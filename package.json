@@ -1,0 +1,31 @@
+{
+  "name": "last-man-standing",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cross-chain multiplayer arena: authoritative off-chain game server with on-chain stake escrow and settlement",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "typecheck": "tsc --build --force",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sol:build": "forge build --root contracts",
+    "sol:test": "forge test --root contracts -vv",
+    "sol:fuzz": "forge test --root contracts --match-path \"test/fuzz/*\" -vv",
+    "sol:invariant": "forge test --root contracts --match-path \"test/invariant/*\" -vv",
+    "sol:fmt": "forge fmt --root contracts",
+    "sol:snapshot": "forge snapshot --root contracts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.0"
+  }
+}

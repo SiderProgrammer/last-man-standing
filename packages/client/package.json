@@ -1,0 +1,19 @@
+{
+  "name": "@lms/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lms/protocol": "0.1.0",
+    "pixi.js": "^8.20.1",
+    "viem": "^2.21.55"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}
