@@ -1,0 +1,89 @@
+import type { ClientMessage, ServerMessage } from '@lms/protocol';
+
+export type Handler = (message: ServerMessage) => void;
+
+const MAX_BACKOFF_MS = 10_000;
+
+/**
+ * Typed socket with reconnect.
+ *
+ * A dropped connection must not cost the player their seat: the match lives on
+ * the server, so reconnecting and re-authenticating is enough to be handed the
+ * current state again. Messages queued while offline are flushed on reconnect
+ * rather than thrown away, because a commit sent a moment before a blip still
+ * belongs in this round.
+ */
+export class Net {
+  private socket: WebSocket | null = null;
+  private readonly handlers = new Set<Handler>();
+  private readonly outbox: ClientMessage[] = [];
+  private backoff = 500;
+  private closed = false;
+
+  constructor(
+    private readonly url: string,
+    /** Called after every (re)connect so the caller can re-auth and re-join. */
+    private readonly onReady: () => void,
+    private readonly onStatus: (connected: boolean) => void,
+  ) {}
+
+  on(handler: Handler): void {
+    this.handlers.add(handler);
+  }
+
+  connect(): void {
+    this.closed = false;
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+
+    socket.onopen = () => {
+      this.backoff = 500;
+      this.onStatus(true);
+    };
+
+    socket.onmessage = (event) => {
+      let message: ServerMessage;
+      try {
+        message = JSON.parse(String(event.data)) as ServerMessage;
+      } catch {
+        return;
+      }
+      for (const handler of this.handlers) handler(message);
+      // `hello` carries a fresh nonce, so re-auth only after the handlers have
+      // stored it — otherwise a reconnect would sign the previous session's nonce.
+      if (message.type === 'hello') this.onReady();
+    };
+
+    socket.onclose = () => {
+      this.socket = null;
+      this.onStatus(false);
+      if (this.closed) return;
+      setTimeout(() => this.connect(), this.backoff);
+      this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
+    };
+
+    socket.onerror = () => socket.close();
+  }
+
+  send(message: ClientMessage): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(message));
+      return;
+    }
+    this.outbox.push(message);
+  }
+
+  /** Called once the session is authenticated: anything buffered is now safe to send. */
+  flush(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    while (this.outbox.length > 0) {
+      const message = this.outbox.shift();
+      if (message) this.socket.send(JSON.stringify(message));
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    this.socket?.close();
+  }
+}

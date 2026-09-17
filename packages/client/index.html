@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Last Man Standing</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Last&nbsp;Man&nbsp;Standing</h1>
+      <div class="topbar-right">
+        <span id="chain-label" class="pill">offline</span>
+        <span id="chips-label" class="pill">— chips</span>
+        <button id="connect" class="primary">Connect wallet</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="lobby-screen" class="screen">
+        <div class="panel">
+          <h2>Play now</h2>
+          <p class="muted">
+            Practice runs entirely off-chain against house bots. Staked lobbies escrow a
+            real testnet stake and settle on-chain when the match ends.
+          </p>
+          <div class="row">
+            <label for="bot-count">Opponents</label>
+            <select id="bot-count">
+              <option value="3" selected>3 bots</option>
+              <option value="5">5 bots</option>
+              <option value="7">7 bots</option>
+            </select>
+            <button id="practice" class="primary">Start practice match</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>One-click play</h2>
+            <span id="session-state" class="pill">off</span>
+          </div>
+          <p class="muted small">
+            Delegate your wallet once (EIP-7702) and this browser gets a scoped, expiring
+            key. It signs you back in after every reconnect without a wallet prompt, and
+            can only join matches, withdraw, and handle your avatar.
+          </p>
+          <div class="row">
+            <button id="enable-session" class="primary" disabled>Enable one-click play</button>
+            <button id="revoke-session" class="ghost hidden">Revoke</button>
+            <span id="session-status" class="muted small">Connect a wallet to set up.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Your avatar</h2>
+            <span id="avatar-chain" class="pill">no collection</span>
+          </div>
+          <p class="muted small">
+            Avatars are cosmetic NFTs, minted on whichever chain you play from. One per
+            wallet, and it follows you into the arena.
+          </p>
+          <div class="row">
+            <img id="avatar-preview" class="avatar-preview hidden" alt="Your avatar" />
+            <button id="mint-avatar" disabled>Mint avatar</button>
+            <span id="avatar-status" class="muted small">Connect a wallet to check.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Staked lobbies</h2>
+            <button id="refresh-lobbies" class="ghost">Refresh</button>
+          </div>
+          <div class="row">
+            <label for="stake">Stake (ETH)</label>
+            <input id="stake" type="text" value="0.001" size="8" />
+            <label for="seats">Seats</label>
+            <select id="seats">
+              <option value="4" selected>4</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+            </select>
+            <button id="create-lobby">Create lobby</button>
+          </div>
+          <ul id="lobby-list" class="lobby-list"></ul>
+        </div>
+      </section>
+
+      <section id="match-screen" class="screen hidden">
+        <div id="arena" class="arena"></div>
+
+        <aside class="sidebar">
+          <div class="panel">
+            <div class="panel-head">
+              <h2 id="phase-label">Commit</h2>
+              <span id="timer" class="timer">--</span>
+            </div>
+            <div id="action-bar" class="actions">
+              <button data-action="1" class="action">⚔️ Attack</button>
+              <button data-action="2" class="action">🛡️ Defend</button>
+              <button data-action="3" class="action">🏃 Hide</button>
+            </div>
+            <div id="target-row" class="row hidden">
+              <label for="target">Target</label>
+              <select id="target"></select>
+            </div>
+            <button id="lock-in" class="primary wide">Lock in move</button>
+            <p id="move-status" class="muted small">Pick an action before the timer runs out.</p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Book — who falls this round?</h2>
+              <span id="book-round" class="pill">round 1</span>
+            </div>
+            <div class="row">
+              <label for="bet-target">Seat</label>
+              <select id="bet-target"></select>
+              <label for="bet-chips">Chips</label>
+              <input id="bet-chips" type="number" min="1" value="100" />
+              <button id="place-bet">Bet</button>
+            </div>
+            <ul id="book-list" class="book-list"></ul>
+          </div>
+
+          <div class="panel grow">
+            <div class="tabs">
+              <button id="tab-feed" class="tab active">History</button>
+              <button id="tab-reads" class="tab">Reads</button>
+            </div>
+            <ol id="feed" class="feed"></ol>
+            <div id="reads" class="reads hidden"></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,362 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #141a24;
+  --panel-2: #1b2331;
+  --line: #273041;
+  --text: #dbe3f0;
+  --muted: #8794ab;
+  --accent: #52d1a4;
+  --danger: #e0575b;
+  --warn: #e6b455;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.topbar h1 {
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+main {
+  padding: 20px;
+}
+
+.screen.hidden,
+.hidden {
+  display: none !important;
+}
+
+#lobby-screen {
+  display: grid;
+  gap: 16px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+#match-screen {
+  display: grid;
+  /* The zero minimum matters: a grid track defaults to its content's intrinsic
+     size, and the Pixi canvas would otherwise pin the column to whatever width
+     it was first sized at and push the sidebar off-screen. */
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+
+.arena {
+  height: calc(100vh - 120px);
+  min-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #070a10;
+}
+
+/* Pixi sizes the canvas inline to match its container, so this only guards
+   against the element being laid out as inline content. */
+.arena canvas {
+  display: block;
+}
+
+/* Below this width the two-column split leaves the arena too narrow to read, so
+   the sidebar moves underneath it. */
+@media (max-width: 1100px) {
+  #match-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .arena {
+    height: 60vh;
+    min-height: 340px;
+  }
+
+  .sidebar {
+    max-height: none;
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 120px);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.panel.grow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  overflow: hidden;
+}
+
+.panel h2 {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+button,
+select,
+input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 7px 12px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06120d;
+  font-weight: 600;
+}
+
+button.ghost {
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+button.wide {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.action.selected {
+  border-color: var(--accent);
+  background: #17352a;
+}
+
+.pill {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* Origin-chain chip. `--chain` is set inline from the protocol's chain table so
+   the colour matches the badge Pixi draws above the same seat in the arena. */
+.chain-chip {
+  --chain: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--chain) 70%, transparent);
+  background: color-mix(in srgb, var(--chain) 14%, transparent);
+  border-radius: 999px;
+  color: var(--chain);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.chain-chip.warn {
+  --chain: var(--warn);
+}
+
+.chain-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.avatar-preview {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--panel-2);
+}
+
+.timer {
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.lobby-list,
+.book-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lobby-list li,
+.book-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tab {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.feed,
+.reads {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.feed li {
+  border-bottom: 1px solid var(--line);
+  padding: 5px 2px;
+}
+
+.feed li.round-head {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-top: 8px;
+  text-transform: uppercase;
+}
+
+.feed li.kill {
+  color: var(--danger);
+}
+
+.reads table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.reads th,
+.reads td {
+  border-bottom: 1px solid var(--line);
+  padding: 5px 4px;
+  text-align: left;
+}
+
+.reads th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.reads .tell {
+  color: var(--warn);
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 10px 16px;
+  max-width: 70vw;
+}

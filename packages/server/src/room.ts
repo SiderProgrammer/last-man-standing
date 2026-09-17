@@ -4,6 +4,7 @@ import {
   MatchPhase,
   commitMove,
   settleEliminationBook,
+  type AvatarEntry,
   type BookSnapshot,
   type EliminationBet,
   type MatchResult,
@@ -47,6 +48,8 @@ export class Room {
   private readonly seatByAddress = new Map<string, number>();
   private readonly botMoves = new Map<number, SealedMove>();
   private bets: EliminationBet[] = [];
+  /** Cosmetic only, and resolved off the match's critical path. */
+  private avatars: AvatarEntry[] = [];
   private deadlineAt: number;
   private settled = false;
 
@@ -94,6 +97,20 @@ export class Room {
       this.chipStacks.set(client.address.toLowerCase(), this.options.startingChips);
     }
     this.pushState(client);
+    if (this.avatars.length > 0) this.pushAvatars(client);
+  }
+
+  /**
+   * Publishes the avatars the seats are wearing.
+   *
+   * Called once the registry has answered, which is after the match is already
+   * playable: resolving an NFT means a chain read and an IPFS fetch, and no
+   * round waits for either. A client that connects later gets them on attach.
+   */
+  setAvatars(entries: readonly AvatarEntry[]): void {
+    this.avatars = [...entries];
+    if (this.avatars.length === 0) return;
+    for (const client of this.clients) this.pushAvatars(client);
   }
 
   detach(client: Client): void {
@@ -253,6 +270,10 @@ export class Room {
 
   private broadcastState(): void {
     for (const client of this.clients) this.pushState(client);
+  }
+
+  private pushAvatars(client: Client): void {
+    client.send({ type: 'avatars', matchId: this.matchId, entries: this.avatars });
   }
 
   private pushState(client: Client): void {

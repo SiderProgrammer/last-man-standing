@@ -21,7 +21,8 @@
     "sol:fuzz": "forge test --root contracts --match-path \"test/fuzz/*\" -vv",
     "sol:invariant": "forge test --root contracts --match-path \"test/invariant/*\" -vv",
     "sol:fmt": "forge fmt --root contracts",
-    "sol:snapshot": "forge snapshot --root contracts"
+    "sol:snapshot": "forge snapshot --root contracts --snap contracts/.gas-snapshot",
+    "sol:snapshot:check": "forge snapshot --root contracts --snap contracts/.gas-snapshot --check"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -1,56 +1,43 @@
 # What's left to do
 
-Status as of the current tree. The protocol, engine, server and contracts are in place
-and tested; the client does not exist yet, and several integrations are still mocks.
+Status as of the current tree. The protocol, engine, server, client and contracts are in
+place, the full TypeScript and Solidity suites are green, and the practice loop plays
+end-to-end in the browser. What remains is mostly integrations that are still mocks, the
+trust-minimisation story, and operational work.
+
 Items are ordered roughly by what blocks the next demo.
 
 ---
 
 ## 1. Blocking — nothing works end-to-end without these
 
-### 1.1 The PixiJS client
+### 1.1 Staked lobby flow against a live chain
 
-`packages/client` currently contains only `package.json` and `tsconfig.json`. Nothing is
-implemented. Needed:
+The pieces exist and typecheck, but they have only run against mocks:
 
-- `index.html` + `vite.config.ts` with `@lms/protocol` aliased to source.
-- **Wallet session:** connect an injected provider with viem, sign
-  `Last Man Standing login\nnonce:<nonce>`, hold the account for the socket's lifetime.
-- **Socket layer:** typed `ClientMessage` / `ServerMessage` transport, reconnect with
-  re-auth, and a local salt store so a commitment can still be revealed after a refresh
-  (losing the salt means losing the round).
-- **Arena scene:** seats as HP rings, attack arrows on reveal, storm intensity by round,
-  elimination animation.
-- **History feed:** the `#7 → attacked #13` log, plus a per-opponent read panel
-  (attack/defend/hide frequencies, favourite targets) — this is the core of the game and
-  should not be a raw text dump.
-- **Action bar:** three actions plus target picker, commit/reveal countdown driven by the
-  `deadline` field, and a clear "revealed / waiting" indicator.
-- **Betting panel:** chip stack, per-seat pot odds, one-click bet before the commit
-  window closes.
-
-### 1.2 Staked lobby flow
-
-The server can only *adopt* a match that already exists on-chain (`chain.ts` watches
-`MatchStarted`). There is no path for a player to discover or create one:
-
-- Lobby directory over WebSocket or HTTP: open lobbies, seat counts, stake, join deadline.
-- Client-side `createMatch` / `join` calls against `GameEscrow` with a viem wallet client.
-- Anyone-can-call `lockMatch` trigger (a keeper loop in the server is the simplest option).
+- `ChainBridge` (`packages/server/src/chain.ts`) polls `MatchCreated`, publishes a lobby
+  directory, locks a full or expired lobby with the keeper key, and opens a room when the
+  match goes `Live`. It has **never been run against a real RPC** — no integration test
+  covers the poll loop, and the 5 000-block backfill window on restart is a guess.
+- The client can `createMatch`, `join` and watch, but the flow has only been exercised in
+  practice mode. Needs a run against a local Anvil fork with the deploy script.
+- **Reconnect on the staked path:** the client re-sends `watch` after re-auth, but a
+  player who joins on-chain before the room exists gets no feedback beyond a toast.
 - Reconcile the two id spaces: practice matches use `deriveMatchId(0, 0x0, nonce)`, staked
-  matches use the escrow's nonce. They cannot currently collide, but nothing enforces that.
+  matches use the escrow's nonce. They cannot currently collide, but nothing enforces it.
 
-### 1.3 Two failing Foundry tests
+### 1.2 Client gaps
 
-Both are test-harness problems, not contract bugs:
+The client plays a full match, but these are missing:
 
-- `SettlementLibGasTest.test_yulIsCheaperThanReferenceOnEightSeats` — measures a
-  calldata Yul path against a memory reference path through an external harness, so the
-  call overhead dominates and the comparison is meaningless. Replace with a
-  `forge snapshot` gas baseline committed to the repo.
-- `GameEscrowTest.test_crossChainJoin_rejectsUntrustedMessengerAndPeer` — `vm.expectRevert`
-  fires at the same call depth as the cheatcode. Route the call through a small external
-  helper contract.
+- **Withdrawals.** `Wallet.withdraw` and `withdrawable` exist and are unused — there is no
+  UI for claiming a payout after settlement.
+- **`MatchMarket`.** The on-chain Winner / Top 3 market has no client surface at all; only
+  the off-chain chip book is wired up.
+- **Result screen.** A finished match prints one line into the history feed. It should
+  show the final ranking, the payout, and the settlement transaction hash.
+- **Spectator discovery.** `watch` works, but live matches are only listed if they came
+  from the chain directory; practice rooms are invisible to everyone but their player.
 
 ---
 
@@ -82,9 +69,8 @@ Both are test-harness problems, not contract bugs:
 
 - `PostgresArchive` is written but never exercised: `pg` is not installed and there is no
   migration, integration test, or docker-compose service.
-- Redis is in the stack list and in `config.ts` but is not used at all. Decide whether it
-  is needed (presence, rate limiting, multi-instance room ownership) or drop it from the
-  config surface.
+- Redis is in the stack list but is not used at all. Decide whether it is needed
+  (presence, rate limiting, multi-instance room ownership) or drop it from the stack.
 
 ---
 
@@ -106,11 +92,13 @@ Until then, document honestly that settlement is quorum-trusted.
 ### 3.2 Server-side hardening
 
 - No rate limiting, message size cap, or connection cap on the gateway.
-- No reconnect/resume: a dropped socket loses the seat mapping until the next `state`.
 - Commitments and reveals are held only in memory. A server restart mid-match loses the
-  round and the match can only end via `cancelMatch` after the deadline. Persist the
-  round log (Redis or Postgres) and restore on boot.
+  round and the match can only end via `cancelMatch` after the deadline. Persist the round
+  log (Redis or Postgres) and restore on boot.
 - The practice-room path lets any authenticated wallet create unlimited rooms.
+- The login nonce is single-use per connection but never expires within it.
+- The keeper key doubles as the attestor key by default. Splitting them would mean a
+  compromised keeper cannot also sign results.
 
 ### 3.3 Contract review items
 
@@ -129,19 +117,51 @@ Until then, document honestly that settlement is quorum-trusted.
 
 ## 4. Tooling and process
 
-- **CI:** nothing runs automatically. Add a workflow for `npm test`, `forge test`,
-  `forge fmt --check`, and the deep fuzz profile on a schedule.
+- **CI:** nothing runs automatically. Add a workflow for `npm test`, `npm run typecheck`,
+  `forge test`, `forge fmt --check`, `npm run sol:snapshot:check`, and the deep fuzz
+  profile on a schedule.
 - **Static analysis:** Slither and Aderyn are available as MCP tooling but no run is
   committed. Add a baseline and fail CI on new findings.
-- **Gas snapshots:** `npm run sol:snapshot` exists; no `.gas-snapshot` is committed, so
-  regressions are invisible.
-- **`.env.example`:** referenced by `.gitignore` but does not exist.
-- **README:** there is no top-level README; `docs/ARCHITECTURE.md` currently carries
-  everything.
+- **Client tests:** `packages/client` has no test of its own. `reads.ts` is pure and
+  deserves unit tests; the commit/reveal state machine in `main.ts` should be extracted
+  from the DOM wiring so it can be tested headlessly.
 - **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
-- **Nothing is committed yet.** Only `.gitmodules` and the OpenZeppelin submodule pointer
-  are staged; the entire source tree — including `.gitignore` — is untracked. The repo
-  needs an initial commit before any of the above can be reviewed as a diff.
+- **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
+  Fine for a testnet demo, worth code-splitting before anything public.
+
+### Not yet exercised against a chain
+
+Three features landed with unit coverage but have only run against mocks, for the same
+reason as §1.1: no deployment has been driven end to end.
+
+- **Avatars.** `AvatarRegistry` is unit-tested including every failure path, and the arena
+  rendering was verified against stubbed entries. No `PlayerAvatars` has been deployed, so
+  the read → IPFS → texture path has never run against a real token.
+- **Session keys.** `SessionKeyDelegate` is covered by 22 Foundry tests over real
+  `vm.signAndAttachDelegation` delegations, and the digest is pinned to the TypeScript
+  side by frozen vectors. What has *not* been exercised is the browser half: viem's
+  `signAuthorization` against a real wallet, and the relay round trip through the gateway.
+  Needs an Anvil run with `--hardfork prague` or a Pectra testnet.
+- **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
+  `ChainBridge`, but only the in-arena badges have been seen rendered — the lobby list
+  needs a staked lobby to appear at all.
+
+### Done since the last revision
+
+- **Origin chains are visible.** Seats carry the chain they staked from all the way to a
+  coloured badge in the arena and chips in the lobby list. Fixed a real defect on the way:
+  `seatOrigin` stores the *messenger's* id space (LayerZero endpoint ids), which
+  `ChainBridge` was assigning straight into `Seat.chainId` — a seat staked from Base
+  Sepolia would have rendered as "chain 40245".
+- **NFT avatars**, per chain, cosmetic, resolved off the match's critical path.
+- **EIP-7702 session keys**, so reconnecting no longer costs a wallet signature.
+- `.env.example` and a top-level `README.md` now exist.
+- `contracts/.gas-snapshot` is committed; `npm run sol:snapshot:check` fails on drift.
+- Both previously failing Foundry tests are fixed. The gas test now warms the harness
+  before measuring (the first external call was paying 2 600 gas of cold-account access,
+  which swamped the difference) and asserts the Yul path is never worse — currently 451
+  gas cheaper on eight seats, growing with lobby size. The cross-chain revert test funds
+  the caller so the call reaches the escrow instead of failing in the caller's frame.
 
 ---
 
@@ -151,12 +171,15 @@ These are open questions, not bugs:
 
 - **Lobby size.** The concept describes 10–50 players; `DEFAULT_RULES` caps a lobby at 8
   and the storm curve is tuned for that. Large lobbies need a re-tuned storm and probably
-  multi-target rounds, plus a UI that stays readable at 50 seats.
+  multi-target rounds, plus a UI that stays readable at 50 seats. The arena already lays
+  seats out on a circle of any size, but the labels will collide past ~16.
 - **Balance.** No simulation harness exists to answer "is Hide too strong at 60%?".
   The engine is pure and seeded, so a batch simulator over strategy pools is cheap to
   build and would turn balance into data.
+- **Reads.** The tells in `packages/client/src/reads.ts` are hand-tuned thresholds
+  ("attacks ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
+  against simulated play so the panel does not confidently mislabel a bot.
 - **Round-level on-chain betting.** Currently off-chain chips only. Moving it on-chain
   needs per-round elimination data in the escrow, which is a real protocol change.
-- **Spectators.** The wire protocol supports `watch`, but there is no discovery, no
-  spectator-only chip faucet policy, and no anti-collusion rule preventing a seated
-  player from betting against themselves.
+- **Anti-collusion.** Nothing prevents a seated player from betting against themselves in
+  the elimination book, or two players from splitting a lobby.

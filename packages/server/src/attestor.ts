@@ -13,7 +13,7 @@ import {
   matchResultMessage,
   type MatchResult,
 } from '@lms/protocol';
-import { gameEscrowAbi } from './abi.js';
+import { gameEscrowAbi } from '@lms/protocol';
 import { config } from './config.js';
 
 /**
@@ -106,7 +106,7 @@ export function createRelayer(options: {
 }
 
 export function relayerFromEnv(): Relayer {
-  if (!config.attestorPk || !config.rpcUrl || config.escrow === ZERO_ADDRESS) return nullRelayer;
+  if (!config.attestorPk || !config.onChain) return nullRelayer;
   return createRelayer({
     privateKey: config.attestorPk,
     rpcUrl: config.rpcUrl,
@@ -114,5 +114,3 @@ export function relayerFromEnv(): Relayer {
     escrow: config.escrow,
   });
 }
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

@@ -3,6 +3,7 @@ import { keccak256, toHex } from 'viem';
 import { DEFAULT_RULES, deriveMatchId, type Rules, type Seat } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from './room.js';
+import type { AvatarRegistry } from './avatars.js';
 import type { MatchArchive } from './store.js';
 import type { Relayer } from './attestor.js';
 
@@ -13,6 +14,8 @@ export interface LobbyOptions {
   revealMs: number;
   startingChips: number;
   rules?: Rules;
+  /** Resolves the NFT avatars seats are wearing. Omitted, nobody wears one. */
+  avatars?: AvatarRegistry;
 }
 
 /**
@@ -109,7 +112,28 @@ export class Lobby {
 
     const room = new Room(setup, options, now);
     this.rooms.set(room.matchId.toLowerCase(), room);
+    void this.decorate(room, setup);
     return room;
+  }
+
+  /**
+   * Resolves avatars in the background.
+   *
+   * Deliberately not awaited: the room is already playable and the first commit
+   * window is already open. An avatar arriving a second later costs nothing,
+   * whereas making the match wait on an IPFS gateway would let a slow one
+   * eat into the round clock.
+   */
+  private async decorate(room: Room, setup: MatchSetup): Promise<void> {
+    const registry = this.options.avatars;
+    if (!registry || registry.empty) return;
+
+    try {
+      room.setAvatars(await registry.resolve(setup.seats));
+    } catch (error) {
+      // Cosmetic: a failure here must never surface to the players.
+      console.warn('[lobby] avatar resolution failed:', describe(error));
+    }
   }
 
   private async finalise(

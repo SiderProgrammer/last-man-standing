@@ -1,8 +1,32 @@
 import { randomBytes } from 'node:crypto';
 import { verifyMessage } from 'viem';
-import { AUTH_PREFIX, isActionValue, type ClientMessage, type ServerMessage } from '@lms/protocol';
+import {
+  AUTH_PREFIX,
+  isActionValue,
+  type AvatarCollectionInfo,
+  type ClientMessage,
+  type LobbyInfo,
+  type ServerMessage,
+} from '@lms/protocol';
 import type { Lobby } from './lobby.js';
+import type { SessionRelayer } from './relayer.js';
 import type { Client } from './room.js';
+
+/**
+ * Checks a login signature against an address.
+ *
+ * Injected rather than fixed, because the two cases need different machinery.
+ * A plain EOA is verified with `ecrecover` and no network at all, which is what
+ * practice-only mode runs on. An account that has delegated under EIP-7702
+ * signs its logins with a *session key*, so the signature does not recover to
+ * the account address and only the account itself can say whether it is valid —
+ * an ERC-1271 `isValidSignature` call, which needs an RPC.
+ */
+export type SignatureVerifier = (args: {
+  address: `0x${string}`;
+  message: string;
+  signature: `0x${string}`;
+}) => Promise<boolean>;
 
 /** The slice of `ws` the gateway actually uses, so tests can supply a fake. */
 export interface Socket {
@@ -22,6 +46,22 @@ interface Session extends Client {
 export interface GatewayOptions {
   lobby: Lobby;
   chainId: number;
+  /** Hub escrow, so the client knows where to stake. Null in practice-only mode. */
+  escrow?: `0x${string}` | null;
+  /** Avatar collections, so the client knows where to mint on its own chain. */
+  avatarCollections?: AvatarCollectionInfo[];
+  /** 7702 delegate the client may grant a session key against. */
+  sessionDelegate?: `0x${string}` | null;
+  /** Submits session-authorised calls on players' behalf. */
+  relayer?: SessionRelayer;
+  /** Lobby directory from the chain bridge. Empty when running without an RPC. */
+  directory?: () => { open: LobbyInfo[]; live: LobbyInfo[] };
+  /**
+   * How login signatures are checked. Defaults to offline `ecrecover`, which
+   * accepts EOAs only; supply an RPC-backed verifier to also accept session
+   * keys from 7702-delegated accounts.
+   */
+  verify?: SignatureVerifier;
   /** Wall clock, injectable for tests. */
   now?: () => number;
 }
@@ -50,7 +90,14 @@ export class Gateway {
       send: (message) => this.write(socket, message),
     };
     this.sessions.set(socket, session);
-    session.send({ type: 'hello', nonce: session.nonce, chainId: this.options.chainId });
+    session.send({
+      type: 'hello',
+      nonce: session.nonce,
+      chainId: this.options.chainId,
+      escrow: this.options.escrow ?? null,
+      avatarCollections: this.options.avatarCollections ?? [],
+      sessionDelegate: this.options.sessionDelegate ?? null,
+    });
 
     socket.on('message', (data: unknown) => {
       void this.dispatch(session, String(data)).catch((error: unknown) => {
@@ -68,7 +115,8 @@ export class Gateway {
     const message = parse(raw);
 
     if (message.type === 'auth') {
-      const valid = await verifyMessage({
+      const verify = this.options.verify ?? offlineVerify;
+      const valid = await verify({
         address: message.address,
         message: `${AUTH_PREFIX}${session.nonce}`,
         signature: message.signature,
@@ -84,6 +132,11 @@ export class Gateway {
     const now = this.options.now?.() ?? Date.now();
 
     switch (message.type) {
+      case 'lobbies': {
+        const directory = this.options.directory?.() ?? { open: [], live: [] };
+        session.send({ type: 'lobbies', open: directory.open, live: directory.live });
+        return;
+      }
       case 'practice': {
         const room = this.options.lobby.createPractice(address, message.bots ?? 3, now);
         room.attach(session);
@@ -91,6 +144,24 @@ export class Gateway {
       }
       case 'watch': {
         this.options.lobby.attach(message.matchId, session);
+        return;
+      }
+      case 'relay': {
+        const relayer = this.options.relayer;
+        if (!relayer?.enabled) throw new Error('session relaying is not enabled on this server');
+
+        // Submitted for the authenticated address and no other: the signature
+        // proves the session key spoke, but only this socket's login proves
+        // which account is asking, and the two must be the same account.
+        const hash = await relayer.submit({
+          account: address,
+          target: message.target,
+          value: BigInt(message.value),
+          data: message.data,
+          nonce: BigInt(message.nonce),
+          signature: message.signature,
+        });
+        session.send({ type: 'relayed', hash });
         return;
       }
       case 'commit': {
@@ -139,6 +210,9 @@ function parse(raw: string): ClientMessage {
   }
   return parsed as ClientMessage;
 }
+
+/** `ecrecover` only: no network, and therefore no ERC-1271. */
+const offlineVerify: SignatureVerifier = (args) => verifyMessage(args);
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

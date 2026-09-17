@@ -220,6 +220,12 @@ contract GameEscrowTest is Fixtures {
         bytes32 peer = config.peerFor(421_614);
         bytes memory payload = abi.encode(matchId, players[1]);
 
+        // The delivery carries the stake, so whoever makes the call needs the
+        // balance: without it the call fails in the caller's frame and never
+        // reaches the authentication checks being tested here.
+        vm.deal(address(this), STAKE * 2);
+        vm.deal(address(messenger), STAKE * 2);
+
         vm.expectRevert(
             abi.encodeWithSelector(GameEscrow.UntrustedMessenger.selector, uint32(421_614), address(this))
         );

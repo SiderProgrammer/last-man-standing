@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "lms-server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "@lms/server"],
+      "port": 8787
+    },
+    {
+      "name": "lms-client",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "@lms/client"],
+      "port": 5173
+    }
+  ]
+}
