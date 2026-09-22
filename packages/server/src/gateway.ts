@@ -11,6 +11,7 @@ import {
 } from '@lms/protocol';
 import type { Lobby } from './lobby.js';
 import type { SessionRelayer } from './relayer.js';
+import { errorFrame, parseClientMessage } from './frames.js';
 import type { Client } from './room.js';
 
 /**
@@ -29,12 +30,19 @@ export type SignatureVerifier = (args: {
   signature: `0x${string}`;
 }) => Promise<boolean>;
 
-/** The slice of `ws` the gateway actually uses, so tests can supply a fake. */
+/**
+ * The slice of `ws` the gateway actually uses, so tests can supply a fake.
+ *
+ * Two named methods rather than an overloaded `on`: an overload set is not
+ * structurally satisfiable by a simple fake, so every implementation — the
+ * real `ws` in `index.ts` and the `FakeSocket` in the tests — had to be cast
+ * into place. `ws` satisfies this shape directly.
+ */
 export interface Socket {
   readyState: number;
   send(data: string): void;
-  on(event: 'message', listener: (data: unknown) => void): void;
-  on(event: 'close', listener: () => void): void;
+  onMessage(listener: (data: unknown) => void): void;
+  onClose(listener: () => void): void;
 }
 
 const OPEN = 1;
@@ -56,7 +64,7 @@ export interface GatewayOptions {
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
-  directory?: () => { open: LobbyInfo[]; live: LobbyInfo[] };
+  directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   /**
    * How login signatures are checked. Defaults to offline `ecrecover`, which
    * accepts EOAs only; supply an RPC-backed verifier to also accept session
@@ -100,20 +108,20 @@ export class Gateway {
       sessionDelegate: this.options.sessionDelegate ?? null,
     });
 
-    socket.on('message', (data: unknown) => {
+    socket.onMessage((data: unknown) => {
       void this.dispatch(session, String(data)).catch((error: unknown) => {
-        session.send({ type: 'error', code: 'REJECTED', message: errorMessage(error) });
+        session.send(errorFrame(error));
       });
     });
 
-    socket.on('close', () => {
+    socket.onClose(() => {
       for (const room of this.options.lobby.list()) room.detach(session);
       this.sessions.delete(socket);
     });
   }
 
   private async dispatch(session: Session, raw: string): Promise<void> {
-    const message = parse(raw);
+    const message = parseClientMessage(raw);
 
     if (message.type === 'auth') {
       const verify = this.options.verify ?? offlineVerify;
@@ -197,19 +205,6 @@ export class Gateway {
   private write(socket: Socket, message: ServerMessage): void {
     if (socket.readyState === OPEN) socket.send(JSON.stringify(message));
   }
-}
-
-function parse(raw: string): ClientMessage {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('payload is not valid JSON');
-  }
-  if (typeof parsed !== 'object' || parsed === null || !('type' in parsed)) {
-    throw new Error('payload has no message type');
-  }
-  return parsed as ClientMessage;
 }
 
 /** `ecrecover` only: no network, and therefore no ERC-1271. */

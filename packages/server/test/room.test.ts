@@ -13,6 +13,7 @@ const OPTIONS: RoomOptions = {
   commitMs: 10_000,
   revealMs: 5_000,
   startingChips: 1_000,
+  botSeats: [],
 };
 
 function room(seatCount = 4, label = 'room', extra: Partial<RoomOptions> = {}) {

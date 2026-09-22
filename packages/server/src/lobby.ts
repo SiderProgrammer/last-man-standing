@@ -6,6 +6,8 @@ import {
   ZERO_ADDRESS,
   deriveMatchId,
   errorMessage,
+  type MatchResult,
+  type RoundRecord,
   type Rules,
   type Seat,
 } from '@lms/protocol';
@@ -145,8 +147,8 @@ export class Lobby {
   }
 
   private async finalise(
-    result: Parameters<NonNullable<RoomOptions['onFinished']>>[0],
-    history: Parameters<NonNullable<RoomOptions['onFinished']>>[1],
+    result: MatchResult,
+    history: readonly RoundRecord[],
   ): Promise<void> {
     let settledTx: string | null = null;
     try {

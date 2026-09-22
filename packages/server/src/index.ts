@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
 import { config, ZERO_ADDRESS } from './config.js';
-import { Gateway, type Socket } from './gateway.js';
+import { Gateway } from './gateway.js';
 import { Lobby } from './lobby.js';
 import { createArchive } from './store.js';
 import { relayerFromEnv } from './attestor.js';
@@ -10,7 +10,7 @@ import { ChainBridge } from './chain.js';
 import { AvatarRegistry, parseCollections } from './avatars.js';
 import { createSessionRelayer, nullSessionRelayer } from './relayer.js';
 
-export { Room, type Client, type RoomOptions } from './room.js';
+export { Room, type Client, type MatchFinished, type RoomOptions } from './room.js';
 export { Lobby, type LobbyOptions } from './lobby.js';
 export { Gateway, type GatewayOptions, type Socket, type SignatureVerifier } from './gateway.js';
 export {
@@ -24,10 +24,22 @@ export {
   signResult,
   packSignatures,
   createRelayer,
+  relayerFrom,
   nullRelayer,
   type Relayer,
 } from './attestor.js';
-export { ChainBridge, type ChainBridgeOptions } from './chain.js';
+export { BotDriver } from './bots.js';
+export { ChipLedger } from './chips.js';
+export { errorFrame, parseClientMessage } from './frames.js';
+export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain.js';
+export {
+  viemEscrowReader,
+  type EscrowMatch,
+  type EscrowReader,
+  type MatchCreatedLog,
+  type PlayerJoinedLog,
+  type ViemEscrowReaderOptions,
+} from './escrowReader.js';
 export {
   createSessionRelayer,
   nullSessionRelayer,
@@ -42,7 +54,7 @@ export {
   type AvatarRegistryOptions,
   type AvatarSubject,
 } from './avatars.js';
-export { config } from './config.js';
+export { config, loadConfig, type ServerConfig } from './config.js';
 
 const TICK_MS = 250;
 
@@ -124,7 +136,18 @@ export async function main(): Promise<void> {
   });
 
   const wss = new WebSocketServer({ server: http });
-  wss.on('connection', (socket) => gateway.accept(socket as unknown as Socket));
+  // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
+  // the shapes are bridged here rather than by casting the socket into place.
+  wss.on('connection', (socket) =>
+    gateway.accept({
+      get readyState() {
+        return socket.readyState;
+      },
+      send: (data) => socket.send(data),
+      onMessage: (listener) => void socket.on('message', listener),
+      onClose: (listener) => void socket.on('close', listener),
+    }),
+  );
 
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();

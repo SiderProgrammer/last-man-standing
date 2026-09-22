@@ -17,9 +17,12 @@ class FakeSocket implements Socket {
     this.sent.push(JSON.parse(data) as ServerMessage);
   }
 
-  on(event: 'message' | 'close', listener: never): void {
-    if (event === 'message') this.listeners.message = listener as (data: unknown) => void;
-    else this.listeners.close = listener as () => void;
+  onMessage(listener: (data: unknown) => void): void {
+    this.listeners.message = listener;
+  }
+
+  onClose(listener: () => void): void {
+    this.listeners.close = listener;
   }
 
   async deliver(message: ClientMessage): Promise<void> {

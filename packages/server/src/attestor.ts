@@ -8,7 +8,7 @@ import {
   type MatchResult,
 } from '@lms/protocol';
 import { gameEscrowAbi } from '@lms/protocol';
-import { config } from './config.js';
+import { config, type ServerConfig } from './config.js';
 import { signerClients } from './viem.js';
 
 /**
@@ -94,12 +94,23 @@ export function createRelayer(options: {
   };
 }
 
-export function relayerFromEnv(): Relayer {
-  if (!config.attestorPk || !config.onChain) return nullRelayer;
+/**
+ * The relayer a given configuration implies.
+ *
+ * Without an attestor key, or without a chain to submit to, results are still
+ * signed and archived but never land on-chain — that is what practice-only
+ * mode runs on.
+ */
+export function relayerFrom(cfg: ServerConfig): Relayer {
+  if (!cfg.attestorPk || !cfg.onChain) return nullRelayer;
   return createRelayer({
-    privateKey: config.attestorPk,
-    rpcUrl: config.rpcUrl,
-    chainId: config.chainId,
-    escrow: config.escrow,
+    privateKey: cfg.attestorPk,
+    rpcUrl: cfg.rpcUrl,
+    chainId: cfg.chainId,
+    escrow: cfg.escrow,
   });
+}
+
+export function relayerFromEnv(): Relayer {
+  return relayerFrom(config);
 }
