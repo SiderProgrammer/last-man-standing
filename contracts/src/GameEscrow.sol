@@ -2,10 +2,9 @@
 pragma solidity 0.8.28;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
-import {NothingToWithdraw, TransferFailed} from "./Errors.sol";
+import {PullPayable} from "./PullPayable.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
@@ -30,7 +29,7 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient calls
 ///      `withdraw` or bridges the balance out.
-contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChainReceiver {
+contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver {
     enum MatchStatus {
         None,
         /// @dev Accepting joins.
@@ -81,13 +80,10 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     /// @notice Oracle request handle back to the match it belongs to.
     mapping(bytes32 requestId => bytes32 matchId) public randomnessRequest;
 
-    /// @notice Withdrawable balance, credited by settlement and refunds.
-    mapping(address account => uint256) public withdrawable;
-    /// @notice Sum of every unwithdrawn balance.
-    uint256 public totalOwed;
     /// @notice Stakes held for matches that have not yet settled or cancelled.
-    /// @dev Together these two account for the entire contract balance; the
-    ///      solvency invariant is `address(this).balance == totalOwed + totalEscrowed`.
+    /// @dev This and `PullPayable.totalOwed` account for the entire contract
+    ///      balance; the solvency invariant is
+    ///      `address(this).balance == totalOwed + totalEscrowed`.
     uint256 public totalEscrowed;
 
     bool public paused;
@@ -104,7 +100,6 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
     event MatchCancelled(bytes32 indexed matchId, string reason);
-    event Withdrawn(address indexed account, address indexed to, uint256 amount);
     event WithdrawalBridged(address indexed account, uint32 indexed dstChainId, uint256 amount);
     event PausedSet(bool paused);
 
@@ -292,10 +287,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         info.status = MatchStatus.Settled;
         info.historyRoot = historyRoot;
 
-        address[] storage storedRanking = matchRanking[matchId];
-        for (uint256 i = 0; i < ranking.length; ++i) {
-            storedRanking.push(ranking[i]);
-        }
+        matchRanking[matchId] = ranking;
 
         totalEscrowed -= uint256(info.stake) * info.seatCount;
         _distribute(matchId, info, ranking);
@@ -369,32 +361,14 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
 
     // --- Balances ----------------------------------------------------------
 
-    /// @notice Withdraws the caller's balance on this chain.
-    function withdraw(address to) external nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-
-        withdrawable[msg.sender] = 0;
-        totalOwed -= amount;
-
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert TransferFailed(to, amount);
-
-        emit Withdrawn(msg.sender, to, amount);
-    }
-
     /// @notice Sends the caller's balance to another chain through the transport.
     /// @dev `msg.value` pays the transport fee; the balance itself is forwarded
     ///      alongside the message. Used by players who staked from a spoke chain.
     function withdrawToChain(uint32 dstChainId) external payable nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-
         address messenger = config.messengerFor(dstChainId);
         if (messenger == address(0)) revert NoMessengerForChain(dstChainId);
 
-        withdrawable[msg.sender] = 0;
-        totalOwed -= amount;
+        amount = _takeBalance(msg.sender);
 
         ICrossChainMessenger(messenger).sendMessage{value: amount + msg.value}(
             dstChainId, config.peerFor(dstChainId), abi.encode(msg.sender, amount)
@@ -463,8 +437,4 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         emit PlayerJoined(matchId, player, seat, originChainId);
     }
 
-    function _credit(address account, uint256 amount) private {
-        withdrawable[account] += amount;
-        totalOwed += amount;
-    }
 }
