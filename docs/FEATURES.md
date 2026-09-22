@@ -21,7 +21,7 @@ and none of the three repeats another:
 - **Mocked** — the third-party integration behind it is a local stub.
 - **Known issue** — implemented, but with a flaw documented in the review.
 
-Test counts at the time of writing: **104 TypeScript tests** across 11 files,
+Test counts at the time of writing: **190 TypeScript tests** across 18 files,
 **95 Foundry tests** across 15 suites.
 
 ---
@@ -617,14 +617,19 @@ Two supporting decisions:
 
 | File | Responsibility |
 | --- | --- |
-| `room.ts` | One live match: phases, round clock, chip book, client fan-out |
+| `room.ts` | One live match: phases, round clock, client fan-out |
+| `chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| `bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
 | `lobby.ts` | Room registry; practice lobbies, adopted on-chain matches, finalisation |
-| `gateway.ts` | Socket framing, wallet login, message dispatch |
+| `gateway.ts` | Session registry, wallet login, message dispatch |
+| `frames.ts` | Frame decoding, and the error frame returned when it fails |
 | `chain.ts` | `ChainBridge`: discovery, directory, keeper lock, room adoption |
+| `escrowReader.ts` | The hub as an interface, plus its viem implementation |
 | `attestor.ts` | Signs the EIP-712 result and submits `settle` |
 | `avatars.ts` | Resolves each seat's NFT on its own chain |
 | `relayer.ts` | Submits and pays for session-authorised calls |
 | `store.ts` | Match archive: in-memory by default, Postgres when configured |
+| `viem.ts` | Client construction for a chain known only by id and RPC URL |
 
 ### Design decisions worth knowing
 
@@ -660,13 +665,21 @@ Two supporting decisions:
 
 | File | Responsibility |
 | --- | --- |
-| `main.ts` | Wire dispatch, commit/reveal handshake, DOM panels, lobby and match screens |
+| `main.ts` | Entry point, three lines: calls `start()` |
+| `app.ts` | The shell: state, socket wiring, dispatch, wallet and session flows, DOM writes |
+| `dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `phase.ts` | *Pure.* `phasePlan` — control states, and whether a reveal is due |
+| `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, attack bolts, storm ring |
-| `reads.ts` | Per-opponent tendencies and tells, derived from public history |
+| `theme.ts` | The arena's palette and text styles |
+| `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| `reads.ts` | *Pure.* Per-opponent tendencies and tells, derived from public history |
 | `net.ts` | Typed socket with backoff reconnect, re-auth and an outbox |
 | `wallet.ts` | EIP-1193 session, login signature, escrow / avatar / session calls |
 | `session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
 | `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
 
 ### Why these choices
 
@@ -729,7 +742,7 @@ is not dominated by cold-account access.
 
 ```bash
 npm test               # TypeScript: protocol, engine, server
-npm run typecheck      # whole monorepo, strict
+npm run typecheck      # whole monorepo, strict — including every test file
 npm run sol:test       # Foundry: unit, fuzz, invariant
 npm run sol:fuzz       # fuzz suites only
 npm run sol:invariant  # invariant suites only

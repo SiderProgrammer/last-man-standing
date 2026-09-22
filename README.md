@@ -80,7 +80,7 @@ match ends.
 
 ```bash
 npm test              # TypeScript: protocol, engine, server
-npm run typecheck     # whole monorepo, strict
+npm run typecheck     # whole monorepo, strict — including every test file
 npm run sol:test      # Foundry: unit, fuzz, invariant
 npm run sol:snapshot  # gas snapshot
 ```
