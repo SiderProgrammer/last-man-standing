@@ -23,8 +23,12 @@ Alongside the match runs a play-money book on *who falls this round*, and an
 on-chain parimutuel market on the final Winner and Top 3.
 
 For the full design — trust model, hashing rules, Yul optimisations, cross-chain
-flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Work still outstanding
-is tracked in [docs/TODO.md](docs/TODO.md).
+flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a feature-by-feature
+reference covering what each mechanism does and why it is there — cross-chain,
+governance, the randomness oracle, EIP-7702 session keys, the Yul libraries —
+see [docs/FEATURES.md](docs/FEATURES.md). Whether each of those features earns
+its place is argued in [docs/PROTOCOL_REVIEW.md](docs/PROTOCOL_REVIEW.md), and
+work still outstanding is tracked in [docs/TODO.md](docs/TODO.md).
 
 ## Layout
 
