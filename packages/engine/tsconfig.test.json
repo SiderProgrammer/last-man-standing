@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    "paths": {
+      "@lms/protocol": ["../protocol/src/index.ts"],
+      "@lms/engine": ["../engine/src/index.ts"],
+      "@lms/server": ["../server/src/index.ts"]
+    }
+  },
+  "include": ["test/**/*.ts"]
+}
