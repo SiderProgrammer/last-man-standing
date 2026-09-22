@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
-import {SettlementHarness} from "../helpers/Fixtures.sol";
+import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 
 contract SettlementLibTest is Test {
     SettlementHarness internal harness;

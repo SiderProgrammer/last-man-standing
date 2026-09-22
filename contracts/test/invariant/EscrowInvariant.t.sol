@@ -7,7 +7,8 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
-import {SettlementHarness} from "../helpers/Fixtures.sol";
+import {SettlementHarness} from "../helpers/SettlementHarness.sol";
+import {Attest} from "../helpers/Attest.sol";
 
 /// @dev Actor that drives GameEscrow through random sequences of public calls.
 contract EscrowHandler is Test {
@@ -79,17 +80,7 @@ contract EscrowHandler is Test {
         for (uint256 i = 0; i < n; ++i) {
             pks[i] = attestorPks[i];
         }
-        for (uint256 i = 0; i < n; ++i) {
-            for (uint256 j = i + 1; j < n; ++j) {
-                if (vm.addr(pks[j]) < vm.addr(pks[i])) (pks[i], pks[j]) = (pks[j], pks[i]);
-            }
-        }
-        bytes memory sigs;
-        for (uint256 i = 0; i < n; ++i) {
-            (uint8 v, bytes32 r, bytes32 s) = vm.sign(pks[i], digest);
-            sigs = bytes.concat(sigs, abi.encodePacked(r, s, v));
-        }
-        escrow.settle(current, rounds, historyRoot, ranking, sigs);
+        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest));
     }
 
     function withdraw(uint256 who) public {

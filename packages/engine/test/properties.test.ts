@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { Action, DEFAULT_RULES, MatchPhase } from '@lms/protocol';
 import { replayMatch, verifyResult } from '@lms/engine';
-import { always, bytes32, playMatch, Prng, randomStrategy, setupFor } from './helpers.js';
+import {
+  always,
+  bytes32,
+  playMatch,
+  Prng,
+  randomStrategy,
+  readerStrategy,
+  setupFor,
+} from './helpers.js';
 
 const TRIALS = 120;
 
@@ -82,11 +90,17 @@ describe('engine invariants', () => {
     expect(roots.size).toBe(20);
   });
 
+  // `replay.ts` deliberately re-derives the initial state, the per-round fold
+  // and the ranking rather than sharing them with `Match` — that independence
+  // is what makes `verifyResult` an audit rather than a tautology. This test is
+  // what pays for the duplication, so it covers both strategies: `reader`
+  // concentrates fire and eliminates seats in a different order to `random`.
   it('lets an independent replay reproduce the signed result', () => {
     for (let trial = 0; trial < 40; trial += 1) {
       const setup = setupFor(4 + (trial % 5), `replay-${trial}`);
       const prng = new Prng(bytes32(`replay-strategy-${trial}`));
-      const { match, moveLog } = playMatch(setup, randomStrategy(prng));
+      const strategy = trial % 2 === 0 ? randomStrategy(prng) : readerStrategy(prng);
+      const { match, moveLog } = playMatch(setup, strategy);
 
       const replayed = replayMatch(setup, moveLog);
       expect(replayed.result).toEqual(match.result());
@@ -95,6 +109,18 @@ describe('engine invariants', () => {
       );
       expect(verifyResult(setup, moveLog, match.result())).toBe(true);
     }
+  });
+
+  it('reproduces a result for a match where seats went silent', () => {
+    // No-shows take a different path through `resolveRound` (Action.None), and
+    // the move log records them as unrevealed — the replay has to agree there
+    // too, or a timing-out lobby could not be audited.
+    const setup = setupFor(6, 'replay-silent');
+    const prng = new Prng(bytes32('replay-silent'));
+    const { match, moveLog } = playMatch(setup, randomStrategy(prng), new Set([1, 4]));
+
+    expect(replayMatch(setup, moveLog).result).toEqual(match.result());
+    expect(verifyResult(setup, moveLog, match.result())).toBe(true);
   });
 
   it('rejects a replay whose move log was tampered with', () => {

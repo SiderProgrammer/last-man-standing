@@ -4,7 +4,8 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
-import {SettlementHarness} from "../helpers/Fixtures.sol";
+import {SettlementHarness} from "../helpers/SettlementHarness.sol";
+import {Attest} from "../helpers/Attest.sol";
 
 contract SignatureLibFuzzTest is Test {
     SettlementHarness internal harness;
@@ -63,12 +64,6 @@ contract SignatureLibFuzzTest is Test {
     }
 
     function _sort(uint256[] memory pks) internal view {
-        for (uint256 i = 0; i < pks.length; ++i) {
-            for (uint256 j = i + 1; j < pks.length; ++j) {
-                if (vm.addr(pks[j]) < vm.addr(pks[i])) {
-                    (pks[i], pks[j]) = (pks[j], pks[i]);
-                }
-            }
-        }
+        Attest.sortByAddress(pks);
     }
 }

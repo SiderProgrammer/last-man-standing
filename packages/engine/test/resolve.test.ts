@@ -7,19 +7,9 @@ import {
   type PlayerState,
 } from '@lms/protocol';
 import { resolveRound, type DeclaredMove } from '@lms/engine';
-import { bytes32 } from './helpers.js';
+import { bytes32, freshStates } from './helpers.js';
 
 const SEED = bytes32('resolve-seed');
-
-function freshStates(count: number, hp = DEFAULT_RULES.startingHp): PlayerState[] {
-  return Array.from({ length: count }, (_, index) => ({
-    index,
-    hp,
-    alive: true,
-    eliminatedInRound: 0,
-    timeouts: 0,
-  }));
-}
 
 function move(index: number, action: DeclaredMove['action'], target = 0): DeclaredMove {
   return { index, action, target, revealed: true };
