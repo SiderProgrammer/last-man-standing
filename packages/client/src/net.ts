@@ -2,6 +2,7 @@ import type { ClientMessage, ServerMessage } from '@lms/protocol';
 
 export type Handler = (message: ServerMessage) => void;
 
+const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 10_000;
 
 /**
@@ -17,7 +18,7 @@ export class Net {
   private socket: WebSocket | null = null;
   private readonly handlers = new Set<Handler>();
   private readonly outbox: ClientMessage[] = [];
-  private backoff = 500;
+  private backoff = BASE_BACKOFF_MS;
   private closed = false;
 
   constructor(
@@ -37,7 +38,7 @@ export class Net {
     this.socket = socket;
 
     socket.onopen = () => {
-      this.backoff = 500;
+      this.backoff = BASE_BACKOFF_MS;
       this.onStatus(true);
     };
 

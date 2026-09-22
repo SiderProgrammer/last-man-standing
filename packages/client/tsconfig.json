@@ -1,14 +1,22 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist-types",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["vite/client"],
-    "emitDeclarationOnly": true
+    // A leaf app: nothing imports it, so it emits nothing and is not part of
+    // the `tsc --build` project graph. That drops the `composite` requirement
+    // and the dist-types output no package.json entry ever pointed at.
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    // Resolved to source, exactly as vite.config.ts aliases it, so tsc and the
+    // bundler agree on which files are being compiled.
+    "paths": {
+      "@lms/protocol": ["../protocol/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"],
-  "references": [{ "path": "../protocol" }]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }

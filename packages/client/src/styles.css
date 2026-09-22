@@ -239,15 +239,6 @@ button.wide {
   vertical-align: middle;
 }
 
-.avatar-preview {
-  width: 48px;
-  height: 48px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--panel-2);
-}
-
 .timer {
   color: var(--warn);
   font-variant-numeric: tabular-nums;

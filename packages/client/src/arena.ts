@@ -1,12 +1,4 @@
-import {
-  Application,
-  Assets,
-  Container,
-  Graphics,
-  Sprite,
-  Text,
-  type TextStyleOptions,
-} from 'pixi.js';
+import { Application, Assets, Container, Graphics, Sprite, Text } from 'pixi.js';
 import {
   AttackOutcome,
   MatchPhase,
@@ -15,31 +7,16 @@ import {
   type PublicMatchState,
   type RoundRecord,
 } from '@lms/protocol';
-
-const COLORS = {
-  seat: 0x1b2331,
-  seatDead: 0x11151d,
-  outline: 0x2b3547,
-  you: 0x52d1a4,
-  hp: 0x52d1a4,
-  hpLow: 0xe6b455,
-  hpCritical: 0xe0575b,
-  text: 0xdbe3f0,
-  muted: 0x8794ab,
-  attack: 0xe0575b,
-  parried: 0x6fa8f5,
-  missed: 0x5a6579,
-  storm: 0x3a2d4a,
-} as const;
-
-const LABEL: TextStyleOptions = { fill: COLORS.text, fontFamily: 'Segoe UI, sans-serif', fontSize: 14 };
-const SUBLABEL: TextStyleOptions = { fill: COLORS.muted, fontFamily: 'Segoe UI, sans-serif', fontSize: 11 };
-const BADGE: TextStyleOptions = {
-  fill: COLORS.text,
-  fontFamily: 'Segoe UI, sans-serif',
-  fontSize: 10,
-  letterSpacing: 0.6,
-};
+import {
+  AVATAR_RADIUS,
+  AVATAR_SIZE,
+  BADGE_Y,
+  HP_ARC_RADIUS,
+  SEAT_RADIUS,
+  seatPosition,
+  stormRing,
+} from './layout.js';
+import { BADGE, COLORS, LABEL, SUBLABEL, hpColor } from './theme.js';
 
 interface SeatView {
   root: Container;
@@ -78,7 +55,7 @@ interface Bolt {
 export class Arena {
   private readonly seats = new Map<number, SeatView>();
   private readonly avatars = new Map<number, AvatarEntry>();
-  private readonly bolts: Bolt[] = [];
+  private bolts: Bolt[] = [];
   private readonly seatLayer = new Container();
   private readonly boltLayer = new Graphics();
   private readonly stormLayer = new Graphics();
@@ -95,7 +72,7 @@ export class Arena {
   static async mount(element: HTMLElement): Promise<Arena> {
     const app = new Application();
     await app.init({
-      background: 0x070a10,
+      background: COLORS.background,
       antialias: true,
       resizeTo: element,
       resolution: window.devicePixelRatio || 1,
@@ -158,16 +135,15 @@ export class Arena {
     const chainBg = new Graphics();
     const chainText = new Text({ text: '', style: BADGE });
     const avatarLayer = new Container();
-    const avatarMask = new Graphics().circle(0, 0, 28).fill(0xffffff);
+    const avatarMask = new Graphics().circle(0, 0, AVATAR_RADIUS).fill(0xffffff);
     avatarLayer.mask = avatarMask;
 
     name.anchor.set(0.5);
     hp.anchor.set(0.5);
     status.anchor.set(0.5);
     chainText.anchor.set(0.5);
-    // Above the circle (radius 30) and clear of the HP arc (radius 38).
-    chainBg.y = -52;
-    chainText.y = -52;
+    chainBg.y = BADGE_Y;
+    chainText.y = BADGE_Y;
 
     // Explicit order, because the picture has to land between the circle and
     // the labels rather than on top of either.
@@ -210,8 +186,8 @@ export class Arena {
 
           const sprite = new Sprite(texture);
           sprite.anchor.set(0.5);
-          sprite.width = 56;
-          sprite.height = 56;
+          sprite.width = AVATAR_SIZE;
+          sprite.height = AVATAR_SIZE;
           view.avatarLayer.removeChildren();
           view.avatarLayer.addChild(sprite);
           view.avatarUrl = entry.image;
@@ -252,21 +228,17 @@ export class Arena {
     if (!state) return;
 
     const { width, height } = this.app.screen;
-    // Avatars push each seat's labels below its circle, so the ring of seats
-    // has to sit further in or the bottom ones clip against the arena edge.
-    const margin = this.avatars.size > 0 ? 92 : 70;
-    const radius = Math.min(width, height) / 2 - margin;
-    const centreX = width / 2;
-    const centreY = height / 2;
-    const count = state.players.length || 1;
+    // Avatars push each seat's labels below its circle, so the ring has to sit
+    // further in or the bottom seats clip against the arena edge.
+    const hasAvatars = this.avatars.size > 0;
+    const count = state.players.length;
 
     state.players.forEach((player, position) => {
       const view = this.seats.get(player.index);
       if (!view) return;
-      // Start at the top and go clockwise so seat #0 is where players expect it.
-      const angle = (position / count) * Math.PI * 2 - Math.PI / 2;
-      view.root.x = centreX + Math.cos(angle) * radius;
-      view.root.y = centreY + Math.sin(angle) * radius;
+      const { x, y } = seatPosition(position, count, width, height, hasAvatars);
+      view.root.x = x;
+      view.root.y = y;
     });
   }
 
@@ -283,12 +255,11 @@ export class Arena {
 
       const isYou = player.index === this.you;
       const fraction = Math.max(0, Math.min(1, player.hp / 100));
-      const hpColor =
-        fraction > 0.5 ? COLORS.hp : fraction > 0.25 ? COLORS.hpLow : COLORS.hpCritical;
+      const arcColor = hpColor(fraction);
 
       view.body
         .clear()
-        .circle(0, 0, 30)
+        .circle(0, 0, SEAT_RADIUS)
         .fill(player.alive ? COLORS.seat : COLORS.seatDead)
         .stroke({ width: isYou ? 3 : 1.5, color: isYou ? COLORS.you : COLORS.outline });
 
@@ -303,14 +274,14 @@ export class Arena {
       // with a scrim to stay readable, which defeats the point of having one.
       view.name.y = wearing ? 44 : -8;
       view.hp.y = wearing ? 58 : 8;
-      // Clear of the HP ring at radius 38, so the label never sits on the arc.
+      // Clear of the HP arc, so the label never sits on it.
       view.status.y = wearing ? 74 : 54;
 
       view.ring.clear();
       if (player.alive && fraction > 0) {
         view.ring
-          .arc(0, 0, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction)
-          .stroke({ width: 4, color: hpColor, cap: 'round' });
+          .arc(0, 0, HP_ARC_RADIUS, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction)
+          .stroke({ width: 4, color: arcColor, cap: 'round' });
       }
 
       this.paintChainBadge(view, player.chainId);
@@ -337,13 +308,15 @@ export class Arena {
     if (!state) return;
 
     const { width, height } = this.app.screen;
-    const radius = Math.min(width, height) / 2 - 20;
-    // The ring tightens as the storm damage ramps with the round number.
-    const intensity = Math.min(1, state.round / 12);
+    const ring = stormRing(width, height, state.round);
     this.stormLayer
       .clear()
-      .circle(width / 2, height / 2, radius - intensity * 30)
-      .stroke({ width: 2 + intensity * 6, color: COLORS.storm, alpha: 0.35 + 0.4 * this.pulse });
+      .circle(ring.centre.x, ring.centre.y, ring.radius)
+      .stroke({
+        width: 2 + ring.intensity * 6,
+        color: COLORS.storm,
+        alpha: 0.35 + 0.4 * this.pulse,
+      });
   }
 
   private flagStatus(seat: number, text: string): void {
@@ -355,12 +328,9 @@ export class Arena {
     this.pulse = (Math.sin(performance.now() / 700) + 1) / 2;
     this.paintStorm();
 
-    if (this.bolts.length === 0) {
-      this.boltLayer.clear();
-      return;
-    }
-
     this.boltLayer.clear();
+    if (this.bolts.length === 0) return;
+
     for (const bolt of this.bolts) {
       bolt.life -= deltaSeconds;
       const from = this.seats.get(bolt.from)?.root;
@@ -380,9 +350,6 @@ export class Arena {
         .stroke({ width: 2.5, color, alpha: Math.min(1, bolt.life / 2.5) });
     }
 
-    for (let index = this.bolts.length - 1; index >= 0; --index) {
-      const bolt = this.bolts[index];
-      if (bolt && bolt.life <= 0) this.bolts.splice(index, 1);
-    }
+    this.bolts = this.bolts.filter((bolt) => bolt.life > 0);
   }
 }

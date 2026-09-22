@@ -7,6 +7,8 @@ import {
   http,
   parseEther,
   toFunctionSelector,
+  type Abi,
+  type AbiFunction,
   type Address,
   type Hex,
   type LocalAccount,
@@ -20,6 +22,36 @@ import {
   playerAvatarsAbi,
   sessionKeyDelegateAbi,
 } from '@lms/protocol';
+
+/**
+ * Selector of a named function, taken from the ABI the rest of the file uses.
+ *
+ * The session scope used to hand-write the signatures a third time, next to
+ * the ABIs that already describe them, which is one more place for them to
+ * drift. `session-scope.test.ts` pins the resulting bytes4 values.
+ */
+function selectorOf(abi: Abi, name: string): Hex {
+  const item = abi.find(
+    (entry): entry is AbiFunction => entry.type === 'function' && entry.name === name,
+  );
+  if (!item) throw new Error(`no function ${name} in ABI`);
+  return toFunctionSelector(item);
+}
+
+/**
+ * What a session key may call, and nothing else.
+ *
+ * Deliberately narrow: join and withdraw on the escrow, mint and equip on the
+ * avatar collection. It cannot create lobbies and it cannot transfer the
+ * player's avatar away.
+ */
+export const SESSION_SCOPE = {
+  escrow: [selectorOf(gameEscrowAbi as Abi, 'join'), selectorOf(gameEscrowAbi as Abi, 'withdraw')],
+  avatars: [
+    selectorOf(playerAvatarsAbi as Abi, 'mint'),
+    selectorOf(playerAvatarsAbi as Abi, 'equip'),
+  ],
+} as const;
 
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -105,6 +137,11 @@ export class Wallet {
    * Each of these simulates before signing, so an on-chain revert (lobby full,
    * wrong stake, already seated) surfaces as a readable error instead of a
    * wallet prompt the player pays gas to watch fail.
+   *
+   * The `simulate -> write` shape repeats rather than being wrapped in a
+   * helper: viem infers argument types from the literal `abi` and
+   * `functionName` at each call site, and a wrapper erases that, trading four
+   * compile-time-checked calls for four unchecked ones.
    */
   async createMatch(escrow: Address, stakeEth: string, seats: number): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
@@ -167,17 +204,6 @@ export class Wallet {
     return this.wallet.writeContract({ ...request, chain: null });
   }
 
-  async equipAvatar(collection: Address, tokenId: bigint): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: collection,
-      abi: playerAvatarsAbi,
-      functionName: 'equip',
-      args: [tokenId],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
-
   /** Everything the avatar panel needs, in one round trip per field. */
   async avatarStatus(
     collection: Address,
@@ -234,15 +260,15 @@ export class Wallet {
     const selectors: Hex[] = [];
 
     if (contracts.escrow) {
-      for (const signature of ['function join(bytes32)', 'function withdraw(address)'] as const) {
+      for (const selector of SESSION_SCOPE.escrow) {
         targets.push(contracts.escrow);
-        selectors.push(toFunctionSelector(signature));
+        selectors.push(selector);
       }
     }
     if (contracts.avatars) {
-      for (const signature of ['function mint()', 'function equip(uint256)'] as const) {
+      for (const selector of SESSION_SCOPE.avatars) {
         targets.push(contracts.avatars);
-        selectors.push(toFunctionSelector(signature));
+        selectors.push(selector);
       }
     }
 
@@ -281,14 +307,6 @@ export class Wallet {
     });
   }
 
-  /** Whether this account has already delegated, and to what. */
-  async delegation(): Promise<Address | null> {
-    const code = await this.rpc.getCode({ address: this.address });
-    // EIP-7702 designators are exactly `0xef0100 || address`.
-    if (!code || code.length !== 48 || !code.startsWith('0xef0100')) return null;
-    return `0x${code.slice(8)}` as Address;
-  }
-
   /** Next session-call nonce for this account, for signing a relayed call. */
   async sessionNonce(): Promise<bigint> {
     return this.rpc.readContract({
@@ -296,21 +314,6 @@ export class Wallet {
       abi: sessionKeyDelegateAbi,
       functionName: 'sessionNonce',
     });
-  }
-
-  /** Whether the chain still accepts this session key for this account. */
-  async sessionActive(sessionKey: Address): Promise<boolean> {
-    try {
-      return await this.rpc.readContract({
-        address: this.address,
-        abi: sessionKeyDelegateAbi,
-        functionName: 'sessionActive',
-        args: [sessionKey],
-      });
-    } catch {
-      // Not delegated, or delegated to something else entirely.
-      return false;
-    }
   }
 
   waitFor(hash: Hex): Promise<unknown> {

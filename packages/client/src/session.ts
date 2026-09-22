@@ -1,6 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import { addressKey, sameAddress, sessionCallDigest } from '@lms/protocol';
+import { readRaw, removeRaw, writeRaw } from './storage.js';
 
 /**
  * A scoped session key, stored in the browser.
@@ -68,13 +69,8 @@ export class Session {
    * to a wallet signature.
    */
   static load(owner: Address, chainId: number, delegate: Address, now: number = Date.now()): Session | null {
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(storageKey(owner, chainId));
-    } catch {
-      // Private browsing, or storage disabled. No session, no error.
-      return null;
-    }
+    // Private browsing or disabled storage reads as "no session", not an error.
+    const raw = readRaw(storageKey(owner, chainId));
     if (!raw) return null;
 
     try {
@@ -109,19 +105,12 @@ export class Session {
    * against it while the player watched a working wallet sit unused.
    */
   save(): void {
-    try {
-      localStorage.setItem(storageKey(this.stored.owner, this.stored.chainId), JSON.stringify(this.stored));
-    } catch {
-      // Storage refused: the session still works for this page's lifetime.
-    }
+    // If storage refuses, the session still works for this page's lifetime.
+    writeRaw(storageKey(this.stored.owner, this.stored.chainId), JSON.stringify(this.stored));
   }
 
   static forget(owner: Address, chainId: number): void {
-    try {
-      localStorage.removeItem(storageKey(owner, chainId));
-    } catch {
-      // Nothing to do; a key that cannot be removed also cannot be read back.
-    }
+    removeRaw(storageKey(owner, chainId));
   }
 
   /** Signs the login nonce locally — the prompt this whole mechanism removes. */
