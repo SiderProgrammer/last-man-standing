@@ -115,16 +115,137 @@ Until then, document honestly that settlement is quorum-trusted.
 
 ---
 
+### 3.4 Known-wrong, deliberately preserved
+
+Found during the staged refactor. Every one was left exactly as it was, because that
+refactor was strictly behaviour-preserving. Nothing here is a design choice, and nothing
+here is a bug report against the refactor — these all predate it.
+
+Where a test pins the current behaviour, it is named. Those tests exist so that fixing
+any of this is a deliberate, visible change rather than a silent one.
+
+**Server and protocol**
+
+- **`loadConfig` validates nothing.** `Number(env.X ?? default)` yields `NaN` for any
+  non-numeric value and nothing rejects it. A `NaN` `COMMIT_MS` makes `Room`'s
+  `now < deadlineAt` false forever, so every round resolves on the first tick and the
+  match ends instantly, with nothing logged. `ESCROW_ADDRESS` and `SESSION_DELEGATE` are
+  unchecked casts, so a typo reaches viem instead of failing at boot — note
+  `parseCollections` already regex-checks addresses, so the validation exists and is
+  applied to the least important setting. Pinned by `packages/server/test/config.test.ts`.
+- **One key silently takes three roles.** `KEEPER_PK` falls back to `ATTESTOR_PK`, and
+  `index.ts` then uses `keeperPk` as the session relayer's gas key. Result attestor,
+  lobby keeper and session relayer end up the same account with nothing logged. Splitting
+  them is already noted in §3.2; this records the exact path.
+- **The chip book stores a bet under the caller's casing.** `ChipLedger.place` pushes
+  `better` as given while the stacks are keyed lowercase, and `settleEliminationBook`
+  keys its returned Map on that raw value. Payouts are correct **today** because both
+  consumers re-normalise, so this is latent rather than live — but the returned Map is
+  not safe to index directly. `addressKey` was deliberately *not* applied there. Pinned
+  by `packages/protocol/test/betting.test.ts`.
+- **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
+  `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
+  Dormant, because nothing calls `load`. Pinned by `packages/server/test/store.test.ts`.
+- **Client frames are cast, not validated.** `parseClientMessage` checks that the payload
+  is JSON, is an object and has a `type`, then casts. `target`, `chips`, `value` and
+  `nonce` reach the room and the relayer unvalidated; only `action` is guarded. A
+  `BigInt('abc')` surfaces to the player as a V8 `SyntaxError`.
+- **The wire's `code` field is decorative.** `wire.ts` reserves a machine-readable code,
+  `errorFrame` always sends `REJECTED`, and the client never reads it — while the
+  engine's `MatchError` carries a real code that is discarded at the boundary. Either
+  forward it or drop the field; both are wire changes. It is funnelled through one
+  function now, so either is a single edit.
+- **Three error conventions coexist.** Typed `MatchError` in the engine, bare
+  `new Error(string)` in the server, swallow-and-log at the edges. Server tests assert on
+  message *substrings*, so the prose is currently part of the API — which is why the
+  messages were not touched.
+- **`replay.ts` duplicates `match.ts` on purpose.** The initial state, the per-round fold
+  and the ranking rule are written out twice. **This must not be de-duplicated**: sharing
+  them would make `verifyResult` a tautology, since a wrong ranking rule would produce a
+  wrong result and a wrong replay that agree perfectly. Guarded by the replay differential
+  in `packages/engine/test/properties.test.ts`, which now covers both bot strategies and
+  a lobby with silent seats.
+
+**Client**
+
+- **A network send still happens during a render pass.** `phasePlan` decides
+  `shouldReveal` and `app.ts` acts on it at the same point in the same order as before.
+  The send is no longer hidden inside a predicate, but rendering and acting are still
+  coupled; a second render in the reveal phase is prevented only by the `revealedRound`
+  guard.
+- **`Arena` never removes seats.** `this.seats` only grows, so switching from an 8-seat
+  match to a 4-seat one leaves orphan views at stale positions, and `destroy()` exists
+  but is never called. A long session leaks views and Pixi textures.
+- **`reads.ts:tellFor` has an unreachable branch.** The outer guard admits
+  `attacks >= 3 || revealed >= 5`, then the inner one re-requires `attacks >= 3`, so
+  `revealed >= 5` can never fire alone. Fixing it changes which tell is shown. Pinned by
+  `packages/client/test/reads.test.ts`.
+- **`hpLeaders` is O(n²)** — `state.history.indexOf(record)` inside a loop over
+  `state.history`. Bounded by `maxRounds: 30`, so currently harmless; the caller already
+  has the index.
+- **`data-action` is unvalidated.** `index.html` hardcodes `1|2|3` and `app.ts` does
+  `Number(dataset.action) as ActionValue`, though `isActionValue` exists in
+  `@lms/protocol` and is used server-side. Malformed markup sends a garbage action rather
+  than failing.
+- **`net.ts` has no `off()`,** `connect()` has no re-entrancy guard, and `close()` is
+  never called. One handler is ever registered, so nothing leaks in practice.
+- **Port `8787` is hardcoded in three places** — `app.ts`, `packages/client/vite.config.ts`
+  and `.claude/launch.json`. Two are JSON and cannot import a TS constant.
+
+**Contracts**
+
+- **`UntrustedMessenger` has two incompatible signatures for one failure:**
+  `(uint32,address)` in `GameEscrow`, `(address)` in `SpokeEscrow`. Different selectors,
+  both asserted on in tests. Unifying is an ABI break, so only the signature-*identical*
+  errors were hoisted into `src/Errors.sol`. Same reasoning leaves `UnknownRequest`
+  (declared four times with three different argument types), `UntrustedPeer` and
+  `UnknownMatch` alone.
+- **`BPS_DENOMINATOR = 10_000` is declared three times with two types** — `uint16` in
+  `GameEscrow` and `ProtocolConfig`, `uint256` in `HashLib`. Retyping changes promotion
+  behaviour in the payout-schedule validation for no reader benefit.
+- **`Deploy.s.sol` deploys `MockMessenger` but never calls `setRemoteChain`,** so
+  `receiveMessage` rejects every cross-chain join on a fresh deployment and
+  `withdrawToChain` reverts with `NoMessengerForChain`.
+- **`Deploy.s.sol` transfers config ownership to a timelock that never accepts it.**
+  `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only *proposes*; the config
+  stays owned by the deployer. The mocks are also hardwired with no env switch, and no
+  deployed addresses are recorded anywhere.
+- **`GameEscrow` re-implements pausing** rather than using OpenZeppelin `Pausable`,
+  which emits different events and reverts a different error. The modifier was renamed
+  `whenNotPaused`; adopting OZ would be an ABI break.
+- **Five tests use bare `vm.expectRevert()`** — `GameEscrow.t.sol` (×2),
+  `SpokeEscrow.t.sol`, `ProtocolConfig.t.sol`, `SessionKeyDelegate.t.sol`. They pass on
+  *any* revert, including one from an unrelated cause. Every other test pins the selector.
+- **`EscrowInvariant.t.sol` re-implements `Fixtures.setUp`** with materially different
+  parameters (1h vs 2h settle window, 2 vs 3 attestors, 6 actors vs 8). Unifying would
+  change what the invariant explores, so only the attestor-signing routine was extracted.
+- **The invariant's recorded revert counts are noise.** The campaign is unseeded: three
+  consecutive runs of identical code gave 8099, 8064 and 7975. Those `.gas-snapshot`
+  lines cannot be used to detect a changed revert surface. Seeding the campaign would
+  make them meaningful.
+- **`forge fmt --check` does not pass, and did not before this work.** Fifteen files
+  under `contracts/src` disagree with the configured formatting. Running `forge fmt`
+  would fix it in one mechanical, behaviour-preserving commit — deliberately not done
+  here, because it would have buried the review diff of every contract stage.
+- **Two Foundry naming conventions coexist:** `test_snake_camel` everywhere except
+  `PlayerAvatars.t.sol` and `SessionKeyDelegate.t.sol`, which use
+  `test_PascalCaseSentence`. Renaming changes `.gas-snapshot` keys.
+
+---
+
 ## 4. Tooling and process
 
-- **CI:** nothing runs automatically. Add a workflow for `npm test`, `npm run typecheck`,
-  `forge test`, `forge fmt --check`, `npm run sol:snapshot:check`, and the deep fuzz
-  profile on a schedule.
+- **CI:** nothing runs automatically. Add a workflow for `npm test`, `npm run typecheck`
+  (which now also typechecks `test/**`, via a `tsconfig.test.json` per package),
+  `forge test`, `npm run sol:snapshot:check`, and the deep fuzz profile on a schedule.
+  `forge fmt --check` cannot be part of it until the formatting in §3.4 is fixed.
 - **Static analysis:** Slither and Aderyn are available as MCP tooling but no run is
   committed. Add a baseline and fail CI on new findings.
-- **Client tests:** `packages/client` has no test of its own. `reads.ts` is pure and
-  deserves unit tests; the commit/reveal state machine in `main.ts` should be extracted
-  from the DOM wiring so it can be tested headlessly.
+- **Client tests:** done. `main.ts` split into `app.ts` (shell) plus pure `phase.ts`,
+  `views.ts`, `format.ts` and `layout.ts`; `reads.ts`, the commit/reveal plan, the view
+  builders and the arena geometry are covered by `packages/client/test`. What is still
+  untested is the DOM applier layer in `app.ts` and `arena.ts`'s rendering, both of which
+  would need a browser rather than node.
 - **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
 - **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
   Fine for a testnet demo, worth code-splitting before anything public.
