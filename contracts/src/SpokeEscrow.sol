@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "./Errors.sol";
 
 /// @title SpokeEscrow
 /// @notice Spoke-chain gate for joining a hub match and receiving payouts.
@@ -26,13 +27,10 @@ contract SpokeEscrow is Ownable, ReentrancyGuard, ICrossChainReceiver {
     event PayoutCredited(address indexed player, uint256 amount);
     event Withdrawn(address indexed account, address indexed to, uint256 amount);
 
-    error ZeroAddress();
     error UntrustedMessenger(address caller);
     error UntrustedPeer(uint32 srcChainId, bytes32 srcSender);
     error InsufficientValue(uint256 sent, uint256 required);
     error IncorrectPayout(uint256 sent, uint256 expected);
-    error NothingToWithdraw();
-    error TransferFailed(address to, uint256 amount);
 
     constructor(address owner_, address messenger_, uint32 hubChainId_, address hubEscrow_)
         Ownable(owner_)

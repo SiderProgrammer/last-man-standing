@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
+import {SettlementRef} from "../helpers/SettlementRef.sol";
 
 contract SettlementLibFuzzTest is Test {
     SettlementHarness internal harness;
@@ -15,7 +16,7 @@ contract SettlementLibFuzzTest is Test {
 
     function testFuzz_hashRankingMatchesReference(address[] memory ranking) public view {
         vm.assume(ranking.length < 48);
-        assertEq(harness.hashRanking(ranking), SettlementLib.hashRankingReference(ranking));
+        assertEq(harness.hashRanking(ranking), SettlementRef.hashRanking(ranking));
     }
 
     function testFuzz_hashMatchResultMatchesReference(
@@ -27,7 +28,7 @@ contract SettlementLibFuzzTest is Test {
         vm.assume(ranking.length < 48);
         assertEq(
             harness.hashMatchResult(matchId, rounds, historyRoot, ranking),
-            SettlementLib.hashMatchResultReference(matchId, rounds, historyRoot, ranking)
+            SettlementRef.hashMatchResult(matchId, rounds, historyRoot, ranking)
         );
     }
 
@@ -35,7 +36,7 @@ contract SettlementLibFuzzTest is Test {
         address[] memory clean = new address[](2);
         clean[0] = a;
         clean[1] = b;
-        bytes32 expected = SettlementLib.hashRankingReference(clean);
+        bytes32 expected = SettlementRef.hashRanking(clean);
 
         bytes memory packed = abi.encodePacked(
             bytes32(uint256(uint160(a))) | (bytes32(uint256(dirtA)) << 160),

@@ -7,7 +7,6 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
 import {GameEscrow} from "../src/GameEscrow.sol";
 import {MatchMarket} from "../src/MatchMarket.sol";
-import {SpokeEscrow} from "../src/SpokeEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";

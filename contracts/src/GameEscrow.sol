@@ -3,9 +3,9 @@ pragma solidity 0.8.28;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
+import {NothingToWithdraw, TransferFailed} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
@@ -127,8 +127,6 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     error NoMessengerForChain(uint32 dstChainId);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
-    error NothingToWithdraw();
-    error TransferFailed(address to, uint256 amount);
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
 
@@ -137,11 +135,11 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     }
 
     modifier onlyGovernance() {
-        if (msg.sender != Ownable(address(config)).owner()) revert NotGovernance();
+        if (msg.sender != config.owner()) revert NotGovernance();
         _;
     }
 
-    modifier whenLive() {
+    modifier whenNotPaused() {
         if (paused) revert Paused();
         _;
     }
@@ -153,7 +151,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     /// @param maxSeats Seats in the lobby.
     function createMatch(uint128 stake, uint16 maxSeats)
         external
-        whenLive
+        whenNotPaused
         returns (bytes32 matchId)
     {
         ProtocolConfig.Params memory params = config.getParams();
@@ -184,7 +182,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     }
 
     /// @notice Takes a seat by staking on this chain.
-    function join(bytes32 matchId) external payable whenLive {
+    function join(bytes32 matchId) external payable whenNotPaused {
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
         _seat(matchId, info, msg.sender, 0);
@@ -198,7 +196,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
         external
         payable
-        whenLive
+        whenNotPaused
     {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
@@ -217,7 +215,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     ///      an under-filled but quorate one once the join window has expired.
     ///      Randomness is requested only after the seat list is final, so no
     ///      player can decide whether to join based on the seed.
-    function lockMatch(bytes32 matchId) external whenLive returns (bytes32 requestId) {
+    function lockMatch(bytes32 matchId) external whenNotPaused returns (bytes32 requestId) {
         MatchInfo storage info = _open(matchId);
 
         bool full = info.seatCount == info.maxSeats;
@@ -269,7 +267,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         bytes32 historyRoot,
         address[] calldata ranking,
         bytes calldata signatures
-    ) external nonReentrant whenLive {
+    ) external nonReentrant whenNotPaused {
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);

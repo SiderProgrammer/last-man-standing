@@ -5,6 +5,7 @@ import {HashLib} from "../../src/libraries/HashLib.sol";
 import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
 import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
 import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
+import {SettlementRef} from "./SettlementRef.sol";
 
 /// @notice External surface over the internal settlement libraries.
 ///
@@ -35,7 +36,7 @@ contract SettlementHarness {
         bytes32 historyRoot,
         address[] memory ranking
     ) external pure returns (bytes32) {
-        return SettlementLib.hashMatchResultReference(matchId, rounds, historyRoot, ranking);
+        return SettlementRef.hashMatchResult(matchId, rounds, historyRoot, ranking);
     }
 
     function toTypedDataHash(bytes32 domainSeparator, bytes32 structHash) external pure returns (bytes32) {

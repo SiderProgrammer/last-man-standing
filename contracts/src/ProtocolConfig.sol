@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ZeroAddress} from "./Errors.sol";
 
 /// @title ProtocolConfig
 /// @notice Every governable parameter of the protocol, in one place.
@@ -69,7 +70,6 @@ contract ProtocolConfig is Ownable2Step {
     error InvalidSeatRange(uint16 minSeats, uint16 maxSeats);
     error InvalidStakeRange(uint128 minStake, uint128 maxStake);
     error InvalidWindow();
-    error ZeroAddress();
     error PayoutScheduleEmpty();
     error PayoutScheduleTooLong(uint256 length, uint16 minSeats);
     error PayoutScheduleNotExact(uint256 totalBps);

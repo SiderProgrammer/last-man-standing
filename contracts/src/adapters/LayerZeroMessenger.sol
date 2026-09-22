@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ICrossChainMessenger, ICrossChainReceiver} from "../interfaces/ICrossChainMessenger.sol";
 import {ILayerZeroEndpoint, ILayerZeroReceiver} from "../interfaces/ILayerZeroEndpoint.sol";
+import {ZeroAddress} from "../Errors.sol";
 
 /// @title LayerZeroMessenger
 /// @notice Adapts LayerZero v2 send/receive to the protocol's messenger interface.
@@ -23,7 +24,6 @@ contract LayerZeroMessenger is Ownable, ICrossChainMessenger, ILayerZeroReceiver
     event ReceiverSet(address indexed receiver);
     event OptionsSet(bytes options);
 
-    error ZeroAddress();
     error NotEndpoint(address caller);
     error NoReceiver();
 
