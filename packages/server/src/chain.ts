@@ -1,16 +1,9 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  type Address,
-  type Hex,
-  type PublicClient,
-  type WalletClient,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import type { Address, Hex, PublicClient, WalletClient } from 'viem';
 import {
   DEFAULT_RULES,
   MatchStatus,
+  addressKey,
+  errorMessage,
   gameEscrowAbi,
   normaliseOriginChainId,
   type LobbyInfo,
@@ -19,6 +12,7 @@ import {
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import type { Lobby } from './lobby.js';
+import { readClient, signerClients } from './viem.js';
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
@@ -65,22 +59,16 @@ export class ChainBridge {
   private polling = false;
 
   private constructor(private readonly options: ChainBridgeOptions) {
-    const chain = {
-      id: options.chainId,
-      name: `chain-${options.chainId}`,
-      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-      rpcUrls: { default: { http: [options.rpcUrl] } },
-    } as const;
-
-    this.publicClient = createPublicClient({ chain, transport: http(options.rpcUrl) });
-
     if (options.keeperKey) {
-      const account = privateKeyToAccount(options.keeperKey);
-      this.keeper = {
-        account: account.address,
-        client: createWalletClient({ account, chain, transport: http(options.rpcUrl) }),
-      };
+      const { account, publicClient, walletClient } = signerClients(
+        options.keeperKey,
+        options.chainId,
+        options.rpcUrl,
+      );
+      this.publicClient = publicClient;
+      this.keeper = { account, client: walletClient };
     } else {
+      this.publicClient = readClient(options.chainId, options.rpcUrl);
       this.keeper = null;
     }
   }
@@ -117,7 +105,7 @@ export class ChainBridge {
       await this.discover();
       await this.refresh();
     } catch (error) {
-      console.error('[chain] poll failed:', describe(error));
+      console.error('[chain] poll failed:', errorMessage(error));
     } finally {
       this.polling = false;
     }
@@ -239,7 +227,7 @@ export class ChainBridge {
       console.log(`[chain] locked ${info.matchId}`);
     } catch (error) {
       // Another caller may have locked it first; the next poll picks up the truth.
-      console.warn('[chain] lock skipped:', describe(error));
+      console.warn('[chain] lock skipped:', errorMessage(error));
     }
   }
 
@@ -295,6 +283,3 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
   };
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

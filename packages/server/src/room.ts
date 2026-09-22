@@ -2,7 +2,9 @@ import { keccak256, toHex } from 'viem';
 import {
   Action,
   MatchPhase,
+  addressKey,
   commitMove,
+  sameAddress,
   settleEliminationBook,
   type AvatarEntry,
   type BookSnapshot,
@@ -59,9 +61,9 @@ export class Room {
     this.bots = new Set(options.botSeats ?? []);
 
     for (const seat of setup.seats) {
-      this.seatByAddress.set(seat.address.toLowerCase(), seat.index);
+      this.seatByAddress.set(addressKey(seat.address), seat.index);
       if (!this.bots.has(seat.index)) {
-        this.chipStacks.set(seat.address.toLowerCase(), options.startingChips);
+        this.chipStacks.set(addressKey(seat.address), options.startingChips);
       }
     }
 
@@ -82,19 +84,19 @@ export class Room {
   }
 
   seatOf(address: `0x${string}`): number | null {
-    return this.seatByAddress.get(address.toLowerCase()) ?? null;
+    return this.seatByAddress.get(addressKey(address)) ?? null;
   }
 
   chipsOf(address: `0x${string}` | null): number {
     if (!address) return 0;
-    return this.chipStacks.get(address.toLowerCase()) ?? 0;
+    return this.chipStacks.get(addressKey(address)) ?? 0;
   }
 
   attach(client: Client): void {
     this.clients.add(client);
     // A spectator who never staked still gets a stack, so the book stays lively.
-    if (client.address && !this.chipStacks.has(client.address.toLowerCase())) {
-      this.chipStacks.set(client.address.toLowerCase(), this.options.startingChips);
+    if (client.address && !this.chipStacks.has(addressKey(client.address))) {
+      this.chipStacks.set(addressKey(client.address), this.options.startingChips);
     }
     this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
@@ -147,7 +149,7 @@ export class Room {
     if (chips > stack) throw new Error('not enough chips');
     if (!this.match.playerState(target).alive) throw new Error('target is already eliminated');
 
-    this.chipStacks.set(address.toLowerCase(), stack - chips);
+    this.chipStacks.set(addressKey(address), stack - chips);
     this.bets.push({ better: address, target, chips });
     this.broadcastState();
   }
@@ -164,7 +166,7 @@ export class Room {
     const yours: Record<number, number> = {};
     for (const bet of this.bets) {
       pots[bet.target] = (pots[bet.target] ?? 0) + bet.chips;
-      if (address && bet.better.toLowerCase() === address.toLowerCase()) {
+      if (sameAddress(bet.better, address)) {
         yours[bet.target] = (yours[bet.target] ?? 0) + bet.chips;
       }
     }
@@ -220,7 +222,7 @@ export class Room {
   private payBook(record: RoundRecord): void {
     const payouts = settleEliminationBook(this.bets, record.eliminated);
     for (const [better, amount] of payouts) {
-      const key = better.toLowerCase();
+      const key = addressKey(better);
       this.chipStacks.set(key, (this.chipStacks.get(key) ?? 0) + amount);
     }
     this.bets = [];
@@ -288,5 +290,3 @@ export class Room {
   }
 }
 
-/** Re-exported so callers can build legal moves without importing the engine. */
-export { Action };

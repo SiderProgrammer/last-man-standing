@@ -7,6 +7,8 @@ import {
   chainCss,
   chainInfo,
   commitMove,
+  errorFirstLine,
+  sameAddress,
   gameEscrowAbi,
   playerAvatarsAbi,
   type ActionValue,
@@ -412,10 +414,7 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     chainChips(lobby.players);
 
   const button = document.createElement('button');
-  const address = app.wallet?.address.toLowerCase();
-  const seated = address
-    ? lobby.players.some((player) => player.address.toLowerCase() === address)
-    : false;
+  const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
 
   if (seated || !joinable) {
     button.textContent = seated ? 'Enter' : 'Watch';
@@ -513,7 +512,7 @@ async function renderAvatarPanel(): Promise<void> {
   } catch (error) {
     // Almost always a wallet pointed at a chain the collection is not on.
     dom.mintAvatar.disabled = true;
-    dom.avatarStatus.textContent = `Could not read the collection: ${describe(error)}`;
+    dom.avatarStatus.textContent = `Could not read the collection: ${errorFirstLine(error)}`;
   }
 }
 
@@ -540,7 +539,7 @@ async function mintAvatar(): Promise<void> {
     await wallet.waitFor(hash);
     toast('Avatar minted. You will wear it in your next match.');
   } catch (error) {
-    toast(describe(error));
+    toast(errorFirstLine(error));
   } finally {
     await renderAvatarPanel();
   }
@@ -673,7 +672,7 @@ async function connectWallet(): Promise<void> {
     await authenticate();
   } catch (error) {
     console.error('[wallet]', error);
-    toast(describe(error));
+    toast(errorFirstLine(error));
   }
 }
 
@@ -700,7 +699,7 @@ async function authenticate(): Promise<void> {
       toast('Session key rejected — falling back to your wallet.');
       return;
     }
-    toast(`Login signature failed: ${describe(error)}`);
+    toast(`Login signature failed: ${errorFirstLine(error)}`);
   }
 }
 
@@ -784,7 +783,7 @@ async function enableSession(): Promise<void> {
     app.session = session;
     toast('One-click play is on. Reconnects will not prompt your wallet.');
   } catch (error) {
-    toast(describe(error));
+    toast(errorFirstLine(error));
   } finally {
     renderSessionPanel();
   }
@@ -832,7 +831,7 @@ async function revokeSession(): Promise<void> {
     await wallet.waitFor(hash);
     toast('Session key revoked.');
   } catch (error) {
-    toast(describe(error));
+    toast(errorFirstLine(error));
   } finally {
     // Forgotten locally either way: a key the player asked to be rid of should
     // not keep being offered just because the transaction failed.
@@ -854,7 +853,7 @@ async function createLobby(): Promise<void> {
     net.send({ type: 'lobbies' });
     toast('Lobby created. Stake into it to take a seat.');
   } catch (error) {
-    toast(describe(error));
+    toast(errorFirstLine(error));
   } finally {
     dom.createLobby.disabled = false;
   }
@@ -886,7 +885,7 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
     net.send({ type: 'watch', matchId: lobby.matchId });
     toast('Seat taken. The match starts when the lobby fills.');
   } catch (error) {
-    toast(describe(error));
+    toast(errorFirstLine(error));
   }
 }
 
@@ -951,11 +950,6 @@ function fillSelect(select: HTMLSelectElement, options: Array<[string, string]>)
 
 function short(value: string): string {
   return `${value.slice(0, 6)}…${value.slice(-4)}`;
-}
-
-function describe(error: unknown): string {
-  if (error instanceof Error) return error.message.split('\n')[0] ?? error.message;
-  return String(error);
 }
 
 function byId<T extends HTMLElement>(id: string): T {

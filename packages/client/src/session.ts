@@ -1,6 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { sessionCallDigest } from '@lms/protocol';
+import { addressKey, sameAddress, sessionCallDigest } from '@lms/protocol';
 
 /**
  * A scoped session key, stored in the browser.
@@ -37,7 +37,7 @@ const STORAGE_PREFIX = 'lms.session.';
 const EXPIRY_MARGIN_SECONDS = 120;
 
 function storageKey(owner: Address, chainId: number): string {
-  return `${STORAGE_PREFIX}${chainId}.${owner.toLowerCase()}`;
+  return `${STORAGE_PREFIX}${chainId}.${addressKey(owner)}`;
 }
 
 export class Session {
@@ -80,9 +80,9 @@ export class Session {
     try {
       const stored = JSON.parse(raw) as StoredSession;
       const stale =
-        stored.owner.toLowerCase() !== owner.toLowerCase() ||
+        !sameAddress(stored.owner, owner) ||
         stored.chainId !== chainId ||
-        stored.delegate.toLowerCase() !== delegate.toLowerCase() ||
+        !sameAddress(stored.delegate, delegate) ||
         stored.validUntil - EXPIRY_MARGIN_SECONDS <= Math.floor(now / 1000);
       if (stale) return null;
 

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { verifyMessage } from 'viem';
 import {
   AUTH_PREFIX,
+  errorMessage,
   isActionValue,
   type AvatarCollectionInfo,
   type ClientMessage,
@@ -101,7 +102,7 @@ export class Gateway {
 
     socket.on('message', (data: unknown) => {
       void this.dispatch(session, String(data)).catch((error: unknown) => {
-        session.send({ type: 'error', code: 'REJECTED', message: describe(error) });
+        session.send({ type: 'error', code: 'REJECTED', message: errorMessage(error) });
       });
     });
 
@@ -214,6 +215,3 @@ function parse(raw: string): ClientMessage {
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
 const offlineVerify: SignatureVerifier = (args) => verifyMessage(args);
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

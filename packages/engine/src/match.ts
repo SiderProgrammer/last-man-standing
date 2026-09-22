@@ -238,6 +238,10 @@ export class Match {
    * Final ranking, best-first. Survivors are ordered by remaining HP, then by
    * everyone else in reverse elimination order, so a player who lasted longer
    * always outranks a player who fell earlier.
+   *
+   * `replayMatch` re-derives this independently; see the note in `replay.ts`
+   * for why the two are not shared, and `properties.test.ts` for the test that
+   * holds them to the same answer.
    */
   ranking(): number[] {
     if (!this.finished) throw new MatchError('BAD_PHASE', 'match has not finished');

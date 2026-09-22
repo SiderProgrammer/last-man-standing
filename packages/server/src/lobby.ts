@@ -1,6 +1,14 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { keccak256, toHex } from 'viem';
-import { DEFAULT_RULES, deriveMatchId, type Rules, type Seat } from '@lms/protocol';
+import {
+  DEFAULT_RULES,
+  PRACTICE_CHAIN_ID,
+  ZERO_ADDRESS,
+  deriveMatchId,
+  errorMessage,
+  type Rules,
+  type Seat,
+} from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from './room.js';
 import type { AvatarRegistry } from './avatars.js';
@@ -55,11 +63,11 @@ export class Lobby {
   createPractice(human: `0x${string}`, opponents: number, now: number = Date.now()): Room {
     const rules = this.options.rules ?? DEFAULT_RULES;
     const seatCount = clamp(opponents + 1, rules.minPlayers, rules.maxPlayers);
-    const matchId = deriveMatchId(0, ZERO_ADDRESS, this.practiceNonce++);
+    const matchId = deriveMatchId(PRACTICE_CHAIN_ID, ZERO_ADDRESS, this.practiceNonce++);
     const seats: Seat[] = Array.from({ length: seatCount }, (_, index) => ({
       index,
       address: index === 0 ? human : botAddress(matchId, index),
-      chainId: 0,
+      chainId: PRACTICE_CHAIN_ID,
     }));
 
     const setup: MatchSetup = {
@@ -132,7 +140,7 @@ export class Lobby {
       room.setAvatars(await registry.resolve(setup.seats));
     } catch (error) {
       // Cosmetic: a failure here must never surface to the players.
-      console.warn('[lobby] avatar resolution failed:', describe(error));
+      console.warn('[lobby] avatar resolution failed:', errorMessage(error));
     }
   }
 
@@ -146,7 +154,7 @@ export class Lobby {
     } catch (error) {
       // A failed settlement is recoverable: the escrow stays `Live` until the
       // deadline, so the result can be resubmitted or the match cancelled.
-      console.error('[lobby] settlement failed', describe(error));
+      console.error('[lobby] settlement failed', errorMessage(error));
     }
     await this.options.archive.save({ result, history, settledTx });
   }
@@ -161,8 +169,4 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

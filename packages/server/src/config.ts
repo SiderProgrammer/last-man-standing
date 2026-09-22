@@ -1,4 +1,4 @@
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+import { ZERO_ADDRESS } from '@lms/protocol';
 
 export const config = {
   port: Number(process.env.WS_PORT ?? 8787),

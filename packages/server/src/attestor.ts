@@ -1,20 +1,15 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  concatHex,
-  type Address,
-  type Hex,
-} from 'viem';
+import { concatHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   MATCH_RESULT_TYPES,
+  addressKey,
   matchResultDomain,
   matchResultMessage,
   type MatchResult,
 } from '@lms/protocol';
 import { gameEscrowAbi } from '@lms/protocol';
 import { config } from './config.js';
+import { signerClients } from './viem.js';
 
 /**
  * Signs a finished match under the escrow's EIP-712 domain.
@@ -43,7 +38,7 @@ export async function signResult(
  */
 export function packSignatures(signed: ReadonlyArray<{ signer: Address; signature: Hex }>): Hex {
   const ordered = [...signed].sort((a, b) =>
-    a.signer.toLowerCase() < b.signer.toLowerCase() ? -1 : 1,
+    addressKey(a.signer) < addressKey(b.signer) ? -1 : 1,
   );
   return concatHex(ordered.map((item) => item.signature));
 }
@@ -71,17 +66,11 @@ export function createRelayer(options: {
   chainId: number;
   escrow: Address;
 }): Relayer {
-  const account = privateKeyToAccount(options.privateKey);
-  const transport = http(options.rpcUrl);
-  const chain = {
-    id: options.chainId,
-    name: `chain-${options.chainId}`,
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    rpcUrls: { default: { http: [options.rpcUrl] } },
-  } as const;
-
-  const publicClient = createPublicClient({ chain, transport });
-  const walletClient = createWalletClient({ account, chain, transport });
+  const { account, publicClient, walletClient } = signerClients(
+    options.privateKey,
+    options.chainId,
+    options.rpcUrl,
+  );
 
   return {
     async settle(result) {
@@ -91,7 +80,7 @@ export function createRelayer(options: {
         options.chainId,
         options.escrow,
       );
-      const signatures = packSignatures([{ signer: account.address, signature }]);
+      const signatures = packSignatures([{ signer: account, signature }]);
 
       const { request } = await publicClient.simulateContract({
         account,
