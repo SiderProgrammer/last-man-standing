@@ -2,9 +2,10 @@
 pragma solidity 0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {TransferFailed, ZeroAddress} from "./Errors.sol";
+import {PullPayable} from "./PullPayable.sol";
 
 /// @title SpokeEscrow
 /// @notice Spoke-chain gate for joining a hub match and receiving payouts.
@@ -13,26 +14,20 @@ import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChai
 ///      stakes here; the messenger forwards the stake and the join payload
 ///      to the hub. After settlement the hub bridges the payout back and
 ///      this contract credits a pull-based balance.
-contract SpokeEscrow is Ownable, ReentrancyGuard, ICrossChainReceiver {
+contract SpokeEscrow is Ownable, PullPayable, ICrossChainReceiver {
     address public messenger;
     uint32 public hubChainId;
     bytes32 public hubEscrow;
 
-    mapping(address account => uint256) public withdrawable;
-    uint256 public totalOwed;
 
     event HubSet(uint32 hubChainId, bytes32 hubEscrow, address messenger);
     event JoinForwarded(bytes32 indexed matchId, address indexed player, uint128 stake);
     event PayoutCredited(address indexed player, uint256 amount);
-    event Withdrawn(address indexed account, address indexed to, uint256 amount);
 
-    error ZeroAddress();
     error UntrustedMessenger(address caller);
     error UntrustedPeer(uint32 srcChainId, bytes32 srcSender);
     error InsufficientValue(uint256 sent, uint256 required);
     error IncorrectPayout(uint256 sent, uint256 expected);
-    error NothingToWithdraw();
-    error TransferFailed(address to, uint256 amount);
 
     constructor(address owner_, address messenger_, uint32 hubChainId_, address hubEscrow_)
         Ownable(owner_)
@@ -77,22 +72,8 @@ contract SpokeEscrow is Ownable, ReentrancyGuard, ICrossChainReceiver {
         (address player, uint256 amount) = abi.decode(payload, (address, uint256));
         if (msg.value != amount) revert IncorrectPayout(msg.value, amount);
 
-        withdrawable[player] += amount;
-        totalOwed += amount;
+        _credit(player, amount);
         emit PayoutCredited(player, amount);
-    }
-
-    function withdraw(address to) external nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-
-        withdrawable[msg.sender] = 0;
-        totalOwed -= amount;
-
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert TransferFailed(to, amount);
-
-        emit Withdrawn(msg.sender, to, amount);
     }
 
     function _setHub(address messenger_, uint32 hubChainId_, address hubEscrow_) private {

@@ -41,6 +41,20 @@ describe('elimination book', () => {
     expect(payouts.get(bob)).toBe(70);
   });
 
+  it('keys payouts on the address exactly as the bet carried it', () => {
+    // Characterisation, not endorsement. The returned Map is keyed on the raw
+    // `better` value, so one wallet betting under two casings is two betters
+    // here. Both current callers re-normalise before crediting, so payouts are
+    // correct today — see `docs/TODO.md` §3.4. If a future caller indexes this
+    // Map directly, this test is what should fail first.
+    const mixed = alice.toUpperCase().replace('0X', '0x') as `0x${string}`;
+    const payouts = settleEliminationBook([bet(alice, 1, 100), bet(mixed, 1, 100)], [1]);
+
+    expect(payouts.size).toBe(2);
+    expect(payouts.get(alice)).toBe(100);
+    expect(payouts.get(mixed)).toBe(100);
+  });
+
   it('returns nothing for an empty book', () => {
     expect(settleEliminationBook([], [1, 2]).size).toBe(0);
   });

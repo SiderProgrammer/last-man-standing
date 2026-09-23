@@ -28,9 +28,6 @@ export const sessionKeyDelegateAbi = parseAbi([
   'event SessionRevoked(address indexed sessionKey)',
 ]);
 
-/** The EIP-7702 delegation designator prefix: `0xef0100 || address`. */
-export const DELEGATION_PREFIX = '0xef0100';
-
 
 const DOMAIN_TYPEHASH = keccak256(
   stringToHex('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),

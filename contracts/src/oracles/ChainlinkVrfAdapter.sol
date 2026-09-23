@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {IRandomnessOracle, IRandomnessConsumer} from "../interfaces/IRandomnessOracle.sol";
 import {IVrfCoordinator, IVrfConsumer} from "../interfaces/IVrfCoordinator.sol";
+import {ZeroAddress} from "../Errors.sol";
 
 /// @title ChainlinkVrfAdapter
 /// @notice Presents a Chainlink VRF v2.5 subscription as `IRandomnessOracle`.
@@ -30,7 +31,6 @@ contract ChainlinkVrfAdapter is Ownable, IRandomnessOracle, IVrfConsumer {
     event CoordinatorUpdated(address indexed coordinator, bytes32 keyHash, uint256 subId);
     event RandomnessRequested(bytes32 indexed requestId, uint256 indexed vrfId, address indexed consumer);
 
-    error ZeroAddress();
     error NotCoordinator(address caller);
     error UnknownRequest(uint256 requestId);
     error AlreadyFulfilled(uint256 requestId);

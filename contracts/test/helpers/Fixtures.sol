@@ -7,51 +7,10 @@ import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MatchMarket} from "../../src/MatchMarket.sol";
 import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
-import {HashLib} from "../../src/libraries/HashLib.sol";
-import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
-import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
-import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
-
-contract SettlementHarness {
-    function hashRanking(address[] calldata ranking) external pure returns (bytes32) {
-        return SettlementLib.hashRanking(ranking);
-    }
-
-    function hashMatchResult(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] calldata ranking)
-        external
-        pure
-        returns (bytes32)
-    {
-        return SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking);
-    }
-
-    function hashMatchResultReference(
-        bytes32 matchId,
-        uint32 rounds,
-        bytes32 historyRoot,
-        address[] memory ranking
-    ) external pure returns (bytes32) {
-        return SettlementLib.hashMatchResultReference(matchId, rounds, historyRoot, ranking);
-    }
-
-    function toTypedDataHash(bytes32 domainSeparator, bytes32 structHash) external pure returns (bytes32) {
-        return SettlementLib.toTypedDataHash(domainSeparator, structHash);
-    }
-
-    function recover(bytes32 digest, bytes calldata signatures) external view returns (address[] memory) {
-        return SignatureLib.recoverAscending(digest, signatures);
-    }
-
-    function assertPermutation(address[] memory seats, address[] calldata ranking) external {
-        SeatSetLib.assertPermutation(seats, ranking);
-    }
-
-    function hashRulesDefault() external pure returns (bytes32) {
-        return HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30);
-    }
-}
+import {Attest} from "./Attest.sol";
+import {SettlementHarness} from "./SettlementHarness.sol";
 
 contract Fixtures is Test {
     uint256 internal constant ATTESTOR_PK_A = 0xA11CE;
@@ -149,21 +108,7 @@ contract Fixtures is Test {
     ) internal view returns (bytes memory signatures) {
         bytes32 structHash = harness.hashMatchResult(matchId, rounds, historyRoot, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
-
-        // Recovering requires strictly ascending signer addresses, so sort by addr.
-        uint256 n = pks.length;
-        for (uint256 i = 0; i < n; ++i) {
-            for (uint256 j = i + 1; j < n; ++j) {
-                if (vm.addr(pks[j]) < vm.addr(pks[i])) {
-                    (pks[i], pks[j]) = (pks[j], pks[i]);
-                }
-            }
-        }
-
-        for (uint256 i = 0; i < n; ++i) {
-            (uint8 v, bytes32 r, bytes32 s) = vm.sign(pks[i], digest);
-            signatures = bytes.concat(signatures, abi.encodePacked(r, s, v));
-        }
+        signatures = Attest.signAscending(pks, digest);
     }
 
     function _twoAttestors() internal pure returns (uint256[] memory pks) {

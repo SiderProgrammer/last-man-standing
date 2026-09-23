@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Action, MatchPhase, commitMove, type SealedMove } from '@lms/protocol';
+import {
+  Action,
+  MatchPhase,
+  commitMove,
+  type MatchPhaseValue,
+  type SealedMove,
+} from '@lms/protocol';
 import { Room, type RoomOptions } from '@lms/server';
 import { FakeClient, HUMAN, botSeats, bytes32, setupWithBots } from './helpers.js';
 
@@ -7,6 +13,7 @@ const OPTIONS: RoomOptions = {
   commitMs: 10_000,
   revealMs: 5_000,
   startingChips: 1_000,
+  botSeats: [],
 };
 
 function room(seatCount = 4, label = 'room', extra: Partial<RoomOptions> = {}) {
@@ -24,7 +31,11 @@ function playOut(instance: Room, now = 0): number {
   let guard = 0;
   while (!instance.finished && guard++ < 200) {
     clock += 1_000;
-    if (instance.match.phase === MatchPhase.Commit && instance.match.playerState(0).alive) {
+    // Read the phase into a local so the check below narrows the local rather
+    // than `instance.match.phase` itself: the commit can open the reveal window
+    // mid-iteration, which control-flow analysis of a getter cannot see.
+    const phase: MatchPhaseValue = instance.match.phase;
+    if (phase === MatchPhase.Commit && instance.match.playerState(0).alive) {
       const target = instance.match.alive.find((seat) => seat !== 0) ?? 0;
       const move = humanMove(instance, Action.Attack, target);
       instance.submitCommit(HUMAN, commitMove(instance.matchId, instance.match.round, 0, move), clock);

@@ -1,4 +1,4 @@
-import type { MatchResult, RoundRecord } from '@lms/protocol';
+import { errorMessage, type MatchResult, type RoundRecord } from '@lms/protocol';
 
 export interface ArchivedMatch {
   result: MatchResult;
@@ -125,11 +125,8 @@ export async function createArchive(databaseUrl: string): Promise<MatchArchive> 
   try {
     return await PostgresArchive.connect(databaseUrl);
   } catch (error) {
-    console.warn('[store] falling back to in-memory archive:', describe(error));
+    console.warn('[store] falling back to in-memory archive:', errorMessage(error));
     return new MemoryArchive();
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -1,14 +1,6 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  type Address,
-  type Hex,
-  type PublicClient,
-  type WalletClient,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import type { Address, Hex } from 'viem';
 import { sessionKeyDelegateAbi } from '@lms/protocol';
+import { signerClients } from './viem.js';
 
 /** One call a player's session key has authorised. */
 export interface SessionCall {
@@ -57,16 +49,11 @@ export interface ChainRelayerOptions {
 }
 
 export function createSessionRelayer(options: ChainRelayerOptions): SessionRelayer {
-  const chain = {
-    id: options.chainId,
-    name: `chain-${options.chainId}`,
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    rpcUrls: { default: { http: [options.rpcUrl] } },
-  } as const;
-
-  const account = privateKeyToAccount(options.relayerKey);
-  const publicClient: PublicClient = createPublicClient({ chain, transport: http(options.rpcUrl) });
-  const wallet: WalletClient = createWalletClient({ account, chain, transport: http(options.rpcUrl) });
+  const { account, publicClient, walletClient: wallet } = signerClients(
+    options.relayerKey,
+    options.chainId,
+    options.rpcUrl,
+  );
 
   return {
     enabled: true,

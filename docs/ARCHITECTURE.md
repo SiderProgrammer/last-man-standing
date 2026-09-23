@@ -128,6 +128,8 @@ about rendering. Everything that decides who gets paid lives in `protocol` + `en
 | `escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
 | `avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
 | `session.ts` | The `SessionKeyDelegate` ABI and `sessionCallDigest`, pinned to Solidity |
+| `address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
+| `errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
 
 Everything in `hash.ts` is built with `abi.encode` so Solidity can recompute it
 byte-for-byte. `contracts/src/libraries/HashLib.sol` is the mirror, and both sides pin
@@ -145,7 +147,12 @@ instead of drifting silently.
   broadcast (it carries seat numbers and HP, never a pending action).
 - **`replay.ts`** is the audit path: `replayMatch(setup, moveLog)` recomputes the whole
   match from the seed and published moves, and `verifyResult` checks a claimed result
-  against it. It shares nothing with `Match` except the pure kernel.
+  against it. It shares nothing with `Match` except the pure kernel. The initial state,
+  the per-round fold and the ranking rule are therefore written out twice **on purpose**:
+  sharing them would make `verifyResult` a tautology, because a wrong ranking rule would
+  produce a wrong result and a wrong replay that agree perfectly. A differential test in
+  `properties.test.ts` replays 40 matches across both bot strategies to hold the two
+  derivations to the same answer.
 - **`strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
   `readerStrategy`.
 
@@ -153,23 +160,32 @@ instead of drifting silently.
 
 | File | Responsibility |
 | --- | --- |
-| `room.ts` | One live match: phases, the round clock, the chip book, client fan-out |
+| `room.ts` | One live match: phases, the round clock, client fan-out |
+| `chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| `bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
 | `lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
-| `gateway.ts` | Socket framing, wallet login, message dispatch |
+| `gateway.ts` | Session registry, wallet login, message dispatch |
+| `frames.ts` | Frame decoding and the error frame that goes back when it fails |
 | `chain.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
 | `attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
 | `avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `relayer.ts` | Submits and pays for calls a player's session key authorised |
 | `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
+| `viem.ts` | Client construction for a chain known only by id and RPC URL |
 | `config.ts` | Environment configuration |
 
-Two deliberate design choices make this testable:
+Three deliberate design choices make this testable:
 
 - **The room owns the clock but never reads it.** `tick(now)` is driven from outside —
   a 250 ms interval in production, a loop in tests — so a whole match can be played
   deterministically without timers.
 - **Clients are opaque sinks.** `Room` talks to a `Client` interface with a single
   `send`, so the state machine has no idea WebSockets exist.
+- **The chain is an interface.** `ChainBridge` takes an `EscrowReader` rather than
+  building viem clients itself, so the poll loop — cursor arithmetic, lock conditions,
+  adopt-once — is exercised against a fake instead of an RPC. `ChainBridge.start` still
+  takes a URL and builds the real one, so nothing at the composition root changed.
 
 Login is a signed nonce: the server issues a random nonce on connect, the wallet signs
 `Last Man Standing login\nnonce:<nonce>`, and the server recovers the address. The
@@ -189,13 +205,26 @@ any player can lock the lobby themselves.
 
 | File | Responsibility |
 | --- | --- |
-| `main.ts` | Wire dispatch, the commit/reveal handshake, DOM panels, lobby and match screens |
+| `main.ts` | Entry point, three lines: calls `start()` |
+| `app.ts` | The imperative shell: state, socket wiring, dispatch, wallet and session flows, DOM writes |
+| `dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
+| `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `arena.ts` | Pixi scene: seats on a circle, HP arcs, attack bolts on reveal, storm ring |
-| `reads.ts` | Derives per-opponent tendencies and tells from the public history |
+| `theme.ts` | The arena's palette and text styles |
+| `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| `reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
-| `wallet.ts` | Injected EIP-1193 session, login signature, `createMatch` / `join` / `withdraw` |
-| `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| `wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
 | `session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
+
+The split is along one line: anything that decides *what* to show is pure and tested in
+node; anything that writes to the document stays in `app.ts`. `phasePlan` returns a
+`shouldReveal` flag rather than sending the reveal itself, so the decision is testable
+while the send stays exactly where it was in the sequence.
 
 Three things are worth calling out:
 
@@ -211,6 +240,8 @@ Three things are worth calling out:
 
 | Contract | Role |
 | --- | --- |
+| `PullPayable` | Base for both escrows: credited balances, `totalOwed`, pull-based `withdraw` |
+| `Errors` | The errors several contracts raise identically, hoisted to file level |
 | `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, per-chain messengers and peers. Owned by a `TimelockController`. |
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
 | `SpokeEscrow` | Spoke-chain gate: forwards a stake plus a join message to the hub, receives bridged payouts. |
@@ -367,14 +398,21 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 
 ### Testing
 
-- **TypeScript (vitest, 8 files / 71 tests):** engine unit tests, property tests over
+- **TypeScript (vitest, 18 files / 190 tests):** engine unit tests, property tests over
   random strategies (termination, unique ranking, HP bounds, determinism, replay
   equivalence, tamper detection), protocol parity vectors, betting math, room lifecycle,
   gateway auth and lobby directory, attestation.
-- **Solidity (Foundry, 13 suites / 61 tests):** unit tests per contract and library,
+- **Solidity (Foundry, 15 suites / 95 tests):** unit tests per contract and library,
   differential fuzzing of the Yul hashers and the signature recovery loop, and a stateful
   invariant campaign driving `GameEscrow` through random call sequences while asserting
   solvency. A deeper campaign is available with `FOUNDRY_PROFILE=deep`.
+- **Typecheck covers the tests too.** Each package has a `tsconfig.test.json` resolving
+  `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
+  test fails `npm run typecheck` rather than sitting there unchecked.
+- **Some tests pin behaviour that is wrong.** `config.test.ts` asserts that a
+  non-numeric `COMMIT_MS` yields `NaN`, and `betting.test.ts` asserts that the payout map
+  is keyed on raw address casing. They exist so that fixing either is a deliberate,
+  visible change. Every one is listed in `docs/TODO.md` §3.4.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
   on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
   than the ABI-encoder reference, warming the harness first so the measurement is not
@@ -405,7 +443,7 @@ See `.env.example` for the annotated template.
 
 ```bash
 npm run build          # tsc project references
-npm run typecheck
+npm run typecheck      # src, the client, and every test file
 npm test               # vitest
 npm run sol:build      # forge build
 npm run sol:test       # forge test

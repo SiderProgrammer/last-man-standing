@@ -4,7 +4,8 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
-import {SettlementHarness} from "../helpers/Fixtures.sol";
+import {SettlementHarness} from "../helpers/SettlementHarness.sol";
+import {SettlementRef} from "../helpers/SettlementRef.sol";
 
 contract SettlementLibTest is Test {
     SettlementHarness internal harness;
@@ -27,7 +28,7 @@ contract SettlementLibTest is Test {
         clean[0] = a;
         clean[1] = b;
 
-        bytes32 expected = SettlementLib.hashRankingReference(clean);
+        bytes32 expected = SettlementRef.hashRanking(clean);
 
         address[] memory dirty = new address[](2);
         dirty[0] = a;
@@ -45,7 +46,7 @@ contract SettlementLibTest is Test {
         ranking[2] = address(0x3);
 
         bytes32 yul = harness.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking);
-        bytes32 ref = SettlementLib.hashMatchResultReference(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking);
+        bytes32 ref = SettlementRef.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking);
         assertEq(yul, ref);
     }
 

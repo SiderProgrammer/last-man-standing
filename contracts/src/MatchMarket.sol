@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {GameEscrow} from "./GameEscrow.sol";
+import {TransferFailed} from "./Errors.sol";
 
 /// @title MatchMarket
 /// @notice Parimutuel spectator markets on a match's attested ranking.
@@ -52,7 +53,6 @@ contract MatchMarket is ReentrancyGuard {
     error AlreadySettled(bytes32 matchId, Kind kind);
     error NotSettled(bytes32 matchId, Kind kind);
     error NothingToClaim();
-    error TransferFailed(address to, uint256 amount);
     error MatchNotCancelled(bytes32 matchId);
 
     constructor(GameEscrow escrow_) {

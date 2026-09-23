@@ -1,17 +1,9 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  type Address,
-  type Hex,
-  type PublicClient,
-  type WalletClient,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import type { Address, Hex } from 'viem';
 import {
   DEFAULT_RULES,
   MatchStatus,
-  gameEscrowAbi,
+  addressKey,
+  errorMessage,
   normaliseOriginChainId,
   type LobbyInfo,
   type LobbySeat,
@@ -19,6 +11,7 @@ import {
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import type { Lobby } from './lobby.js';
+import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
@@ -28,6 +21,17 @@ export interface ChainBridgeOptions {
   /** Funds the permissionless `lockMatch` call. Without it, someone else must lock. */
   keeperKey?: Hex;
   pollMs?: number;
+}
+
+/** What the bridge needs once the transport has been chosen. */
+export interface ChainBridgeDeps {
+  reader: EscrowReader;
+  lobby: Lobby;
+  /** Hub chain id, used to map a seat's origin out of the messenger's id space. */
+  chainId: number;
+  pollMs?: number;
+  /** Injectable clock, so the lock window can be tested without waiting. */
+  now?: () => number;
 }
 
 interface TrackedMatch {
@@ -58,35 +62,29 @@ interface TrackedMatch {
  */
 export class ChainBridge {
   private readonly tracked = new Map<string, TrackedMatch>();
-  private readonly publicClient: PublicClient;
-  private readonly keeper: { client: WalletClient; account: Address } | null;
+  private readonly reader: EscrowReader;
+  private readonly now: () => number;
   private timer: ReturnType<typeof setInterval> | null = null;
   private cursor: bigint | null = null;
   private polling = false;
 
-  private constructor(private readonly options: ChainBridgeOptions) {
-    const chain = {
-      id: options.chainId,
-      name: `chain-${options.chainId}`,
-      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-      rpcUrls: { default: { http: [options.rpcUrl] } },
-    } as const;
-
-    this.publicClient = createPublicClient({ chain, transport: http(options.rpcUrl) });
-
-    if (options.keeperKey) {
-      const account = privateKeyToAccount(options.keeperKey);
-      this.keeper = {
-        account: account.address,
-        client: createWalletClient({ account, chain, transport: http(options.rpcUrl) }),
-      };
-    } else {
-      this.keeper = null;
-    }
+  constructor(private readonly deps: ChainBridgeDeps) {
+    this.reader = deps.reader;
+    this.now = deps.now ?? Date.now;
   }
 
+  /** Builds a bridge over a real RPC and starts its poll loop. */
   static start(options: ChainBridgeOptions): ChainBridge {
-    const bridge = new ChainBridge(options);
+    const bridge = new ChainBridge({
+      reader: viemEscrowReader({
+        rpcUrl: options.rpcUrl,
+        chainId: options.chainId,
+        escrow: options.escrow,
+        ...(options.keeperKey ? { keeperKey: options.keeperKey } : {}),
+      }),
+      lobby: options.lobby,
+      chainId: options.chainId,
+    });
     void bridge.poll();
     bridge.timer = setInterval(() => void bridge.poll(), options.pollMs ?? 4_000);
     bridge.timer.unref?.();
@@ -117,29 +115,19 @@ export class ChainBridge {
       await this.discover();
       await this.refresh();
     } catch (error) {
-      console.error('[chain] poll failed:', describe(error));
+      console.error('[chain] poll failed:', errorMessage(error));
     } finally {
       this.polling = false;
     }
   }
 
   private async discover(): Promise<void> {
-    const latest = await this.publicClient.getBlockNumber();
+    const latest = await this.reader.blockNumber();
     // First pass starts a little way back so a restart still sees a fresh lobby.
     const from = this.cursor ?? (latest > 5_000n ? latest - 5_000n : 0n);
     if (from > latest) return;
 
-    const logs = await this.publicClient.getContractEvents({
-      address: this.options.escrow,
-      abi: gameEscrowAbi,
-      eventName: 'MatchCreated',
-      fromBlock: from,
-      toBlock: latest,
-    });
-
-    for (const log of logs) {
-      const matchId = log.args.matchId;
-      if (!matchId) continue;
+    for (const { matchId } of await this.reader.matchCreatedLogs(from, latest)) {
       const key = matchId.toLowerCase();
       if (this.tracked.has(key)) continue;
       this.tracked.set(key, { adopted: false, info: placeholder(matchId), origins: new Map() });
@@ -147,22 +135,12 @@ export class ChainBridge {
 
     // Joins are read from the log rather than by polling `seatOrigin` per seat:
     // the event already carries the origin, and an origin never changes.
-    const joins = await this.publicClient.getContractEvents({
-      address: this.options.escrow,
-      abi: gameEscrowAbi,
-      eventName: 'PlayerJoined',
-      fromBlock: from,
-      toBlock: latest,
-    });
-
-    for (const log of joins) {
-      const { matchId, player, originChainId } = log.args;
-      if (!matchId || !player || originChainId === undefined) continue;
-      const entry = this.tracked.get(matchId.toLowerCase());
+    for (const join of await this.reader.playerJoinedLogs(from, latest)) {
+      const entry = this.tracked.get(join.matchId.toLowerCase());
       if (!entry) continue;
       entry.origins.set(
-        player.toLowerCase(),
-        normaliseOriginChainId(Number(originChainId), this.options.chainId),
+        addressKey(join.player),
+        normaliseOriginChainId(join.originChainId, this.deps.chainId),
       );
     }
 
@@ -172,24 +150,14 @@ export class ChainBridge {
   private async refresh(): Promise<void> {
     for (const [key, entry] of this.tracked) {
       const matchId = entry.info.matchId;
-      const raw = await this.publicClient.readContract({
-        address: this.options.escrow,
-        abi: gameEscrowAbi,
-        functionName: 'getMatch',
-        args: [matchId],
-      });
+      const raw = await this.reader.getMatch(matchId);
 
       if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled) {
         this.tracked.delete(key);
         continue;
       }
 
-      const players = await this.publicClient.readContract({
-        address: this.options.escrow,
-        abi: gameEscrowAbi,
-        functionName: 'getSeats',
-        args: [matchId],
-      });
+      const players = await this.reader.getSeats(matchId);
 
       const seats: LobbySeat[] = [];
       for (const address of players) {
@@ -221,25 +189,13 @@ export class ChainBridge {
    * trusted role: if it is offline, any player can lock the lobby themselves.
    */
   private async maybeLock(info: LobbyInfo): Promise<void> {
-    if (!this.keeper) return;
     const full = info.seatCount >= info.maxSeats;
-    const expired = Math.floor(Date.now() / 1000) >= info.joinDeadline;
+    const expired = Math.floor(this.now() / 1000) >= info.joinDeadline;
     if (!full && !expired) return;
     if (info.seatCount < info.minSeats) return;
 
-    try {
-      const { request } = await this.publicClient.simulateContract({
-        account: this.keeper.account,
-        address: this.options.escrow,
-        abi: gameEscrowAbi,
-        functionName: 'lockMatch',
-        args: [info.matchId],
-      });
-      await this.keeper.client.writeContract(request);
+    if (await this.reader.lockMatch(info.matchId)) {
       console.log(`[chain] locked ${info.matchId}`);
-    } catch (error) {
-      // Another caller may have locked it first; the next poll picks up the truth.
-      console.warn('[chain] lock skipped:', describe(error));
     }
   }
 
@@ -252,19 +208,14 @@ export class ChainBridge {
     matchId: `0x${string}`,
     address: Address,
   ): Promise<number> {
-    const key = address.toLowerCase();
+    const key = addressKey(address);
     const known = entry.origins.get(key);
     if (known !== undefined) return known;
 
-    const origin = await this.publicClient.readContract({
-      address: this.options.escrow,
-      abi: gameEscrowAbi,
-      functionName: 'seatOrigin',
-      args: [matchId, address],
-    });
+    const origin = await this.reader.seatOrigin(matchId, address);
     // Zero means the player staked on the hub chain itself; anything else is in
     // the messenger's id space and has to be mapped back to a chain id.
-    const chainId = normaliseOriginChainId(Number(origin), this.options.chainId);
+    const chainId = normaliseOriginChainId(origin, this.deps.chainId);
     entry.origins.set(key, chainId);
     return chainId;
   }
@@ -277,7 +228,7 @@ export class ChainBridge {
     }));
 
     const setup: MatchSetup = { matchId, seats, seed, rules: DEFAULT_RULES };
-    this.options.lobby.adopt(setup);
+    this.deps.lobby.adopt(setup);
     console.log(`[chain] opened room for ${matchId} with ${seats.length} seats`);
   }
 }
@@ -295,6 +246,3 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
   };
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

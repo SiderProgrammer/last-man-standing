@@ -27,6 +27,24 @@ export function botSeats(seatCount: number): number[] {
   return Array.from({ length: seatCount - 1 }, (_, i) => i + 1);
 }
 
+/**
+ * Most recent message of a given type, or undefined.
+ *
+ * Free function rather than a method because the two fakes that need it
+ * implement different interfaces — `FakeClient` is a `Client`, `FakeSocket` is
+ * a `Socket` — so neither can inherit it from the other.
+ */
+export function lastOfType<T extends ServerMessage['type']>(
+  messages: readonly ServerMessage[],
+  type: T,
+): Extract<ServerMessage, { type: T }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.type === type) return message as Extract<ServerMessage, { type: T }>;
+  }
+  return undefined;
+}
+
 /** Records everything the room pushes, so tests can assert on the feed. */
 export class FakeClient implements Client {
   readonly received: ServerMessage[] = [];
@@ -38,11 +56,7 @@ export class FakeClient implements Client {
   }
 
   last<T extends ServerMessage['type']>(type: T): Extract<ServerMessage, { type: T }> | undefined {
-    for (let i = this.received.length - 1; i >= 0; i -= 1) {
-      const message = this.received[i];
-      if (message && message.type === type) return message as Extract<ServerMessage, { type: T }>;
-    }
-    return undefined;
+    return lastOfType(this.received, type);
   }
 
   all<T extends ServerMessage['type']>(type: T): Array<Extract<ServerMessage, { type: T }>> {

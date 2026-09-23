@@ -2,10 +2,9 @@
 pragma solidity 0.8.28;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
+import {PullPayable} from "./PullPayable.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
@@ -30,7 +29,7 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient calls
 ///      `withdraw` or bridges the balance out.
-contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChainReceiver {
+contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver {
     enum MatchStatus {
         None,
         /// @dev Accepting joins.
@@ -81,13 +80,10 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     /// @notice Oracle request handle back to the match it belongs to.
     mapping(bytes32 requestId => bytes32 matchId) public randomnessRequest;
 
-    /// @notice Withdrawable balance, credited by settlement and refunds.
-    mapping(address account => uint256) public withdrawable;
-    /// @notice Sum of every unwithdrawn balance.
-    uint256 public totalOwed;
     /// @notice Stakes held for matches that have not yet settled or cancelled.
-    /// @dev Together these two account for the entire contract balance; the
-    ///      solvency invariant is `address(this).balance == totalOwed + totalEscrowed`.
+    /// @dev This and `PullPayable.totalOwed` account for the entire contract
+    ///      balance; the solvency invariant is
+    ///      `address(this).balance == totalOwed + totalEscrowed`.
     uint256 public totalEscrowed;
 
     bool public paused;
@@ -104,7 +100,6 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
     event MatchCancelled(bytes32 indexed matchId, string reason);
-    event Withdrawn(address indexed account, address indexed to, uint256 amount);
     event WithdrawalBridged(address indexed account, uint32 indexed dstChainId, uint256 amount);
     event PausedSet(bool paused);
 
@@ -127,8 +122,6 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     error NoMessengerForChain(uint32 dstChainId);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
-    error NothingToWithdraw();
-    error TransferFailed(address to, uint256 amount);
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
 
@@ -137,11 +130,11 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     }
 
     modifier onlyGovernance() {
-        if (msg.sender != Ownable(address(config)).owner()) revert NotGovernance();
+        if (msg.sender != config.owner()) revert NotGovernance();
         _;
     }
 
-    modifier whenLive() {
+    modifier whenNotPaused() {
         if (paused) revert Paused();
         _;
     }
@@ -153,7 +146,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     /// @param maxSeats Seats in the lobby.
     function createMatch(uint128 stake, uint16 maxSeats)
         external
-        whenLive
+        whenNotPaused
         returns (bytes32 matchId)
     {
         ProtocolConfig.Params memory params = config.getParams();
@@ -184,7 +177,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     }
 
     /// @notice Takes a seat by staking on this chain.
-    function join(bytes32 matchId) external payable whenLive {
+    function join(bytes32 matchId) external payable whenNotPaused {
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
         _seat(matchId, info, msg.sender, 0);
@@ -198,7 +191,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
         external
         payable
-        whenLive
+        whenNotPaused
     {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
@@ -217,7 +210,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
     ///      an under-filled but quorate one once the join window has expired.
     ///      Randomness is requested only after the seat list is final, so no
     ///      player can decide whether to join based on the seed.
-    function lockMatch(bytes32 matchId) external whenLive returns (bytes32 requestId) {
+    function lockMatch(bytes32 matchId) external whenNotPaused returns (bytes32 requestId) {
         MatchInfo storage info = _open(matchId);
 
         bool full = info.seatCount == info.maxSeats;
@@ -269,7 +262,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         bytes32 historyRoot,
         address[] calldata ranking,
         bytes calldata signatures
-    ) external nonReentrant whenLive {
+    ) external nonReentrant whenNotPaused {
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
@@ -294,10 +287,7 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         info.status = MatchStatus.Settled;
         info.historyRoot = historyRoot;
 
-        address[] storage storedRanking = matchRanking[matchId];
-        for (uint256 i = 0; i < ranking.length; ++i) {
-            storedRanking.push(ranking[i]);
-        }
+        matchRanking[matchId] = ranking;
 
         totalEscrowed -= uint256(info.stake) * info.seatCount;
         _distribute(matchId, info, ranking);
@@ -371,32 +361,14 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
 
     // --- Balances ----------------------------------------------------------
 
-    /// @notice Withdraws the caller's balance on this chain.
-    function withdraw(address to) external nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-
-        withdrawable[msg.sender] = 0;
-        totalOwed -= amount;
-
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert TransferFailed(to, amount);
-
-        emit Withdrawn(msg.sender, to, amount);
-    }
-
     /// @notice Sends the caller's balance to another chain through the transport.
     /// @dev `msg.value` pays the transport fee; the balance itself is forwarded
     ///      alongside the message. Used by players who staked from a spoke chain.
     function withdrawToChain(uint32 dstChainId) external payable nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-
         address messenger = config.messengerFor(dstChainId);
         if (messenger == address(0)) revert NoMessengerForChain(dstChainId);
 
-        withdrawable[msg.sender] = 0;
-        totalOwed -= amount;
+        amount = _takeBalance(msg.sender);
 
         ICrossChainMessenger(messenger).sendMessage{value: amount + msg.value}(
             dstChainId, config.peerFor(dstChainId), abi.encode(msg.sender, amount)
@@ -465,8 +437,4 @@ contract GameEscrow is EIP712, ReentrancyGuard, IRandomnessConsumer, ICrossChain
         emit PlayerJoined(matchId, player, seat, originChainId);
     }
 
-    function _credit(address account, uint256 amount) private {
-        withdrawable[account] += amount;
-        totalOwed += amount;
-    }
 }

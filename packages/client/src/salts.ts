@@ -1,4 +1,6 @@
+import { toHex } from 'viem';
 import type { ActionValue } from '@lms/protocol';
+import { readRaw, writeRaw } from './storage.js';
 
 const KEY = 'lms.moves.v1';
 
@@ -19,7 +21,10 @@ export interface StoredMove {
 export function freshSalt(): `0x${string}` {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  return `0x${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  // viem's encoding, byte for byte what the hand-rolled loop produced. The
+  // format is load-bearing — a salt that round-trips differently cannot open
+  // its own commitment after a refresh — so `salts.test.ts` pins it.
+  return toHex(bytes);
 }
 
 export function rememberMove(matchId: string, round: number, move: StoredMove): void {
@@ -43,16 +48,13 @@ export function forgetMatch(matchId: string): void {
 
 function read(): Record<string, StoredMove> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, StoredMove>;
+    return JSON.parse(readRaw(KEY) ?? '{}') as Record<string, StoredMove>;
   } catch {
+    // Unparseable store: start over rather than lose the round to a throw.
     return {};
   }
 }
 
 function write(store: Record<string, StoredMove>): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(store));
-  } catch {
-    // Private-browsing mode: the player just loses refresh resilience.
-  }
+  writeRaw(KEY, JSON.stringify(store));
 }

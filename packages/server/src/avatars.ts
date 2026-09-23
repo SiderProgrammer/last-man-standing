@@ -1,5 +1,6 @@
-import { createPublicClient, http, type Address, type PublicClient } from 'viem';
-import { playerAvatarsAbi, type AvatarEntry } from '@lms/protocol';
+import type { Address, PublicClient } from 'viem';
+import { addressKey, errorMessage, playerAvatarsAbi, type AvatarEntry } from '@lms/protocol';
+import { readClient } from './viem.js';
 
 /** One `PlayerAvatars` deployment, and the RPC that can be used to read it. */
 export interface AvatarCollection {
@@ -68,15 +69,9 @@ export class AvatarRegistry {
     this.now = options.now ?? Date.now;
 
     for (const collection of options.collections) {
-      const chain = {
-        id: collection.chainId,
-        name: `chain-${collection.chainId}`,
-        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-        rpcUrls: { default: { http: [collection.rpcUrl] } },
-      } as const;
       this.clients.set(collection.chainId, {
         address: collection.address,
-        client: createPublicClient({ chain, transport: http(collection.rpcUrl) }),
+        client: readClient(collection.chainId, collection.rpcUrl),
       });
     }
   }
@@ -114,7 +109,7 @@ export class AvatarRegistry {
     const collection = this.clients.get(subject.chainId);
     if (!collection) return null;
 
-    const key = `${subject.chainId}:${subject.address.toLowerCase()}`;
+    const key = `${subject.chainId}:${addressKey(subject.address)}`;
     const cached = this.cache.get(key);
     if (cached && cached.expires > this.now()) return cached.value;
 
@@ -144,7 +139,7 @@ export class AvatarRegistry {
         image: await this.imageFor(uri),
       };
     } catch (error) {
-      console.warn(`[avatars] read failed for ${player} on ${chainId}:`, describe(error));
+      console.warn(`[avatars] read failed for ${player} on ${chainId}:`, errorMessage(error));
       return null;
     }
   }
@@ -173,7 +168,7 @@ export class AvatarRegistry {
       const image = (metadata as { image?: unknown }).image;
       return typeof image === 'string' && image.length > 0 ? this.toHttp(image) : null;
     } catch (error) {
-      console.warn('[avatars] metadata fetch failed:', describe(error));
+      console.warn('[avatars] metadata fetch failed:', errorMessage(error));
       return null;
     }
   }
@@ -212,11 +207,8 @@ export function parseCollections(raw: string): AvatarCollection[] {
       return [{ chainId, address: address as Address, rpcUrl }];
     });
   } catch (error) {
-    console.warn('[avatars] AVATAR_COLLECTIONS is not valid JSON:', describe(error));
+    console.warn('[avatars] AVATAR_COLLECTIONS is not valid JSON:', errorMessage(error));
     return [];
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

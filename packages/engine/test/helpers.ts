@@ -1,5 +1,13 @@
 import { keccak256, toHex } from 'viem';
-import { Action, commitMove, DEFAULT_RULES, type Move, type Rules, type Seat } from '@lms/protocol';
+import {
+  Action,
+  commitMove,
+  DEFAULT_RULES,
+  type Move,
+  type PlayerState,
+  type Rules,
+  type Seat,
+} from '@lms/protocol';
 import { Match, type MatchSetup, type Strategy } from '@lms/engine';
 import type { DeclaredMove } from '@lms/engine';
 
@@ -16,6 +24,17 @@ export function seatsFor(count: number, chainIds: number[] = [11155111]): Seat[]
 
 export function bytes32(label: string): `0x${string}` {
   return keccak256(toHex(label));
+}
+
+/** Every seat alive on full HP, the state a match starts from. */
+export function freshStates(count: number, hp = DEFAULT_RULES.startingHp): PlayerState[] {
+  return Array.from({ length: count }, (_, index) => ({
+    index,
+    hp,
+    alive: true,
+    eliminatedInRound: 0,
+    timeouts: 0,
+  }));
 }
 
 export function setupFor(

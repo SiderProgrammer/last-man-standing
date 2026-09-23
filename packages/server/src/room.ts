@@ -1,18 +1,16 @@
-import { keccak256, toHex } from 'viem';
 import {
-  Action,
   MatchPhase,
-  commitMove,
-  settleEliminationBook,
+  addressKey,
   type AvatarEntry,
   type BookSnapshot,
-  type EliminationBet,
   type MatchResult,
   type RoundRecord,
   type SealedMove,
   type ServerMessage,
 } from '@lms/protocol';
-import { Match, Prng, describeRound, readerStrategy, type MatchSetup } from '@lms/engine';
+import { Match, describeRound, type MatchSetup } from '@lms/engine';
+import { BotDriver } from './bots.js';
+import { ChipLedger } from './chips.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -20,14 +18,16 @@ export interface Client {
   send(message: ServerMessage): void;
 }
 
+/** Called once a match reaches a signable result. */
+export type MatchFinished = (result: MatchResult, history: readonly RoundRecord[]) => void;
+
 export interface RoomOptions {
   commitMs: number;
   revealMs: number;
   startingChips: number;
   /** Seats played by the server's bots. Empty for a fully human lobby. */
-  botSeats?: readonly number[];
-  /** Called once the match reaches a signable result. */
-  onFinished?: (result: MatchResult, history: readonly RoundRecord[]) => void;
+  botSeats: readonly number[];
+  onFinished?: MatchFinished;
 }
 
 /**
@@ -42,12 +42,10 @@ export class Room {
   readonly match: Match;
 
   private readonly options: RoomOptions;
-  private readonly bots: Set<number>;
+  private readonly bots: BotDriver;
+  private readonly chips: ChipLedger;
   private readonly clients = new Set<Client>();
-  private readonly chipStacks = new Map<string, number>();
   private readonly seatByAddress = new Map<string, number>();
-  private readonly botMoves = new Map<number, SealedMove>();
-  private bets: EliminationBet[] = [];
   /** Cosmetic only, and resolved off the match's critical path. */
   private avatars: AvatarEntry[] = [];
   private deadlineAt: number;
@@ -56,17 +54,16 @@ export class Room {
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
     this.match = new Match(setup);
     this.options = options;
-    this.bots = new Set(options.botSeats ?? []);
+    this.bots = new BotDriver(options.botSeats);
+    this.chips = new ChipLedger(options.startingChips);
 
     for (const seat of setup.seats) {
-      this.seatByAddress.set(seat.address.toLowerCase(), seat.index);
-      if (!this.bots.has(seat.index)) {
-        this.chipStacks.set(seat.address.toLowerCase(), options.startingChips);
-      }
+      this.seatByAddress.set(addressKey(seat.address), seat.index);
+      if (!this.bots.has(seat.index)) this.chips.grant(seat.address);
     }
 
     this.deadlineAt = now + options.commitMs;
-    this.commitBots();
+    this.bots.commit(this.match);
   }
 
   get matchId(): `0x${string}` {
@@ -82,20 +79,17 @@ export class Room {
   }
 
   seatOf(address: `0x${string}`): number | null {
-    return this.seatByAddress.get(address.toLowerCase()) ?? null;
+    return this.seatByAddress.get(addressKey(address)) ?? null;
   }
 
   chipsOf(address: `0x${string}` | null): number {
-    if (!address) return 0;
-    return this.chipStacks.get(address.toLowerCase()) ?? 0;
+    return this.chips.balanceOf(address);
   }
 
   attach(client: Client): void {
     this.clients.add(client);
     // A spectator who never staked still gets a stack, so the book stays lively.
-    if (client.address && !this.chipStacks.has(client.address.toLowerCase())) {
-      this.chipStacks.set(client.address.toLowerCase(), this.options.startingChips);
-    }
+    if (client.address) this.chips.grant(client.address);
     this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
   }
@@ -143,12 +137,10 @@ export class Room {
     if (!Number.isSafeInteger(chips) || chips <= 0) {
       throw new Error('chips must be a positive integer');
     }
-    const stack = this.chipsOf(address);
-    if (chips > stack) throw new Error('not enough chips');
+    if (chips > this.chipsOf(address)) throw new Error('not enough chips');
     if (!this.match.playerState(target).alive) throw new Error('target is already eliminated');
 
-    this.chipStacks.set(address.toLowerCase(), stack - chips);
-    this.bets.push({ better: address, target, chips });
+    this.chips.place(address, target, chips);
     this.broadcastState();
   }
 
@@ -160,15 +152,7 @@ export class Room {
   }
 
   bookSnapshot(address: `0x${string}` | null): BookSnapshot {
-    const pots: Record<number, number> = {};
-    const yours: Record<number, number> = {};
-    for (const bet of this.bets) {
-      pots[bet.target] = (pots[bet.target] ?? 0) + bet.chips;
-      if (address && bet.better.toLowerCase() === address.toLowerCase()) {
-        yours[bet.target] = (yours[bet.target] ?? 0) + bet.chips;
-      }
-    }
-    return { round: this.match.round, pots, yours };
+    return this.chips.snapshot(this.match.round, address);
   }
 
   private requireSeat(address: `0x${string}`): number {
@@ -181,7 +165,7 @@ export class Room {
   private openReveal(now: number): void {
     if (this.match.phase !== MatchPhase.Commit) return;
     this.match.openRevealPhase();
-    this.revealBots();
+    this.bots.reveal(this.match);
 
     if (this.match.allRevealed()) {
       this.resolveRound(now);
@@ -195,7 +179,7 @@ export class Room {
     if (this.match.phase !== MatchPhase.Reveal) return;
 
     const record = this.match.resolve();
-    this.payBook(record);
+    this.chips.settle(record.eliminated);
 
     for (const client of this.clients) {
       client.send({
@@ -213,17 +197,8 @@ export class Room {
     }
 
     this.deadlineAt = now + this.options.commitMs;
-    this.commitBots();
+    this.bots.commit(this.match);
     this.broadcastState();
-  }
-
-  private payBook(record: RoundRecord): void {
-    const payouts = settleEliminationBook(this.bets, record.eliminated);
-    for (const [better, amount] of payouts) {
-      const key = better.toLowerCase();
-      this.chipStacks.set(key, (this.chipStacks.get(key) ?? 0) + amount);
-    }
-    this.bets = [];
   }
 
   private finish(): void {
@@ -236,36 +211,6 @@ export class Room {
       client.send({ type: 'finished', result, ranking, chips: this.chipsOf(client.address) });
     }
     this.options.onFinished?.(result, this.match.history);
-  }
-
-  /**
-   * Bots commit as soon as the window opens. Their salts are derived from the
-   * match seed rather than stored secrets, so a replay can reproduce them.
-   */
-  private commitBots(): void {
-    if (this.match.phase !== MatchPhase.Commit) return;
-
-    const prng = new Prng(keccak256(toHex(`${this.match.seed}:${this.match.round}`)));
-    const strategy = readerStrategy(prng);
-
-    for (const seat of this.bots) {
-      if (!this.match.playerState(seat).alive) continue;
-      const move = strategy(seat, this.match);
-      const sealed: SealedMove = {
-        ...move,
-        salt: keccak256(toHex(`bot:${this.match.seed}:${this.match.round}:${seat}`)),
-      };
-      this.botMoves.set(seat, sealed);
-      this.match.submitCommit(seat, commitMove(this.match.matchId, this.match.round, seat, sealed));
-    }
-  }
-
-  private revealBots(): void {
-    for (const [seat, move] of this.botMoves) {
-      if (!this.match.playerState(seat).alive) continue;
-      this.match.submitReveal(seat, move);
-    }
-    this.botMoves.clear();
   }
 
   private broadcastState(): void {
@@ -288,5 +233,3 @@ export class Room {
   }
 }
 
-/** Re-exported so callers can build legal moves without importing the engine. */
-export { Action };

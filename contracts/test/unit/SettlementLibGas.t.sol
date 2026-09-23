@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
-import {SettlementHarness} from "../helpers/Fixtures.sol";
+import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 
 /// @dev Pins the Yul hasher against the ABI-encoder reference: same digest, and
 ///      no worse on gas. Both paths are measured through the same external

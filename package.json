@@ -13,7 +13,10 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "typecheck": "tsc --build --force",
+    "typecheck": "npm run typecheck:src && npm run typecheck:client && npm run typecheck:tests",
+    "typecheck:src": "tsc --build --force",
+    "typecheck:client": "tsc -p packages/client/tsconfig.json",
+    "typecheck:tests": "tsc -p packages/protocol/tsconfig.test.json && tsc -p packages/engine/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && tsc -p packages/client/tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "sol:build": "forge build --root contracts",

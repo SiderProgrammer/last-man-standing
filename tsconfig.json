@@ -3,7 +3,6 @@
   "references": [
     { "path": "./packages/protocol" },
     { "path": "./packages/engine" },
-    { "path": "./packages/server" },
-    { "path": "./packages/client" }
+    { "path": "./packages/server" }
   ]
 }

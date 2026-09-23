@@ -7,6 +7,10 @@ pragma solidity 0.8.28;
 ///      can recompute a history root independently of the TypeScript engine.
 ///      Changing the encodings here is a consensus break and must be mirrored
 ///      in `packages/protocol/src/hash.ts`.
+///
+///      No contract in `src/` calls this library. It exists to be the on-chain
+///      mirror the future fraud proof will need (`docs/TODO.md` §3.1), and is
+///      reached today only from the deploy script and the tests.
 library HashLib {
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint8 internal constant ACTION_ATTACK = 1;
