@@ -6,12 +6,13 @@ import {
 } from '@lms/protocol';
 
 /**
- * A resolved round, turned into a timeline the arena can play back.
+ * A resolved round, turned into a schedule of beats: what happens, to whom, and
+ * when. It decides nothing about how any of it moves — `replay.ts` turns this
+ * schedule into a GSAP timeline, and GSAP does the interpolation.
  *
- * Pure: no Pixi, no clock, no canvas — the arena asks `sample(timeline, t)` what
- * each seat should look like at time `t` and draws that. Everything here is
- * derived from the published `RoundRecord`, which is the only source a spectator
- * has too, so the replay can never show anything the history feed does not.
+ * Pure: no Pixi, no clock, no canvas. Everything here is derived from the
+ * published `RoundRecord`, which is the only source a spectator has too, so the
+ * replay can never show anything the history feed does not.
  *
  * HP is moved between two waypoints and deliberately knows no rule constants:
  *
@@ -57,12 +58,12 @@ export type Beat =
   /** A seat shattering. `order` is its place in the record's tie-broken order. */
   | { kind: 'eliminate'; seat: number; order: number; start: number; end: number };
 
-interface Window {
+export interface Window {
   start: number;
   end: number;
 }
 
-interface SeatTrack {
+export interface SeatTrack {
   before: number;
   afterAttacks: number;
   after: number;
@@ -79,13 +80,6 @@ export interface Timeline {
   /** True when the storm did damage this round, so the ring should flare. */
   storm: Window | null;
   tracks: Map<number, SeatTrack>;
-}
-
-export interface SeatDisplay {
-  hp: number;
-  alive: boolean;
-  /** 0 until the seat's elimination beat starts, 1 once it has finished. */
-  dying: number;
 }
 
 // Timings, in seconds. Tuned so the worst case — eight seats, every one of them
@@ -247,57 +241,4 @@ export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]
     storm: record.stormDamage > 0 ? settleWindow : null,
     tracks,
   };
-}
-
-/** Progress through a window, 0 before it and 1 after it. */
-export function progress(t: number, window: Window): number {
-  if (t <= window.start) return 0;
-  if (t >= window.end) return 1;
-  return (t - window.start) / (window.end - window.start);
-}
-
-/** Fast at first, settling gently: how a draining bar reads as a hit. */
-export function easeOutCubic(x: number): number {
-  return 1 - (1 - x) ** 3;
-}
-
-function move(from: number, to: number, window: Window | null, t: number): number {
-  if (!window) return to;
-  const p = progress(t, window);
-  // Returned exactly rather than interpolated at the end, so a finished replay
-  // shows the published integer and not a float one ulp away from it.
-  if (p >= 1) return to;
-  return from + (to - from) * easeOutCubic(p);
-}
-
-/** What every seat should display `t` seconds into the replay. */
-export function sample(timeline: Timeline, t: number): Map<number, SeatDisplay> {
-  const out = new Map<number, SeatDisplay>();
-
-  for (const [index, track] of timeline.tracks) {
-    // Untouched by any blow, `before` and `afterAttacks` are the same number.
-    let hp = track.attackWindow
-      ? t < track.attackWindow.start
-        ? track.before
-        : move(track.before, track.afterAttacks, track.attackWindow, t)
-      : track.afterAttacks;
-    if (track.settleWindow && t >= track.settleWindow.start) {
-      hp = move(track.afterAttacks, track.after, track.settleWindow, t);
-    }
-    // No settle beat for this seat means its attack waypoint already is final.
-    if (!track.settleWindow && (!track.attackWindow || t >= track.attackWindow.end)) {
-      hp = track.after;
-    }
-
-    const dying = track.eliminateWindow ? progress(t, track.eliminateWindow) : 0;
-    out.set(index, {
-      hp,
-      // A seat stays "alive" on screen until its shatter has played out, so the
-      // fade to the dead style happens at the end of the beat, not the start.
-      alive: track.aliveBefore && dying < 1,
-      dying,
-    });
-  }
-
-  return out;
 }

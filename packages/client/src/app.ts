@@ -1,6 +1,8 @@
 import { MatchPhase, type ServerMessage } from '@lms/protocol';
+import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
+import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { renderLobbies, wireLobbyControls } from './screens/lobby.js';
 import {
   onAvatars,
@@ -39,6 +41,10 @@ export function start(): void {
     },
   );
   initContext(elements, socket);
+
+  // In parallel with everything below: the loading screen covers the page
+  // until the arena's textures are cached, while the socket connects behind it.
+  void loadAssets(showLoadProgress).then(hideLoader);
 
   net.on(onServerMessage);
   net.connect();

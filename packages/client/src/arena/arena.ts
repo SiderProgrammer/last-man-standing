@@ -6,7 +6,9 @@ import {
   type PublicMatchState,
   type RoundRecord,
 } from '@lms/protocol';
-import { choreograph, sample, type SeatDisplay } from './choreography.js';
+import { loadAssets, type FxTextures } from '../assets/loader.js';
+import { gsap } from '../motion.js';
+import { choreograph } from './choreography.js';
 import { Effects } from './effects.js';
 import {
   AVATAR_RADIUS,
@@ -18,7 +20,11 @@ import {
   stormRing,
   type Point,
 } from './layout.js';
+import { buildReplay, DEAD_FADE, type Replay, type SeatDisplay } from './replay.js';
 import { BADGE, COLORS, FX, LABEL, SUBLABEL, hpColor } from './theme.js';
+
+/** Half a breath of the storm ring's idle pulse, in seconds. */
+const STORM_BREATH = 2.2;
 
 interface SeatView {
   root: Container;
@@ -52,8 +58,8 @@ interface SeatView {
  * knows. The post-round snapshot arrives a few milliseconds after the round
  * record, and painting it would snap every HP arc and grey out every casualty
  * before the replay could show how it happened. So for the length of the replay
- * each seat's HP and liveness come from `sample(timeline, t)` instead, and the
- * snapshot takes over again once the replay has caught up with it.
+ * each seat is drawn from the replay's `SeatDisplay` — values a GSAP timeline is
+ * tweening — and the snapshot takes over again once the replay has finished.
  */
 export class Arena {
   private readonly seats = new Map<number, SeatView>();
@@ -62,31 +68,26 @@ export class Arena {
   private readonly world = new Container();
   private readonly seatLayer = new Container();
   private readonly stormLayer = new Graphics();
+  private readonly effects: Effects;
+  /** The storm ring's idle breathing, 0..1, tweened forever. */
+  private readonly idle = { pulse: 0 };
   private state: PublicMatchState | null = null;
   private you: number | null = null;
-  private pulse = 0;
-  /** Replay display values for this frame, or null when the snapshot rules. */
-  private display: Map<number, SeatDisplay> | null = null;
-  /**
-   * The last round replayed, and how it ended.
-   *
-   * Needed because the final round is never followed by a snapshot: the match
-   * finishes and the arena is left holding the state from *before* the round.
-   * Handing back to that when the replay ends would refill every HP arc and
-   * bring the casualties back to life, so the final frame stays pinned until a
-   * snapshot from a later round arrives — which, after the last round, is never.
-   */
-  private replayed: { round: number; final: Map<number, SeatDisplay> } | null = null;
-  private pinned = false;
+  /** The most recent round replayed, whether or not it is still playing. */
+  private replay: Replay | null = null;
+  /** Whether the last frame was drawn from a playing replay. */
+  private wasReplaying = false;
 
   private constructor(
     private readonly app: Application,
-    private readonly effects: Effects,
+    textures: FxTextures,
   ) {
-    this.world.addChild(this.stormLayer, this.seatLayer, effects.layer);
+    this.effects = new Effects(app, textures, (seat) => this.homeOf(seat), this.world);
+    this.world.addChild(this.stormLayer, this.seatLayer, this.effects.layer);
     app.stage.addChild(this.world);
     app.ticker.add(() => this.animate());
     app.renderer.on('resize', () => this.layout());
+    gsap.to(this.idle, { pulse: 1, duration: STORM_BREATH, ease: 'sine.inOut', yoyo: true, repeat: -1 });
   }
 
   static async mount(element: HTMLElement): Promise<Arena> {
@@ -100,26 +101,17 @@ export class Arena {
     });
     element.appendChild(app.canvas);
 
-    // Effects need seat positions, and seats need the arena: resolve the loop
-    // through a late-bound reference rather than constructing in two passes.
-    let arena: Arena | null = null;
-    const effects = await Effects.create(app, (seat) => arena?.homeOf(seat) ?? null);
-    arena = new Arena(app, effects);
-    return arena;
+    // Normally already resolved: loading starts at boot, behind the loading
+    // screen, long before anyone opens a match.
+    return new Arena(app, await loadAssets());
   }
 
   render(state: PublicMatchState, you: number | null): void {
     // A different match: nothing from the last one's replay belongs here.
     if (this.state && this.state.matchId !== state.matchId) {
+      this.replay?.timeline.kill();
+      this.replay = null;
       this.effects.clear();
-      this.display = null;
-      this.replayed = null;
-      this.pinned = false;
-    }
-    // A snapshot from past the pinned round is the truth again.
-    if (this.pinned && this.replayed && state.round > this.replayed.round) {
-      this.pinned = false;
-      this.display = null;
     }
     this.state = state;
     this.you = you;
@@ -161,11 +153,13 @@ export class Arena {
     }));
     if (!before) return;
 
-    const timeline = choreograph(record, before);
-    this.effects.play(timeline);
-    this.replayed = { round: record.round, final: sample(timeline, Infinity) };
-    this.pinned = false;
-    this.display = sample(timeline, 0);
+    const choreo = choreograph(record, before);
+    const replay = buildReplay(record.round, choreo);
+    this.effects.decorate(replay, choreo);
+    // The previous round's timeline is left to finish on its own: anything of
+    // it still in flight lands normally, it just no longer drives the seats.
+    this.replay = replay;
+    replay.timeline.play();
     this.paint();
   }
 
@@ -175,7 +169,27 @@ export class Arena {
   }
 
   destroy(): void {
+    this.replay?.timeline.kill();
+    this.effects.clear();
+    gsap.killTweensOf(this.idle);
     this.app.destroy(true, { children: true });
+  }
+
+  /**
+   * Where each seat's appearance comes from right now: the replay, or null for
+   * the published snapshot.
+   *
+   * The replay rules while it plays. Once it has finished, the post-round
+   * snapshot is normally already here and takes over — except after the final
+   * round, which no snapshot ever follows. Handing back then would show the
+   * state from *before* that round, refilling every HP arc and reviving the
+   * casualties, so the replay's final frame stays until a later round arrives.
+   */
+  private get display(): Map<number, SeatDisplay> | null {
+    const replay = this.replay;
+    if (!replay) return null;
+    if (isPlaying(replay)) return replay.seats;
+    return (this.state?.round ?? 0) <= replay.round ? replay.seats : null;
   }
 
   private homeOf(seat: number): Point | null {
@@ -306,16 +320,17 @@ export class Arena {
     const committed = new Set(state.committed);
     const revealed = new Set(state.revealed);
 
+    const display = this.display;
     for (const player of state.players) {
       const view = this.seats.get(player.index);
       if (!view) continue;
 
       // During a replay the seat shows where the round has got to, not where
       // it ended up. `shown` is null the rest of the time.
-      const shown = this.display?.get(player.index) ?? null;
+      const shown = display?.get(player.index) ?? null;
       const hp = shown?.hp ?? player.hp;
       const alive = shown?.alive ?? player.alive;
-      const dying = shown?.dying ?? 0;
+      const dying = shown?.dying ?? false;
 
       const isYou = player.index === this.you;
       const fraction = Math.max(0, Math.min(1, hp / 100));
@@ -328,7 +343,7 @@ export class Arena {
         .stroke({
           width: isYou ? 3 : 1.5,
           // A dying seat's outline heats up as it goes.
-          color: dying > 0 ? FX.kill : isYou ? COLORS.you : COLORS.outline,
+          color: dying ? FX.kill : isYou ? COLORS.you : COLORS.outline,
         });
 
       // An eliminated seat greys out; the whole container is already faded, and
@@ -357,14 +372,14 @@ export class Arena {
       view.name.style.fill = alive ? COLORS.text : COLORS.muted;
       view.hp.text = alive ? `${Math.round(hp)} hp` : 'out';
 
-      // The shatter: a quick swell, then a shrink into the dead style. Both
-      // ends meet the static values, so nothing jumps when the replay hands
-      // back to the snapshot.
-      const swell = dying < 0.35 ? dying / 0.35 : 1 - (dying - 0.35) / 0.65;
-      view.root.scale.set(1 + 0.2 * swell);
-      view.root.alpha = (alive ? 1 - 0.6 * dying : 0.4) * this.effects.seatAlpha(player.index);
+      // Scale, fade and offset are tweened on the replay's timeline; both ends
+      // of every tween meet the static values, so nothing jumps when the
+      // replay hands back to the snapshot.
+      view.root.scale.set(shown?.scale ?? 1);
+      view.root.alpha = shown ? shown.fade * shown.veil : alive ? 1 : DEAD_FADE;
+      view.root.position.set(view.home.x + (shown?.dx ?? 0), view.home.y + (shown?.dy ?? 0));
 
-      if (this.display) {
+      if (display) {
         // Mid-replay, the snapshot's phase text is for a round nobody has seen
         // finish yet.
         view.status.text = '';
@@ -387,42 +402,31 @@ export class Arena {
 
     const { width, height } = this.app.screen;
     const ring = stormRing(width, height, state.round);
-    const flare = this.effects.stormFlare();
+    const flare = this.replay?.storm.flare ?? 0;
     this.stormLayer
       .clear()
       .circle(ring.centre.x, ring.centre.y, ring.radius)
       .stroke({
         width: 2 + ring.intensity * 6 + flare * 6,
         color: flare > 0 ? FX.storm : COLORS.storm,
-        alpha: Math.min(1, 0.35 + 0.4 * this.pulse + flare * 0.5),
+        alpha: Math.min(1, 0.35 + 0.4 * this.idle.pulse + flare * 0.5),
       });
   }
 
+  /**
+   * Called every frame. GSAP moves the values; this only draws them — every
+   * frame while a replay plays, once more as it hands back to the snapshot,
+   * and otherwise just the storm ring's idle breathing.
+   */
   private animate(): void {
-    this.pulse = (Math.sin(performance.now() / 700) + 1) / 2;
-    this.effects.update();
-
-    if (this.effects.replaying) {
-      this.display = this.effects.sampleNow();
-      this.paint();
-    } else if (this.display && !this.pinned) {
-      // The replay is over. Normally the post-round snapshot is already here
-      // and takes over; after the final round it never comes, so keep showing
-      // how the round ended rather than falling back to how it began.
-      const stale = this.replayed !== null && (this.state?.round ?? 0) <= this.replayed.round;
-      this.display = stale ? (this.replayed?.final ?? null) : null;
-      this.pinned = stale;
-      this.paint();
-    } else {
-      this.paintStorm();
-    }
-
-    for (const [index, view] of this.seats) {
-      const offset = this.effects.seatOffset(index);
-      view.root.position.set(view.home.x + offset.x, view.home.y + offset.y);
-    }
-
-    const shake = this.effects.shake();
-    this.world.position.set(shake.x, shake.y);
+    const replaying = this.replay !== null && isPlaying(this.replay);
+    if (replaying || replaying !== this.wasReplaying) this.paint();
+    else this.paintStorm();
+    this.wasReplaying = replaying;
   }
+}
+
+function isPlaying(replay: Replay): boolean {
+  const { timeline } = replay;
+  return !timeline.paused() && timeline.progress() < 1;
 }

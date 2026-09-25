@@ -55,6 +55,9 @@ export function queryDom(doc: Document = document) {
     feed: el<HTMLOListElement>('feed'),
     reads: el<HTMLDivElement>('reads'),
     toast: el<HTMLDivElement>('toast'),
+    loader: el<HTMLDivElement>('loader'),
+    loaderBar: el<HTMLDivElement>('loader-bar'),
+    loaderLabel: el<HTMLSpanElement>('loader-label'),
   };
 }
 

@@ -5,7 +5,8 @@ import {
   type AttackRecord,
   type RoundRecord,
 } from '@lms/protocol';
-import { choreograph, sample, type SeatSnapshot } from '../src/arena/choreography.js';
+import { choreograph, type SeatSnapshot, type Timeline } from '../src/arena/choreography.js';
+import { buildReplay, type SeatDisplay } from '../src/arena/replay.js';
 import { bytes32 } from './helpers.js';
 
 /** The server's default replay hold, which every timeline must fit inside. */
@@ -44,6 +45,16 @@ function attack(
 
 const END = 99;
 
+/**
+ * What every seat shows `t` seconds in, read by seeking the GSAP timeline the
+ * arena plays. Copied out, because the timeline keeps mutating the live objects.
+ */
+function sample(timeline: Timeline, t: number): Map<number, SeatDisplay> {
+  const replay = buildReplay(3, timeline);
+  replay.timeline.seek(t);
+  return new Map([...replay.seats].map(([seat, display]) => [seat, { ...display }]));
+}
+
 describe('choreograph', () => {
   it('ends every seat exactly on the published hpAfter', () => {
     const timeline = choreograph(
@@ -77,7 +88,7 @@ describe('choreograph', () => {
     );
 
     const end = sample(timeline, END);
-    expect(end.get(0)).toEqual({ hp: 1, alive: true, dying: 0 });
+    expect(end.get(0)).toMatchObject({ hp: 1, alive: true, dying: false });
     expect(end.get(1)).toMatchObject({ hp: 0, alive: false });
   });
 
@@ -168,9 +179,9 @@ describe('choreograph', () => {
     const beat = timeline.beats.find((entry) => entry.kind === 'eliminate');
     if (!beat) throw new Error('no elimination beat');
 
-    expect(sample(timeline, beat.start - 0.001).get(1)).toMatchObject({ alive: true, dying: 0 });
+    expect(sample(timeline, beat.start - 0.001).get(1)).toMatchObject({ alive: true, dying: false });
     expect(sample(timeline, (beat.start + beat.end) / 2).get(1)?.alive).toBe(true);
-    expect(sample(timeline, beat.end).get(1)).toMatchObject({ alive: false, dying: 1 });
+    expect(sample(timeline, beat.end).get(1)).toMatchObject({ alive: false, dying: true });
   });
 
   it('shows the pre-round HP before anything has happened', () => {
@@ -266,5 +277,57 @@ describe('choreograph', () => {
 
     expect(timeline.duration).toBeLessThanOrEqual(HOLD_SECONDS);
     expect(timeline.beats.filter((beat) => beat.kind === 'eliminate')).toHaveLength(7);
+  });
+});
+
+describe('replay timeline', () => {
+  it('runs exactly as long as the choreography', () => {
+    const timeline = choreograph(
+      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], stormDamage: 6, hpAfter: [94, 60] }),
+      seats(100, 100),
+    );
+    expect(buildReplay(3, timeline).timeline.duration()).toBeCloseTo(timeline.duration, 6);
+  });
+
+  it('eases the drain with a cubic ease-out, as the arena always has', () => {
+    const timeline = choreograph(
+      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 60)], hpAfter: [100, 40] }),
+      seats(100, 100),
+    );
+    const track = timeline.tracks.get(1);
+    const window = track?.attackWindow;
+    if (!window) throw new Error('no attack window');
+
+    // Halfway through a cubic ease-out, 1 - 0.5^3 = 87.5% of the drop is done.
+    const halfway = sample(timeline, (window.start + window.end) / 2).get(1)?.hp;
+    expect(halfway).toBeCloseTo(100 - 60 * 0.875, 6);
+  });
+
+  it('flares the storm ring up and back down across the storm', () => {
+    const timeline = choreograph(record({ stormDamage: 12, hpAfter: [88, 88] }), seats(100, 100));
+    const storm = timeline.storm;
+    if (!storm) throw new Error('no storm');
+
+    const flareAt = (t: number) => {
+      const replay = buildReplay(3, timeline);
+      replay.timeline.seek(t);
+      return replay.storm.flare;
+    };
+    expect(flareAt(storm.start)).toBe(0);
+    expect(flareAt((storm.start + storm.end) / 2)).toBeCloseTo(1, 6);
+    expect(flareAt(storm.end)).toBeCloseTo(0, 6);
+  });
+
+  it('swells a shattering seat, then shrinks it into the dead style', () => {
+    const timeline = choreograph(
+      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], hpAfter: [100, 0], eliminated: [1] }),
+      seats(100, 20),
+    );
+    const beat = timeline.beats.find((entry) => entry.kind === 'eliminate');
+    if (!beat) throw new Error('no elimination beat');
+    const length = beat.end - beat.start;
+
+    expect(sample(timeline, beat.start + length * 0.35).get(1)?.scale).toBeCloseTo(1.2, 6);
+    expect(sample(timeline, beat.end).get(1)).toMatchObject({ scale: 1, fade: 0.4 });
   });
 });

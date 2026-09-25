@@ -1,56 +1,28 @@
-import { Assets, Container, Graphics, Sprite, Text, Texture, type Application } from 'pixi.js';
+import 'pixi.js/math-extras';
+import { Container, Graphics, Point, Sprite, Text, type Application, type Texture } from 'pixi.js';
 import { Action, AttackOutcome } from '@lms/protocol';
-import {
-  easeOutCubic,
-  progress,
-  sample,
-  type Beat,
-  type SeatDisplay,
-  type Timeline,
-} from './choreography.js';
-import type { Point } from './layout.js';
+import type { FxTextures } from '../assets/loader.js';
+import { FX_TEXTURES, type FxTexture } from '../assets/manifest.js';
+import { gsap } from '../motion.js';
+import type { Beat, Timeline, Window } from './choreography.js';
+import type { Point as PointLike } from './layout.js';
+import type { Replay, SeatDisplay } from './replay.js';
 import { BANNER, FLOAT, FX } from './theme.js';
 
 /**
- * The round replay's visual effects.
+ * The round replay's visual effects, all of them GSAP tweens.
  *
- * Two kinds of thing live here. Some effects are *bound to the timeline* — a
- * projectile's position is a function of how far through its travel beat the
- * replay is, so it can never drift from the HP drain the arena shows. Others are
- * *fire and forget* — sparks, debris, smoke — spawned when a beat starts and left
- * to run their own short physics. Both run on one monotonic clock, so a puff of
- * smoke from the last round finishes correctly even if the next replay starts.
+ * Two kinds. Effects that must line up with the round — a projectile arriving
+ * on its impact, a shield dropping when the last blow lands, a lunge — are
+ * placed on the replay's own timeline, so they cannot drift from the HP drain
+ * the arena shows. Effects that merely decorate a moment — sparks, debris,
+ * smoke, floating numbers — are spawned when that moment is reached and left
+ * to run; they live in one `gsap.context`, so `clear()` stops all of them at
+ * once.
  *
- * Textures are the Kenney CC0 set in `public/fx/`, white with the shape in
- * alpha, tinted from `FX`. Every one of them is optional: a texture that fails
- * to load is replaced by a procedural glow, exactly as a seat without an avatar
- * keeps its plain circle. The match never depends on a picture.
+ * Textures come from the asset loader. Any that failed to load is replaced by
+ * a generated glow, exactly as a seat without an avatar keeps its plain circle.
  */
-
-const TEXTURES = [
-  'glow',
-  'streak',
-  'flash',
-  'burst',
-  'claw',
-  'shield',
-  'ring',
-  'puff',
-  'blast',
-  'debris',
-  'shockwave',
-  'smoke',
-  'bolt',
-  'flare',
-] as const;
-
-type TextureName = (typeof TEXTURES)[number];
-
-/** Something on screen that updates itself until it reports it is finished. */
-interface Live {
-  update(now: number): boolean;
-  destroy(): void;
-}
 
 interface ParticleOptions {
   tint: number;
@@ -59,283 +31,316 @@ interface ParticleOptions {
   sizeTo: number;
   alphaFrom?: number;
   alphaTo?: number;
-  vx?: number;
-  vy?: number;
+  /** Launch speed in pixels per second, for `Physics2DPlugin`. */
+  velocity?: number;
+  /** Launch direction in degrees: 0 is right, 90 is down. */
+  angle?: number;
   gravity?: number;
+  /** Radians turned over the particle's life. */
   spin?: number;
   rotation?: number;
   additive?: boolean;
 }
 
 /**
- * A trigger this far behind the replay clock is dropped rather than fired.
- * Only happens when frames stop arriving — a backgrounded tab, a stalled
- * device — and firing a whole round's bursts on one frame would be noise.
+ * A moment reached this long after it was due is skipped, not played. Only
+ * happens when frames stop arriving — a backgrounded tab, a stalled device —
+ * and firing a whole round's bursts on one frame would be noise.
  */
 const STALE = 0.25;
 
-/** Headroom above a seat's centre where floating numbers start. */
 const FLOAT_ORIGIN = -26;
 const FLOAT_RISE = 26;
 const FLOAT_LIFE = 0.8;
-/** Vertical spacing between numbers that land on one seat at the same time. */
+/** Vertical spacing between numbers that land on one seat at once. */
 const FLOAT_STACK = 16;
 /** How far an attacker leans toward its target while declaring. */
 const LUNGE = 10;
 /** How far a hider steps aside when a blow misses. */
 const SIDESTEP = 12;
-/** Projectiles bow sideways so two seats trading blows do not overlap. */
+/** Projectiles bow sideways, so two seats trading blows do not overlap. */
 const ARC = 18;
+const SHIELD_SIZE = 92;
+const SHIELD_ALPHA = 0.55;
+const SHIELD_FADE = 0.15;
+/** Half a breath of the shield's pulse, and of a hider's shimmer. */
+const SHIELD_PULSE = 0.52;
+const SHIMMER = 0.175;
+const SHAKE = 6;
 
 export class Effects {
   readonly layer = new Container();
 
-  private readonly live: Live[] = [];
+  private readonly textures: Record<FxTexture, Texture>;
   private readonly pool: Sprite[] = [];
+  /** Sprites currently on screen, so `clear` can recover any a killed timeline stranded. */
+  private readonly active = new Set<Sprite>();
   private readonly floats = new Map<number, number>();
-  /**
-   * Wall-clock seconds, read once per frame. Deliberately not accumulated from
-   * frame deltas: the server's replay hold runs on real time, and a clock built
-   * from clamped deltas falls behind it whenever frames are slow, which would
-   * let the replay spill into the next commit window.
-   */
-  private now = wallClock();
+  private readonly reduced = prefersReducedMotion();
+  /** Owns every fire-and-forget tween. */
+  private context = gsap.context(() => {});
 
-  private timeline: Timeline | null = null;
-  private replayStart = 0;
-  private triggers: Array<{ at: number; fire: () => void }> = [];
-  /** When each seat's shield or shimmer should drop. */
-  private guardUntil = new Map<number, number>();
-  private shakeUntil = 0;
-  private shakeStrength = 0;
-  private winner: Live | null = null;
-
-  private constructor(
-    private readonly textures: Record<TextureName, Texture>,
-    private readonly positionOf: (seat: number) => Point | null,
-    private readonly reduced: boolean,
-  ) {}
-
-  /**
-   * Loads the textures, substituting a generated glow for any that fail.
-   *
-   * `allSettled` rather than `all`: one missing file must cost exactly that one
-   * effect its look, not take every other texture down with it.
-   */
-  static async create(app: Application, positionOf: (seat: number) => Point | null): Promise<Effects> {
+  constructor(
+    app: Application,
+    loaded: FxTextures,
+    private readonly positionOf: (seat: number) => PointLike | null,
+    /** Shaken as a whole when a seat is eliminated. */
+    private readonly world: Container,
+  ) {
     const fallback = app.renderer.generateTexture(softGlow());
-    const base = import.meta.env.BASE_URL ?? '/';
-
-    const loaded = await Promise.allSettled(
-      TEXTURES.map((name) => Assets.load<Texture>(`${base}fx/${name}.png`)),
-    );
-
-    const textures = {} as Record<TextureName, Texture>;
-    TEXTURES.forEach((name, index) => {
-      const result = loaded[index];
-      if (result?.status === 'fulfilled') {
-        textures[name] = result.value;
-      } else {
-        console.warn(`[fx] ${name}.png unavailable, using a generated glow`);
-        textures[name] = fallback;
-      }
-    });
-
-    return new Effects(textures, positionOf, prefersReducedMotion());
+    this.textures = Object.fromEntries(
+      FX_TEXTURES.map((name) => [name, loaded[name] ?? fallback]),
+    ) as Record<FxTexture, Texture>;
   }
 
-  /** True while a replay is playing, which is when the arena defers to `sample`. */
-  get replaying(): boolean {
-    return this.timeline !== null && this.replayTime <= this.timeline.duration;
-  }
-
-  /** Seconds into the current replay. */
-  get replayTime(): number {
-    return this.now - this.replayStart;
-  }
-
-  /** What every seat should show right now, or null outside a replay. */
-  sampleNow(): Map<number, SeatDisplay> | null {
-    return this.timeline ? sample(this.timeline, this.replayTime) : null;
-  }
-
-  /** Starts a replay. Anything still lingering from the last one finishes normally. */
-  play(timeline: Timeline): void {
-    this.timeline = timeline;
-    this.replayStart = this.now;
-    this.guardUntil.clear();
-
+  /**
+   * Adds the round's effects to its replay timeline.
+   *
+   * Called before the timeline plays, so every effect is scheduled against the
+   * same clock as the HP drain it illustrates.
+   */
+  decorate(replay: Replay, choreo: Timeline): void {
+    const { timeline, seats } = replay;
     // Shields and shimmers hold until every blow of the round has landed.
     const combat = new Set<Beat['kind']>(['declare', 'travel', 'impact', 'riposte']);
     const combatEnd = Math.max(
       0,
-      ...timeline.beats.filter((beat) => combat.has(beat.kind)).map((beat) => beat.end),
+      ...choreo.beats.filter((beat) => combat.has(beat.kind)).map((beat) => beat.end),
     );
 
-    this.triggers = timeline.beats
-      .flatMap((beat) => this.triggersFor(beat, combatEnd))
-      .sort((a, b) => a.at - b.at);
+    for (const beat of choreo.beats) {
+      switch (beat.kind) {
+        case 'noShow':
+          this.when(timeline, beat.start, () => this.noShow(beat.seat));
+          break;
+        case 'declare':
+          if (beat.action === Action.Attack) {
+            this.sway(timeline, seats.get(beat.seat), this.direction(beat.seat, beat.target), LUNGE, beat);
+          } else if (beat.action === Action.Defend) {
+            this.shield(timeline, beat.seat, beat.start, combatEnd);
+          } else if (beat.action === Action.Hide) {
+            this.shimmer(timeline, seats.get(beat.seat), beat.start, combatEnd);
+          }
+          break;
+        case 'travel':
+          this.projectile(timeline, beat.from, beat.to, beat, FX.projectile);
+          break;
+        case 'impact':
+          this.when(timeline, beat.start, () => this.impact(beat));
+          if (beat.outcome === AttackOutcome.Missed) {
+            // Perpendicular to the blow: a dodge, not a retreat.
+            const blow = this.direction(beat.from, beat.seat);
+            this.sway(timeline, seats.get(beat.seat), new Point(-blow.y, blow.x), SIDESTEP, beat);
+          }
+          break;
+        case 'riposte':
+          this.projectile(timeline, beat.from, beat.to, beat, FX.parry);
+          this.when(timeline, beat.end, () => this.riposteLands(beat.to, beat.damage));
+          break;
+        case 'storm':
+          this.when(timeline, beat.start, () => this.storm(beat.seat, beat.damage));
+          break;
+        case 'eliminate':
+          this.when(timeline, beat.start, () => this.eliminate(beat.seat));
+          break;
+      }
+    }
   }
 
-  /** Drops the replay and every effect, for a new match. */
+  /** Stops every effect and returns every sprite, for a new match. */
   clear(): void {
-    this.timeline = null;
-    this.triggers = [];
-    this.guardUntil.clear();
-    for (const effect of this.live.splice(0)) effect.destroy();
-    this.winner?.destroy();
-    this.winner = null;
+    this.context.kill();
+    this.context = gsap.context(() => {});
+    for (const sprite of [...this.active]) this.release(sprite);
+    // What is left is labels and emptied projectile containers; none is pooled.
+    for (const child of this.layer.removeChildren()) child.destroy();
     this.floats.clear();
-  }
-
-  /** Advances every effect. Called from the arena's ticker. */
-  update(): void {
-    this.now = wallClock();
-
-    const t = this.replayTime;
-    while (this.triggers.length > 0 && (this.triggers[0]?.at ?? Infinity) <= t) {
-      const trigger = this.triggers.shift();
-      // Late by more than a beat means frames stopped arriving; the HP drain
-      // still lands correctly because `sample` reads the same clock.
-      if (trigger && t - trigger.at <= STALE) trigger.fire();
-    }
-
-    for (let index = this.live.length - 1; index >= 0; index -= 1) {
-      const effect = this.live[index];
-      if (effect && !effect.update(this.now)) {
-        effect.destroy();
-        this.live.splice(index, 1);
-      }
-    }
-    this.winner?.update(this.now);
-
-    if (this.timeline && t > this.timeline.duration) this.timeline = null;
-  }
-
-  /**
-   * How far a seat is displaced this frame: a lunge while declaring an attack,
-   * a sidestep when a blow misses it. Zero under reduced motion.
-   */
-  seatOffset(seat: number): Point {
-    const timeline = this.timeline;
-    if (!timeline || this.reduced) return { x: 0, y: 0 };
-
-    const t = this.replayTime;
-    let x = 0;
-    let y = 0;
-    for (const beat of timeline.beats) {
-      if (beat.kind === 'declare' && beat.seat === seat && beat.action === Action.Attack) {
-        const push = Math.sin(Math.PI * progress(t, beat)) * LUNGE;
-        const toward = this.direction(seat, beat.target);
-        x += toward.x * push;
-        y += toward.y * push;
-      } else if (beat.kind === 'impact' && beat.seat === seat && beat.outcome === AttackOutcome.Missed) {
-        const step = Math.sin(Math.PI * progress(t, beat)) * SIDESTEP;
-        const away = this.direction(beat.from, seat);
-        // Perpendicular to the blow: a dodge, not a retreat.
-        x += -away.y * step;
-        y += away.x * step;
-      }
-    }
-    return { x, y };
-  }
-
-  /** Opacity multiplier for a seat: hiders shimmer until the blows are in. */
-  seatAlpha(seat: number): number {
-    const until = this.guardUntil.get(seat);
-    if (until === undefined || this.replayTime > until || this.reduced) return 1;
-    const hiding = this.timeline?.beats.some(
-      (beat) => beat.kind === 'declare' && beat.seat === seat && beat.action === Action.Hide,
-    );
-    return hiding ? 0.55 + 0.12 * Math.sin(this.now * 18) : 1;
-  }
-
-  /** Screen shake for the current frame, applied by the arena to its world. */
-  shake(): Point {
-    if (this.now >= this.shakeUntil || this.reduced) return { x: 0, y: 0 };
-    const left = (this.shakeUntil - this.now) / 0.18;
-    const strength = this.shakeStrength * left;
-    return {
-      x: (Math.random() * 2 - 1) * strength,
-      y: (Math.random() * 2 - 1) * strength,
-    };
-  }
-
-  /** 0..1, peaking mid-storm, so the arena can flare the storm ring. */
-  stormFlare(): number {
-    const storm = this.timeline?.storm;
-    if (!storm) return 0;
-    return Math.sin(Math.PI * progress(this.replayTime, storm));
+    this.world.position.set(0, 0);
   }
 
   /** Crowns the last seat standing. Persists until the next match. */
   showWinner(seat: number): void {
     const at = this.positionOf(seat);
     if (!at) return;
-    this.winner?.destroy();
 
-    if (!this.reduced) {
-      this.burstOf(at, 16, { tint: FX.winner, life: 0.9, size: 12, speed: [70, 180] });
-      this.particle('ring', at, {
-        tint: FX.winner,
-        life: 0.8,
-        sizeFrom: 50,
-        sizeTo: 170,
-        alphaFrom: 0.9,
-        additive: true,
-      });
-    }
+    this.context.add(() => {
+      if (!this.reduced) {
+        this.burst(at, 16, { tint: FX.winner, life: 0.9, size: 12, speed: [70, 180] });
+        this.particle('ring', at, {
+          tint: FX.winner,
+          life: 0.8,
+          sizeFrom: 50,
+          sizeTo: 170,
+          alphaFrom: 0.9,
+          additive: true,
+        });
+      }
 
-    const flare = this.acquire('flare', FX.winner, true);
-    flare.position.set(at.x, at.y);
-    const banner = new Text({ text: 'LAST ONE STANDING', style: BANNER });
-    banner.anchor.set(0.5);
-    banner.position.set(at.x, at.y - 78);
-    this.layer.addChild(banner);
+      const flare = this.acquire('flare', FX.winner, true);
+      flare.position.set(at.x, at.y);
+      flare.alpha = 0;
+      const size = this.scaleFor(flare, 130);
+      flare.scale.set(size);
+      gsap.to(flare, { alpha: 0.85, duration: 0.3 });
 
-    const born = this.now;
-    this.winner = {
-      update: (now) => {
-        const age = now - born;
-        const pulse = this.reduced ? 0 : Math.sin(age * 3) * 0.08;
-        size(flare, 130 * (1 + pulse));
-        flare.alpha = Math.min(0.85, age * 3);
-        flare.rotation = this.reduced ? 0 : age * 0.4;
-        banner.alpha = Math.min(1, age * 2.5);
-        return true;
-      },
-      destroy: () => {
-        this.release(flare);
-        banner.destroy();
-      },
-    };
+      const banner = new Text({ text: 'LAST ONE STANDING', style: BANNER });
+      banner.anchor.set(0.5);
+      banner.position.set(at.x, at.y - 78);
+      banner.alpha = 0;
+      this.layer.addChild(banner);
+      gsap.to(banner, { alpha: 1, duration: 0.4 });
+
+      if (!this.reduced) {
+        gsap.to(flare, { rotation: Math.PI * 2, duration: 16, repeat: -1, ease: 'none' });
+        gsap.to(flare.scale, {
+          x: size * 1.08,
+          y: size * 1.08,
+          duration: 1,
+          yoyo: true,
+          repeat: -1,
+          ease: 'sine.inOut',
+        });
+      }
+    });
   }
 
-  // ------------------------------------------------------------------ triggers
+  // --------------------------------------------------------- on the timeline
 
-  private triggersFor(beat: Beat, combatEnd: number): Array<{ at: number; fire: () => void }> {
-    switch (beat.kind) {
-      case 'noShow':
-        return [{ at: beat.start, fire: () => this.noShow(beat.seat) }];
-      case 'declare':
-        return beat.action === Action.Defend || beat.action === Action.Hide
-          ? [{ at: beat.start, fire: () => this.guard(beat.seat, beat.action, combatEnd) }]
-          : [];
-      case 'travel':
-        return [{ at: beat.start, fire: () => this.projectile(beat.from, beat.to, beat, FX.projectile) }];
-      case 'impact':
-        return [{ at: beat.start, fire: () => this.impact(beat) }];
-      case 'riposte':
-        return [
-          { at: beat.start, fire: () => this.projectile(beat.from, beat.to, beat, FX.parry) },
-          { at: beat.end, fire: () => this.riposteLands(beat.to, beat.damage) },
-        ];
-      case 'storm':
-        return [{ at: beat.start, fire: () => this.storm(beat.seat, beat.damage) }];
-      case 'eliminate':
-        return [{ at: beat.start, fire: () => this.eliminate(beat.seat) }];
-    }
+  /**
+   * Fires a moment's effects when the replay reaches it, unless the replay only
+   * got there by jumping far past it.
+   */
+  private when(timeline: gsap.core.Timeline, at: number, fire: () => void): void {
+    timeline.call(
+      () => {
+        if (timeline.time() - at <= STALE) this.context.add(fire);
+      },
+      undefined,
+      at,
+    );
   }
+
+  /** A seat leaning out and back along a direction: a lunge or a sidestep. */
+  private sway(
+    timeline: gsap.core.Timeline,
+    seat: SeatDisplay | undefined,
+    direction: Point,
+    distance: number,
+    window: Window,
+  ): void {
+    if (!seat || this.reduced) return;
+    const reach = direction.multiplyScalar(distance);
+    // `sine.out` up, mirrored by the yoyo on the way back: one arch, which
+    // leaves the seat exactly home when the beat ends.
+    timeline.to(
+      seat,
+      { dx: reach.x, dy: reach.y, duration: span(window) / 2, ease: 'sine.out', yoyo: true, repeat: 1 },
+      window.start,
+    );
+  }
+
+  /** A defender's shield, raised on declaring and dropped once the blows are in. */
+  private shield(timeline: gsap.core.Timeline, seat: number, from: number, until: number): void {
+    if (this.reduced) return;
+    const at = this.positionOf(seat);
+    if (!at) return;
+
+    const ring = this.acquire('ring', FX.parry, true);
+    ring.position.set(at.x, at.y);
+    ring.alpha = 0;
+    const size = this.scaleFor(ring, SHIELD_SIZE);
+    ring.scale.set(size);
+
+    timeline
+      .to(ring, { alpha: SHIELD_ALPHA, duration: SHIELD_FADE }, from)
+      .to(
+        ring.scale,
+        {
+          x: size * 1.02,
+          y: size * 1.02,
+          duration: SHIELD_PULSE,
+          ease: 'sine.inOut',
+          yoyo: true,
+          repeat: breaths(until - from, SHIELD_PULSE),
+        },
+        from,
+      )
+      .to(ring, { alpha: 0, duration: SHIELD_FADE }, until)
+      .call(() => this.release(ring), undefined, until + SHIELD_FADE);
+  }
+
+  /** A hider flickering until the blows are in. */
+  private shimmer(timeline: gsap.core.Timeline, seat: SeatDisplay | undefined, from: number, until: number): void {
+    if (!seat || this.reduced) return;
+    timeline
+      .fromTo(
+        seat,
+        { veil: 0.67 },
+        {
+          veil: 0.43,
+          duration: SHIMMER,
+          ease: 'sine.inOut',
+          yoyo: true,
+          repeat: breaths(until - from, SHIMMER),
+          immediateRender: false,
+        },
+        from,
+      )
+      .set(seat, { veil: 1 }, until);
+  }
+
+  /** A projectile curving from one seat to another, landing exactly on its impact. */
+  private projectile(timeline: gsap.core.Timeline, from: number, to: number, window: Window, tint: number): void {
+    if (this.reduced) return;
+    const a = this.positionOf(from);
+    const b = this.positionOf(to);
+    if (!a || !b) return;
+
+    const bolt = new Container();
+    bolt.visible = false;
+    const head = this.acquire('glow', tint, true, bolt);
+    const trail = this.acquire('streak', tint, true, bolt);
+    head.scale.set(this.scaleFor(head, 26));
+    trail.scale.set(this.scaleFor(trail, 70));
+    trail.alpha = 0.75;
+    this.layer.addChild(bolt);
+
+    const start = new Point(a.x, a.y);
+    const end = new Point(b.x, b.y);
+    const along = end.subtract(start).normalize();
+    const middle = start.add(end).multiplyScalar(0.5).add(new Point(-along.y, along.x).multiplyScalar(ARC));
+
+    timeline
+      .set(bolt, { visible: true }, window.start)
+      .to(
+        bolt,
+        {
+          motionPath: {
+            // Plain objects: the plugin reads a path point's fields by enumerating them.
+            path: [start, middle, end].map(({ x, y }) => ({ x, y })),
+            fromCurrent: false,
+            curviness: 1,
+            // Turns the trail to lie along the curve, not the straight line.
+            autoRotate: Math.PI / 2,
+            useRadians: true,
+          },
+          duration: span(window),
+          ease: 'none',
+        },
+        window.start,
+      )
+      .call(
+        () => {
+          this.release(head);
+          this.release(trail);
+          bolt.destroy();
+        },
+        undefined,
+        window.end,
+      );
+  }
+
+  // --------------------------------------------------------------- moments
 
   private noShow(seat: number): void {
     const at = this.positionOf(seat);
@@ -347,76 +352,11 @@ export class Effects {
         sizeFrom: 40,
         sizeTo: 80,
         alphaFrom: 0.6,
-        vy: -18,
+        velocity: 18,
+        angle: -90,
       });
     }
     this.floatText(seat, 'no show', FX.noShow);
-  }
-
-  /** A defender's shield, or a hider's shimmer, held until the blows are in. */
-  private guard(seat: number, action: number, until: number): void {
-    this.guardUntil.set(seat, until);
-    if (action !== Action.Defend || this.reduced) return;
-
-    const at = this.positionOf(seat);
-    if (!at) return;
-    const shield = this.acquire('ring', FX.parry, true);
-    shield.position.set(at.x, at.y);
-    const born = this.now;
-    const drop = this.replayStart + until;
-
-    this.live.push({
-      update: (now) => {
-        const rise = Math.min(1, (now - born) / 0.15);
-        const fall = now > drop ? 1 - Math.min(1, (now - drop) / 0.15) : 1;
-        shield.alpha = 0.55 * rise * fall;
-        size(shield, 92 + Math.sin(now * 6) * 2);
-        return fall > 0;
-      },
-      destroy: () => this.release(shield),
-    });
-  }
-
-  /** A projectile bound to a beat's window, so it lands exactly on its impact. */
-  private projectile(from: number, to: number, window: { start: number; end: number }, tint: number): void {
-    if (this.reduced) return;
-    const a = this.positionOf(from);
-    const b = this.positionOf(to);
-    if (!a || !b) return;
-
-    const head = this.acquire('glow', tint, true);
-    const trail = this.acquire('streak', tint, true);
-    size(head, 26);
-    const start = this.replayStart + window.start;
-    const end = this.replayStart + window.end;
-    const normal = { x: -(b.y - a.y), y: b.x - a.x };
-    const length = Math.hypot(normal.x, normal.y) || 1;
-
-    this.live.push({
-      update: (now) => {
-        const p = progress(now, { start, end });
-        const bow = Math.sin(Math.PI * p) * ARC;
-        const x = a.x + (b.x - a.x) * p + (normal.x / length) * bow;
-        const y = a.y + (b.y - a.y) * p + (normal.y / length) * bow;
-        // Velocity of the curve, so the trail points along the path it is
-        // actually taking rather than along the straight line.
-        const lead = Math.min(1, p + 0.02);
-        const bowLead = Math.sin(Math.PI * lead) * ARC;
-        const nx = a.x + (b.x - a.x) * lead + (normal.x / length) * bowLead;
-        const ny = a.y + (b.y - a.y) * lead + (normal.y / length) * bowLead;
-
-        head.position.set(x, y);
-        trail.position.set(x, y);
-        trail.rotation = Math.atan2(ny - y, nx - x) + Math.PI / 2;
-        size(trail, 70);
-        trail.alpha = 0.75;
-        return p < 1;
-      },
-      destroy: () => {
-        this.release(head);
-        this.release(trail);
-      },
-    });
   }
 
   private impact(beat: Extract<Beat, { kind: 'impact' }>): void {
@@ -432,10 +372,10 @@ export class Effects {
           life: 0.45,
           sizeFrom: 58,
           sizeTo: 62,
-          rotation: Math.random() * Math.PI * 2,
+          rotation: gsap.utils.random(0, Math.PI * 2),
           additive: true,
         });
-        this.burstOf(at, 6, { tint: FX.hit, life: 0.35, size: 10, speed: [90, 170] });
+        this.burst(at, 6, { tint: FX.hit, life: 0.35, size: 10, speed: [90, 170] });
       }
       this.floatText(beat.seat, `-${beat.damage}`, FX.hit);
       return;
@@ -465,7 +405,8 @@ export class Effects {
           sizeFrom: 30,
           sizeTo: 64,
           alphaFrom: 0.7,
-          vy: -14,
+          velocity: 14,
+          angle: -90,
         });
       }
       this.floatText(beat.seat, 'miss', FX.miss);
@@ -477,7 +418,7 @@ export class Effects {
     if (!at) return;
     if (!this.reduced) {
       this.particle('flash', at, { tint: FX.parry, life: 0.22, sizeFrom: 22, sizeTo: 60, additive: true });
-      this.burstOf(at, 4, { tint: FX.parry, life: 0.3, size: 8, speed: [70, 130] });
+      this.burst(at, 4, { tint: FX.parry, life: 0.3, size: 8, speed: [70, 130] });
     }
     this.floatText(seat, `-${damage}`, FX.parry);
   }
@@ -515,19 +456,17 @@ export class Effects {
         additive: true,
       });
       for (let index = 0; index < 10; index += 1) {
-        const angle = (index / 10) * Math.PI * 2 + Math.random() * 0.5;
-        const speed = 90 + Math.random() * 100;
         this.particle('debris', at, {
           tint: 0x9a8f82,
-          life: 0.6 + Math.random() * 0.3,
-          sizeFrom: 18 + Math.random() * 10,
+          life: gsap.utils.random(0.6, 0.9),
+          sizeFrom: gsap.utils.random(18, 28),
           sizeTo: 6,
           alphaFrom: 1,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed - 40,
+          velocity: gsap.utils.random(90, 190),
+          angle: index * 36 + gsap.utils.random(0, 28),
           gravity: 260,
-          spin: (Math.random() * 2 - 1) * 6,
-          rotation: Math.random() * Math.PI * 2,
+          spin: gsap.utils.random(-6, 6),
+          rotation: gsap.utils.random(0, Math.PI * 2),
         });
       }
       this.particle('smoke', at, {
@@ -536,69 +475,81 @@ export class Effects {
         sizeFrom: 50,
         sizeTo: 115,
         alphaFrom: 0.5,
-        vy: -16,
+        velocity: 16,
+        angle: -90,
       });
-      this.shakeUntil = this.now + 0.18;
-      this.shakeStrength = 6;
+      // Five quick jolts to random offsets, then back to rest.
+      gsap.fromTo(
+        this.world,
+        { x: 0, y: 0 },
+        {
+          x: `random(${-SHAKE}, ${SHAKE})`,
+          y: `random(${-SHAKE}, ${SHAKE})`,
+          duration: 0.03,
+          repeat: 5,
+          yoyo: true,
+          repeatRefresh: true,
+          ease: 'none',
+          overwrite: true,
+          onComplete: () => this.world.position.set(0, 0),
+        },
+      );
     }
     this.floatText(seat, 'OUT', FX.kill);
   }
 
-  // ------------------------------------------------------------------ helpers
+  // ------------------------------------------------------------- building blocks
 
-  private particle(name: TextureName, at: Point, options: ParticleOptions): void {
+  private particle(name: FxTexture, at: PointLike, options: ParticleOptions): void {
     const sprite = this.acquire(name, options.tint, options.additive ?? false);
-    const born = this.now;
-    const from = options.alphaFrom ?? 1;
-    const to = options.alphaTo ?? 0;
-    let x = at.x;
-    let y = at.y;
-    const vx = options.vx ?? 0;
-    // Only the vertical velocity changes, because gravity is the only force.
-    let vy = options.vy ?? 0;
-    let last = born;
+    sprite.position.set(at.x, at.y);
     sprite.rotation = options.rotation ?? 0;
+    const from = this.scaleFor(sprite, options.sizeFrom);
+    const to = this.scaleFor(sprite, options.sizeTo);
 
-    this.live.push({
-      update: (now) => {
-        const age = now - born;
-        const p = Math.min(1, age / options.life);
-        const dt = now - last;
-        last = now;
-
-        vy += (options.gravity ?? 0) * dt;
-        x += vx * dt;
-        y += vy * dt;
-        sprite.position.set(x, y);
-        sprite.rotation += (options.spin ?? 0) * dt;
-        size(sprite, options.sizeFrom + (options.sizeTo - options.sizeFrom) * easeOutCubic(p));
-        sprite.alpha = from + (to - from) * p;
-        return p < 1;
-      },
-      destroy: () => this.release(sprite),
-    });
-    // Place it immediately, so it does not sit at the origin for one frame.
-    sprite.position.set(x, y);
-    size(sprite, options.sizeFrom);
-    sprite.alpha = from;
+    const life = gsap.timeline({ onComplete: () => this.release(sprite) });
+    life
+      .fromTo(sprite.scale, { x: from, y: from }, { x: to, y: to, duration: options.life, ease: 'power2.out' }, 0)
+      .fromTo(
+        sprite,
+        { alpha: options.alphaFrom ?? 1 },
+        { alpha: options.alphaTo ?? 0, duration: options.life, ease: 'none' },
+        0,
+      );
+    if (options.velocity) {
+      life.to(
+        sprite,
+        {
+          physics2D: {
+            velocity: options.velocity,
+            angle: options.angle ?? 0,
+            gravity: options.gravity ?? 0,
+          },
+          duration: options.life,
+        },
+        0,
+      );
+    }
+    if (options.spin) {
+      life.to(sprite, { rotation: `+=${options.spin}`, duration: options.life, ease: 'none' }, 0);
+    }
   }
 
-  /** A radial spray of small glowing sparks. */
-  private burstOf(
-    at: Point,
+  /** A radial spray of small glowing sparks, spread evenly with a little jitter. */
+  private burst(
+    at: PointLike,
     count: number,
     options: { tint: number; life: number; size: number; speed: [number, number] },
   ): void {
+    const step = 360 / count;
     for (let index = 0; index < count; index += 1) {
-      const angle = (index / count) * Math.PI * 2 + Math.random() * 0.6;
-      const speed = options.speed[0] + Math.random() * (options.speed[1] - options.speed[0]);
       this.particle('glow', at, {
         tint: options.tint,
         life: options.life,
         sizeFrom: options.size,
         sizeTo: 2,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        velocity: gsap.utils.random(...options.speed),
+        angle: index * step + gsap.utils.random(0, 34),
         additive: true,
       });
     }
@@ -617,42 +568,39 @@ export class Effects {
 
     const label = new Text({ text, style: { ...FLOAT, fill: tint } });
     label.anchor.set(0.5);
+    label.position.set(at.x, at.y + FLOAT_ORIGIN - slot * FLOAT_STACK);
     this.layer.addChild(label);
-    const born = this.now;
-    const baseY = at.y + FLOAT_ORIGIN - slot * FLOAT_STACK;
 
-    const step = (now: number) => {
-      const p = Math.min(1, (now - born) / FLOAT_LIFE);
-      label.position.set(at.x, baseY - easeOutCubic(p) * FLOAT_RISE);
-      label.alpha = p < 0.55 ? 1 : 1 - (p - 0.55) / 0.45;
-      label.scale.set(0.7 + 0.3 * Math.min(1, p / 0.15));
-      return p < 1;
-    };
-    step(born);
-
-    this.live.push({
-      update: step,
-      destroy: () => {
-        label.destroy();
-        const left = (this.floats.get(seat) ?? 1) - 1;
-        if (left <= 0) this.floats.delete(seat);
-        else this.floats.set(seat, left);
-      },
-    });
+    gsap
+      .timeline({
+        onComplete: () => {
+          label.destroy();
+          const left = (this.floats.get(seat) ?? 1) - 1;
+          if (left <= 0) this.floats.delete(seat);
+          else this.floats.set(seat, left);
+        },
+      })
+      .to(label, { y: `-=${FLOAT_RISE}`, duration: FLOAT_LIFE, ease: 'power2.out' }, 0)
+      .fromTo(label.scale, { x: 0.7, y: 0.7 }, { x: 1, y: 1, duration: FLOAT_LIFE * 0.15 }, 0)
+      // Holds for the first half of its life, then fades.
+      .to(label, { alpha: 0, duration: FLOAT_LIFE * 0.45, ease: 'none' }, FLOAT_LIFE * 0.55);
   }
 
+  /** Unit vector from one seat toward another. */
   private direction(from: number, to: number): Point {
     const a = this.positionOf(from);
     const b = this.positionOf(to);
-    if (!a || !b) return { x: 0, y: 0 };
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const length = Math.hypot(dx, dy) || 1;
-    return { x: dx / length, y: dy / length };
+    if (!a || !b || (a.x === b.x && a.y === b.y)) return new Point(0, 0);
+    return new Point(b.x, b.y).subtract(new Point(a.x, a.y)).normalize();
+  }
+
+  /** Scale that renders a sprite `pixels` wide, whatever its texture's resolution. */
+  private scaleFor(sprite: Sprite, pixels: number): number {
+    return pixels / (sprite.texture.width || 1);
   }
 
   /** Sprites are pooled: a busy round spawns dozens of them for half a second. */
-  private acquire(name: TextureName, tint: number, additive: boolean): Sprite {
+  private acquire(name: FxTexture, tint: number, additive: boolean, parent: Container = this.layer): Sprite {
     const sprite = this.pool.pop() ?? new Sprite();
     sprite.texture = this.textures[name];
     sprite.anchor.set(0.5);
@@ -660,21 +608,31 @@ export class Effects {
     sprite.blendMode = additive ? 'add' : 'normal';
     sprite.alpha = 1;
     sprite.rotation = 0;
+    sprite.position.set(0, 0);
     sprite.visible = true;
-    this.layer.addChild(sprite);
+    parent.addChild(sprite);
+    this.active.add(sprite);
     return sprite;
   }
 
   private release(sprite: Sprite): void {
+    if (!this.active.delete(sprite)) return;
+    gsap.killTweensOf([sprite, sprite.scale]);
     sprite.removeFromParent();
     this.pool.push(sprite);
   }
 }
 
-/** Sets a sprite's rendered size, whatever the resolution of its texture. */
-function size(sprite: Sprite, pixels: number): void {
-  const width = sprite.texture.width || 1;
-  sprite.scale.set(pixels / width);
+function span(window: Window): number {
+  return window.end - window.start;
+}
+
+/**
+ * How many times a yoyo of half-period `half` repeats inside `length` seconds,
+ * so it finishes on or before the moment its effect is meant to end.
+ */
+function breaths(length: number, half: number): number {
+  return Math.max(0, Math.floor(length / half) - 1);
 }
 
 /** The procedural stand-in for any texture that fails to load. */
@@ -684,10 +642,6 @@ function softGlow(): Graphics {
     glow.circle(0, 0, ring * 4).fill({ color: 0xffffff, alpha: 0.06 });
   }
   return glow;
-}
-
-function wallClock(): number {
-  return performance.now() / 1000;
 }
 
 function prefersReducedMotion(): boolean {
