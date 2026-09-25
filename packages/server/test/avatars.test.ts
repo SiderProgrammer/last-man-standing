@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AvatarRegistry, parseCollections, type AvatarSubject } from '../src/avatars.js';
+import { AvatarRegistry, parseCollections, type AvatarSubject } from '../src/chain/avatars.js';
 
 const COLLECTION = '0x00000000000000000000000000000000000000aa' as const;
 const ALICE = '0x00000000000000000000000000000000000000a1' as const;

@@ -8,7 +8,7 @@ import {
   type MatchResult,
 } from '@lms/protocol';
 import { gameEscrowAbi } from '@lms/protocol';
-import { config, type ServerConfig } from './config.js';
+import { config, type ServerConfig } from '../config.js';
 import { signerClients } from './viem.js';
 
 /**
