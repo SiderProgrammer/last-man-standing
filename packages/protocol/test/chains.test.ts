@@ -7,7 +7,7 @@ import {
   chainInfo,
   eidForChainId,
   normaliseOriginChainId,
-} from '../src/chains.js';
+} from '../src/chain/chains.js';
 
 const HUB = 11155111;
 

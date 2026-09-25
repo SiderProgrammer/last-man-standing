@@ -17,7 +17,7 @@ import {
   type SealedMove,
   type Seat,
 } from '@lms/protocol';
-import { resolveRound, type DeclaredMove } from './resolve.js';
+import { resolveRound, type DeclaredMove } from '../kernel/resolve.js';
 
 export type MatchErrorCode =
   | 'BAD_PHASE'

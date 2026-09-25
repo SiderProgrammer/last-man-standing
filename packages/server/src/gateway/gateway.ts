@@ -9,10 +9,10 @@ import {
   type LobbyInfo,
   type ServerMessage,
 } from '@lms/protocol';
-import type { Lobby } from '../rooms/lobby.js';
+import type { Lobby } from '../lobby/lobby.js';
 import type { SessionRelayer } from '../chain/relayer.js';
 import { errorFrame, parseClientMessage } from './frames.js';
-import type { Client } from '../rooms/room.js';
+import type { Client } from '../match/room.js';
 
 /**
  * Checks a login signature against an address.

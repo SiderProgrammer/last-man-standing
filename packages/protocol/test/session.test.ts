@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sessionCallDigest } from '../src/session.js';
+import { sessionCallDigest } from '../src/chain/session.js';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1' as const;
 const TARGET = '0x00000000000000000000000000000000000000b2' as const;

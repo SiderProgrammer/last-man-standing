@@ -115,7 +115,7 @@ cancels, settlements and withdrawals in any order.
 
 ## Hidden information: commit–reveal
 
-`packages/protocol/src/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
+`packages/protocol/src/game/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
 
 ### What it does
 
@@ -242,7 +242,7 @@ It currently targets a minimal local coordinator interface and runs against
 ## Cross-chain
 
 `contracts/src/SpokeEscrow.sol` · `contracts/src/interfaces/ICrossChainMessenger.sol` ·
-`contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chains.ts` ·
+`contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chain/chains.ts` ·
 **Mocked**
 
 ### What it does
@@ -531,7 +531,7 @@ nobody backed a winning outcome, the book aborts and every stake is refundable.
 
 ### Off-chain: round eliminations
 
-`packages/protocol/src/betting.ts` · **Live** · **Known issue**
+`packages/protocol/src/game/betting.ts` · **Live** · **Known issue**
 
 Before each commit window closes, spectators back a seat to be eliminated that
 round, using play-money chips. Parimutuel again: tickets on eliminated seats
@@ -582,14 +582,14 @@ fails on drift.
 The deterministic kernel that decides what happens in a round, with no I/O
 whatsoever.
 
-- **`resolve.ts`** — `resolveRound(rules, seed, round, states, moves)` is pure
+- **`kernel/resolve.ts`** — `resolveRound(rules, seed, round, states, moves)` is pure
   and total. It does not read the clock, does not use floating point, and does
   not depend on the order moves arrive in.
-- **`match.ts`** — the per-match state machine: commit → reveal → resolve, phase
+- **`match/match.ts`** — the per-match state machine: commit → reveal → resolve, phase
   guards, commitment verification, ranking, and the public snapshot.
-- **`replay.ts`** — recomputes an entire match from the seed and published move
+- **`match/replay.ts`** — recomputes an entire match from the seed and published move
   log, and checks a claimed result against it.
-- **`strategy.ts`** — seeded bots: `randomStrategy` and `readerStrategy`, the
+- **`bots/strategy.ts`** — seeded bots: `randomStrategy` and `readerStrategy`, the
   latter punishing repeat attackers and piling onto the seat everyone else is
   hunting.
 
@@ -620,12 +620,15 @@ Two supporting decisions:
 | `main.ts` | Composition root: reads the config, wires every component, listens |
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
-| `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
-| **`rooms/`** | **Live matches** |
-| `rooms/room.ts` | One live match: phases, the round clock, client fan-out |
-| `rooms/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
-| `rooms/bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
-| `rooms/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| **`match/`** | **One live match** |
+| `match/room.ts` | Phases, the round clock, client fan-out |
+| **`bots/`** | **The house players** |
+| `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
+| **`betting/`** | **The play-money book** |
+| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| **`lobby/`** | **Which matches exist, and what happens when one ends** |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |

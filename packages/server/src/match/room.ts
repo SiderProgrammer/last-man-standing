@@ -9,8 +9,8 @@ import {
   type ServerMessage,
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
-import { BotDriver } from './bots.js';
-import { ChipLedger } from './chips.js';
+import { BotDriver } from '../bots/bots.js';
+import { ChipLedger } from '../betting/chips.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {

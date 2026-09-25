@@ -1,5 +1,5 @@
-import type { AvatarEntry } from './avatars.js';
-import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './types.js';
+import type { AvatarEntry } from './chain/avatars.js';
+import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =

@@ -118,20 +118,24 @@ about rendering. Everything that decides who gets paid lives in `protocol` + `en
 
 | File | Responsibility |
 | --- | --- |
-| `types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
-| `rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
-| `chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
-| `hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
-| `eip712.ts` | `MatchResult` typed-data schema and domain |
+| `index.ts` | The package's exports, grouped by the folders below |
 | `wire.ts` | `ClientMessage` / `ServerMessage` union, `LobbyInfo`, login prefix |
-| `betting.ts` | `settleEliminationBook` — parimutuel payout for the round book |
-| `escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
-| `avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
-| `session.ts` | The `SessionKeyDelegate` ABI and `sessionCallDigest`, pinned to Solidity |
-| `address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
-| `errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
+| **`game/`** | **The rules everybody agrees on** |
+| `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
+| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
+| `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
+| `game/betting.ts` | `settleEliminationBook` — parimutuel payout for the round book |
+| **`chain/`** | **Everything tied to a chain or a contract** |
+| `chain/chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
+| `chain/eip712.ts` | `MatchResult` typed-data schema and domain |
+| `chain/escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
+| `chain/avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
+| `chain/session.ts` | The `SessionKeyDelegate` ABI and `sessionCallDigest`, pinned to Solidity |
+| **`util/`** | **Small shared helpers** |
+| `util/address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
+| `util/errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
 
-Everything in `hash.ts` is built with `abi.encode` so Solidity can recompute it
+Everything in `game/hash.ts` is built with `abi.encode` so Solidity can recompute it
 byte-for-byte. `contracts/src/libraries/HashLib.sol` is the mirror, and both sides pin
 the same frozen vectors (`packages/protocol/test/parity.test.ts` and
 `contracts/test/unit/HashLib.t.sol`), so an encoding change fails exactly one suite
@@ -139,13 +143,13 @@ instead of drifting silently.
 
 ### `packages/engine` — deterministic game logic
 
-- **`resolve.ts`** is the kernel: `resolveRound(rules, seed, round, states, moves)` is
+- **`kernel/resolve.ts`** is the kernel: `resolveRound(rules, seed, round, states, moves)` is
   pure and total. It does not read the clock, does not use floating point, and does not
   depend on the order moves arrive in. This is what makes a match replayable.
-- **`match.ts`** is the per-match state machine: commit → reveal → resolve, phase
+- **`match/match.ts`** is the per-match state machine: commit → reveal → resolve, phase
   guards, commitment verification, ranking, and the public snapshot that is safe to
   broadcast (it carries seat numbers and HP, never a pending action).
-- **`replay.ts`** is the audit path: `replayMatch(setup, moveLog)` recomputes the whole
+- **`match/replay.ts`** is the audit path: `replayMatch(setup, moveLog)` recomputes the whole
   match from the seed and published moves, and `verifyResult` checks a claimed result
   against it. It shares nothing with `Match` except the pure kernel. The initial state,
   the per-round fold and the ranking rule are therefore written out twice **on purpose**:
@@ -153,7 +157,7 @@ instead of drifting silently.
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
   `properties.test.ts` replays 40 matches across both bot strategies to hold the two
   derivations to the same answer.
-- **`strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
+- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
   `readerStrategy`.
 
 ### `packages/server` — authoritative, but not trusted
@@ -163,12 +167,15 @@ instead of drifting silently.
 | `main.ts` | Composition root: reads the config, wires every component, listens |
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
-| `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
-| **`rooms/`** | **Live matches** |
-| `rooms/room.ts` | One live match: phases, the round clock, client fan-out |
-| `rooms/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
-| `rooms/bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
-| `rooms/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| **`match/`** | **One live match** |
+| `match/room.ts` | Phases, the round clock, client fan-out |
+| **`bots/`** | **The house players** |
+| `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
+| **`betting/`** | **The play-money book** |
+| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| **`lobby/`** | **Which matches exist, and what happens when one ends** |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |

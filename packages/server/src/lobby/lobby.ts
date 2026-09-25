@@ -12,9 +12,9 @@ import {
   type Seat,
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
-import { Room, type Client, type RoomOptions } from './room.js';
+import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
-import type { MatchArchive } from '../store.js';
+import type { MatchArchive } from './store.js';
 import type { Relayer } from '../chain/attestor.js';
 
 export interface LobbyOptions {
