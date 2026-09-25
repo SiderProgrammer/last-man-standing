@@ -617,34 +617,25 @@ Two supporting decisions:
 
 | File | Responsibility |
 | --- | --- |
-| `main.ts` | Entry point, three lines: calls `start()` |
-| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
-| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
-| **`screens/`** | **What the player sees, and the controls on it** |
-| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
-| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
-| **`wallet/`** | **The player's account** |
-| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
-| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
-| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
-| **`game/`** | **Match logic that runs in the browser** |
-| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
-| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
-| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
-| **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring, and the round replay |
-| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a timeline, and samples it at time `t` |
-| `arena/effects.ts` | Pixi effects for the replay: projectiles, impacts, storm, shatter, winner |
-| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
-| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
-| **`ui/`** | **The DOM around the canvas** |
-| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
-| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
-| **`io/`** | **Browser I/O** |
-| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
-| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
+| `main.ts` | Composition root: reads the config, wires every component, listens |
+| `index.ts` | The package's public exports. Importing it boots nothing |
+| `config.ts` | Environment configuration |
+| `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
+| **`rooms/`** | **Live matches** |
+| `rooms/room.ts` | One live match: phases, the round clock, client fan-out |
+| `rooms/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| `rooms/bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
+| `rooms/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| **`gateway/`** | **The socket boundary** |
+| `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
+| `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
+| **`chain/`** | **Everything that talks to a chain** |
+| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
+| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
+| `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
+| `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
+| `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
 ### Design decisions worth knowing
 
@@ -681,20 +672,39 @@ Two supporting decisions:
 | File | Responsibility |
 | --- | --- |
 | `main.ts` | Entry point, three lines: calls `start()` |
-| `app.ts` | The shell: state, socket wiring, dispatch, wallet and session flows, DOM writes |
-| `dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `phase.ts` | *Pure.* `phasePlan` — control states, and whether a reveal is due |
-| `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
-| `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, attack bolts, storm ring |
-| `theme.ts` | The arena's palette and text styles |
-| `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
-| `reads.ts` | *Pure.* Per-opponent tendencies and tells, derived from public history |
-| `net.ts` | Typed socket with backoff reconnect, re-auth and an outbox |
-| `wallet.ts` | EIP-1193 session, login signature, escrow / avatar / session calls |
-| `session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
-| `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
-| `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
+| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
+| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
+| **`assets/`** | **Everything loaded at boot** |
+| `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
+| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot |
+| **`screens/`** | **What the player sees, and the controls on it** |
+| `screens/loading.ts` | The boot screen: a progress bar while assets load |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| **`wallet/`** | **The player's account** |
+| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
+| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| **`game/`** | **Match logic that runs in the browser** |
+| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
+| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
+| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| **`arena/`** | **The Pixi canvas** |
+| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring |
+| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
+| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
+| `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
+| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
+| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| **`ui/`** | **The DOM around the canvas** |
+| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
+| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
+| **`io/`** | **Browser I/O** |
+| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
+| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
 
 ### Why these choices
 
