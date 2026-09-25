@@ -35,7 +35,10 @@ function playOut(instance: Room, now = 0): number {
     // than `instance.match.phase` itself: the commit can open the reveal window
     // mid-iteration, which control-flow analysis of a getter cannot see.
     const phase: MatchPhaseValue = instance.match.phase;
-    if (phase === MatchPhase.Commit && instance.match.playerState(0).alive) {
+    // Under a replay hold a commit is kept without opening the reveal, so the
+    // human may already be committed while the phase is still Commit.
+    const pending = instance.match.publicState().committed.includes(0);
+    if (phase === MatchPhase.Commit && instance.match.playerState(0).alive && !pending) {
       const target = instance.match.alive.find((seat) => seat !== 0) ?? 0;
       const move = humanMove(instance, Action.Attack, target);
       instance.submitCommit(HUMAN, commitMove(instance.matchId, instance.match.round, 0, move), clock);
@@ -135,6 +138,101 @@ describe('room lifecycle', () => {
     expect(finished).not.toBeNull();
     expect(client.last('finished')?.result.historyRoot).toBe(instance.match.historyRoot);
     expect(new Set(client.last('finished')?.ranking).size).toBe(4);
+  });
+});
+
+describe('replay hold', () => {
+  const REPLAY = 2_500;
+
+  /** Resolves round 1 at t=1000 by committing and revealing the human's move. */
+  function resolveFirstRound(instance: Room): void {
+    const move = humanMove(instance, Action.Defend);
+    instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, move), 1_000);
+    instance.submitReveal(HUMAN, move, 1_000);
+  }
+
+  it('starts the next commit clock only after the replay', () => {
+    const instance = room(4, 'hold-deadline', { replayMs: REPLAY });
+    resolveFirstRound(instance);
+
+    expect(instance.match.round).toBe(2);
+    expect(instance.deadline).toBe(1_000 + REPLAY + OPTIONS.commitMs);
+  });
+
+  it('tells clients how long the replay lasts', () => {
+    const instance = room(4, 'hold-message', { replayMs: REPLAY });
+    const client = new FakeClient(HUMAN);
+    instance.attach(client);
+    resolveFirstRound(instance);
+
+    expect(client.last('round')?.replayMs).toBe(REPLAY);
+  });
+
+  /**
+   * The trap this guards: bots commit the instant a round resolves, so a
+   * human locking in during the replay would complete the table and skip the
+   * pause entirely.
+   */
+  it('keeps a commit made during the replay but does not open the reveal early', () => {
+    const instance = room(4, 'hold-early', { replayMs: REPLAY });
+    resolveFirstRound(instance);
+
+    const move = humanMove(instance, Action.Hide);
+    instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_500);
+
+    expect(instance.match.phase).toBe(MatchPhase.Commit);
+    expect(instance.match.publicState().committed).toContain(0);
+  });
+
+  it('opens the reveal as soon as the replay ends for a table that is already committed', () => {
+    const instance = room(4, 'hold-release', { replayMs: REPLAY });
+    resolveFirstRound(instance);
+    const move = humanMove(instance, Action.Hide);
+    instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_500);
+
+    instance.tick(1_000 + REPLAY - 1);
+    expect(instance.match.phase).toBe(MatchPhase.Commit);
+
+    instance.tick(1_000 + REPLAY);
+    expect(instance.match.phase).toBe(MatchPhase.Reveal);
+  });
+
+  it('does not wait on the replay for a table that has not committed', () => {
+    const instance = room(4, 'hold-waiting', { replayMs: REPLAY });
+    resolveFirstRound(instance);
+
+    // The hold ends with the human still thinking: the clock runs as normal.
+    instance.tick(1_000 + REPLAY + 1);
+    expect(instance.match.phase).toBe(MatchPhase.Commit);
+  });
+
+  it('never holds back the result of the final round', () => {
+    let finishedAt: number | null = null;
+    const instance = room(4, 'hold-final', {
+      replayMs: REPLAY,
+      onFinished: () => {
+        finishedAt = instance.match.round;
+      },
+    });
+    const client = new FakeClient(HUMAN);
+    instance.attach(client);
+
+    playOut(instance);
+
+    // Settlement fires the moment the last round resolves; only the client
+    // waits to *show* it.
+    expect(finishedAt).not.toBeNull();
+    expect(client.last('finished')).toBeDefined();
+  });
+
+  it('opens the next window immediately with no replay configured', () => {
+    const instance = room(4, 'hold-none');
+    resolveFirstRound(instance);
+
+    expect(instance.deadline).toBe(1_000 + OPTIONS.commitMs);
+    const move = humanMove(instance, Action.Hide);
+    instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_001);
+    expect(instance.match.phase).toBe(MatchPhase.Reveal);
   });
 });
 

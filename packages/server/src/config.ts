@@ -19,6 +19,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     chainId: Number(env.CHAIN_ID ?? 11155111),
     commitMs: Number(env.COMMIT_MS ?? 20_000),
     revealMs: Number(env.REVEAL_MS ?? 12_000),
+    /** Hold after each round so clients can replay it before the next clock starts. */
+    replayMs: Number(env.REPLAY_MS ?? 2_500),
     startingChips: Number(env.STARTING_CHIPS ?? 1_000),
     rpcUrl: env.RPC_URL ?? '',
     escrow: (env.ESCROW_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,

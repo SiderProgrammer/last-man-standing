@@ -60,6 +60,36 @@ describe('commit phase', () => {
   });
 });
 
+describe('replay hold', () => {
+  it('closes every control and relabels the phase while the last round plays', () => {
+    const plan = phasePlan(at(MatchPhase.Commit), {
+      ...SEATED,
+      draft: { action: 2, target: 0 },
+      replaying: true,
+    });
+    expect(plan).toEqual({
+      label: 'Round 3 — replay',
+      actionsEnabled: false,
+      lockInDisabled: true,
+      betDisabled: true,
+      statusText: 'Watching the last round…',
+      shouldReveal: false,
+    });
+  });
+
+  it('opens the commit controls again once the replay is over', () => {
+    const plan = phasePlan(at(MatchPhase.Commit), { ...SEATED, replaying: false });
+    expect(plan.label).toBe('Round 3 — commit');
+    expect(plan.actionsEnabled).toBe(true);
+  });
+
+  /** The hold only ever precedes a commit window; a reveal must never wait on it. */
+  it('does not hold back a reveal', () => {
+    const plan = phasePlan(at(MatchPhase.Reveal), { ...SEATED, replaying: true });
+    expect(plan.shouldReveal).toBe(true);
+  });
+});
+
 describe('reveal phase', () => {
   it('asks for a reveal from a seated player who has not sent one', () => {
     const plan = phasePlan(at(MatchPhase.Reveal), SEATED);

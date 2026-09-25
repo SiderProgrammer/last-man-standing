@@ -1,0 +1,37 @@
+Arena effect textures
+=====================
+
+Source:   Particle Pack 1.1, by Kenney Vleugels (Kenney.nl)
+          https://kenney.nl/assets/particle-pack
+License:  Creative Commons Zero (CC0 1.0), public domain dedication
+          http://creativecommons.org/publicdomain/zero/1.0/
+          Use in personal and commercial projects is permitted. Credit is
+          appreciated but not required; it is given here anyway.
+
+The pack's author also credits Indigo Ray, Craig Nisbet, Zoltan Erdokovy,
+Heliagon, ThreeDee, Killst4r and Tim2501 for its filter templates.
+
+Changes from the originals
+--------------------------
+
+Each file was taken from the pack's "PNG (Transparent)" set, resized from
+512x512 with Lanczos resampling, and converted to white RGB with the shape
+carried entirely in alpha, so that a Pixi tint reproduces the arena's theme
+colour exactly rather than a darker cast of it.
+
+  Shipped as       Original           Size
+  --------------   ----------------   -------
+  glow.png         circle_05.png      128x128
+  streak.png       trace_06.png       128x128
+  flash.png        star_08.png        128x128
+  burst.png        scorch_01.png      128x128
+  claw.png         scratch_01.png     128x128
+  shield.png       twirl_02.png       128x128
+  ring.png         circle_02.png      256x256
+  puff.png         smoke_03.png       128x128
+  blast.png        scorch_03.png      128x128
+  debris.png       dirt_02.png        128x128
+  shockwave.png    circle_03.png      256x256
+  smoke.png        smoke_07.png       128x128
+  bolt.png         spark_05.png       128x128
+  flare.png        star_09.png        128x128

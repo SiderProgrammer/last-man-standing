@@ -27,6 +27,12 @@ export interface RoomOptions {
   startingChips: number;
   /** Seats played by the server's bots. Empty for a fully human lobby. */
   botSeats: readonly number[];
+  /**
+   * Pause after a round resolves, before the next commit clock starts, so the
+   * client can replay the round without eating into anyone's decision time.
+   * Zero (the default) opens the next window immediately.
+   */
+  replayMs?: number;
   onFinished?: MatchFinished;
 }
 
@@ -49,6 +55,13 @@ export class Room {
   /** Cosmetic only, and resolved off the match's critical path. */
   private avatars: AvatarEntry[] = [];
   private deadlineAt: number;
+  /**
+   * End of the replay hold after the last round. Commits are accepted during
+   * it, but the reveal cannot open early until it has passed — otherwise a
+   * table where the bots commit at resolve time would skip the pause the
+   * moment the human locked in.
+   */
+  private replayUntil = 0;
   private settled = false;
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
@@ -114,7 +127,9 @@ export class Room {
   submitCommit(address: `0x${string}`, commitment: `0x${string}`, now: number = Date.now()): void {
     const seat = this.requireSeat(address);
     this.match.submitCommit(seat, commitment);
-    if (this.match.allCommitted()) this.openReveal(now);
+    // During the hold the commit is kept but the fast path waits: `tick` opens
+    // the reveal once the replay has finished.
+    if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
     else this.broadcastState();
   }
 
@@ -146,7 +161,19 @@ export class Room {
 
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
-    if (this.match.finished || now < this.deadlineAt) return;
+    if (this.match.finished) return;
+    // A table that finished committing during the replay hold was waiting only
+    // on the hold, not on the clock.
+    if (
+      this.match.phase === MatchPhase.Commit &&
+      now >= this.replayUntil &&
+      now < this.deadlineAt &&
+      this.match.allCommitted()
+    ) {
+      this.openReveal(now);
+      return;
+    }
+    if (now < this.deadlineAt) return;
     if (this.match.phase === MatchPhase.Commit) this.openReveal(now);
     else if (this.match.phase === MatchPhase.Reveal) this.resolveRound(now);
   }
@@ -180,6 +207,7 @@ export class Room {
 
     const record = this.match.resolve();
     this.chips.settle(record.eliminated);
+    const replayMs = this.options.replayMs ?? 0;
 
     for (const client of this.clients) {
       client.send({
@@ -188,15 +216,22 @@ export class Room {
         lines: describeRound(record),
         book: this.bookSnapshot(client.address),
         chips: this.chipsOf(client.address),
+        replayMs,
       });
     }
 
+    // Settlement is never held for a cosmetic: the client defers showing the
+    // result until its replay ends, the server does not defer producing it.
     if (this.match.finished) {
       this.finish();
       return;
     }
 
-    this.deadlineAt = now + this.options.commitMs;
+    // No replay means no hold at all, not a zero-length one: the gate compares
+    // against caller-supplied timestamps, and a hold ending "now" would still
+    // reject a commit stamped a moment earlier.
+    this.replayUntil = replayMs > 0 ? now + replayMs : 0;
+    this.deadlineAt = now + replayMs + this.options.commitMs;
     this.bots.commit(this.match);
     this.broadcastState();
   }

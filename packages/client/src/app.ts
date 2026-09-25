@@ -68,6 +68,18 @@ interface AppState {
   committedRound: number | null;
   /** Round whose reveal is already on the server. */
   revealedRound: number | null;
+  /**
+   * True while the last round is being replayed. The server holds the next
+   * commit clock for the same length, so the controls stay closed without
+   * costing anyone decision time.
+   */
+  replaying: boolean;
+  /**
+   * A `finished` that arrived mid-replay. Settlement is never delayed on the
+   * server; only *showing* the result waits, so the final kill plays before the
+   * "match over" line spoils it.
+   */
+  pendingFinish: Extract<ServerMessage, { type: 'finished' }> | null;
 }
 
 const app: AppState = {
@@ -86,9 +98,14 @@ const app: AppState = {
   draft: null,
   committedRound: null,
   revealedRound: null,
+  replaying: false,
+  pendingFinish: null,
 };
 
 let arena: Arena | null = null;
+/** Ends the current replay hold. Owned here, not by the renderer, so the
+ *  controls still unlock if the canvas never managed to mount. */
+let replayTimer: ReturnType<typeof setTimeout> | null = null;
 let net: Net;
 
 /**
@@ -160,24 +177,17 @@ function onServerMessage(message: ServerMessage): void {
       app.book = message.book;
       setChips(message.chips);
       appendRound(message.lines, message.record.round, message.record.eliminated);
+      // Before the post-round snapshot lands, which follows within
+      // milliseconds: the replay starts from the HP still on screen.
       arena?.showRound(message.record);
+      startReplay(message.replayMs);
       break;
     }
 
-    case 'finished': {
-      setChips(message.chips);
-      const winner = message.ranking[0];
-      const youWon = winner !== undefined && winner === app.you;
-      appendLine(
-        youWon
-          ? `You are the last one standing after ${message.result.rounds} rounds.`
-          : `Match over — seat #${winner ?? '?'} took it after ${message.result.rounds} rounds.`,
-        'round-head',
-      );
-      forgetMatch(message.result.matchId);
-      lockControls('Match finished.');
+    case 'finished':
+      if (app.replaying) app.pendingFinish = message;
+      else showFinished(message);
       break;
-    }
 
     case 'relayed':
       toast(`Sent without a wallet prompt · ${short(message.hash)}`);
@@ -189,6 +199,49 @@ function onServerMessage(message: ServerMessage): void {
       toast(message.message);
       break;
   }
+}
+
+function startReplay(replayMs: number): void {
+  if (replayTimer) clearTimeout(replayTimer);
+  // A server with no hold configured still gets the animation, just without
+  // the controls closing for it.
+  if (replayMs <= 0) {
+    endReplay();
+    return;
+  }
+  app.replaying = true;
+  if (app.match) syncPhase(app.match);
+  replayTimer = setTimeout(endReplay, replayMs);
+}
+
+/**
+ * Re-runs the phase plan when the hold ends. Nothing else would: the next
+ * snapshot arrived back when the round resolved, so without this the controls
+ * would stay closed until something unrelated pushed a state.
+ */
+function endReplay(): void {
+  replayTimer = null;
+  app.replaying = false;
+  if (app.match) syncPhase(app.match);
+
+  const finished = app.pendingFinish;
+  app.pendingFinish = null;
+  if (finished) showFinished(finished);
+}
+
+function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
+  setChips(message.chips);
+  const winner = message.ranking[0];
+  const youWon = winner !== undefined && winner === app.you;
+  appendLine(
+    youWon
+      ? `You are the last one standing after ${message.result.rounds} rounds.`
+      : `Match over — seat #${winner ?? '?'} took it after ${message.result.rounds} rounds.`,
+    'round-head',
+  );
+  if (winner !== undefined) arena?.showWinner(winner);
+  forgetMatch(message.result.matchId);
+  lockControls('Match finished.');
 }
 
 function onState(
@@ -210,6 +263,11 @@ function onState(
     app.revealedRound = null;
     app.draft = null;
     app.avatars = [];
+    // A replay from the previous match must not close this one's controls.
+    if (replayTimer) clearTimeout(replayTimer);
+    replayTimer = null;
+    app.replaying = false;
+    app.pendingFinish = null;
     dom.feed.replaceChildren();
     showMatchScreen();
   }
@@ -236,6 +294,7 @@ function syncPhase(state: PublicMatchState): void {
     committedRound: app.committedRound,
     revealedRound: app.revealedRound,
     draft: app.draft,
+    replaying: app.replaying,
   });
 
   dom.phaseLabel.textContent = plan.label;

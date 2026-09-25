@@ -57,7 +57,19 @@ export type ServerMessage =
       chips: number;
       book: BookSnapshot;
     }
-  | { type: 'round'; record: RoundRecord; lines: string[]; book: BookSnapshot; chips: number }
+  | {
+      type: 'round';
+      record: RoundRecord;
+      lines: string[];
+      book: BookSnapshot;
+      chips: number;
+      /**
+       * How long the server holds the next commit clock while clients replay
+       * this round. A relative duration rather than a timestamp, so the client
+       * never has to reconcile its clock with the server's.
+       */
+      replayMs: number;
+    }
   /**
    * Avatars for a match's seats. Sent separately from `state` because it
    * arrives later — the seats are known the moment the room opens, the NFT

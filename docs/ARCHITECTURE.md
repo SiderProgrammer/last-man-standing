@@ -211,8 +211,10 @@ any player can lock the lobby themselves.
 | `phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
 | `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
 | `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `arena.ts` | Pixi scene: seats on a circle, HP arcs, attack bolts on reveal, storm ring |
-| `theme.ts` | The arena's palette and text styles |
+| `arena.ts` | Pixi scene: seats on a circle, HP arcs, storm ring, and the round replay |
+| `choreography.ts` | *Pure.* Turns a `RoundRecord` into a timeline, and samples it at time `t` |
+| `effects.ts` | Pixi effects for the replay: projectiles, impacts, storm, shatter, winner |
+| `theme.ts` | The arena's palette and text styles, including the replay's effect tints |
 | `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
 | `reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
@@ -235,6 +237,45 @@ Three things are worth calling out:
 - **The reads panel is bookkeeping, not privileged data.** It is computed from the same
   history every spectator receives — it just does the counting the player would otherwise
   do on paper.
+
+### The round replay
+
+A resolved round is played back rather than snapped into place: attackers lunge,
+projectiles travel, parries flash and bounce a riposte back, hiders sidestep, the storm
+strikes every survivor, and eliminated seats shatter with a short screen shake. The
+winner is crowned after the final round.
+
+- **Choreography is pure.** `choreograph(record, before)` turns a `RoundRecord` into
+  timed beats; `sample(timeline, t)` says what each seat should display at `t`. It uses
+  nothing but the published record, so the replay can never show anything the history
+  feed does not. HP moves between two waypoints and the client holds no rule constants:
+  `before − damage − riposte` is exact from the record, and the end is always the
+  published `hpAfter`. That keeps it honest when the engine does something the client
+  cannot reconstruct, such as reviving the least-overkilled seat on 1 HP.
+- **The arena shows less than it knows while replaying.** The server sends `round`
+  and then, synchronously, the post-round snapshot. Painting that snapshot would refill
+  or empty every arc before the replay could show how. So while a replay runs, HP and
+  liveness come from `sample`; afterwards the snapshot takes over. After the *final*
+  round no snapshot ever follows, so the replay's last frame stays pinned instead of
+  reverting to the state the round began with.
+- **The server holds the clock, not the client.** After a round resolves the room waits
+  `REPLAY_MS` before the next commit window starts, and `round` carries that as a
+  relative `replayMs` so no clock needs reconciling. Commits made during the hold are
+  kept, but the reveal cannot open early. Without that gate, a practice table would skip
+  the pause entirely, because bots commit the instant a round resolves. Settlement is
+  never delayed for a cosmetic: `finished` goes out immediately, and only the client
+  defers *showing* it until the replay has played.
+- **The replay runs on the wall clock.** A clock accumulated from frame deltas falls
+  behind real time on a slow device and would let the replay spill into the commit
+  window. Triggers that frames arrive too late for are dropped rather than fired in a pile.
+- **Textures are optional.** The effects use fourteen CC0 textures from Kenney's
+  Particle Pack in `packages/client/public/fx/` (about 98 KB, provenance in its
+  `LICENSE.txt`), white with the shape in alpha so they tint to the theme exactly. A
+  texture that fails to load becomes a generated glow, just as a seat without an avatar
+  keeps its plain circle.
+- **Reduced motion is respected.** Under `prefers-reduced-motion`, travel, particles,
+  lunges and shake are skipped; the HP drain and the floating numbers remain, because
+  they carry information rather than decoration.
 
 ### `contracts/` — where the value lives
 
@@ -425,6 +466,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | `WS_PORT` | `8787` | WebSocket / HTTP port |
 | `CHAIN_ID` | `11155111` | Hub chain id |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
+| `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
 | `STARTING_CHIPS` | `1000` | Off-chain betting stack |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |
 | `ESCROW_ADDRESS` | zero | `GameEscrow` to watch and settle against |

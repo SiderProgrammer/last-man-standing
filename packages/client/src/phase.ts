@@ -29,6 +29,11 @@ export interface PhaseContext {
   committedRound: number | null;
   revealedRound: number | null;
   draft: unknown;
+  /**
+   * True while the last round is being replayed. The server holds the next
+   * commit clock for exactly this long, so nobody loses decision time to it.
+   */
+  replaying?: boolean;
 }
 
 /**
@@ -41,6 +46,19 @@ export interface PhaseContext {
 export function phasePlan(state: PublicMatchState, context: PhaseContext): PhasePlan {
   const seated = context.you !== null;
   const committed = context.committedRound === state.round;
+
+  if (state.phase === MatchPhase.Commit && context.replaying) {
+    return {
+      label: `Round ${state.round} — replay`,
+      actionsEnabled: false,
+      lockInDisabled: true,
+      // The book is open during the hold on the server, but a bet placed while
+      // the last round is still playing out is almost certainly a misclick.
+      betDisabled: true,
+      statusText: 'Watching the last round…',
+      shouldReveal: false,
+    };
+  }
 
   if (state.phase === MatchPhase.Commit) {
     return {

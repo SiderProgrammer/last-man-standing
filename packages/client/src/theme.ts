@@ -1,5 +1,7 @@
 import type { TextStyleOptions } from 'pixi.js';
 
+const FONT = 'Segoe UI, sans-serif';
+
 /**
  * The arena's palette and type, as Pixi wants them.
  *
@@ -24,7 +26,41 @@ export const COLORS = {
   storm: 0x3a2d4a,
 } as const;
 
-const FONT = 'Segoe UI, sans-serif';
+/**
+ * Tints for the round replay. The textures are white with the shape in alpha,
+ * so each of these comes out exactly as written. Hit, parry and miss reuse the
+ * arena's existing outcome colours so the replay reads the same as the history
+ * feed does.
+ */
+export const FX = {
+  projectile: COLORS.attack,
+  hit: COLORS.attack,
+  parry: COLORS.parried,
+  miss: 0xaab4c6,
+  storm: 0xb49cff,
+  kill: 0xf5a34b,
+  noShow: COLORS.muted,
+  winner: 0xf5d06f,
+  /** Dark outline behind floating numbers, so they read over any avatar. */
+  textStroke: 0x05070c,
+} as const;
+
+export const FLOAT: TextStyleOptions = {
+  fill: COLORS.text,
+  fontFamily: FONT,
+  fontSize: 16,
+  fontWeight: '700',
+  stroke: { color: FX.textStroke, width: 4 },
+};
+
+export const BANNER: TextStyleOptions = {
+  fill: FX.winner,
+  fontFamily: FONT,
+  fontSize: 13,
+  fontWeight: '700',
+  letterSpacing: 1.5,
+  stroke: { color: FX.textStroke, width: 4 },
+};
 
 export const LABEL: TextStyleOptions = { fill: COLORS.text, fontFamily: FONT, fontSize: 14 };
 export const SUBLABEL: TextStyleOptions = { fill: COLORS.muted, fontFamily: FONT, fontSize: 11 };

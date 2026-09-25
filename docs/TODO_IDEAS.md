@@ -1,6 +1,6 @@
-dodac animacje
+dodac animacje — ZROBIONE (replay rundy, patrz ARCHITECTURE.md "The round replay")
 dodac integracje AI (np generowanie obrazkow, boty)
-dodac leaderboard
+dodac leaderboard, tournaments
 Redis
 Upgradeable Contracts
 Emergency Pause
