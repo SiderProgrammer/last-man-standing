@@ -35,7 +35,7 @@ export type SignatureVerifier = (args: {
  *
  * Two named methods rather than an overloaded `on`: an overload set is not
  * structurally satisfiable by a simple fake, so every implementation — the
- * real `ws` in `index.ts` and the `FakeSocket` in the tests — had to be cast
+ * real `ws` in `main.ts` and the `FakeSocket` in the tests — had to be cast
  * into place. `ws` satisfies this shape directly.
  */
 export interface Socket {

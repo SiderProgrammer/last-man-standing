@@ -160,20 +160,34 @@ instead of drifting silently.
 
 | File | Responsibility |
 | --- | --- |
-| `room.ts` | One live match: phases, the round clock, client fan-out |
-| `chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
-| `bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
-| `lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
-| `gateway.ts` | Session registry, wallet login, message dispatch |
-| `frames.ts` | Frame decoding and the error frame that goes back when it fails |
-| `chain.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
-| `escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
-| `attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
-| `avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
-| `relayer.ts` | Submits and pays for calls a player's session key authorised |
-| `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
-| `viem.ts` | Client construction for a chain known only by id and RPC URL |
-| `config.ts` | Environment configuration |
+| `main.ts` | Entry point, three lines: calls `start()` |
+| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
+| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| **`screens/`** | **What the player sees, and the controls on it** |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| **`wallet/`** | **The player's account** |
+| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
+| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| **`game/`** | **Match logic that runs in the browser** |
+| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
+| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
+| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| **`arena/`** | **The Pixi canvas** |
+| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring, and the round replay |
+| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a timeline, and samples it at time `t` |
+| `arena/effects.ts` | Pixi effects for the replay: projectiles, impacts, storm, shatter, winner |
+| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
+| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| **`ui/`** | **The DOM around the canvas** |
+| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
+| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
+| **`io/`** | **Browser I/O** |
+| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
+| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
 
 Three deliberate design choices make this testable:
 
@@ -182,6 +196,8 @@ Three deliberate design choices make this testable:
   deterministically without timers.
 - **Clients are opaque sinks.** `Room` talks to a `Client` interface with a single
   `send`, so the state machine has no idea WebSockets exist.
+- **Importing the package boots nothing.** `index.ts` is exports only and `main.ts` is
+  the composition root, so every test imports `@lms/server` without opening a port.
 - **The chain is an interface.** `ChainBridge` takes an `EscrowReader` rather than
   building viem clients itself, so the poll loop — cursor arithmetic, lock conditions,
   adopt-once — is exercised against a fake instead of an RPC. `ChainBridge.start` still
@@ -223,10 +239,17 @@ any player can lock the lobby themselves.
 | `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
 
-The split is along one line: anything that decides *what* to show is pure and tested in
-node; anything that writes to the document stays in `app.ts`. `phasePlan` returns a
+The folders split along two lines. By feature: each screen owns its controls, and
+`app.ts` does nothing but route server messages to them. By purity: anything that
+decides *what* to show — the *Pure* rows above — is tested in node, while anything that
+writes to the document lives in `screens/` or `wallet/flows.ts`. `phasePlan` returns a
 `shouldReveal` flag rather than sending the reveal itself, so the decision is testable
 while the send stays exactly where it was in the sequence.
+
+The screens share one page, one socket and one set of elements, so that state lives in
+`context.ts` as module singletons rather than being threaded through every call. `dom`
+and `net` are ES-module live bindings assigned once in `start()`; `context.ts` imports
+only types, which keeps the runtime graph acyclic.
 
 Three things are worth calling out:
 

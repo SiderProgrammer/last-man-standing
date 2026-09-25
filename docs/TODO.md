@@ -15,7 +15,7 @@ Items are ordered roughly by what blocks the next demo.
 
 The pieces exist and typecheck, but they have only run against mocks:
 
-- `ChainBridge` (`packages/server/src/chain.ts`) polls `MatchCreated`, publishes a lobby
+- `ChainBridge` (`packages/server/src/chain/bridge.ts`) polls `MatchCreated`, publishes a lobby
   directory, locks a full or expired lobby with the keeper key, and opens a room when the
   match goes `Live`. It has **never been run against a real RPC** — no integration test
   covers the poll loop, and the 5 000-block backfill window on restart is a guess.
@@ -134,7 +134,7 @@ any of this is a deliberate, visible change rather than a silent one.
   `parseCollections` already regex-checks addresses, so the validation exists and is
   applied to the least important setting. Pinned by `packages/server/test/config.test.ts`.
 - **One key silently takes three roles.** `KEEPER_PK` falls back to `ATTESTOR_PK`, and
-  `index.ts` then uses `keeperPk` as the session relayer's gas key. Result attestor,
+  `main.ts` then uses `keeperPk` as the session relayer's gas key. Result attestor,
   lobby keeper and session relayer end up the same account with nothing logged. Splitting
   them is already noted in §3.2; this records the exact path.
 - **The chip book stores a bet under the caller's casing.** `ChipLedger.place` pushes
@@ -169,7 +169,7 @@ any of this is a deliberate, visible change rather than a silent one.
 **Client**
 
 - **A network send still happens during a render pass.** `phasePlan` decides
-  `shouldReveal` and `app.ts` acts on it at the same point in the same order as before.
+  `shouldReveal` and `screens/match.ts` acts on it at the same point in the same order as before.
   The send is no longer hidden inside a predicate, but rendering and acting are still
   coupled; a second render in the reveal phase is prevented only by the `revealedRound`
   guard.
@@ -183,11 +183,11 @@ any of this is a deliberate, visible change rather than a silent one.
 - **`hpLeaders` is O(n²)** — `state.history.indexOf(record)` inside a loop over
   `state.history`. Bounded by `maxRounds: 30`, so currently harmless; the caller already
   has the index.
-- **`data-action` is unvalidated.** `index.html` hardcodes `1|2|3` and `app.ts` does
+- **`data-action` is unvalidated.** `index.html` hardcodes `1|2|3` and `screens/match.ts` does
   `Number(dataset.action) as ActionValue`, though `isActionValue` exists in
   `@lms/protocol` and is used server-side. Malformed markup sends a garbage action rather
   than failing.
-- **`net.ts` has no `off()`,** `connect()` has no re-entrancy guard, and `close()` is
+- **`io/net.ts` has no `off()`,** `connect()` has no re-entrancy guard, and `close()` is
   never called. One handler is ever registered, so nothing leaks in practice.
 - **Port `8787` is hardcoded in three places** — `app.ts`, `packages/client/vite.config.ts`
   and `.claude/launch.json`. Two are JSON and cannot import a TS constant.
@@ -241,11 +241,11 @@ any of this is a deliberate, visible change rather than a silent one.
   `forge fmt --check` cannot be part of it until the formatting in §3.4 is fixed.
 - **Static analysis:** Slither and Aderyn are available as MCP tooling but no run is
   committed. Add a baseline and fail CI on new findings.
-- **Client tests:** done. `main.ts` split into `app.ts` (shell) plus pure `phase.ts`,
-  `views.ts`, `format.ts` and `layout.ts`; `reads.ts`, the commit/reveal plan, the view
-  builders and the arena geometry are covered by `packages/client/test`. What is still
-  untested is the DOM applier layer in `app.ts` and `arena.ts`'s rendering, both of which
-  would need a browser rather than node.
+- **Client tests:** done. The pure modules — `game/phase.ts`, `game/reads.ts`,
+  `ui/views.ts`, `ui/format.ts`, `arena/layout.ts`, `arena/choreography.ts` — are covered
+  by `packages/client/test`. What is still untested is the DOM applier layer in
+  `screens/` and `wallet/flows.ts`, and `arena/`'s rendering, all of which would need a
+  browser rather than node.
 - **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
 - **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
   Fine for a testnet demo, worth code-splitting before anything public.
@@ -297,7 +297,7 @@ These are open questions, not bugs:
 - **Balance.** No simulation harness exists to answer "is Hide too strong at 60%?".
   The engine is pure and seeded, so a batch simulator over strategy pools is cheap to
   build and would turn balance into data.
-- **Reads.** The tells in `packages/client/src/reads.ts` are hand-tuned thresholds
+- **Reads.** The tells in `packages/client/src/game/reads.ts` are hand-tuned thresholds
   ("attacks ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
   against simulated play so the panel does not confidently mislabel a bot.
 - **Round-level on-chain betting.** Currently off-chain chips only. Moving it on-chain

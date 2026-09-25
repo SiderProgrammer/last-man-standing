@@ -14,7 +14,7 @@ import type { Read } from '../game/reads.js';
  *
  * Each takes state and returns rows, options or markup; none of them touches
  * the document. That is what lets the interesting parts of the UI be tested in
- * node, with the DOM writes left as a thin applier layer in `app.ts`.
+ * node, with the DOM writes left as a thin applier layer in `screens/`.
  */
 
 /** A `<select>` option, as value and label. */
