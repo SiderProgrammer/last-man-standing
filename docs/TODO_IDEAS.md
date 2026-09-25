@@ -3,7 +3,6 @@ dodac integracje AI (np generowanie obrazkow, boty)
 dodac leaderboard, tournaments
 Redis
 Upgradeable Contracts
-Emergency Pause
 Observability — metrics, structured logs, tracing i monitoring cross-chain messages
 Rate Limiting + Anti-DDoS dla WebSocketów
 Load Testing — np. 1k/10k równoczesnych połączeń WebSocket
