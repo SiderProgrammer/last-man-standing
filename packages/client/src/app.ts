@@ -17,14 +17,14 @@ import {
   type PublicMatchState,
   type ServerMessage,
 } from '@lms/protocol';
-import { Arena } from './arena.js';
-import { fillSelect, queryDom, type Dom } from './dom.js';
-import { describeDraft, formatCountdown, short } from './format.js';
-import { Net } from './net.js';
-import { phasePlan } from './phase.js';
-import { readOpponents } from './reads.js';
-import { forgetMatch, freshSalt, recallMove, rememberMove } from './salts.js';
-import { Session } from './session.js';
+import { Arena } from './arena/arena.js';
+import { fillSelect, queryDom, type Dom } from './ui/dom.js';
+import { describeDraft, formatCountdown, short } from './ui/format.js';
+import { Net } from './io/net.js';
+import { phasePlan } from './game/phase.js';
+import { readOpponents } from './game/reads.js';
+import { forgetMatch, freshSalt, recallMove, rememberMove } from './game/salts.js';
+import { Session } from './wallet/session.js';
 import {
   avatarPanel,
   betTargetOptions,
@@ -34,8 +34,8 @@ import {
   readsTable,
   targetOptions,
   type AvatarStatus,
-} from './views.js';
-import { Wallet } from './wallet.js';
+} from './ui/views.js';
+import { Wallet } from './wallet/wallet.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:8787`;
 

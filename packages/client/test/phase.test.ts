@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MatchPhase, type MatchPhaseValue, type PublicMatchState } from '@lms/protocol';
-import { phasePlan, type PhaseContext } from '../src/phase.js';
+import { phasePlan, type PhaseContext } from '../src/game/phase.js';
 import { stateWith } from './helpers.js';
 
 function at(phase: MatchPhaseValue, round = 3): PublicMatchState {

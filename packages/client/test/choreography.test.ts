@@ -5,7 +5,7 @@ import {
   type AttackRecord,
   type RoundRecord,
 } from '@lms/protocol';
-import { choreograph, sample, type SeatSnapshot } from '../src/choreography.js';
+import { choreograph, sample, type SeatSnapshot } from '../src/arena/choreography.js';
 import { bytes32 } from './helpers.js';
 
 /** The server's default replay hold, which every timeline must fit inside. */

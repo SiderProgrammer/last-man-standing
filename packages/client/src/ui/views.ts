@@ -7,7 +7,7 @@ import {
   type LobbySeat,
   type PublicMatchState,
 } from '@lms/protocol';
-import type { Read } from './reads.js';
+import type { Read } from '../game/reads.js';
 
 /**
  * Pure builders for everything the panels display.
