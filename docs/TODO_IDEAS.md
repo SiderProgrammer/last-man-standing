@@ -17,4 +17,5 @@ Invariant Testing
 napisac wlasne skille AI i uzyc istniejacych (np do pisania smart contractow, audytow)
 run AI audit
 game balance
+test, run all the features on local fork mainnet
 deploy to mainnet

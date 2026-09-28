@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsc --build",
+    "dev:fork": "node scripts/dev-fork.mjs",
     "clean": "tsc --build --clean",
     "typecheck": "npm run typecheck:src && npm run typecheck:client && npm run typecheck:tests",
     "typecheck:src": "tsc --build --force",

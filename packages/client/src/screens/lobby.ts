@@ -216,7 +216,7 @@ async function payTokenJoin(
       button.textContent = `Approve ${token.symbol}…`;
       // Exactly this join's ceiling, not an unlimited allowance: the zap is
       // ownerless, but an allowance outlives the join it was granted for.
-      await wallet.waitFor(await wallet.approveToken(token.address, zap.address, maxAmountIn));
+      await wallet.approveToken(token.address, zap.address, maxAmountIn);
     }
 
     button.textContent = 'Confirm the join…';

@@ -6,6 +6,7 @@ import {
   erc20Abi,
   formatEther,
   http,
+  parseAbi,
   parseEther,
   toFunctionSelector,
   type Abi,
@@ -42,6 +43,16 @@ function selectorOf(abi: Abi, name: string): Hex {
   if (!item) throw new Error(`no function ${name} in ABI`);
   return toFunctionSelector(item);
 }
+
+/**
+ * `approve` with no return value.
+ *
+ * USDT and a handful of older tokens return nothing from `approve`, and a
+ * simulation against the standard ABI then fails decoding a `bool` that was
+ * never sent. Ignoring the return value is what `SafeERC20` does on-chain; a
+ * token that actually refuses the approval still reverts.
+ */
+const approveAbi = parseAbi(['function approve(address spender, uint256 amount)']);
 
 /**
  * What a session key may call, and nothing else.
@@ -118,16 +129,23 @@ export class Wallet {
    * practice loop needs nothing but a login signature, and requiring a wallet
    * extension to click through the game locally is pure friction.
    */
-  static burner(privateKey: Hex, rpcUrl = 'http://127.0.0.1:8545'): Wallet {
+  static async burner(privateKey: Hex, rpcUrl = 'http://127.0.0.1:8545'): Promise<Wallet> {
     const account = privateKeyToAccount(privateKey);
     const transport = http(rpcUrl);
-    return new Wallet(
-      account.address,
-      0,
-      account,
-      createWalletClient({ account, transport }),
-      createPublicClient({ transport }),
-    );
+    const rpc = createPublicClient({ transport });
+
+    // The chain id decides which avatar collection applies and which chain a
+    // session key is stored against, so it has to be the node's real one.
+    // Practice needs no node at all, though, so an unreachable RPC must not
+    // hold up the login: ask once, briefly, and fall back to 0.
+    let chainId = 0;
+    try {
+      chainId = await createPublicClient({ transport: http(rpcUrl, { retryCount: 0, timeout: 1_500 }) }).getChainId();
+    } catch {
+      // No node: practice only.
+    }
+
+    return new Wallet(account.address, chainId, account, createWalletClient({ account, transport }), rpc);
   }
 
   /** Signs the server's login nonce. Plain personal_sign, no typed data needed. */
@@ -205,15 +223,35 @@ export class Wallet {
     });
   }
 
-  async approveToken(token: Address, spender: Address, amount: bigint): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: token,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [spender, amount],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
+  /**
+   * Sets the allowance to exactly `amount`, and waits for it.
+   *
+   * USDT refuses to move an allowance from one non-zero value to another, and
+   * every token join leaves the unused slippage allowance behind, so the second
+   * USDT join would fail. When the direct approval does not simulate and an
+   * allowance is outstanding, it is zeroed first — one extra prompt, only for
+   * the tokens that need it.
+   */
+  async approveToken(token: Address, spender: Address, amount: bigint): Promise<void> {
+    const approve = (value: bigint) =>
+      this.rpc.simulateContract({
+        account: this.address,
+        address: token,
+        abi: approveAbi,
+        functionName: 'approve',
+        args: [spender, value],
+      });
+
+    let simulation;
+    try {
+      simulation = await approve(amount);
+    } catch (error) {
+      if ((await this.tokenAllowance(token, spender)) === 0n) throw error;
+      const reset = await approve(0n);
+      await this.waitFor(await this.wallet.writeContract({ ...reset.request, chain: null }));
+      simulation = await approve(amount);
+    }
+    await this.waitFor(await this.wallet.writeContract({ ...simulation.request, chain: null }));
   }
 
   /** Swaps the route's first token for the stake and takes the seat, in one transaction. */

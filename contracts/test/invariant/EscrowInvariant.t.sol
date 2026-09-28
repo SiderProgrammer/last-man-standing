@@ -20,6 +20,12 @@ contract EscrowHandler is Test {
     uint256[] public attestorPks;
 
     bytes32 public current;
+    bytes32 public pendingRequest;
+
+    /// @dev Ghost counters: how far the campaign actually got, so a handler
+    ///      that silently stops reaching settlement shows up as a zero.
+    uint256 public locked;
+    uint256 public settled;
     uint128 public constant STAKE = 0.05 ether;
 
     constructor(
@@ -56,14 +62,19 @@ contract EscrowHandler is Test {
         escrow.joinFor{value: STAKE}(current, actors[who % actors.length]);
     }
 
+    /// @dev Locking and seeding are separate actions, as they are on-chain, so
+    ///      the fuzzer can also leave a match `Pending` and reach the
+    ///      "oracle never answered" cancellation.
     function lock() public {
         if (current == bytes32(0)) return;
-        escrow.lockMatch(current);
+        pendingRequest = escrow.lockMatch(current);
+        ++locked;
     }
 
-    function fulfill(bytes32) public {}
-
-    function fulfillKnown(bytes32 requestId, bytes32 randomness) public {
+    function fulfill(bytes32 randomness) public {
+        if (pendingRequest == bytes32(0)) return;
+        bytes32 requestId = pendingRequest;
+        pendingRequest = bytes32(0);
         oracle.fulfill(requestId, randomness);
     }
 
@@ -88,6 +99,7 @@ contract EscrowHandler is Test {
             pks[i] = attestorPks[i];
         }
         escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest));
+        ++settled;
     }
 
     function withdraw(uint256 who) public {
@@ -110,7 +122,6 @@ contract EscrowInvariantTest is StdInvariant, Test {
         uint256 pkB = 0xB0B;
 
         MockRandomnessOracle oracle = new MockRandomnessOracle();
-        oracle.setAutoFulfill(true);
 
         ProtocolConfig.Params memory params = ProtocolConfig.Params({
             feeBps: 500,

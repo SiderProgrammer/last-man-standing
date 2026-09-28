@@ -373,6 +373,10 @@ with* picker. Joining with a token takes two clicks:
 - **Never through the session key.** Its scope is the escrow and the avatar
   collection. A token approval is exactly the kind of call a prompt-free key
   should not be able to make.
+- **USDT-safe approvals.** USDT returns nothing from `approve` and refuses to
+  move one non-zero allowance to another, while every join leaves its unused
+  slippage allowance behind. The client approves through a return-less ABI and,
+  when the direct approval will not simulate, zeroes the allowance first.
 - **Routes are server configuration.** A route whose first hop is not the
   token itself is dropped at boot, since the contract charges `path[0]` and
   would take a different token than the one the player picked.
@@ -882,6 +886,7 @@ npm run sol:test       # Foundry: unit, fuzz, invariant
 npm run sol:fuzz       # fuzz suites only
 npm run sol:invariant  # invariant suites only
 npm run sol:snapshot   # refresh the gas snapshot
+npm run dev:fork       # whole staked stack on a mainnet fork, token payment included
 
 # Uniswap v4 fork test, against the real PoolManager. Skipped without the RPC.
 MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/*'

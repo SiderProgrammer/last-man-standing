@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {SessionKeyDelegate} from "../../src/SessionKeyDelegate.sol";
+import {PlayerAvatars} from "../../src/PlayerAvatars.sol";
 
 /// @dev Stand-in for whatever the session key is allowed to call.
 contract Target {
@@ -77,6 +78,33 @@ contract SessionKeyDelegateTest is Test {
     function test_DelegationGivesTheEoaCodeWithoutChangingItsAddress() public view {
         assertGt(player.code.length, 0);
         assertEq(player, vm.addr(PLAYER_PK));
+    }
+
+    /// @dev Regression: delegating gives the EOA code, and `_safeMint` rejects
+    ///      any account with code that lacks `onERC721Received`. One-click play
+    ///      used to lock a player out of minting an avatar for good.
+    function test_DelegatedAccountCanStillMintAnAvatar() public {
+        PlayerAvatars avatars = new PlayerAvatars(address(this), "LMS Avatars", "LMSA", 100, "ipfs://x/");
+
+        vm.prank(player);
+        uint256 tokenId = avatars.mint();
+        assertEq(avatars.ownerOf(tokenId), player);
+    }
+
+    function test_SessionKeyCanMintAnAvatarForTheAccount() public {
+        PlayerAvatars avatars = new PlayerAvatars(address(this), "LMS Avatars", "LMSA", 100, "ipfs://x/");
+        address[] memory targets = new address[](1);
+        targets[0] = address(avatars);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = PlayerAvatars.mint.selector;
+        vm.prank(player);
+        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 0, targets, selectors);
+
+        bytes memory data = abi.encodeCall(PlayerAvatars.mint, ());
+        bytes memory signature = _sign(SESSION_PK, address(avatars), 0, data);
+        SessionKeyDelegate(payable(player)).executeWithSession(address(avatars), 0, data, 0, signature);
+
+        assertTrue(avatars.hasMinted(player));
     }
 
     function test_GrantSessionStoresTheScope() public {

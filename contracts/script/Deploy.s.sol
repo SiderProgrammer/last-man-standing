@@ -75,9 +75,9 @@ contract Deploy is Script {
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
         deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
-        MockRandomnessOracle mockOracle = new MockRandomnessOracle();
-        mockOracle.setAutoFulfill(true);
-        deployment.oracle = address(mockOracle);
+        // Answers nothing on its own: something must call `fulfill` after each
+        // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
+        deployment.oracle = address(new MockRandomnessOracle());
         deployment.messenger = address(new MockMessenger());
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 

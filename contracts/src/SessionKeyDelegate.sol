@@ -4,6 +4,9 @@ pragma solidity 0.8.28;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @title SessionKeyDelegate
 /// @notice EIP-7702 delegate that lets a player grant a scoped, expiring key.
@@ -31,7 +34,14 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 ///        * value   — a cumulative native-token cap, so a leaked key cannot drain the account;
 ///        * calls   — an explicit (target, selector) allowlist, so a key scoped to
 ///                    joining matches cannot be used to move an avatar NFT.
-contract SessionKeyDelegate is IERC1271 {
+///
+///      Token receiver hooks. Delegating gives the EOA code, and a token that
+///      transfers "safely" — `PlayerAvatars.mint` uses `_safeMint` — calls
+///      `onERC721Received` on any address with code and reverts without it.
+///      Without these hooks, turning on one-click play would stop a player from
+///      ever minting an avatar or receiving a safe-transferred NFT again. A
+///      plain EOA accepts everything, so the delegated one does too.
+contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
     using ECDSA for bytes32;
 
     struct Session {
@@ -206,4 +216,35 @@ contract SessionKeyDelegate is IERC1271 {
 
     /// @dev The account must be able to receive the payouts it wins.
     receive() external payable {}
+
+    // --- Token receiver hooks ----------------------------------------------
+
+    /// @inheritdoc IERC721Receiver
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    /// @inheritdoc IERC1155Receiver
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IERC1155Receiver.onERC1155Received.selector;
+    }
+
+    /// @inheritdoc IERC1155Receiver
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IERC1155Receiver.onERC1155BatchReceived.selector;
+    }
+
+    /// @inheritdoc IERC165
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IERC721Receiver).interfaceId
+            || interfaceId == type(IERC1155Receiver).interfaceId || interfaceId == type(IERC1271).interfaceId;
+    }
 }

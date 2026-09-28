@@ -4,14 +4,33 @@
     {
       "name": "lms-server",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "@lms/server"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "@lms/server"
+      ],
       "port": 8787
     },
     {
       "name": "lms-client",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "@lms/client"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "@lms/client"
+      ],
       "port": 5173
+    },
+    {
+      "name": "lms-fork",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:fork"
+      ],
+      "port": 5174
     }
   ]
 }

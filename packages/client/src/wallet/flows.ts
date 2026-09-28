@@ -31,7 +31,7 @@ async function connectWallet(): Promise<void> {
     app.wallet =
       Wallet.available() || !devKey
         ? await Wallet.connect()
-        : Wallet.burner(devKey as `0x${string}`, import.meta.env.VITE_RPC_URL);
+        : await Wallet.burner(devKey as `0x${string}`, import.meta.env.VITE_RPC_URL);
     restoreSession();
     renderHubLabel();
     renderSessionPanel();

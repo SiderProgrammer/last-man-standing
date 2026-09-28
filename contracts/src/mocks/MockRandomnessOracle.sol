@@ -4,10 +4,18 @@ pragma solidity 0.8.28;
 import {IRandomnessOracle, IRandomnessConsumer} from "../interfaces/IRandomnessOracle.sol";
 
 /// @notice Test double for the randomness oracle.
-/// @dev Fulfilment is manual by default so tests can exercise the window
-///      between locking a lobby and receiving a seed, which is exactly where
-///      the "oracle never answered" cancellation path lives. A Chainlink VRF
-///      adapter behaves the same way: request now, callback later.
+/// @dev Fulfilment is always a separate call, as with Chainlink VRF: request
+///      now, callback later. That window is where the "oracle never answered"
+///      cancellation path lives, and it is also what consumers rely on:
+///      `GameEscrow.lockMatch` records which match a request belongs to only
+///      once `requestRandomness` has returned the id.
+///
+///      There used to be an `autoFulfill` switch that answered inside
+///      `requestRandomness`. Against the escrow that callback arrived before
+///      the request was recorded, so every `lockMatch` reverted with
+///      `UnknownRequest` — on every deployment that enabled it. Off-chain,
+///      `npm run dev:fork` plays the oracle node instead, answering each
+///      request in a later block.
 contract MockRandomnessOracle is IRandomnessOracle {
     struct Request {
         address consumer;
@@ -18,17 +26,10 @@ contract MockRandomnessOracle is IRandomnessOracle {
     mapping(bytes32 requestId => Request) public requests;
     uint256 public nonce;
 
-    /// @notice When true, a request is fulfilled inside the same transaction.
-    bool public autoFulfill;
-
     event RandomnessRequested(bytes32 indexed requestId, address indexed consumer, bytes32 context);
 
     error UnknownRequest(bytes32 requestId);
     error AlreadyFulfilled(bytes32 requestId);
-
-    function setAutoFulfill(bool enabled) external {
-        autoFulfill = enabled;
-    }
 
     /// @inheritdoc IRandomnessOracle
     function requestRandomness(bytes32 context) external returns (bytes32 requestId) {
@@ -36,13 +37,11 @@ contract MockRandomnessOracle is IRandomnessOracle {
         requests[requestId] = Request({consumer: msg.sender, context: context, fulfilled: false});
 
         emit RandomnessRequested(requestId, msg.sender, context);
-
-        if (autoFulfill) {
-            _fulfill(requestId, keccak256(abi.encode(requestId, block.prevrandao)));
-        }
     }
 
     /// @notice Delivers a chosen value, so tests can pin a seed exactly.
+    /// @dev Permissionless: this is a test double, and whoever calls it picks
+    ///      the seed. Never deploy it where a stake is worth anything.
     function fulfill(bytes32 requestId, bytes32 randomness) external {
         _fulfill(requestId, randomness);
     }

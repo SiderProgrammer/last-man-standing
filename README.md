@@ -62,6 +62,31 @@ Open the client, connect a wallet, and start a practice match against house
 bots. Without a wallet extension, set `VITE_DEV_KEY` to any test private key and
 the client signs the login nonce with an in-page burner instead.
 
+### On a mainnet fork, in one command
+
+Everything staked — lobbies, settlement, paying in USDC, USDT or DAI through
+Uniswap v4 — against real contracts and real liquidity, with no testnet funds
+and no `.env`. Needs [Foundry](https://getfoundry.sh) on `PATH`.
+
+```bash
+npm run dev:fork
+```
+
+It forks mainnet into anvil (chain 31337), deploys the protocol including
+`ZapJoin`, funds a test wallet with 1000 of each token, opens two lobbies, and
+starts the server and client wired to it. Open http://localhost:5174. Without a
+wallet extension the page signs with that funded test wallet on its own; with
+one, add the network (`http://127.0.0.1:8545`, chain id 31337) and rerun with
+`FORK_PLAYER=<your address>` to fund your own account. Ctrl+C stops everything.
+
+It runs beside a normal `npm run dev` (ports 8788 and 5174, not 8787 and 5173).
+To exercise everything that has no UI yet — spectator markets, cancellation,
+governance, cross-chain joins, withdrawals — see
+[docs/SIMULATE.md](docs/SIMULATE.md), which drives the same fork with `cast`.
+
+`FORK_RPC_URL` swaps the public RPC for your own — worth doing for long
+sessions, since a pruned node eventually stops serving the fork block's state.
+
 ### With a chain
 
 Deploy the contracts, point the server at them, and staked lobbies appear in the
