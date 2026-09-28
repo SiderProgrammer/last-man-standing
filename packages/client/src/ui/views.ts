@@ -1,11 +1,15 @@
-import { formatEther } from 'viem';
+import { formatEther, formatUnits } from 'viem';
 import {
+  DEFAULT_ZAP_SLIPPAGE_BPS,
   chainCss,
   chainInfo,
+  maxAmountInFor,
   type AvatarCollectionInfo,
   type BookSnapshot,
   type LobbySeat,
   type PublicMatchState,
+  type ZapInfo,
+  type ZapToken,
 } from '@lms/protocol';
 import type { Read } from '../game/reads.js';
 
@@ -217,4 +221,55 @@ export function lobbySummary(
     `${seatCount}/${maxSeats} seats · ${status}</span>` +
     chainChips(seats)
   );
+}
+
+// ------------------------------------------------------------ token payment
+
+/** The "Pay with" picker: ETH first, then every token the server routes to ETH. */
+export function payWithOptions(zap: ZapInfo | null): Option[] {
+  return [['ETH', 'ETH'], ...(zap?.tokens ?? []).map((token): Option => [token.address, token.symbol])];
+}
+
+/** An open lobby's join button before anything has been quoted. */
+export function stakeButtonLabel(stakeWei: string, token: ZapToken | null): string {
+  const stake = formatEther(BigInt(stakeWei));
+  return token ? `Stake ${stake} ETH in ${token.symbol}` : `Stake ${stake}`;
+}
+
+/**
+ * A token amount for display, rounded *up* to `fractionDigits`.
+ *
+ * Up, because the figures shown are ceilings on what the player will pay: a
+ * label that rounds down would promise less than the wallet then takes.
+ */
+export function formatTokenAmount(amount: bigint, decimals: number, fractionDigits = 4): string {
+  if (decimals <= fractionDigits) return formatUnits(amount, decimals);
+  const step = 10n ** BigInt(decimals - fractionDigits);
+  return formatUnits(((amount + step - 1n) / step) * step, decimals);
+}
+
+export type TokenJoinPlan =
+  | { ok: true; maxAmountIn: bigint; label: string }
+  | { ok: false; reason: string };
+
+/**
+ * Turns a quote into the ceiling the player is asked to accept.
+ *
+ * The allowance for price movement is capped at the balance: nobody can pay
+ * more than they hold, and a tighter ceiling only ever protects the player. A
+ * balance short of the quote itself is refused here, before any wallet prompt.
+ */
+export function planTokenJoin(
+  token: ZapToken,
+  quote: bigint,
+  balance: bigint,
+  slippageBps: number = DEFAULT_ZAP_SLIPPAGE_BPS,
+): TokenJoinPlan {
+  const amount = (value: bigint) => `${formatTokenAmount(value, token.decimals)} ${token.symbol}`;
+  if (balance < quote) {
+    return { ok: false, reason: `This seat costs about ${amount(quote)}; you hold ${amount(balance)}.` };
+  }
+  const allowed = maxAmountInFor(quote, slippageBps);
+  const maxAmountIn = allowed < balance ? allowed : balance;
+  return { ok: true, maxAmountIn, label: `Pay ≤ ${amount(maxAmountIn)}` };
 }

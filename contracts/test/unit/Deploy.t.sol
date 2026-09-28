@@ -6,6 +6,7 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 
 import {Deploy} from "../../script/Deploy.s.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
 ///      environment is process-wide and suites run in parallel, so every test
@@ -15,6 +16,7 @@ contract DeployTest is Test {
 
     address private deployer;
     address private safe;
+    address private poolManager;
     Deploy.Deployment private d;
 
     function setUp() public {
@@ -23,6 +25,8 @@ contract DeployTest is Test {
         vm.deal(deployer, 10 ether);
         vm.setEnv("DEPLOYER_PK", vm.toString(DEPLOYER_PK));
         vm.setEnv("SAFE", vm.toString(safe));
+        poolManager = address(new MockPoolManager());
+        vm.setEnv("POOL_MANAGER", vm.toString(poolManager));
         d = new Deploy().run();
     }
 
@@ -47,6 +51,11 @@ contract DeployTest is Test {
         assertEq(d.config.guardian(), safe);
         assertEq(d.config.treasury(), safe);
         assertEq(d.avatars.owner(), safe);
+    }
+
+    function test_zapPointsAtEscrowAndPoolManager() public view {
+        assertEq(address(d.zap.escrow()), address(d.escrow));
+        assertEq(address(d.zap.poolManager()), poolManager);
     }
 
     function test_configChangeWaitsOutTheDelay() public {

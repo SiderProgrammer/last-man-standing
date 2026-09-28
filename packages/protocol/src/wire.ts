@@ -1,4 +1,5 @@
 import type { AvatarEntry } from './chain/avatars.js';
+import type { ZapInfo } from './chain/zap.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
@@ -46,6 +47,11 @@ export type ServerMessage =
        * would reject it.
        */
       sessionDelegate: `0x${string}` | null;
+      /**
+       * Token payment through `ZapJoin`, or null when this server offers none.
+       * Lives on the hub, like the escrow it pays into.
+       */
+      zap: ZapInfo | null;
     }
   | { type: 'authed'; address: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }

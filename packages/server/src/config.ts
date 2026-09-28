@@ -46,6 +46,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * offer; logins then always cost a wallet signature.
      */
     sessionDelegate: (env.SESSION_DELEGATE ?? ZERO_ADDRESS) as `0x${string}`,
+    /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */
+    zapJoin: (env.ZAP_JOIN ?? ZERO_ADDRESS) as `0x${string}`,
+    /** v4-periphery `V4Quoter` on the hub chain, which the client prices routes with. */
+    v4Quoter: (env.V4_QUOTER ?? ZERO_ADDRESS) as `0x${string}`,
+    /** Tokens offered through the zap, each with its v4 route to ETH, as JSON. See `chain/zap.ts`. */
+    zapTokens: env.ZAP_TOKENS ?? '',
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;

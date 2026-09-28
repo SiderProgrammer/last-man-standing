@@ -3,6 +3,7 @@ import {
   createWalletClient,
   custom,
   encodeFunctionData,
+  erc20Abi,
   formatEther,
   http,
   parseEther,
@@ -18,9 +19,13 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
+  ZERO_ADDRESS,
   gameEscrowAbi,
   playerAvatarsAbi,
   sessionKeyDelegateAbi,
+  v4QuoterAbi,
+  zapJoinAbi,
+  type ZapPathKey,
 } from '@lms/protocol';
 
 /**
@@ -162,6 +167,69 @@ export class Wallet {
       functionName: 'join',
       args: [matchId],
       value: stakeWei,
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
+   * What `path` charges for exactly `stakeWei` of ETH, in the token's units.
+   *
+   * The quoter executes the swap and reverts with the result, so this is a
+   * simulation rather than a read — and costs nothing and signs nothing.
+   */
+  async quoteZap(quoter: Address, path: readonly ZapPathKey[], stakeWei: bigint): Promise<bigint> {
+    const { result } = await this.rpc.simulateContract({
+      address: quoter,
+      abi: v4QuoterAbi,
+      functionName: 'quoteExactOutput',
+      args: [{ exactCurrency: ZERO_ADDRESS, path: [...path], exactAmount: stakeWei }],
+    });
+    return result[0];
+  }
+
+  tokenBalance(token: Address): Promise<bigint> {
+    return this.rpc.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [this.address],
+    });
+  }
+
+  tokenAllowance(token: Address, spender: Address): Promise<bigint> {
+    return this.rpc.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [this.address, spender],
+    });
+  }
+
+  async approveToken(token: Address, spender: Address, amount: bigint): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: token,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [spender, amount],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /** Swaps the route's first token for the stake and takes the seat, in one transaction. */
+  async joinWithToken(
+    zap: Address,
+    matchId: Hex,
+    path: readonly ZapPathKey[],
+    maxAmountIn: bigint,
+    deadline: bigint,
+  ): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: zap,
+      abi: zapJoinAbi,
+      functionName: 'joinWithToken',
+      args: [matchId, [...path], maxAmountIn, deadline],
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }

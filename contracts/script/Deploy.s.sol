@@ -9,6 +9,8 @@ import {GameEscrow} from "../src/GameEscrow.sol";
 import {MatchMarket} from "../src/MatchMarket.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
+import {ZapJoin} from "../src/periphery/ZapJoin.sol";
+import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
@@ -45,6 +47,8 @@ contract Deploy is Script {
         /// @dev Stateless and shared: every delegating account runs this same
         ///      code against its own storage, so one deployment per chain.
         SessionKeyDelegate sessionDelegate;
+        /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
+        ZapJoin zap;
         TimelockController timelock;
         address safe;
         address oracle;
@@ -89,6 +93,7 @@ contract Deploy is Script {
             vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
         );
         deployment.sessionDelegate = new SessionKeyDelegate();
+        deployment.zap = _zap(deployment.escrow);
 
         deployment.config.transferOwnership(address(deployment.timelock));
         _handOver(deployment.timelock, deployment.config, deployment.safe, deployer);
@@ -146,6 +151,14 @@ contract Deploy is Script {
 
         config.setRulesHash(HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30));
         config.setGuardian(safe);
+    }
+
+    /// @dev Only where Uniswap v4 is deployed. Ownerless, so there is nothing
+    ///      to hand over: a different route or manager means a new deployment.
+    function _zap(GameEscrow escrow) private returns (ZapJoin) {
+        address manager = vm.envOr("POOL_MANAGER", address(0));
+        if (manager == address(0)) return ZapJoin(payable(address(0)));
+        return new ZapJoin(IPoolManager(manager), escrow);
     }
 
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only

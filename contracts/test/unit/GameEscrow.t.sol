@@ -5,6 +5,7 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -54,6 +55,46 @@ contract GameEscrowTest is Fixtures {
         vm.prank(players[2]);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.IncorrectStake.selector, STAKE / 2, STAKE));
         escrow.join{value: STAKE / 2}(matchId);
+    }
+
+    function test_joinFor_seatsPlayerNotPayer_andRefundsPlayer() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        address payer = makeAddr("payer");
+        vm.deal(payer, STAKE);
+
+        vm.prank(payer);
+        escrow.joinFor{value: STAKE}(matchId, players[1]);
+
+        assertTrue(escrow.hasSeat(matchId, players[1]));
+        assertFalse(escrow.hasSeat(matchId, payer));
+        assertEq(escrow.seatOrigin(matchId, players[1]), 0);
+        assertEq(escrow.totalEscrowed(), STAKE);
+
+        vm.prank(players[1]);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.AlreadyJoined.selector, matchId, players[1]));
+        escrow.join{value: STAKE}(matchId);
+
+        vm.warp(block.timestamp + 1 hours);
+        escrow.cancelMatch(matchId);
+        assertEq(escrow.withdrawable(players[1]), STAKE);
+        assertEq(escrow.withdrawable(payer), 0);
+    }
+
+    function test_joinFor_rejectsZeroPlayerWrongStakeAndPause() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+
+        vm.expectRevert(ZeroAddress.selector);
+        escrow.joinFor{value: STAKE}(matchId, address(0));
+
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.IncorrectStake.selector, STAKE / 2, STAKE));
+        escrow.joinFor{value: STAKE / 2}(matchId, players[1]);
+
+        vm.prank(owner);
+        escrow.pause();
+        vm.expectRevert(GameEscrow.Paused.selector);
+        escrow.joinFor{value: STAKE}(matchId, players[1]);
     }
 
     function test_lockMatch_rejectsUnderfilledBeforeDeadline() public {

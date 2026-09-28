@@ -49,4 +49,5 @@ export {
   type AvatarRegistryOptions,
   type AvatarSubject,
 } from './chain/avatars.js';
+export { parseZapTokens, zapInfo } from './chain/zap.js';
 export { config, loadConfig, type ServerConfig } from './config.js';

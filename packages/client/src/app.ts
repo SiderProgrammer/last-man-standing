@@ -3,7 +3,7 @@ import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { renderLobbies, wireLobbyControls } from './screens/lobby.js';
+import { renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
 import {
   onAvatars,
   onFinished,
@@ -63,6 +63,8 @@ function onServerMessage(message: ServerMessage): void {
       app.escrow = message.escrow;
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
+      app.zap = message.zap;
+      renderPayWith();
       renderHubLabel();
       renderSessionPanel();
       void renderAvatarPanel();

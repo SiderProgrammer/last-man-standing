@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { MatchPhase, type BookSnapshot, type LobbySeat } from '@lms/protocol';
+import {
+  MatchPhase,
+  ZERO_ADDRESS,
+  type BookSnapshot,
+  type LobbySeat,
+  type ZapInfo,
+  type ZapToken,
+} from '@lms/protocol';
 import {
   avatarPanel,
   betTargetOptions,
   bookRows,
   chainChipCounts,
   chainChips,
+  formatTokenAmount,
   hubLabel,
+  payWithOptions,
+  planTokenJoin,
+  stakeButtonLabel,
   targetOptions,
   type AvatarStatus,
 } from '../src/ui/views.js';
@@ -176,5 +187,52 @@ describe('formatting', () => {
   it('shows no clock outside a live round', () => {
     expect(formatCountdown(null, 10_000, 0)).toBe('--');
     expect(formatCountdown(MatchPhase.Finished, 10_000, 0)).toBe('--');
+  });
+});
+
+describe('token payment', () => {
+  const usdc: ZapToken = {
+    symbol: 'USDC',
+    address: `0x${'0c'.repeat(20)}`,
+    decimals: 6,
+    path: [
+      { intermediateCurrency: `0x${'0c'.repeat(20)}`, fee: 500, tickSpacing: 10, hooks: ZERO_ADDRESS, hookData: '0x' },
+    ],
+  };
+  const zap: ZapInfo = { address: `0x${'2a'.repeat(20)}`, quoter: `0x${'3b'.repeat(20)}`, tokens: [usdc] };
+
+  it('offers ETH first, then each routed token', () => {
+    expect(payWithOptions(null)).toEqual([['ETH', 'ETH']]);
+    expect(payWithOptions(zap)).toEqual([
+      ['ETH', 'ETH'],
+      [usdc.address, 'USDC'],
+    ]);
+  });
+
+  it('labels the stake in ETH either way, naming the token paid with', () => {
+    expect(stakeButtonLabel('1000000000000000', null)).toBe('Stake 0.001');
+    expect(stakeButtonLabel('1000000000000000', usdc)).toBe('Stake 0.001 ETH in USDC');
+  });
+
+  it('rounds displayed amounts up, never down', () => {
+    expect(formatTokenAmount(2_662_859_597n, 6)).toBe('2662.8596');
+    expect(formatTokenAmount(2_662_859_500n, 6)).toBe('2662.8595');
+    expect(formatTokenAmount(1n, 18)).toBe('0.0001');
+    expect(formatTokenAmount(1_500n, 2)).toBe('15');
+  });
+
+  it('asks for the quote plus half a percent', () => {
+    const plan = planTokenJoin(usdc, 2_000_000_000n, 5_000_000_000n);
+    expect(plan).toEqual({ ok: true, maxAmountIn: 2_010_000_000n, label: 'Pay ≤ 2010 USDC' });
+  });
+
+  it('caps the ceiling at the balance', () => {
+    const plan = planTokenJoin(usdc, 2_000_000_000n, 2_004_000_000n);
+    expect(plan.ok && plan.maxAmountIn).toBe(2_004_000_000n);
+  });
+
+  it('refuses before any prompt when the balance cannot cover the quote', () => {
+    const plan = planTokenJoin(usdc, 2_000_000_000n, 1_500_000_000n);
+    expect(plan).toEqual({ ok: false, reason: 'This seat costs about 2000 USDC; you hold 1500 USDC.' });
   });
 });

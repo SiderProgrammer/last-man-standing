@@ -10,6 +10,7 @@ export * from './chain/eip712.js';
 export * from './chain/escrow.js';
 export * from './chain/avatars.js';
 export * from './chain/session.js';
+export * from './chain/zap.js';
 
 // Messages between the browser and the server.
 export * from './wire.js';

@@ -38,6 +38,9 @@ The client plays a full match, but these are missing:
   show the final ranking, the payout, and the settlement transaction hash.
 - **Spectator discovery.** `watch` works, but live matches are only listed if they came
   from the chain directory; practice rooms are invisible to everyone but their player.
+- **Token joins cost two transactions the first time.** `approve`, then `joinWithToken`.
+  Permit2, or EIP-2612 `permit` for USDC, would fold the approval into one signature.
+  The slippage allowance is fixed at 0.5%; there is no control for it.
 
 ---
 

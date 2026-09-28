@@ -41,6 +41,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **ERC-4337** account abstraction | *considered, not used* | Rejected because it would change every player's address; reasoning in [Account abstraction](#account-abstraction) |
 | **LayerZero v2** messaging | `LayerZeroMessenger` | Concrete transport behind the chain-agnostic messenger interface |
 | **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | Concrete source behind the chain-agnostic randomness interface |
+| **Uniswap v4** | `ZapJoin` | Swaps any token for exactly the stake in native ETH — see [Paying in any token](#paying-in-any-token) |
 
 ---
 
@@ -51,15 +52,16 @@ A quick index, since most of these are the reason a given file exists at all.
 3. [Settlement and the attestor quorum](#settlement-and-the-attestor-quorum)
 4. [Randomness oracle](#randomness-oracle)
 5. [Cross-chain](#cross-chain)
-6. [Governance](#governance)
-7. [Account abstraction](#account-abstraction)
-8. [Identity and avatars](#identity-and-avatars)
-9. [Betting markets](#betting-markets)
-10. [Gas engineering in Yul](#gas-engineering-in-yul)
-11. [The off-chain engine](#the-off-chain-engine)
-12. [The game server](#the-game-server)
-13. [The browser client](#the-browser-client)
-14. [Testing and verification](#testing-and-verification)
+6. [Paying in any token](#paying-in-any-token)
+7. [Governance](#governance)
+8. [Account abstraction](#account-abstraction)
+9. [Identity and avatars](#identity-and-avatars)
+10. [Betting markets](#betting-markets)
+11. [Gas engineering in Yul](#gas-engineering-in-yul)
+12. [The off-chain engine](#the-off-chain-engine)
+13. [The game server](#the-game-server)
+14. [The browser client](#the-browser-client)
+15. [Testing and verification](#testing-and-verification)
 
 ---
 
@@ -306,6 +308,83 @@ renders unreadably.
 > and exercised with `MockLayerZeroEndpoint`. The native-drop options encoding
 > is not yet enforced, and a stake that leaves a spoke but fails to seat on the
 > hub is currently unrecoverable. See `TODO.md` §2.1.
+
+---
+
+## Paying in any token
+
+`contracts/src/periphery/ZapJoin.sol` · `contracts/src/interfaces/IPoolManager.sol` ·
+`GameEscrow.joinFor` · `protocol/chain/zap.ts` · `server/chain/zap.ts` ·
+`client/screens/lobby.ts` · **Live** against a mainnet fork
+
+### What it does
+
+Lets a player join a lobby holding USDC, DAI or any other ERC-20 with a
+Uniswap v4 route to ETH. The escrow still only ever sees ETH:
+
+```
+player approves ZapJoin for the token
+ZapJoin.joinWithToken(matchId, path, maxAmountIn, deadline)
+  → PoolManager.unlock
+      → swap exact output: precisely `stake` ETH, route walked backwards
+      → pull the input token from the player straight into the PoolManager
+      → take the ETH
+  → GameEscrow.joinFor{value: stake}(matchId, player)   seats the player, not ZapJoin
+```
+
+The route uses v4-periphery's exact-output `PathKey` convention, so the same
+array can be priced off-chain with `V4Quoter.quoteExactOutput` to choose
+`maxAmountIn`.
+
+In the client, the server advertises the zap, the quoter and its token list in
+`hello` (`ZAP_JOIN`, `V4_QUOTER`, `ZAP_TOKENS`), and the lobby grows a *Pay
+with* picker. Joining with a token takes two clicks:
+
+1. **Quote.** The client prices the route with the quoter and reads the
+   player's balance. The button turns into `Pay ≤ 26.7866 USDC`: the quote plus
+   0.5%, capped at the balance, rounded *up* for display. A balance short of the
+   quote is refused here, before any wallet prompt. The quote lapses after 30 s.
+2. **Pay.** If the allowance is short, an `approve` for exactly that ceiling —
+   never an unlimited one — then `joinWithToken` with a ten-minute deadline.
+
+### Why
+
+- **Outside the escrow.** A swap brings price risk, slippage and arbitrary hook
+  code. None of that belongs in the contract holding every stake, and none of it
+  can reach it: all the escrow receives is a `joinFor` call carrying exactly the
+  stake.
+- **Exact output.** The stake is fixed, so the player buys precisely that much
+  ETH and pays what it costs, bounded by `maxAmountIn`. There is no change to
+  refund, and the zap holds no balance between transactions.
+- **v4 rather than v3.** v4 pools can hold native ETH as `address(0)`, so the
+  route ends in the currency the escrow takes, with no WETH unwrap step, and the
+  flash accounting nets intermediate hops of a multi-hop route to zero inside
+  one session.
+- **`joinFor` needs no consent.** Paying someone into a lobby can only ever
+  credit them: the seat, a refund and a payout all belong to `player`, never to
+  the payer. It still passes every seating rule `join` does, and the invariant
+  campaign drives it alongside `join`.
+- **Partial fills are rejected.** v4 ends an exact-output swap early, without
+  reverting, when a pool runs out of liquidity, and hooks can move either side
+  of a delta, so every hop checks that it received exactly what it asked for.
+- **Two clicks, not one.** The wallet's prompt for `joinWithToken` shows a
+  contract call, not a price, so the player sees and accepts the ceiling in the
+  game's own UI first.
+- **Never through the session key.** Its scope is the escrow and the avatar
+  collection. A token approval is exactly the kind of call a prompt-free key
+  should not be able to make.
+- **Routes are server configuration.** A route whose first hop is not the
+  token itself is dropped at boot, since the contract charges `path[0]` and
+  would take a different token than the one the player picked.
+
+> **Status.** `IPoolManager` is a local mirror of v4-core's ABI. The unit suite
+> runs against `MockPoolManager`; `test/fork/ZapJoinFork.t.sol` runs the real
+> mainnet `PoolManager` when `MAINNET_RPC_URL` is set. Fee-on-transfer and
+> rebasing tokens are unsupported: the session ends unsettled and the call
+> reverts. Approval is a plain ERC-20 `approve`, so a first join costs two
+> transactions; Permit2 is in `TODO.md`. Verified end to end on an anvil mainnet
+> fork: the quoted 26.653262 USDC was exactly what left the wallet for a
+> 0.01 ETH seat.
 
 ---
 
@@ -803,6 +882,9 @@ npm run sol:test       # Foundry: unit, fuzz, invariant
 npm run sol:fuzz       # fuzz suites only
 npm run sol:invariant  # invariant suites only
 npm run sol:snapshot   # refresh the gas snapshot
+
+# Uniswap v4 fork test, against the real PoolManager. Skipped without the RPC.
+MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/*'
 ```
 
 ---
@@ -820,6 +902,7 @@ npm run sol:snapshot   # refresh the gas snapshot
 | `ATTESTOR_PK` | — | Result signing and settlement relay |
 | `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, and session relaying |
 | `SESSION_DELEGATE` | zero | EIP-7702 session keys (needs `RPC_URL`) |
+| `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |
 | `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Avatar metadata resolution |
 | `DATABASE_URL` | — | Postgres match archive |

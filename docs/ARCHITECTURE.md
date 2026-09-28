@@ -333,6 +333,7 @@ winner is crowned after the final round.
 | `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, per-chain messengers and peers, emergency guardian. Owned by a `TimelockController` whose proposer is a Safe. |
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
 | `SpokeEscrow` | Spoke-chain gate: forwards a stake plus a join message to the hub, receives bridged payouts. |
+| `ZapJoin` | Periphery: joins a lobby paying in any ERC-20, swapped to exactly the stake through Uniswap v4, then seated via `GameEscrow.joinFor`. Ownerless; holds nothing between transactions. |
 | `MatchMarket` | Parimutuel Winner / Top 3 books settled from the escrow's attested ranking. |
 | `PlayerAvatars` | Cosmetic ERC-721 avatars. Deployed independently per chain, never bridged. |
 | `SessionKeyDelegate` | EIP-7702 delegate: scoped, expiring session keys plus ERC-1271. |

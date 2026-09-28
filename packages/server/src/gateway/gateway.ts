@@ -8,6 +8,7 @@ import {
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
+  type ZapInfo,
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
 import type { SessionRelayer } from '../chain/relayer.js';
@@ -61,6 +62,8 @@ export interface GatewayOptions {
   avatarCollections?: AvatarCollectionInfo[];
   /** 7702 delegate the client may grant a session key against. */
   sessionDelegate?: `0x${string}` | null;
+  /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
+  zap?: ZapInfo | null;
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
@@ -106,6 +109,7 @@ export class Gateway {
       escrow: this.options.escrow ?? null,
       avatarCollections: this.options.avatarCollections ?? [],
       sessionDelegate: this.options.sessionDelegate ?? null,
+      zap: this.options.zap ?? null,
     });
 
     socket.onMessage((data: unknown) => {

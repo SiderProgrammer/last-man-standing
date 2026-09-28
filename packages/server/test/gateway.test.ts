@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
-import { AUTH_PREFIX, type ClientMessage, type LobbyInfo, type ServerMessage } from '@lms/protocol';
+import {
+  AUTH_PREFIX,
+  type ClientMessage,
+  type LobbyInfo,
+  type ServerMessage,
+  type ZapInfo,
+} from '@lms/protocol';
 import { Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
 import type { SignatureVerifier, Socket } from '@lms/server';
 import { lastOfType } from './helpers.js';
@@ -60,6 +66,7 @@ interface Extras {
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   verify: SignatureVerifier;
   sessionDelegate: `0x${string}` | null;
+  zap: ZapInfo | null;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -78,6 +85,7 @@ function harness(extras: Partial<Extras> = {}) {
     directory: extras.directory ?? (() => ({ open: [], live: [] })),
     ...(extras.verify ? { verify: extras.verify } : {}),
     sessionDelegate: extras.sessionDelegate ?? null,
+    zap: extras.zap ?? null,
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -182,6 +190,37 @@ describe('gateway', () => {
     const delegate = `0x${'99'.repeat(20)}` as const;
     const { socket } = harness({ sessionDelegate: delegate });
     expect(socket.last('hello')?.sessionDelegate).toBe(delegate);
+  });
+
+  it('advertises token payment so the client can offer it', () => {
+    const usdc = `0x${'0c'.repeat(20)}` as const;
+    const zap: ZapInfo = {
+      address: `0x${'2a'.repeat(20)}`,
+      quoter: `0x${'3b'.repeat(20)}`,
+      tokens: [
+        {
+          symbol: 'USDC',
+          address: usdc,
+          decimals: 6,
+          path: [
+            {
+              intermediateCurrency: usdc,
+              fee: 500,
+              tickSpacing: 10,
+              hooks: `0x${'00'.repeat(20)}`,
+              hookData: '0x',
+            },
+          ],
+        },
+      ],
+    };
+    const { socket } = harness({ escrow: ESCROW, zap });
+    expect(socket.last('hello')?.zap).toEqual(zap);
+  });
+
+  it('offers only ETH when no zap is configured', () => {
+    const { socket } = harness({ escrow: ESCROW });
+    expect(socket.last('hello')?.zap).toBeNull();
   });
 
   it('advertises no delegate when the server cannot verify one', () => {

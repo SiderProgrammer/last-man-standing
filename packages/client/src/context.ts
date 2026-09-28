@@ -5,6 +5,7 @@ import type {
   BookSnapshot,
   PublicMatchState,
   ServerMessage,
+  ZapInfo,
 } from '@lms/protocol';
 import type { Net } from './io/net.js';
 import type { Dom } from './ui/dom.js';
@@ -32,6 +33,8 @@ export interface AppState {
   sessionDelegate: `0x${string}` | null;
   /** Live session key, if this browser holds one. Signs logins without a prompt. */
   session: Session | null;
+  /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
+  zap: ZapInfo | null;
   match: PublicMatchState | null;
   /**
    * Avatars for the current match, held here rather than pushed straight at the
@@ -70,6 +73,7 @@ export const app: AppState = {
   avatarCollections: [],
   sessionDelegate: null,
   session: null,
+  zap: null,
   match: null,
   avatars: [],
   you: null,

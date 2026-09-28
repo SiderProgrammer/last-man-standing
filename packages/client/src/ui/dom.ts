@@ -30,6 +30,8 @@ export function queryDom(doc: Document = document) {
     stake: el<HTMLInputElement>('stake'),
     seats: el<HTMLSelectElement>('seats'),
     lobbyList: el<HTMLUListElement>('lobby-list'),
+    payWithRow: el<HTMLDivElement>('pay-with-row'),
+    payWith: el<HTMLSelectElement>('pay-with'),
     avatarChain: el<HTMLSpanElement>('avatar-chain'),
     avatarStatus: el<HTMLSpanElement>('avatar-status'),
     mintAvatar: el<HTMLButtonElement>('mint-avatar'),

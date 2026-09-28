@@ -49,6 +49,13 @@ contract EscrowHandler is Test {
         escrow.join{value: STAKE}(current);
     }
 
+    /// @dev One actor pays, another is seated: the value and the seat part ways.
+    function joinFor(uint256 payer, uint256 who) public {
+        if (current == bytes32(0)) return;
+        vm.prank(actors[payer % actors.length]);
+        escrow.joinFor{value: STAKE}(current, actors[who % actors.length]);
+    }
+
     function lock() public {
         if (current == bytes32(0)) return;
         escrow.lockMatch(current);

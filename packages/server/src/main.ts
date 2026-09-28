@@ -14,6 +14,7 @@ import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
+import { parseZapTokens, zapInfo } from './chain/zap.js';
 
 const TICK_MS = 250;
 
@@ -65,6 +66,11 @@ async function main(): Promise<void> {
         })
       : nullSessionRelayer;
 
+  // Pays into the escrow, so it is only offered alongside one.
+  const zap = config.onChain
+    ? zapInfo(config.zapJoin, config.v4Quoter, parseZapTokens(config.zapTokens))
+    : null;
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
@@ -75,6 +81,7 @@ async function main(): Promise<void> {
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
+    zap,
   });
 
   const http = createServer((request, response) => {
@@ -120,6 +127,10 @@ async function main(): Promise<void> {
 
   if (sessionRelayer.enabled) {
     console.log(`[server] relaying session calls through ${config.sessionDelegate}`);
+  }
+
+  if (zap) {
+    console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
   }
 
   if (!avatars.empty) {

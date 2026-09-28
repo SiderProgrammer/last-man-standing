@@ -5,6 +5,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
+import {ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
@@ -182,6 +183,19 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
         _seat(matchId, info, msg.sender, 0);
+    }
+
+    /// @notice Takes a seat for `player`, with the stake paid by the caller.
+    /// @dev For periphery contracts that acquire the stake on the player's
+    ///      behalf, such as `ZapJoin` swapping a token into ETH. The seat, any
+    ///      refund and any payout all belong to `player`; the caller gets
+    ///      nothing back. That is also why it needs no consent from `player`:
+    ///      being paid into a lobby can only ever credit them, never charge them.
+    function joinFor(bytes32 matchId, address player) external payable whenNotPaused {
+        if (player == address(0)) revert ZeroAddress();
+        MatchInfo storage info = _open(matchId);
+        if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
+        _seat(matchId, info, player, 0);
     }
 
     /// @notice Takes a seat on behalf of a player whose stake arrived from another chain.
