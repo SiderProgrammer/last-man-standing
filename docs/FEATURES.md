@@ -115,7 +115,7 @@ cancels, settlements and withdrawals in any order.
 
 ## Hidden information: commit–reveal
 
-`packages/protocol/src/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
+`packages/protocol/src/game/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
 
 ### What it does
 
@@ -157,7 +157,7 @@ than just the final ranking.
 ## Settlement and the attestor quorum
 
 `GameEscrow.settle` · `contracts/src/libraries/SignatureLib.sol` ·
-`packages/server/src/attestor.ts` · **Unit-tested**
+`packages/server/src/chain/attestor.ts` · **Unit-tested**
 
 ### What it does
 
@@ -242,7 +242,7 @@ It currently targets a minimal local coordinator interface and runs against
 ## Cross-chain
 
 `contracts/src/SpokeEscrow.sol` · `contracts/src/interfaces/ICrossChainMessenger.sol` ·
-`contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chains.ts` ·
+`contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chain/chains.ts` ·
 **Mocked**
 
 ### What it does
@@ -292,7 +292,7 @@ chain.
 
 ### Showing the origin
 
-`packages/client/src/arena.ts` · **Live**
+`packages/client/src/arena/` · **Live**
 
 The origin rides through `Seat.chainId` into the match snapshot and is drawn as
 a coloured pill above each seat, with per-chain chips in the lobby list and a
@@ -363,8 +363,8 @@ but unusable state that only the deploy script currently prevents.
 
 ## Account abstraction
 
-`contracts/src/SessionKeyDelegate.sol` · `packages/client/src/session.ts` ·
-`packages/server/src/relayer.ts` · **Unit-tested**
+`contracts/src/SessionKeyDelegate.sol` · `packages/client/src/wallet/session.ts` ·
+`packages/server/src/chain/relayer.ts` · **Unit-tested**
 
 ### The problem
 
@@ -465,7 +465,7 @@ to it.
 
 ### Wallet-as-identity login
 
-`packages/server/src/gateway.ts` · **Live**
+`packages/server/src/gateway/gateway.ts` · **Live**
 
 The server issues a random nonce on connect; the wallet signs
 `Last Man Standing login\nnonce:<nonce>`; the server recovers the address.
@@ -477,7 +477,7 @@ address ownership and nothing else; it cannot authorise a transfer.
 
 ### NFT avatars
 
-`contracts/src/PlayerAvatars.sol` · `packages/server/src/avatars.ts` ·
+`contracts/src/PlayerAvatars.sol` · `packages/server/src/chain/avatars.ts` ·
 **Unit-tested**
 
 An ERC-721 collection deployed **independently per chain**. Free mint, one per
@@ -531,7 +531,7 @@ nobody backed a winning outcome, the book aborts and every stake is refundable.
 
 ### Off-chain: round eliminations
 
-`packages/protocol/src/betting.ts` · **Live** · **Known issue**
+`packages/protocol/src/game/betting.ts` · **Live** · **Known issue**
 
 Before each commit window closes, spectators back a seat to be eliminated that
 round, using play-money chips. Parimutuel again: tickets on eliminated seats
@@ -582,14 +582,14 @@ fails on drift.
 The deterministic kernel that decides what happens in a round, with no I/O
 whatsoever.
 
-- **`resolve.ts`** — `resolveRound(rules, seed, round, states, moves)` is pure
+- **`kernel/resolve.ts`** — `resolveRound(rules, seed, round, states, moves)` is pure
   and total. It does not read the clock, does not use floating point, and does
   not depend on the order moves arrive in.
-- **`match.ts`** — the per-match state machine: commit → reveal → resolve, phase
+- **`match/match.ts`** — the per-match state machine: commit → reveal → resolve, phase
   guards, commitment verification, ranking, and the public snapshot.
-- **`replay.ts`** — recomputes an entire match from the seed and published move
+- **`match/replay.ts`** — recomputes an entire match from the seed and published move
   log, and checks a claimed result against it.
-- **`strategy.ts`** — seeded bots: `randomStrategy` and `readerStrategy`, the
+- **`bots/strategy.ts`** — seeded bots: `randomStrategy` and `readerStrategy`, the
   latter punishing repeat attackers and piling onto the seat everyone else is
   hunting.
 
@@ -617,19 +617,28 @@ Two supporting decisions:
 
 | File | Responsibility |
 | --- | --- |
-| `room.ts` | One live match: phases, round clock, client fan-out |
-| `chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
-| `bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
-| `lobby.ts` | Room registry; practice lobbies, adopted on-chain matches, finalisation |
-| `gateway.ts` | Session registry, wallet login, message dispatch |
-| `frames.ts` | Frame decoding, and the error frame returned when it fails |
-| `chain.ts` | `ChainBridge`: discovery, directory, keeper lock, room adoption |
-| `escrowReader.ts` | The hub as an interface, plus its viem implementation |
-| `attestor.ts` | Signs the EIP-712 result and submits `settle` |
-| `avatars.ts` | Resolves each seat's NFT on its own chain |
-| `relayer.ts` | Submits and pays for session-authorised calls |
-| `store.ts` | Match archive: in-memory by default, Postgres when configured |
-| `viem.ts` | Client construction for a chain known only by id and RPC URL |
+| `main.ts` | Composition root: reads the config, wires every component, listens |
+| `index.ts` | The package's public exports. Importing it boots nothing |
+| `config.ts` | Environment configuration |
+| **`match/`** | **One live match** |
+| `match/room.ts` | Phases, the round clock, client fan-out |
+| **`bots/`** | **The house players** |
+| `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
+| **`betting/`** | **The play-money book** |
+| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| **`lobby/`** | **Which matches exist, and what happens when one ends** |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
+| **`gateway/`** | **The socket boundary** |
+| `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
+| `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
+| **`chain/`** | **Everything that talks to a chain** |
+| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
+| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
+| `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
+| `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
+| `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
 ### Design decisions worth knowing
 
@@ -666,20 +675,39 @@ Two supporting decisions:
 | File | Responsibility |
 | --- | --- |
 | `main.ts` | Entry point, three lines: calls `start()` |
-| `app.ts` | The shell: state, socket wiring, dispatch, wallet and session flows, DOM writes |
-| `dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `phase.ts` | *Pure.* `phasePlan` — control states, and whether a reveal is due |
-| `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
-| `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, attack bolts, storm ring |
-| `theme.ts` | The arena's palette and text styles |
-| `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
-| `reads.ts` | *Pure.* Per-opponent tendencies and tells, derived from public history |
-| `net.ts` | Typed socket with backoff reconnect, re-auth and an outbox |
-| `wallet.ts` | EIP-1193 session, login signature, escrow / avatar / session calls |
-| `session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
-| `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
-| `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
+| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
+| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
+| **`assets/`** | **Everything loaded at boot** |
+| `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
+| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot |
+| **`screens/`** | **What the player sees, and the controls on it** |
+| `screens/loading.ts` | The boot screen: a progress bar while assets load |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| **`wallet/`** | **The player's account** |
+| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
+| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| **`game/`** | **Match logic that runs in the browser** |
+| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
+| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
+| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| **`arena/`** | **The Pixi canvas** |
+| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring |
+| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
+| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
+| `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
+| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
+| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| **`ui/`** | **The DOM around the canvas** |
+| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
+| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
+| **`io/`** | **Browser I/O** |
+| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
+| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
 
 ### Why these choices
 

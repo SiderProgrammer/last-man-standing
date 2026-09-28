@@ -201,7 +201,7 @@ Verdicts: **Keep** earns its place · **Fix** broken or unsafe · **Cut** remove
 
 ### Game rules
 
-`packages/protocol/src/rules.ts`
+`packages/protocol/src/game/rules.ts`
 
 | Feature | Verdict | Assessment |
 | --- | --- | --- |

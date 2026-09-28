@@ -9,7 +9,7 @@ import {
   type Seat,
 } from '@lms/protocol';
 import type { MatchSetup } from './match.js';
-import { resolveRound, type DeclaredMove } from './resolve.js';
+import { resolveRound, type DeclaredMove } from '../kernel/resolve.js';
 
 export interface ReplayResult {
   result: MatchResult;

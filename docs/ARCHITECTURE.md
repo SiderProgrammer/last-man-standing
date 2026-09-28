@@ -118,20 +118,24 @@ about rendering. Everything that decides who gets paid lives in `protocol` + `en
 
 | File | Responsibility |
 | --- | --- |
-| `types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
-| `rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
-| `chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
-| `hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
-| `eip712.ts` | `MatchResult` typed-data schema and domain |
+| `index.ts` | The package's exports, grouped by the folders below |
 | `wire.ts` | `ClientMessage` / `ServerMessage` union, `LobbyInfo`, login prefix |
-| `betting.ts` | `settleEliminationBook` — parimutuel payout for the round book |
-| `escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
-| `avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
-| `session.ts` | The `SessionKeyDelegate` ABI and `sessionCallDigest`, pinned to Solidity |
-| `address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
-| `errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
+| **`game/`** | **The rules everybody agrees on** |
+| `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
+| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
+| `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
+| `game/betting.ts` | `settleEliminationBook` — parimutuel payout for the round book |
+| **`chain/`** | **Everything tied to a chain or a contract** |
+| `chain/chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
+| `chain/eip712.ts` | `MatchResult` typed-data schema and domain |
+| `chain/escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
+| `chain/avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
+| `chain/session.ts` | The `SessionKeyDelegate` ABI and `sessionCallDigest`, pinned to Solidity |
+| **`util/`** | **Small shared helpers** |
+| `util/address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
+| `util/errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
 
-Everything in `hash.ts` is built with `abi.encode` so Solidity can recompute it
+Everything in `game/hash.ts` is built with `abi.encode` so Solidity can recompute it
 byte-for-byte. `contracts/src/libraries/HashLib.sol` is the mirror, and both sides pin
 the same frozen vectors (`packages/protocol/test/parity.test.ts` and
 `contracts/test/unit/HashLib.t.sol`), so an encoding change fails exactly one suite
@@ -139,13 +143,13 @@ instead of drifting silently.
 
 ### `packages/engine` — deterministic game logic
 
-- **`resolve.ts`** is the kernel: `resolveRound(rules, seed, round, states, moves)` is
+- **`kernel/resolve.ts`** is the kernel: `resolveRound(rules, seed, round, states, moves)` is
   pure and total. It does not read the clock, does not use floating point, and does not
   depend on the order moves arrive in. This is what makes a match replayable.
-- **`match.ts`** is the per-match state machine: commit → reveal → resolve, phase
+- **`match/match.ts`** is the per-match state machine: commit → reveal → resolve, phase
   guards, commitment verification, ranking, and the public snapshot that is safe to
   broadcast (it carries seat numbers and HP, never a pending action).
-- **`replay.ts`** is the audit path: `replayMatch(setup, moveLog)` recomputes the whole
+- **`match/replay.ts`** is the audit path: `replayMatch(setup, moveLog)` recomputes the whole
   match from the seed and published moves, and `verifyResult` checks a claimed result
   against it. It shares nothing with `Match` except the pure kernel. The initial state,
   the per-round fold and the ranking rule are therefore written out twice **on purpose**:
@@ -153,27 +157,35 @@ instead of drifting silently.
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
   `properties.test.ts` replays 40 matches across both bot strategies to hold the two
   derivations to the same answer.
-- **`strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
+- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
   `readerStrategy`.
 
 ### `packages/server` — authoritative, but not trusted
 
 | File | Responsibility |
 | --- | --- |
-| `room.ts` | One live match: phases, the round clock, client fan-out |
-| `chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
-| `bots.ts` | `BotDriver`: the seats the house plays, and their seed-derived salts |
-| `lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
-| `gateway.ts` | Session registry, wallet login, message dispatch |
-| `frames.ts` | Frame decoding and the error frame that goes back when it fails |
-| `chain.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
-| `escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
-| `attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
-| `avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
-| `relayer.ts` | Submits and pays for calls a player's session key authorised |
-| `store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
-| `viem.ts` | Client construction for a chain known only by id and RPC URL |
+| `main.ts` | Composition root: reads the config, wires every component, listens |
+| `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
+| **`match/`** | **One live match** |
+| `match/room.ts` | Phases, the round clock, client fan-out |
+| **`bots/`** | **The house players** |
+| `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
+| **`betting/`** | **The play-money book** |
+| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
+| **`lobby/`** | **Which matches exist, and what happens when one ends** |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
+| **`gateway/`** | **The socket boundary** |
+| `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
+| `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
+| **`chain/`** | **Everything that talks to a chain** |
+| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
+| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
+| `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
+| `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
+| `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
 Three deliberate design choices make this testable:
 
@@ -182,6 +194,8 @@ Three deliberate design choices make this testable:
   deterministically without timers.
 - **Clients are opaque sinks.** `Room` talks to a `Client` interface with a single
   `send`, so the state machine has no idea WebSockets exist.
+- **Importing the package boots nothing.** `index.ts` is exports only and `main.ts` is
+  the composition root, so every test imports `@lms/server` without opening a port.
 - **The chain is an interface.** `ChainBridge` takes an `EscrowReader` rather than
   building viem clients itself, so the poll loop — cursor arithmetic, lock conditions,
   adopt-once — is exercised against a fake instead of an RPC. `ChainBridge.start` still
@@ -206,27 +220,51 @@ any player can lock the lobby themselves.
 | File | Responsibility |
 | --- | --- |
 | `main.ts` | Entry point, three lines: calls `start()` |
-| `app.ts` | The imperative shell: state, socket wiring, dispatch, wallet and session flows, DOM writes |
-| `dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
-| `views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
-| `format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `arena.ts` | Pixi scene: seats on a circle, HP arcs, storm ring, and the round replay |
-| `choreography.ts` | *Pure.* Turns a `RoundRecord` into a timeline, and samples it at time `t` |
-| `effects.ts` | Pixi effects for the replay: projectiles, impacts, storm, shatter, winner |
-| `theme.ts` | The arena's palette and text styles, including the replay's effect tints |
-| `layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
-| `reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
-| `net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
-| `wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
-| `session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
-| `salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
-| `storage.ts` | `localStorage` that cannot throw, shared by `salts.ts` and `session.ts` |
+| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
+| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
+| **`assets/`** | **Everything loaded at boot** |
+| `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
+| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot |
+| **`screens/`** | **What the player sees, and the controls on it** |
+| `screens/loading.ts` | The boot screen: a progress bar while assets load |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| **`wallet/`** | **The player's account** |
+| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
+| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| **`game/`** | **Match logic that runs in the browser** |
+| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
+| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
+| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
+| **`arena/`** | **The Pixi canvas** |
+| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring |
+| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
+| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
+| `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
+| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
+| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| **`ui/`** | **The DOM around the canvas** |
+| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
+| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
+| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
+| **`io/`** | **Browser I/O** |
+| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
+| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
 
-The split is along one line: anything that decides *what* to show is pure and tested in
-node; anything that writes to the document stays in `app.ts`. `phasePlan` returns a
+The folders split along two lines. By feature: each screen owns its controls, and
+`app.ts` does nothing but route server messages to them. By purity: anything that
+decides *what* to show — the *Pure* rows above — is tested in node, while anything that
+writes to the document lives in `screens/` or `wallet/flows.ts`. `phasePlan` returns a
 `shouldReveal` flag rather than sending the reveal itself, so the decision is testable
 while the send stays exactly where it was in the sequence.
+
+The screens share one page, one socket and one set of elements, so that state lives in
+`context.ts` as module singletons rather than being threaded through every call. `dom`
+and `net` are ES-module live bindings assigned once in `start()`; `context.ts` imports
+only types, which keeps the runtime graph acyclic.
 
 Three things are worth calling out:
 
@@ -245,17 +283,22 @@ projectiles travel, parries flash and bounce a riposte back, hiders sidestep, th
 strikes every survivor, and eliminated seats shatter with a short screen shake. The
 winner is crowned after the final round.
 
-- **Choreography is pure.** `choreograph(record, before)` turns a `RoundRecord` into
-  timed beats; `sample(timeline, t)` says what each seat should display at `t`. It uses
-  nothing but the published record, so the replay can never show anything the history
-  feed does not. HP moves between two waypoints and the client holds no rule constants:
+- **Choreography is pure; GSAP does the motion.** `choreograph(record, before)` turns
+  a `RoundRecord` into a schedule of timed beats. `buildReplay` turns that schedule into
+  one GSAP timeline that tweens a plain `SeatDisplay` per seat — HP, liveness, the
+  shatter's swell and fade — and `Effects.decorate` adds the visuals to the same
+  timeline, so a projectile lands on exactly the frame its target's HP starts to drain.
+  The arena computes no interpolation of its own; it only draws the tweened values.
+  The schedule uses nothing but the published record, so the replay can never show
+  anything the history feed does not. HP moves between two waypoints and the client holds no rule constants:
   `before − damage − riposte` is exact from the record, and the end is always the
   published `hpAfter`. That keeps it honest when the engine does something the client
   cannot reconstruct, such as reviving the least-overkilled seat on 1 HP.
 - **The arena shows less than it knows while replaying.** The server sends `round`
   and then, synchronously, the post-round snapshot. Painting that snapshot would refill
   or empty every arc before the replay could show how. So while a replay runs, HP and
-  liveness come from `sample`; afterwards the snapshot takes over. After the *final*
+  liveness come from the replay's tweened `SeatDisplay`; afterwards the snapshot takes
+  over. After the *final*
   round no snapshot ever follows, so the replay's last frame stays pinned instead of
   reverting to the state the round began with.
 - **The server holds the clock, not the client.** After a round resolves the room waits
@@ -265,14 +308,18 @@ winner is crowned after the final round.
   the pause entirely, because bots commit the instant a round resolves. Settlement is
   never delayed for a cosmetic: `finished` goes out immediately, and only the client
   defers *showing* it until the replay has played.
-- **The replay runs on the wall clock.** A clock accumulated from frame deltas falls
-  behind real time on a slow device and would let the replay spill into the commit
-  window. Triggers that frames arrive too late for are dropped rather than fired in a pile.
-- **Textures are optional.** The effects use fourteen CC0 textures from Kenney's
-  Particle Pack in `packages/client/public/fx/` (about 98 KB, provenance in its
-  `LICENSE.txt`), white with the shape in alpha so they tint to the theme exactly. A
-  texture that fails to load becomes a generated glow, just as a seat without an avatar
-  keeps its plain circle.
+- **The replay runs on the wall clock.** GSAP's lag smoothing is switched off in
+  `motion.ts`: by default it holds its clock back across a long frame gap, which would
+  let the replay fall behind the server's hold and spill into the commit window.
+  Moments the timeline only reaches by jumping far past them — a backgrounded tab — are
+  skipped rather than fired in a pile.
+- **Textures load at boot, and are optional.** The effects use fourteen CC0 textures
+  from Kenney's Particle Pack in `packages/client/public/fx/` (about 98 KB, provenance in
+  its `LICENSE.txt`), white with the shape in alpha so they tint to the theme exactly.
+  They are declared in a Pixi asset manifest and loaded behind a loading screen when the
+  page opens, so the arena finds them cached. The loader uses Pixi's `skip` strategy: a
+  texture that fails is dropped, not the whole bundle, and the effects draw a generated
+  glow in its place — just as a seat without an avatar keeps its plain circle.
 - **Reduced motion is respected.** Under `prefers-reduced-motion`, travel, particles,
   lunges and shake are skipped; the HP drain and the floating numbers remain, because
   they carry information rather than decoration.

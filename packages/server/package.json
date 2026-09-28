@@ -12,8 +12,8 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts"
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
     "@lms/engine": "0.1.0",

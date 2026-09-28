@@ -1,6 +1,6 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
 import { Action, type ActionValue, type Move } from '@lms/protocol';
-import type { Match } from './match.js';
+import type { Match } from '../match/match.js';
 
 /** Counter-based keccak PRNG, so bot play is reproducible given a seed. */
 export class Prng {

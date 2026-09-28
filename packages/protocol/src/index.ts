@@ -1,13 +1,18 @@
-export * from './address.js';
-export * from './errors.js';
-export * from './types.js';
-export * from './rules.js';
-export * from './chains.js';
-export * from './hash.js';
-export * from './eip712.js';
-export * from './wire.js';
-export * from './betting.js';
-export * from './escrow.js';
-export * from './avatars.js';
-export * from './session.js';
+// The game's shared rules: types, rule set, hashing, and the elimination book.
+export * from './game/types.js';
+export * from './game/rules.js';
+export * from './game/hash.js';
+export * from './game/betting.js';
 
+// Everything tied to a chain: chain ids, typed data, and the contract ABIs.
+export * from './chain/chains.js';
+export * from './chain/eip712.js';
+export * from './chain/escrow.js';
+export * from './chain/avatars.js';
+export * from './chain/session.js';
+
+// Messages between the browser and the server.
+export * from './wire.js';
+
+export * from './util/address.js';
+export * from './util/errors.js';

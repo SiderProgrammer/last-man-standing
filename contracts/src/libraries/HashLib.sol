@@ -6,7 +6,7 @@ pragma solidity 0.8.28;
 /// @dev Every function uses `abi.encode` (or equivalent Yul) so a verifier
 ///      can recompute a history root independently of the TypeScript engine.
 ///      Changing the encodings here is a consensus break and must be mirrored
-///      in `packages/protocol/src/hash.ts`.
+///      in `packages/protocol/src/game/hash.ts`.
 ///
 ///      No contract in `src/` calls this library. It exists to be the on-chain
 ///      mirror the future fraud proof will need (`docs/TODO.md` §3.1), and is

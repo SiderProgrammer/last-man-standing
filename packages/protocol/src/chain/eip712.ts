@@ -1,5 +1,5 @@
 import type { TypedDataDomain } from 'viem';
-import type { MatchResult } from './types.js';
+import type { MatchResult } from '../game/types.js';
 
 export const EIP712_DOMAIN_NAME = 'LastManStanding';
 export const EIP712_DOMAIN_VERSION = '1';

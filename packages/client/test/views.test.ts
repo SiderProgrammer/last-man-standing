@@ -9,8 +9,8 @@ import {
   hubLabel,
   targetOptions,
   type AvatarStatus,
-} from '../src/views.js';
-import { describeDraft, formatCountdown, short } from '../src/format.js';
+} from '../src/ui/views.js';
+import { describeDraft, formatCountdown, short } from '../src/ui/format.js';
 import { stateWith } from './helpers.js';
 
 const SEPOLIA = 11155111;

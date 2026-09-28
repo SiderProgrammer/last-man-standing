@@ -10,7 +10,7 @@ import {
   type Seat,
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
-import type { Lobby } from './lobby.js';
+import type { Lobby } from '../lobby/lobby.js';
 import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
 
 export interface ChainBridgeOptions {

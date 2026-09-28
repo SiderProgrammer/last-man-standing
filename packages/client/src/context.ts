@@ -1,0 +1,91 @@
+import type {
+  ActionValue,
+  AvatarCollectionInfo,
+  AvatarEntry,
+  BookSnapshot,
+  PublicMatchState,
+  ServerMessage,
+} from '@lms/protocol';
+import type { Net } from './io/net.js';
+import type { Dom } from './ui/dom.js';
+import type { Session } from './wallet/session.js';
+import type { Wallet } from './wallet/wallet.js';
+
+/**
+ * State every screen reads and writes.
+ *
+ * The client is one page with one socket and one set of elements, so these are
+ * module singletons rather than objects threaded through every call. `dom` and
+ * `net` are ES-module live bindings: `initContext` assigns them once at boot,
+ * and every module that imported them sees the assigned value from then on.
+ * Nothing may read them before `start()` has run.
+ */
+
+export interface AppState {
+  wallet: Wallet | null;
+  nonce: string;
+  chainId: number;
+  escrow: `0x${string}` | null;
+  /** Where `PlayerAvatars` lives, per chain. Minting happens on the player's own chain. */
+  avatarCollections: AvatarCollectionInfo[];
+  /** 7702 delegate the account may point at, or null if the server cannot verify one. */
+  sessionDelegate: `0x${string}` | null;
+  /** Live session key, if this browser holds one. Signs logins without a prompt. */
+  session: Session | null;
+  match: PublicMatchState | null;
+  /**
+   * Avatars for the current match, held here rather than pushed straight at the
+   * arena: they can arrive before `Arena.mount` has resolved, and the arena is
+   * rebuilt on every match switch.
+   */
+  avatars: AvatarEntry[];
+  you: number | null;
+  deadline: number;
+  book: BookSnapshot | null;
+  /** Action the player has selected but not yet sealed. */
+  draft: { action: ActionValue; target: number } | null;
+  /** Round whose commitment is already on the server. */
+  committedRound: number | null;
+  /** Round whose reveal is already on the server. */
+  revealedRound: number | null;
+  /**
+   * True while the last round is being replayed. The server holds the next
+   * commit clock for the same length, so the controls stay closed without
+   * costing anyone decision time.
+   */
+  replaying: boolean;
+  /**
+   * A `finished` that arrived mid-replay. Settlement is never delayed on the
+   * server; only *showing* the result waits, so the final kill plays before the
+   * "match over" line spoils it.
+   */
+  pendingFinish: Extract<ServerMessage, { type: 'finished' }> | null;
+}
+
+export const app: AppState = {
+  wallet: null,
+  nonce: '',
+  chainId: 0,
+  escrow: null,
+  avatarCollections: [],
+  sessionDelegate: null,
+  session: null,
+  match: null,
+  avatars: [],
+  you: null,
+  deadline: 0,
+  book: null,
+  draft: null,
+  committedRound: null,
+  revealedRound: null,
+  replaying: false,
+  pendingFinish: null,
+};
+
+export let dom: Dom;
+export let net: Net;
+
+export function initContext(elements: Dom, socket: Net): void {
+  dom = elements;
+  net = socket;
+}

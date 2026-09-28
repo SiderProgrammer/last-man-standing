@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Action } from '@lms/protocol';
-import { readOpponents } from '../src/reads.js';
+import { readOpponents } from '../src/game/reads.js';
 import { round, stateWith } from './helpers.js';
 
 /**

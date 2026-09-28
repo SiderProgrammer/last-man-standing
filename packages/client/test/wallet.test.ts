@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { toHex } from 'viem';
-import { SESSION_SCOPE } from '../src/wallet.js';
-import { centreOf, seatPosition, seatRingRadius, stormRing } from '../src/layout.js';
-import { COLORS, hpColor } from '../src/theme.js';
+import { SESSION_SCOPE } from '../src/wallet/wallet.js';
+import { centreOf, seatPosition, seatRingRadius, stormRing } from '../src/arena/layout.js';
+import { COLORS, hpColor } from '../src/arena/theme.js';
 
 describe('session scope', () => {
   /**

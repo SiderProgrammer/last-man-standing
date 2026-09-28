@@ -1,6 +1,6 @@
 import { toHex } from 'viem';
 import type { ActionValue } from '@lms/protocol';
-import { readRaw, writeRaw } from './storage.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 
 const KEY = 'lms.moves.v1';
 

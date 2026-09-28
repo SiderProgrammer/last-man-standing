@@ -1,7 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import { addressKey, sameAddress, sessionCallDigest } from '@lms/protocol';
-import { readRaw, removeRaw, writeRaw } from './storage.js';
+import { readRaw, removeRaw, writeRaw } from '../io/storage.js';
 
 /**
  * A scoped session key, stored in the browser.
