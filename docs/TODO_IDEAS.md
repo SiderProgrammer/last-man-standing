@@ -2,6 +2,9 @@ dodac animacje — ZROBIONE (replay rundy, patrz ARCHITECTURE.md "The round repl
 dodac integracje AI (np generowanie obrazkow, boty)
 dodac leaderboard, tournaments
 Redis
+dodac uniswap v4
+multisig
+gov tokens
 Upgradeable Contracts
 Observability — metrics, structured logs, tracing i monitoring cross-chain messages
 Rate Limiting + Anti-DDoS dla WebSocketów
@@ -10,3 +13,5 @@ Chaos Testing — losowe rozłączanie graczy, opóźnienia sieci, utrata wiadom
 Fuzz Testing
 Invariant Testing
 napisac wlasne skille AI i uzyc istniejacych (np do pisania smart contractow, audytow)
+run AI audit
+game balance
