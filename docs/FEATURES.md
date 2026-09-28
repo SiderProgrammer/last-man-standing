@@ -316,7 +316,15 @@ renders unreadably.
 ### What it does
 
 One contract holding every governable parameter, owned by a
-`TimelockController`:
+`TimelockController` whose only proposer is a multisig (a Safe):
+
+```
+Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
+ |                          (anyone executes once the delay has passed)
+ +- guardian: may pause GameEscrow at once, never unpause
+ +- treasury: receives protocol fees
+ +- owns PlayerAvatars directly
+```
 
 | Parameter group | Contents |
 | --- | --- |
@@ -327,13 +335,30 @@ One contract holding every governable parameter, owned by a
 | Randomness | `randomnessOracle` address |
 | Attestation | Attestor allowlist, `attestorCount`, `attestorThreshold` |
 | Cross-chain | Trusted `messengerFor` and `peerFor`, per remote chain |
+| Emergency | `guardian` — may pause the escrow without the delay |
 
 `GameEscrow` reads this contract and never writes to it.
 
 ### Why
 
-- **Timelock ownership.** Purpose: parameter changes are queued in public before
-  they take effect, so players can see a fee increase coming and leave.
+- **Multisig behind a timelock.** Purpose: no single key can change the
+  protocol. That matters more than it looks: whoever owns the config can swap the
+  randomness oracle (and so choose seeds) or add an attestor and lower the
+  threshold (and so sign results). The Safe proposes; the timelock makes the
+  change public before it lands, so players can see a fee increase or a new
+  oracle coming and leave. The deploy script refuses a delay shorter than
+  `joinWindow + settleWindow`, because the oracle and attestor set are read live
+  rather than snapshotted.
+- **A guardian that can only pause.** Purpose: an emergency stop cannot wait a
+  day. `GameEscrow.pause()` is open to the guardian (and the owner) and skips
+  the timelock; `unpause()` is owner-only, so resuming waits out the
+  delay. A compromised guardian can therefore halt new play — refunds survive
+  a pause — but can never lift a pause that was put in place to stop an exploit.
+  Two consequences for whoever holds the guardian keys: a pause also blocks
+  `settle`, so every match in play ends by cancellation and refund rather than
+  by result; and to recover from a rogue guardian, governance queues
+  `setGuardian(newSafe)` and `unpause()` as one timelock batch, so the pause is
+  lifted with the guardian already replaced.
 - **`Ownable2Step`.** Purpose: ownership transfer requires the new owner to
   accept, so governance cannot be accidentally handed to an address nobody
   controls.
@@ -354,8 +379,11 @@ One contract holding every governable parameter, owned by a
 
 ### What is missing
 
-Governance is a bare `TimelockController` in the deploy script. A real DAO needs
-a Governor contract, a voting token and a documented proposal flow. The config
+Governance is a Safe behind a `TimelockController`: a council, not a DAO. A
+real DAO needs a Governor contract, a voting token and a documented proposal
+flow. The other `Ownable` contracts — `SpokeEscrow`, `LayerZeroMessenger`,
+`ChainlinkVrfAdapter` — are not deployed by the script yet; each must be
+constructed with a timelock as its owner, one Safe and timelock per chain. The config
 can also be deployed with a zero `rulesHash` and zero oracle — a valid-looking
 but unusable state that only the deploy script currently prevents.
 

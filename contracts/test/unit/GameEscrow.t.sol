@@ -245,7 +245,7 @@ contract GameEscrowTest is Fixtures {
         );
 
         vm.prank(owner);
-        escrow.setPaused(true);
+        escrow.pause();
 
         vm.prank(players[0]);
         vm.expectRevert(GameEscrow.Paused.selector);
@@ -254,6 +254,40 @@ contract GameEscrowTest is Fixtures {
         vm.prank(ranking[0]);
         escrow.withdraw(ranking[0]);
         assertEq(escrow.withdrawable(ranking[0]), 0);
+    }
+
+    function test_pause_guardianCanPauseButOnlyGovernanceUnpauses() public {
+        address guardian = makeAddr("guardian");
+        vm.prank(owner);
+        config.setGuardian(guardian);
+
+        vm.prank(guardian);
+        escrow.pause();
+        assertTrue(escrow.paused());
+
+        vm.prank(guardian);
+        vm.expectRevert(GameEscrow.NotGovernance.selector);
+        escrow.unpause();
+
+        vm.prank(owner);
+        escrow.unpause();
+        assertFalse(escrow.paused());
+
+        vm.prank(owner);
+        escrow.pause();
+        assertTrue(escrow.paused());
+    }
+
+    function test_pause_rejectsEveryoneElse() public {
+        vm.prank(players[0]);
+        vm.expectRevert(GameEscrow.NotGuardian.selector);
+        escrow.pause();
+
+        vm.prank(owner);
+        escrow.pause();
+        vm.prank(players[0]);
+        vm.expectRevert(GameEscrow.NotGovernance.selector);
+        escrow.unpause();
     }
 
     function test_cancel_liveMatchAfterDeadline() public {

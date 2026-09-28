@@ -330,7 +330,7 @@ winner is crowned after the final round.
 | --- | --- |
 | `PullPayable` | Base for both escrows: credited balances, `totalOwed`, pull-based `withdraw` |
 | `Errors` | The errors several contracts raise identically, hoisted to file level |
-| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, per-chain messengers and peers. Owned by a `TimelockController`. |
+| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, per-chain messengers and peers, emergency guardian. Owned by a `TimelockController` whose proposer is a Safe. |
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
 | `SpokeEscrow` | Spoke-chain gate: forwards a stake plus a join message to the hub, receives bridged payouts. |
 | `MatchMarket` | Parimutuel Winner / Top 3 books settled from the escrow's attested ranking. |
@@ -367,6 +367,8 @@ withdraw() / withdrawToChain()    pull-based, always
   staked into.
 - *Pausing cannot trap funds.* `cancelMatch` and `withdraw` are deliberately not gated,
   and cancellation is permissionless once the relevant deadline passes.
+- *Pausing is fast, resuming is slow.* The guardian Safe can `pause()` without the
+  timelock; only governance can `unpause()`, so lifting a pause waits out the delay.
 - *Both ends of a bridge are authenticated.* A trusted transport still relays messages
   from untrusted senders, so the messenger **and** the origin peer are checked.
 

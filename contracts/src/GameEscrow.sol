@@ -105,6 +105,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     error Paused();
     error NotGovernance();
+    error NotGuardian();
     error UnknownMatch(bytes32 matchId);
     error WrongStatus(bytes32 matchId, MatchStatus expected, MatchStatus actual);
     error StakeOutOfRange(uint128 stake);
@@ -380,11 +381,22 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     // --- Governance --------------------------------------------------------
 
     /// @notice Halts new lobbies, joins, and settlement. Refunds stay open.
-    /// @dev `cancelMatch` and `withdraw` are deliberately not gated: pausing
+    /// @dev Open to the guardian, which skips the timelock delay, and to
+    ///      governance, so a pause is still possible with no guardian set.
+    ///      `cancelMatch` and `withdraw` are deliberately not gated: pausing
     ///      must never trap player funds.
-    function setPaused(bool paused_) external onlyGovernance {
-        paused = paused_;
-        emit PausedSet(paused_);
+    function pause() external {
+        if (msg.sender != config.guardian() && msg.sender != config.owner()) revert NotGuardian();
+        paused = true;
+        emit PausedSet(true);
+    }
+
+    /// @notice Resumes play. Governance only, so it always waits out the timelock.
+    /// @dev Deliberately not open to the guardian: lifting a pause that was put
+    ///      in place to stop an exploit re-opens it. See `ProtocolConfig.guardian`.
+    function unpause() external onlyGovernance {
+        paused = false;
+        emit PausedSet(false);
     }
 
     // --- Views -------------------------------------------------------------

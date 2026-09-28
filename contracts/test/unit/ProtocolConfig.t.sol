@@ -46,5 +46,21 @@ contract ProtocolConfigTest is Fixtures {
     function test_onlyOwnerCanMutate() public {
         vm.expectRevert();
         config.setRulesHash(bytes32(uint256(1)));
+
+        vm.expectRevert();
+        config.setGuardian(address(this));
+    }
+
+    function test_guardianCanBeSetAndRemoved() public {
+        address guardian = makeAddr("guardian");
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, false, false, address(config));
+        emit ProtocolConfig.GuardianUpdated(address(0), guardian);
+        config.setGuardian(guardian);
+        assertEq(config.guardian(), guardian);
+
+        config.setGuardian(address(0));
+        assertEq(config.guardian(), address(0));
+        vm.stopPrank();
     }
 }

@@ -110,8 +110,11 @@ Until then, document honestly that settlement is quorum-trusted.
   SSTORE per seat. Consider storing only the top 3 that the market actually reads.
 - `SpokeEscrow.join` trusts the caller's `stake` argument for the event only; the hub is
   the authority, but a mismatch produces a confusing failure. Quote the hub's stake instead.
-- Governance is a bare `TimelockController` in the deploy script. A real DAO needs a
+- Governance is a Safe proposing to a `TimelockController`. A real DAO needs a
   Governor contract, a voting token, and a documented proposal flow.
+- No deploy script for spokes. `SpokeEscrow`, `LayerZeroMessenger` and
+  `ChainlinkVrfAdapter` are plain `Ownable`; each must be constructed with a timelock
+  (fed by a Safe on that chain) as owner. Consider `Ownable2Step` for them too.
 
 ---
 
@@ -206,10 +209,8 @@ any of this is a deliberate, visible change rather than a silent one.
 - **`Deploy.s.sol` deploys `MockMessenger` but never calls `setRemoteChain`,** so
   `receiveMessage` rejects every cross-chain join on a fresh deployment and
   `withdrawToChain` reverts with `NoMessengerForChain`.
-- **`Deploy.s.sol` transfers config ownership to a timelock that never accepts it.**
-  `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only *proposes*; the config
-  stays owned by the deployer. The mocks are also hardwired with no env switch, and no
-  deployed addresses are recorded anywhere.
+- **`Deploy.s.sol` hardwires the mocks** with no env switch, and no deployed addresses
+  are recorded anywhere. (The timelock now accepts config ownership during the deploy.)
 - **`GameEscrow` re-implements pausing** rather than using OpenZeppelin `Pausable`,
   which emits different events and reverts a different error. The modifier was renamed
   `whenNotPaused`; adopting OZ would be an ABI break.

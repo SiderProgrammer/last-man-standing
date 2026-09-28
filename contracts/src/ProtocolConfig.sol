@@ -6,8 +6,10 @@ import {ZeroAddress} from "./Errors.sol";
 
 /// @title ProtocolConfig
 /// @notice Every governable parameter of the protocol, in one place.
-/// @dev The owner is intended to be a `TimelockController` driven by the DAO,
-///      so parameter changes are queued in public before they take effect.
+/// @dev The owner is intended to be a `TimelockController` whose proposer is a
+///      multisig, so parameter changes are queued in public before they take
+///      effect. The one thing that cannot wait out the delay is an emergency
+///      stop, which is why the `guardian` exists alongside the owner.
 ///      `GameEscrow` reads this contract but never writes to it, and it
 ///      snapshots the values that must not move underneath a running match.
 contract ProtocolConfig is Ownable2Step {
@@ -53,6 +55,12 @@ contract ProtocolConfig is Ownable2Step {
     /// @notice Signatures required to settle a match.
     uint32 public attestorThreshold;
 
+    /// @notice May pause the escrow immediately, without the timelock delay.
+    /// @dev Pause only: resuming still goes through the owner. A compromised
+    ///      guardian can therefore halt new play, which refunds survive, but
+    ///      never lift a pause that was put in place to stop an exploit.
+    address public guardian;
+
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
     /// @notice Trusted peer contract per remote chain.
@@ -65,6 +73,7 @@ contract ProtocolConfig is Ownable2Step {
     event AttestorUpdated(address indexed attestor, bool allowed);
     event AttestorThresholdUpdated(uint32 previous, uint32 current);
     event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
+    event GuardianUpdated(address indexed previous, address indexed current);
 
     error FeeTooHigh(uint16 feeBps);
     error InvalidSeatRange(uint16 minSeats, uint16 maxSeats);
@@ -150,6 +159,12 @@ contract ProtocolConfig is Ownable2Step {
         }
         emit AttestorThresholdUpdated(attestorThreshold, threshold);
         attestorThreshold = threshold;
+    }
+
+    /// @notice Sets the emergency pauser. The zero address removes it.
+    function setGuardian(address newGuardian) external onlyOwner {
+        emit GuardianUpdated(guardian, newGuardian);
+        guardian = newGuardian;
     }
 
     /// @notice Registers, or with zero arguments removes, a remote chain.

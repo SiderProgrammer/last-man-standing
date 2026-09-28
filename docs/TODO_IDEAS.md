@@ -2,10 +2,14 @@ dodac animacje — ZROBIONE (replay rundy, patrz ARCHITECTURE.md "The round repl
 dodac integracje AI (np generowanie obrazkow, boty)
 dodac leaderboard, tournaments
 Redis
-dodac uniswap v4
+dodac
 multisig
 gov tokens
-Upgradeable Contracts
+timelock
+yield/staking
+role based access
+Transient Storage
+Join with any token (uniswap v4)
 Observability — metrics, structured logs, tracing i monitoring cross-chain messages
 Rate Limiting + Anti-DDoS dla WebSocketów
 Load Testing — np. 1k/10k równoczesnych połączeń WebSocket

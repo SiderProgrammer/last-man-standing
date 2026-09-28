@@ -13,11 +13,28 @@ import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
 
-/// @notice Testnet deploy: timelock-owned config, mock oracle, hub escrow, spectator market.
-/// @dev Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
-///      `LayerZeroMessenger` once those endpoints exist on the target testnet.
+/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow, spectator market.
+/// @dev Governance ends up as:
+///
+///        Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
+///         |                          (anyone may execute once       |
+///         |                           the delay has passed)         +--> read by GameEscrow
+///         +- guardian: may pause GameEscrow at once, never unpause
+///         +- treasury: receives protocol fees
+///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
+///
+///      The deployer holds no role once `run` returns.
+///
+///      Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
+///      `LayerZeroMessenger` once those endpoints exist on the target testnet. Both are
+///      `Ownable`, and whoever owns them can choose seeds or forge cross-chain joins, so
+///      deploy them with the timelock as `owner_`, never an EOA. The same goes for
+///      `SpokeEscrow` on every spoke, each behind its own Safe and timelock.
 contract Deploy is Script {
-    /// @dev Returned as one struct rather than as six named values: each named
+    /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
+    uint256 private constant LOCAL_CHAIN_ID = 31_337;
+
+    /// @dev Returned as one struct rather than as named values: each named
     ///      return is a stack slot held for the whole body, and this frame is
     ///      already at the limit without `via_ir`.
     struct Deployment {
@@ -28,25 +45,69 @@ contract Deploy is Script {
         /// @dev Stateless and shared: every delegating account runs this same
         ///      code against its own storage, so one deployment per chain.
         SessionKeyDelegate sessionDelegate;
+        TimelockController timelock;
+        address safe;
         address oracle;
         address messenger;
     }
 
+    error SafeRequired();
+    error DelayTooShort(uint256 delay, uint256 matchLifetime);
+
     function run() external returns (Deployment memory deployment) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
-        address treasury = vm.envOr("TREASURY", deployer);
-        address attestor = vm.envOr("ATTESTOR", deployer);
+        deployment.safe = _safe(deployer);
 
         vm.startBroadcast(pk);
 
+        // Zero delay and the deployer as proposer only while it is being set
+        // up: `_handOver` raises the delay and removes the deployer before the
+        // broadcast ends.
         address[] memory proposers = new address[](1);
         proposers[0] = deployer;
         address[] memory executors = new address[](1);
         executors[0] = address(0);
-        TimelockController timelock = new TimelockController(1 days, proposers, executors, deployer);
+        deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
-        ProtocolConfig.Params memory params = ProtocolConfig.Params({
+        deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
+        MockRandomnessOracle mockOracle = new MockRandomnessOracle();
+        mockOracle.setAutoFulfill(true);
+        deployment.oracle = address(mockOracle);
+        deployment.messenger = address(new MockMessenger());
+        _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
+
+        deployment.escrow = new GameEscrow(deployment.config);
+        deployment.market = new MatchMarket(deployment.escrow);
+        // Cosmetic and per-chain: the same deployment is repeated on every
+        // spoke, and the collections are independent of each other.
+        deployment.avatars = new PlayerAvatars(
+            deployment.safe,
+            "LMS Avatars",
+            "LMSA",
+            vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),
+            vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
+        );
+        deployment.sessionDelegate = new SessionKeyDelegate();
+
+        deployment.config.transferOwnership(address(deployment.timelock));
+        _handOver(deployment.timelock, deployment.config, deployment.safe, deployer);
+
+        vm.stopBroadcast();
+    }
+
+    /// @dev Required everywhere but a local node. Pointing it at the deployer's
+    ///      own address is allowed, but it has to be a deliberate choice rather
+    ///      than something a missing variable does silently.
+    function _safe(address deployer) private view returns (address safe) {
+        safe = vm.envOr("SAFE", address(0));
+        if (safe != address(0)) return safe;
+        if (block.chainid != LOCAL_CHAIN_ID) revert SafeRequired();
+        return deployer;
+    }
+
+    function _params(address safe) private view returns (ProtocolConfig.Params memory) {
+        return ProtocolConfig.Params({
             feeBps: 500,
             minSeats: 4,
             maxSeats: 8,
@@ -54,46 +115,76 @@ contract Deploy is Script {
             settleWindow: 2 hours,
             minStake: 0.001 ether,
             maxStake: 1 ether,
-            treasury: treasury
+            treasury: vm.envOr("TREASURY", safe)
         });
-        uint16[] memory payout = new uint16[](3);
+    }
+
+    function _payout() private pure returns (uint16[] memory payout) {
+        payout = new uint16[](3);
         payout[0] = 6000;
         payout[1] = 2500;
         payout[2] = 1500;
+    }
 
-        ProtocolConfig config = new ProtocolConfig(deployer, params, payout);
-        MockRandomnessOracle mockOracle = new MockRandomnessOracle();
-        mockOracle.setAutoFulfill(true);
-        MockMessenger mockMessenger = new MockMessenger();
+    /// @dev Called while the deployer still owns the config, which is what lets
+    ///      the initial setup skip the timelock.
+    function _configure(ProtocolConfig config, address oracle, address safe, address deployer) private {
+        config.setRandomnessOracle(oracle);
 
-        config.setRandomnessOracle(address(mockOracle));
-        config.setAttestor(attestor, true);
-        config.setAttestorThreshold(1);
+        // The quorum is a multisig over results: independent attestor keys,
+        // most of which must agree. `ATTESTOR` is the single-key fallback.
+        address[] memory fallbackAttestors = new address[](1);
+        fallbackAttestors[0] = vm.envOr("ATTESTOR", deployer);
+        address[] memory attestors = vm.envOr("ATTESTORS", ",", fallbackAttestors);
+        // A blank `ATTESTORS=` parses as an empty list rather than as unset.
+        if (attestors.length == 0) attestors = fallbackAttestors;
+        for (uint256 i = 0; i < attestors.length; ++i) {
+            config.setAttestor(attestors[i], true);
+        }
+        // Majority by default: 1 of 1, 2 of 3, 3 of 5.
+        config.setAttestorThreshold(uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
+
         config.setRulesHash(HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30));
+        config.setGuardian(safe);
+    }
 
-        GameEscrow escrow = new GameEscrow(config);
-        // Cosmetic and per-chain: the same deployment is repeated on every
-        // spoke, and the collections are independent of each other. The
-        // settings are read inline because this frame is already near the
-        // stack limit.
-        deployment = Deployment({
-            config: config,
-            escrow: escrow,
-            market: new MatchMarket(escrow),
-            avatars: new PlayerAvatars(
-                deployer,
-                "LMS Avatars",
-                "LMSA",
-                vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),
-                vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
-            ),
-            sessionDelegate: new SessionKeyDelegate(),
-            oracle: address(mockOracle),
-            messenger: address(mockMessenger)
-        });
+    /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
+    ///      proposes: the timelock has to call `acceptOwnership` itself. While
+    ///      its delay is still zero that can be scheduled and executed at once,
+    ///      in the same batch that raises the delay to its real value, so the
+    ///      timelock never owns the config with a zero delay outside that call.
+    function _handOver(TimelockController timelock, ProtocolConfig config, address safe, address deployer)
+        private
+    {
+        // A queued change must not be able to land on a match that was
+        // already open when it was queued: the oracle and attestor set are
+        // read live, not snapshotted, so players need time to see it coming.
+        uint256 delay = vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+        ProtocolConfig.Params memory params = config.getParams();
+        uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
+        if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
-        config.transferOwnership(address(timelock));
+        address[] memory targets = new address[](2);
+        targets[0] = address(config);
+        targets[1] = address(timelock);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodeCall(config.acceptOwnership, ());
+        payloads[1] = abi.encodeCall(timelock.updateDelay, (delay));
+        // The timelock marks executed operations with timestamp 1, so at the
+        // in-memory dry run's starting timestamp of 1 a zero-delay operation
+        // reads as already done. No real chain is there, and a cheatcode is
+        // never broadcast, so this only ever moves a simulation's clock.
+        if (block.timestamp <= 1) vm.warp(2);
+        timelock.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), 0);
+        timelock.executeBatch(targets, values, payloads, bytes32(0), bytes32(0));
 
-        vm.stopBroadcast();
+        // Revoke before granting, so that on a local node, where the Safe may
+        // be the deployer itself, it keeps the roles it is meant to end with.
+        timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
+        timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
+        timelock.grantRole(timelock.PROPOSER_ROLE(), safe);
+        timelock.grantRole(timelock.CANCELLER_ROLE(), safe);
+        timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
     }
 }
