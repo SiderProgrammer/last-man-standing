@@ -1,12 +1,14 @@
 dodac animacje — ZROBIONE (replay rundy, patrz ARCHITECTURE.md "The round replay")
 dodac integracje AI (np generowanie obrazkow, boty)
-dodac leaderboard, tournaments
+dodac leaderboard
+in-game prediction market
 multisig
 gov tokens
 timelock
 yield/staking
 role based access
 Transient Storage
+slashing
 Join with any token (uniswap v4) — ZROBIONE (ZapJoin + "Pay with" w lobby, patrz FEATURES.md "Paying in any token")
 Observability — metrics, structured logs, tracing i monitoring cross-chain messages
 Rate Limiting + Anti-DDoS dla WebSocketów

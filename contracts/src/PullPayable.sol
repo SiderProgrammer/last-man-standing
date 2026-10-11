@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {NothingToWithdraw, TransferFailed} from "./Errors.sol";
 
@@ -23,7 +23,11 @@ import {NothingToWithdraw, TransferFailed} from "./Errors.sol";
 ///      contract's own, so inheriting shifts every slot after them. That is
 ///      safe here because both escrows are deployed with `new` and neither
 ///      sits behind a proxy. It would not be safe the day one does.
-abstract contract PullPayable is ReentrancyGuard {
+///
+///      The reentrancy lock lives in EIP-1153 transient storage rather than in
+///      a storage slot: it only has to exist for the length of one call, and a
+///      transient slot costs ~100 gas per access instead of a cold SSTORE.
+abstract contract PullPayable is ReentrancyGuardTransient {
     /// @notice Withdrawable balance, credited by settlement and refunds.
     mapping(address account => uint256) public withdrawable;
 

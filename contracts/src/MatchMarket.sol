@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {GameEscrow} from "./GameEscrow.sol";
 import {TransferFailed} from "./Errors.sol";
@@ -20,7 +20,7 @@ import {TransferFailed} from "./Errors.sol";
 ///      If a match is cancelled, or if nobody bet on a winning outcome,
 ///      every stake is refundable. Settlement is permissionless once the
 ///      escrow has a ranking.
-contract MatchMarket is ReentrancyGuard {
+contract MatchMarket is ReentrancyGuardTransient {
     enum Kind {
         Winner,
         Top3

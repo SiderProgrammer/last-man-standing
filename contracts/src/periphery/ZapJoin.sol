@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {GameEscrow} from "../GameEscrow.sol";
 import {ZeroAddress} from "../Errors.sol";
@@ -39,7 +39,7 @@ import {
 ///      Unsupported: fee-on-transfer and rebasing tokens. The `PoolManager`
 ///      credits what actually arrives, so the session ends unsettled and the
 ///      whole transaction reverts.
-contract ZapJoin is IUnlockCallback, ReentrancyGuard {
+contract ZapJoin is IUnlockCallback, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice One hop of a route, in the convention of v4-periphery's
