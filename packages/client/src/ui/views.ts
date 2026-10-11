@@ -5,7 +5,6 @@ import {
   chainInfo,
   maxAmountInFor,
   type AvatarCollectionInfo,
-  type BookSnapshot,
   type LobbySeat,
   type PublicMatchState,
   type ZapInfo,
@@ -28,44 +27,6 @@ export function targetOptions(state: PublicMatchState, you: number | null): Opti
   return state.players
     .filter((player) => player.alive && player.index !== you)
     .map((player) => [String(player.index), `#${player.index}`]);
-}
-
-export function betTargetOptions(state: PublicMatchState, you: number | null): Option[] {
-  return state.players
-    .filter((player) => player.alive)
-    .map((player) => [
-      String(player.index),
-      player.index === you ? `#${player.index} (you)` : `#${player.index}`,
-    ]);
-}
-
-export interface BookRow {
-  seat: string;
-  chips: number;
-  /** Display odds, or an em dash when the pot is empty. */
-  odds: string;
-  /** This viewer's stake on the seat; zero when they have none. */
-  yours: number;
-}
-
-/**
- * The round book, richest pot first.
- *
- * These odds are a display figure — total pot over the stake on one seat — and
- * are deliberately *not* the settlement maths in `@lms/protocol`'s
- * `settleEliminationBook`, which divides the pot among winning tickets. The two
- * look alike and are different functions; merging them would change payouts.
- */
-export function bookRows(book: BookSnapshot): BookRow[] {
-  const entries = Object.entries(book.pots).sort((a, b) => Number(b[1]) - Number(a[1]));
-  const total = entries.reduce((sum, [, chips]) => sum + chips, 0);
-
-  return entries.map(([seat, chips]) => ({
-    seat,
-    chips,
-    odds: total > 0 ? (total / chips).toFixed(2) : '—',
-    yours: book.yours[Number(seat)] ?? 0,
-  }));
 }
 
 export function readsTable(reads: Read[]): string {

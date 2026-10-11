@@ -24,7 +24,6 @@ export {
   type Relayer,
 } from './chain/attestor.js';
 export { BotDriver } from './bots/bots.js';
-export { ChipLedger } from './betting/chips.js';
 export { errorFrame, parseClientMessage } from './gateway/frames.js';
 export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
 export {

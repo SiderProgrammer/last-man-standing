@@ -88,7 +88,7 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'state':
-      onState(message.state, message.you, message.deadline, message.chips, message.book);
+      onState(message.state, message.you, message.deadline);
       break;
 
     case 'avatars':

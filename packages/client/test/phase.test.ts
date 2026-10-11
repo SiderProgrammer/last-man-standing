@@ -23,7 +23,6 @@ describe('commit phase', () => {
       actionsEnabled: true,
       // No draft yet, so there is nothing to lock in.
       lockInDisabled: true,
-      betDisabled: false,
       statusText: 'Pick an action before the timer runs out.',
       shouldReveal: false,
     });
@@ -51,11 +50,10 @@ describe('commit phase', () => {
     expect(plan.actionsEnabled).toBe(true);
   });
 
-  it('locks a spectator out of acting and betting', () => {
+  it('locks a spectator out of acting', () => {
     const plan = phasePlan(at(MatchPhase.Commit), SPECTATOR);
 
     expect(plan.actionsEnabled).toBe(false);
-    expect(plan.betDisabled).toBe(true);
     expect(plan.statusText).toBe('Spectating — no seat in this match.');
   });
 });
@@ -71,7 +69,6 @@ describe('replay hold', () => {
       label: 'Round 3 — replay',
       actionsEnabled: false,
       lockInDisabled: true,
-      betDisabled: true,
       statusText: 'Watching the last round…',
       shouldReveal: false,
     });
@@ -111,7 +108,7 @@ describe('reveal phase', () => {
 
   it('closes every control', () => {
     const plan = phasePlan(at(MatchPhase.Reveal), SEATED);
-    expect(plan).toMatchObject({ actionsEnabled: false, lockInDisabled: true, betDisabled: true });
+    expect(plan).toMatchObject({ actionsEnabled: false, lockInDisabled: true });
   });
 });
 
@@ -121,7 +118,6 @@ describe('other phases', () => {
       label: 'Finished',
       actionsEnabled: false,
       lockInDisabled: true,
-      betDisabled: true,
       statusText: null,
       shouldReveal: false,
     });

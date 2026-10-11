@@ -6,7 +6,6 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
 import {GameEscrow} from "../src/GameEscrow.sol";
-import {MatchMarket} from "../src/MatchMarket.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
@@ -15,7 +14,7 @@ import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
 
-/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow, spectator market.
+/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow.
 /// @dev Governance ends up as:
 ///
 ///        Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
@@ -42,7 +41,6 @@ contract Deploy is Script {
     struct Deployment {
         ProtocolConfig config;
         GameEscrow escrow;
-        MatchMarket market;
         PlayerAvatars avatars;
         /// @dev Stateless and shared: every delegating account runs this same
         ///      code against its own storage, so one deployment per chain.
@@ -82,7 +80,6 @@ contract Deploy is Script {
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
-        deployment.market = new MatchMarket(deployment.escrow);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(

@@ -10,7 +10,6 @@ export type ClientMessage =
   | { type: 'watch'; matchId: `0x${string}` }
   | { type: 'commit'; commitment: `0x${string}` }
   | { type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` }
-  | { type: 'bet'; target: number; chips: number }
   /**
    * A call the player's session key authorised, for the server to submit and
    * pay for. The signature is the whole authority — the server cannot alter
@@ -60,15 +59,11 @@ export type ServerMessage =
       state: PublicMatchState;
       you: number | null;
       deadline: number;
-      chips: number;
-      book: BookSnapshot;
     }
   | {
       type: 'round';
       record: RoundRecord;
       lines: string[];
-      book: BookSnapshot;
-      chips: number;
       /**
        * How long the server holds the next commit clock while clients replay
        * this round. A relative duration rather than a timestamp, so the client
@@ -83,7 +78,7 @@ export type ServerMessage =
    * cosmetics out of the match snapshot keeps them out of the engine.
    */
   | { type: 'avatars'; matchId: `0x${string}`; entries: AvatarEntry[] }
-  | { type: 'finished'; result: MatchResult; ranking: number[]; chips: number }
+  | { type: 'finished'; result: MatchResult; ranking: number[] }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
   | { type: 'error'; code: string; message: string };
@@ -115,13 +110,6 @@ export interface LobbyInfo {
   joinDeadline: number;
   status: 'open' | 'pending' | 'live';
   players: LobbySeat[];
-}
-
-/** Per-round elimination book, from the perspective of one viewer. */
-export interface BookSnapshot {
-  round: number;
-  pots: Record<number, number>;
-  yours: Record<number, number>;
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

@@ -190,10 +190,6 @@ export class Gateway {
         );
         return;
       }
-      case 'bet': {
-        this.requireRoom(address).placeBet(address, message.target, message.chips);
-        return;
-      }
       default: {
         throw new Error('unsupported message');
       }

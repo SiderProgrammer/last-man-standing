@@ -24,7 +24,6 @@ export interface LobbyOptions {
   revealMs: number;
   /** Pause after each round for the client-side replay. Defaults to none. */
   replayMs?: number;
-  startingChips: number;
   rules?: Rules;
   /** Resolves the NFT avatars seats are wearing. Omitted, nobody wears one. */
   avatars?: AvatarRegistry;
@@ -116,7 +115,6 @@ export class Lobby {
       commitMs: this.options.commitMs,
       revealMs: this.options.revealMs,
       replayMs: this.options.replayMs ?? 0,
-      startingChips: this.options.startingChips,
       botSeats,
       onFinished: (result, history) => {
         void this.finalise(result, history);

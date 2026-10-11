@@ -84,7 +84,6 @@ function bridgeOver(reader: EscrowReader, now = () => 1_000_000): { bridge: Chai
     relayer: nullRelayer,
     commitMs: 1_000,
     revealMs: 1_000,
-    startingChips: 100,
   });
   return { bridge: new ChainBridge({ reader, lobby, chainId: HUB, now }), lobby };
 }

@@ -7,7 +7,7 @@ gov tokens
 timelock
 yield/staking
 role based access
-Transient Storage
+Transient Storage - ZROBIONE
 slashing
 Join with any token (uniswap v4) — ZROBIONE (ZapJoin + "Pay with" w lobby, patrz FEATURES.md "Paying in any token")
 Observability — metrics, structured logs, tracing i monitoring cross-chain messages

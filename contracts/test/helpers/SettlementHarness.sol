@@ -15,7 +15,7 @@ import {SettlementRef} from "./SettlementRef.sol";
 ///
 ///      It lives in its own file rather than in `Fixtures.sol` because the six
 ///      pure-library suites need only this — pulling it from `Fixtures` made
-///      them compile `GameEscrow`, `MatchMarket`, `SpokeEscrow` and two mocks
+///      them compile `GameEscrow`, `SpokeEscrow` and two mocks
 ///      to test a hashing function.
 contract SettlementHarness {
     function hashRanking(address[] calldata ranking) external pure returns (bytes32) {

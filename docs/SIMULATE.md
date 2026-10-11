@@ -7,7 +7,7 @@ fresh `npm run dev:fork`.
 | --- | --- | --- |
 | Foundry suites | Every contract path, including failures, with full call traces | `forge test --root contracts --match-contract <Suite> -vvvv` |
 | The browser on a fork | What a player sees, against real contracts and real Uniswap pools | `npm run dev:fork`, then http://localhost:5174 |
-| `cast` on the same fork | Everything with no UI yet: markets, cancellation, governance, cross-chain, withdraw | the recipes below |
+| `cast` on the same fork | Everything with no UI yet: cancellation, governance, cross-chain, withdraw | the recipes below |
 
 ## 1. Foundry: one suite per feature
 
@@ -17,7 +17,6 @@ fresh `npm run dev:fork`.
 | Solvency under random call sequences, through settlement | `EscrowInvariantTest` |
 | Attestor quorum and signature ordering | `SignatureLibTest`, `SignatureLibFuzzTest` |
 | Payout maths, Yul against the reference | `SettlementLibTest`, `SettlementLibFuzzTest` |
-| Winner / Top 3 markets | `MatchMarketTest` |
 | Spoke-chain gate | `SpokeEscrowTest` |
 | LayerZero and Chainlink VRF adapters | `AdapterTest` |
 | Governance parameters, guardian | `ProtocolConfigTest` |
@@ -26,7 +25,7 @@ fresh `npm run dev:fork`.
 | Avatars | `PlayerAvatarsTest` |
 | Join with any token (mock pool / real mainnet pool) | `ZapJoinTest` / `ZapJoinForkTest` (needs `MAINNET_RPC_URL`) |
 
-The off-chain side — commit–reveal, the round kernel, replays, the chip book,
+The off-chain side — commit–reveal, the round kernel, replays,
 the gateway — is `npm test`.
 
 ## 2. In the browser (`npm run dev:fork`)
@@ -49,11 +48,11 @@ anvil signs for itself (`--unlocked`), so no key is ever typed.
 
 ```bash
 R=http://127.0.0.1:8545
-eval "$(node -e "const d=require('./contracts/broadcast/Deploy.s.sol/31337/run-latest.json');const n={GameEscrow:'ESCROW',MatchMarket:'MARKET',MockRandomnessOracle:'ORACLE',MockMessenger:'MESSENGER',ProtocolConfig:'CONFIG',TimelockController:'TIMELOCK'};for(const t of d.transactions)if(t.transactionType==='CREATE'&&n[t.contractName])console.log(n[t.contractName]+'='+t.contractAddress)")"
+eval "$(node -e "const d=require('./contracts/broadcast/Deploy.s.sol/31337/run-latest.json');const n={GameEscrow:'ESCROW',MockRandomnessOracle:'ORACLE',MockMessenger:'MESSENGER',ProtocolConfig:'CONFIG',TimelockController:'TIMELOCK'};for(const t of d.transactions)if(t.transactionType==='CREATE'&&n[t.contractName])console.log(n[t.contractName]+'='+t.contractAddress)")"
 OP=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266   # deployer: attestor, and on 31337 also the Safe and guardian
 P1=0x70997970C51812dc3A010C7d01b50e0d17dc79C8   # the browser's burner
 P2=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; P3=0x90F79bf6EB2c4f870365E785982E1f101E93b906; P4=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
-FAN=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc  # a spectator
+FAN=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc  # an unrelated third party
 next_match() { cast keccak $(cast abi-encode "f(uint256,address,uint256)" 31337 $ESCROW $(cast call $ESCROW 'matchNonce()(uint256)' --rpc-url $R)); }
 status() { cast call $ESCROW 'getMatch(bytes32)((uint128,uint16,uint16,uint16,uint16,uint8,uint64,uint64,uint64,address,bytes32,bytes32,bytes32))' $1 --rpc-url $R | tr -d '()' | cut -d, -f6; }
 warp() { cast rpc evm_increaseTime $1 --rpc-url $R; cast rpc evm_mine --rpc-url $R; }
@@ -72,10 +71,9 @@ M=$(cast keccak $(cast abi-encode "f(uint256,address,uint256)" 31337 $ESCROW 0))
 
 Within 15 minutes of starting: that is the join window.
 
-### 3.3 The whole lifecycle by hand, with the spectator market
+### 3.3 The whole lifecycle by hand
 
-Lobby, four stakes, bets, lock, seed, a quorum-signed result, market payouts,
-withdrawal. Under `dev:fork` two steps happen on their own: the server's keeper
+Lobby, four stakes, lock, seed, a quorum-signed result, withdrawal. Under `dev:fork` two steps happen on their own: the server's keeper
 locks the lobby the moment it is full (so a manual `lockMatch` may revert with
 `WrongStatus` — that is fine), and the oracle loop seeds it a block later. The
 server then opens a room for it too; its own settlement will simply lose the
@@ -84,10 +82,6 @@ race to yours.
 ```bash
 M=$(next_match); cast send --unlocked --from $OP $ESCROW 'createMatch(uint128,uint16)' 10000000000000000 4 --rpc-url $R
 for P in $P1 $P2 $P3 $P4; do cast send --unlocked --from $P $ESCROW 'join(bytes32)' $M --value 0.01ether --rpc-url $R; done
-# Spectator bets: kind 0 = Winner, 1 = Top 3. Closed once the match settles.
-cast send --unlocked --from $FAN $MARKET 'place(bytes32,uint8,address)' $M 0 $P1 --value 0.1ether --rpc-url $R
-cast send --unlocked --from $P2  $MARKET 'place(bytes32,uint8,address)' $M 0 $P2 --value 0.1ether --rpc-url $R
-cast send --unlocked --from $FAN $MARKET 'place(bytes32,uint8,address)' $M 1 $P3 --value 0.05ether --rpc-url $R
 cast send --unlocked --from $OP $ESCROW 'lockMatch(bytes32)' $M --rpc-url $R; sleep 3; status $M   # 3 = Live once seeded
 ```
 
@@ -104,13 +98,9 @@ for P in $P1 $P3 $P2 $P4; do cast call $ESCROW 'withdrawable(address)(uint256)' 
 ```
 
 Expected: a 0.04 ETH pool, 5 % to the treasury, the rest 60 / 25 / 15 —
-`0.0228`, `0.0095`, `0.0057`, `0`. Then the market and the withdrawal:
+`0.0228`, `0.0095`, `0.0057`, `0`. Then the withdrawal:
 
 ```bash
-cast send --unlocked --from $FAN $MARKET 'settle(bytes32,uint8)' $M 0 --rpc-url $R; cast send --unlocked --from $FAN $MARKET 'settle(bytes32,uint8)' $M 1 --rpc-url $R
-cast send --unlocked --from $FAN $MARKET 'claim(bytes32,uint8,address[])' $M 0 "[$P1]" --rpc-url $R   # the whole 0.2 Winner pool
-cast send --unlocked --from $FAN $MARKET 'claim(bytes32,uint8,address[])' $M 1 "[$P3]" --rpc-url $R   # 0.05
-cast send --unlocked --from $P2  $MARKET 'claim(bytes32,uint8,address[])' $M 0 "[$P2]" --rpc-url $R   # reverts NothingToClaim
 cast send --unlocked --from $P1 $ESCROW 'withdraw(address)' $P1 --rpc-url $R
 ```
 

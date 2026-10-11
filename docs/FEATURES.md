@@ -56,12 +56,11 @@ A quick index, since most of these are the reason a given file exists at all.
 7. [Governance](#governance)
 8. [Account abstraction](#account-abstraction)
 9. [Identity and avatars](#identity-and-avatars)
-10. [Betting markets](#betting-markets)
-11. [Gas engineering in Yul](#gas-engineering-in-yul)
-12. [The off-chain engine](#the-off-chain-engine)
-13. [The game server](#the-game-server)
-14. [The browser client](#the-browser-client)
-15. [Testing and verification](#testing-and-verification)
+10. [Gas engineering in Yul](#gas-engineering-in-yul)
+11. [The off-chain engine](#the-off-chain-engine)
+12. [The game server](#the-game-server)
+13. [The browser client](#the-browser-client)
+14. [Testing and verification](#testing-and-verification)
 
 ---
 
@@ -618,45 +617,6 @@ wallet wears.
 
 ---
 
-## Betting markets
-
-Two separate books, because they need different data.
-
-### On-chain: Winner and Top 3
-
-`contracts/src/MatchMarket.sol` · **Unit-tested** · **Known issues**
-
-Parimutuel spectator markets settled against the ranking the escrow has already
-attested. Bettors back an address to finish first (Winner) or top three (Top3);
-winning tickets split the pot proportionally.
-
-Purpose: these markets only need the finishing order, which settlement already
-commits to — no extra oracle, no extra trust. If a match is cancelled, or if
-nobody backed a winning outcome, the book aborts and every stake is refundable.
-
-> **Known issues.** Betting stays open for the whole match, so a spectator can
-> wait until the winner is obvious and scoop the dead money; nothing stops a
-> seated player betting on their own match; and the claim flag is per book
-> rather than per outcome, so an incomplete `outcomes` array silently forfeits
-> the rest of the caller's tickets. The review defers the whole subsystem.
-
-### Off-chain: round eliminations
-
-`packages/protocol/src/game/betting.ts` · **Live** · **Known issue**
-
-Before each commit window closes, spectators back a seat to be eliminated that
-round, using play-money chips. Parimutuel again: tickets on eliminated seats
-split the round pot, and if nobody hit, everyone is refunded.
-
-Purpose: this needs per-round elimination history, which the escrow never sees,
-so it cannot be on-chain without a real protocol change.
-
-> **Known issue.** Chips are minted per room, handed free to any connecting
-> spectator, and destroyed when the match ends — so winning them means nothing.
-> The review says give it a season ladder or delete it.
-
----
-
 ## Gas engineering in Yul
 
 `contracts/src/libraries/` · **Live**
@@ -735,8 +695,6 @@ Two supporting decisions:
 | `match/room.ts` | Phases, the round clock, client fan-out |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
-| **`betting/`** | **The play-money book** |
-| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
 | `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
 | `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
@@ -813,7 +771,7 @@ Two supporting decisions:
 | `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
 | **`io/`** | **Browser I/O** |
@@ -901,7 +859,6 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | `WS_PORT` | `8787` | Gateway port |
 | `CHAIN_ID` | `11155111` | Hub chain |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
-| `STARTING_CHIPS` | `1000` | Off-chain elimination book |
 | `RPC_URL` | — | Chain bridge, ERC-1271 logins, relaying |
 | `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
 | `ATTESTOR_PK` | — | Result signing and settlement relay |

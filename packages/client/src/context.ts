@@ -2,7 +2,6 @@ import type {
   ActionValue,
   AvatarCollectionInfo,
   AvatarEntry,
-  BookSnapshot,
   PublicMatchState,
   ServerMessage,
   ZapInfo,
@@ -44,7 +43,6 @@ export interface AppState {
   avatars: AvatarEntry[];
   you: number | null;
   deadline: number;
-  book: BookSnapshot | null;
   /** Action the player has selected but not yet sealed. */
   draft: { action: ActionValue; target: number } | null;
   /** Round whose commitment is already on the server. */
@@ -78,7 +76,6 @@ export const app: AppState = {
   avatars: [],
   you: null,
   deadline: 0,
-  book: null,
   draft: null,
   committedRound: null,
   revealedRound: null,

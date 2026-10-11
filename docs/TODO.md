@@ -32,8 +32,6 @@ The client plays a full match, but these are missing:
 
 - **Withdrawals.** `Wallet.withdraw` and `withdrawable` exist and are unused — there is no
   UI for claiming a payout after settlement.
-- **`MatchMarket`.** The on-chain Winner / Top 3 market has no client surface at all; only
-  the off-chain chip book is wired up.
 - **Result screen.** A finished match prints one line into the history feed. It should
   show the final ranking, the payout, and the settlement transaction hash.
 - **Spectator discovery.** `watch` works, but live matches are only listed if they came
@@ -109,12 +107,8 @@ Until then, document honestly that settlement is quorum-trusted.
 
 ### 3.3 Contract review items
 
-- `MatchMarket.claim` marks `claimed[msg.sender]` for the whole book, so a better who
-  passes an incomplete `outcomes` array forfeits the rest. Either track per-outcome claims
-  or enumerate the caller's outcomes on-chain.
-- `MatchMarket` has no fee and no minimum bet; dust bets are economically free spam.
 - `GameEscrow.settle` stores the full ranking (`matchRanking`) on every settlement — one
-  SSTORE per seat. Consider storing only the top 3 that the market actually reads.
+  SSTORE per seat, and nothing on-chain reads it any more. Consider dropping it for the event.
 - `SpokeEscrow.join` trusts the caller's `stake` argument for the event only; the hub is
   the authority, but a mismatch produces a confusing failure. Quote the hub's stake instead.
 - Governance is a Safe proposing to a `TimelockController`. A real DAO needs a
@@ -147,17 +141,11 @@ any of this is a deliberate, visible change rather than a silent one.
   `main.ts` then uses `keeperPk` as the session relayer's gas key. Result attestor,
   lobby keeper and session relayer end up the same account with nothing logged. Splitting
   them is already noted in §3.2; this records the exact path.
-- **The chip book stores a bet under the caller's casing.** `ChipLedger.place` pushes
-  `better` as given while the stacks are keyed lowercase, and `settleEliminationBook`
-  keys its returned Map on that raw value. Payouts are correct **today** because both
-  consumers re-normalise, so this is latent rather than live — but the returned Map is
-  not safe to index directly. `addressKey` was deliberately *not* applied there. Pinned
-  by `packages/protocol/test/betting.test.ts`.
 - **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
   `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
   Dormant, because nothing calls `load`. Pinned by `packages/server/test/store.test.ts`.
 - **Client frames are cast, not validated.** `parseClientMessage` checks that the payload
-  is JSON, is an object and has a `type`, then casts. `target`, `chips`, `value` and
+  is JSON, is an object and has a `type`, then casts. `target`, `value` and
   `nonce` reach the room and the relayer unvalidated; only `action` is guarded. A
   `BigInt('abc')` surfaces to the player as a V8 `SyntaxError`.
 - **The wire's `code` field is decorative.** `wire.ts` reserves a machine-readable code,
@@ -308,7 +296,4 @@ These are open questions, not bugs:
 - **Reads.** The tells in `packages/client/src/game/reads.ts` are hand-tuned thresholds
   ("attacks ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
   against simulated play so the panel does not confidently mislabel a bot.
-- **Round-level on-chain betting.** Currently off-chain chips only. Moving it on-chain
-  needs per-round elimination data in the escrow, which is a real protocol change.
-- **Anti-collusion.** Nothing prevents a seated player from betting against themselves in
-  the elimination book, or two players from splitting a lobby.
+- **Anti-collusion.** Nothing prevents two players from splitting a lobby.

@@ -29,27 +29,6 @@ don't. Fix: idea 01 below.
 
 ## What is actually broken
 
-### Late betting on a decided match
-
-`MatchMarket.place` only rejects Settled and Cancelled, so the Winner book stays
-open for the entire match. In a parimutuel pool a small late bet on the obvious
-winner pays out roughly `stake × total / winningStake` — a near-riskless claim
-on everyone else's dead money. Betting must close when the lobby locks.
-
-### Players may bet on their own match
-
-Nothing stops a seated address from backing an opponent and then throwing the
-round. The prize pool is fixed, but the market pot is spectator money, so the
-pair profits at the audience's expense. Exclude seat holders, and require the
-outcome to be a seat in that match.
-
-### The chip book does nothing
-
-Every room mints 1000 chips per player, hands 1000 more to any spectator who
-connects, and destroys the lot when the match ends. A whole subsystem — payout
-maths, wire messages, a UI panel — resolves to a number that never leaves the
-room. Give it a season ladder or delete it.
-
 ### The opening is solved
 
 Storm damage is zero for the first two rounds and Defend blocks every attacker
@@ -64,12 +43,13 @@ end, a pure turtle — zero attacks, five defends — won.
 Not because these are badly written — they are not — but because each one
 carries ongoing cost that its current value does not repay.
 
-### The spectator markets, for now
+### The spectator markets — done
 
-`MatchMarket` is 195 lines of value-handling contract with two live exploits, a
-per-book claim bug, and permanent dust accrual, serving an audience that does
-not exist for a four-to-eight player testnet game. Defer it until there are
-spectators to sell to, and spend the review budget on the escrow instead.
+`MatchMarket` was 195 lines of value-handling contract with two live exploits
+(late betting on a decided match, seated players backing an opponent and
+throwing), a per-book claim bug, and permanent dust accrual, serving an audience
+that does not exist for a four-to-eight player testnet game. It has been
+removed; revisit only once there are spectators to sell to.
 
 ### `withdrawToChain`
 
@@ -83,11 +63,6 @@ been paid on the hub. The convenience is not worth another way to lose funds.
 `Action.None` resolvable, but a forfeit resolves just as cleanly at zero — and
 removing it deletes a branch from the kernel that a future fraud proof must
 port to Solidity.
-
-### The free spectator chip stack
-
-`Room.attach` hands 1000 chips to any wallet that connects. Harmless today only
-because chips are worthless; the moment they are not, it is an unbounded faucet.
 
 ### Redis, from the stated stack
 
@@ -120,13 +95,9 @@ If Defend parries the lowest-seat attacker and the rest connect, focus fire
 beats a turtle, coalitions become the counterplay, and the read panel gains a
 reason to exist.
 
-### 03. Close the on-chain markets when the lobby locks
+### 03. ~~Close the on-chain markets when the lobby locks~~
 
-**Impact:** high · **Effort:** small — three require checks
-
-Reject `place()` for any status past Open, block addresses that hold a seat in
-the match, and require the outcome to actually be a seat. Three guards that
-remove both the late-money scoop and the throw-the-match incentive.
+Superseded: the on-chain markets were removed outright.
 
 ### 04. Make the history root enforceable with a fraud proof
 
@@ -165,13 +136,10 @@ archive and a regular opponent arrives with a dossier. This is genuinely novel
 for a web3 game: a portable reputation of play style, grounded in matches that
 settled on-chain.
 
-### 08. Give the chip book a season ladder, or delete it
+### 08. ~~Give the chip book a season ladder, or delete it~~
 
-**Impact:** medium · **Effort:** small either way
-
-As built, chips are minted per room and vanish at the final round. Either
-persist them per wallet with a seasonal leaderboard, or remove the subsystem
-and reclaim the wire messages, the UI panel and the payout maths.
+Done: the chip book was deleted — payout maths, wire messages, room ledger and
+UI panel.
 
 ### 09. Let the server hold the sealed move for disconnected players
 
@@ -228,7 +196,7 @@ Verdicts: **Keep** earns its place · **Fix** broken or unsafe · **Cut** remove
 | `abi.encode` everywhere, mirrored by HashLib.sol | Keep | Frozen vectors pin both sides, so an encoding drift fails a test instead of bricking reveals. |
 | EIP-712 MatchResult schema | Keep | Signers see a structured result, not an opaque digest. |
 | Typed wire protocol shared by server and browser | Keep | One definition, compiler-enforced on both ends. |
-| Off-chain elimination book (parimutuel chips) | Cut | Chips are minted per room and evaporate at the final round, so winning them means nothing. |
+| Off-chain elimination book (parimutuel chips) | Cut (done) | Chips were minted per room and evaporated at the final round, so winning them meant nothing. Removed. |
 | Shared GameEscrow ABI | Keep | Server and client cannot drift from the deployed interface. |
 
 ### Engine
@@ -254,7 +222,7 @@ Verdicts: **Keep** earns its place · **Fix** broken or unsafe · **Cut** remove
 | Transport-agnostic client sink | Keep | The state machine has no idea WebSockets exist. |
 | Practice lobbies against house bots | Keep | The only zero-friction way into the game. |
 | Unlimited practice rooms per wallet | Fix | No cap, no rate limit — a trivial memory-exhaustion vector. |
-| Spectator mode with a free 1000-chip stack | Cut | Any connecting wallet is handed chips. Harmless only because chips are worthless. |
+| Free 1000-chip stack for spectators | Cut (done) | Went with the chip book. Spectating itself stays. |
 | Attestor signing and settlement relay | Keep | Works, but one key is the quorum today. |
 | Match archive (memory / Postgres) | Keep | Interface is right; the Postgres path has never been executed. |
 | ChainBridge: discovery, directory, keeper lock, adoption | Keep | One convergent poll loop instead of a web of subscriptions. Never run against a real RPC. |
@@ -291,18 +259,15 @@ Verdicts: **Keep** earns its place · **Fix** broken or unsafe · **Cut** remove
 | Payout schedule validated exact and never longer than minSeats | Keep | Closes the index-past-the-ranking hole that would otherwise brick settlement. |
 | Fee capped at 10%, remainder swept to treasury | Keep | Nothing can be stranded by integer division. |
 | Pause that leaves cancel and withdraw open | Keep | Pausing can never trap player funds. |
-| Full finishing order written to storage on settle | Fix | One SSTORE per seat, and only the top three are ever read. |
+| Full finishing order written to storage on settle | Fix | One SSTORE per seat, and nothing on-chain reads it now that the markets are gone. |
 
-### Contracts — markets and cross-chain
+### Contracts — cross-chain
 
-`contracts/src/MatchMarket.sol`, `SpokeEscrow.sol`
+`contracts/src/SpokeEscrow.sol`
 
 | Feature | Verdict | Assessment |
 | --- | --- | --- |
-| Winner / Top3 parimutuel spectator markets | Defer | Two exploitable holes and no audience. High risk, near-zero value at this stage. |
-| Betting stays open while the match is live | Fix | A spectator can wait until the winner is obvious and scoop the dead money. |
-| No restriction on seated players betting | Fix | A player can back an opponent and throw the match. |
-| Claim flag is per book, not per outcome | Fix | An incomplete outcomes array silently forfeits the rest of the caller's tickets. |
+| Winner / Top3 parimutuel spectator markets | Cut (done) | Two exploitable holes and no audience. Removed. |
 | Cross-chain join via authenticated messenger and peer | Keep | Both the transport and the originating contract are checked — a trusted relay still carries untrusted senders. |
 | Stake value carried with the join message | Fix | A stake that leaves the spoke but fails to seat on the hub is unrecoverable. |
 | `withdrawToChain` — bridging a payout back out | Cut | Adds a second irreversible transport path to save a player one manual bridge. |

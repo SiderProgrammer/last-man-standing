@@ -81,20 +81,6 @@ seed is delivered by a randomness oracle *after* the lobby locks. Neither the se
 a player can pick moves against known rolls, and anyone holding the seed can replay
 every roll in the match.
 
-### Betting
-
-Two independent markets, because they need different data:
-
-- **Round eliminations (off-chain chips).** Before each commit window closes you back a
-  seat to be eliminated this round. Chips are escrowed on the spot, the book is
-  parimutuel: tickets on eliminated seats split the whole round pot; if nobody hit,
-  everyone is refunded. This lives off-chain because it needs per-round history the
-  escrow never sees.
-- **Winner / Top 3 (on-chain, `MatchMarket`).** Real stakes on the finishing order,
-  settled against the ranking the escrow has already attested. If the match is
-  cancelled, or nobody backed a winning outcome, the book aborts and every stake is
-  refundable.
-
 ---
 
 ## Part 2 — Architecture
@@ -106,7 +92,7 @@ packages/protocol   shared types, rules, hashing, EIP-712, wire format   (no I/O
 packages/engine     pure resolution kernel + match state machine + replay
 packages/server     WebSocket gateway, rooms, chain bridge, attestor, archive
 packages/client     PixiJS arena, wallet session, history and reads panels
-contracts/          escrow, config, markets, Yul libraries, adapters
+contracts/          escrow, config, Yul libraries, adapters
 ```
 
 The dependency direction is strictly one-way: `contracts` and `protocol` know nothing
@@ -124,7 +110,6 @@ about rendering. Everything that decides who gets paid lives in `protocol` + `en
 | `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
 | `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
 | `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
-| `game/betting.ts` | `settleEliminationBook` — parimutuel payout for the round book |
 | **`chain/`** | **Everything tied to a chain or a contract** |
 | `chain/chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
 | `chain/eip712.ts` | `MatchResult` typed-data schema and domain |
@@ -171,8 +156,6 @@ instead of drifting silently.
 | `match/room.ts` | Phases, the round clock, client fan-out |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
-| **`betting/`** | **The play-money book** |
-| `betting/chips.ts` | `ChipLedger`: stacks, escrowed bets, parimutuel payout, book snapshot |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
 | `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
 | `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
@@ -247,7 +230,7 @@ any player can lock the lobby themselves.
 | `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Book rows, target options, chain chips, reads table, hub label, avatar panel |
+| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
 | **`io/`** | **Browser I/O** |
@@ -334,7 +317,6 @@ winner is crowned after the final round.
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
 | `SpokeEscrow` | Spoke-chain gate: forwards a stake plus a join message to the hub, receives bridged payouts. |
 | `ZapJoin` | Periphery: joins a lobby paying in any ERC-20, swapped to exactly the stake through Uniswap v4, then seated via `GameEscrow.joinFor`. Ownerless; holds nothing between transactions. |
-| `MatchMarket` | Parimutuel Winner / Top 3 books settled from the escrow's attested ranking. |
 | `PlayerAvatars` | Cosmetic ERC-721 avatars. Deployed independently per chain, never bridged. |
 | `SessionKeyDelegate` | EIP-7702 delegate: scoped, expiring session keys plus ERC-1271. |
 | `LayerZeroMessenger` | Adapts LayerZero v2 to the transport-agnostic `ICrossChainMessenger`. |
@@ -491,7 +473,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 
 - **TypeScript (vitest, 18 files / 190 tests):** engine unit tests, property tests over
   random strategies (termination, unique ranking, HP bounds, determinism, replay
-  equivalence, tamper detection), protocol parity vectors, betting math, room lifecycle,
+  equivalence, tamper detection), protocol parity vectors, room lifecycle,
   gateway auth and lobby directory, attestation.
 - **Solidity (Foundry, 15 suites / 95 tests):** unit tests per contract and library,
   differential fuzzing of the Yul hashers and the signature recovery loop, and a stateful
@@ -501,9 +483,8 @@ otherwise every stake reverts with an error the wallet renders unreadably.
   `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
   test fails `npm run typecheck` rather than sitting there unchecked.
 - **Some tests pin behaviour that is wrong.** `config.test.ts` asserts that a
-  non-numeric `COMMIT_MS` yields `NaN`, and `betting.test.ts` asserts that the payout map
-  is keyed on raw address casing. They exist so that fixing either is a deliberate,
-  visible change. Every one is listed in `docs/TODO.md` §3.4.
+  non-numeric `COMMIT_MS` yields `NaN`. Such tests exist so that fixing the behaviour
+  is a deliberate, visible change. Every one is listed in `docs/TODO.md` §3.4.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
   on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
   than the ABI-encoder reference, warming the harness first so the measurement is not
@@ -517,7 +498,6 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | `CHAIN_ID` | `11155111` | Hub chain id |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
 | `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
-| `STARTING_CHIPS` | `1000` | Off-chain betting stack |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |
 | `ESCROW_ADDRESS` | zero | `GameEscrow` to watch and settle against |
 | `ATTESTOR_PK` | — | Attestor key; without it results are archived but not submitted |

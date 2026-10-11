@@ -12,7 +12,7 @@ import { errorMessage, type ClientMessage, type ServerMessage } from '@lms/proto
  *
  * Only the envelope is checked: that the payload is JSON, is an object, and
  * carries a `type`. The fields inside are **not** validated — `target`,
- * `chips`, `value` and `nonce` all reach the room and the relayer as whatever
+ * `value` and `nonce` all reach the room and the relayer as whatever
  * the client sent, and the cast below says so out loud. See `docs/TODO.md`
  * §3.4; tightening it changes what a malformed frame does, so it is not part
  * of a behaviour-preserving refactor.

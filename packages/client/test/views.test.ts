@@ -2,15 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   MatchPhase,
   ZERO_ADDRESS,
-  type BookSnapshot,
   type LobbySeat,
   type ZapInfo,
   type ZapToken,
 } from '@lms/protocol';
 import {
   avatarPanel,
-  betTargetOptions,
-  bookRows,
   chainChipCounts,
   chainChips,
   formatTokenAmount,
@@ -44,31 +41,8 @@ describe('target options', () => {
     ]);
   });
 
-  it('offers every living seat to the book, marking your own', () => {
-    expect(betTargetOptions(state, 0)).toEqual([
-      ['0', '#0 (you)'],
-      ['1', '#1'],
-      ['3', '#3'],
-    ]);
-  });
-
   it('offers a spectator every living seat, unmarked', () => {
     expect(targetOptions(state, null).map(([value]) => value)).toEqual(['0', '1', '3']);
-  });
-});
-
-describe('book rows', () => {
-  const book: BookSnapshot = { round: 2, pots: { 1: 100, 3: 300 }, yours: { 3: 50 } };
-
-  it('lists the richest pot first with display odds over the whole pot', () => {
-    expect(bookRows(book)).toEqual([
-      { seat: '3', chips: 300, odds: '1.33', yours: 50 },
-      { seat: '1', chips: 100, odds: '4.00', yours: 0 },
-    ]);
-  });
-
-  it('returns nothing for an empty book', () => {
-    expect(bookRows({ round: 1, pots: {}, yours: {} })).toEqual([]);
   });
 });
 

@@ -19,9 +19,6 @@ of the game: within a few rounds the history tells you who always swings, who
 turtles, and who keeps coming after you. The client derives those tells from the
 same public history everyone else can see.
 
-Alongside the match runs a play-money book on *who falls this round*, and an
-on-chain parimutuel market on the final Winner and Top 3.
-
 For the full design — trust model, hashing rules, Yul optimisations, cross-chain
 flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a feature-by-feature
 reference covering what each mechanism does and why it is there — cross-chain,
@@ -37,7 +34,7 @@ packages/protocol   types, hashing, EIP-712 schema, wire format, escrow/avatar/s
 packages/engine     deterministic match state machine and bot strategies
 packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge
 packages/client     PixiJS arena, wallet login, history and reads panels
-contracts/          Foundry project: escrow, markets, oracles, messengers, avatars, 7702 delegate
+contracts/          Foundry project: escrow, oracles, messengers, avatars, 7702 delegate
 ```
 
 Dependencies only ever point left: the engine may use the protocol, the server
@@ -80,8 +77,8 @@ one, add the network (`http://127.0.0.1:8545`, chain id 31337) and rerun with
 `FORK_PLAYER=<your address>` to fund your own account. Ctrl+C stops everything.
 
 It runs beside a normal `npm run dev` (ports 8788 and 5174, not 8787 and 5173).
-To exercise everything that has no UI yet — spectator markets, cancellation,
-governance, cross-chain joins, withdrawals — see
+To exercise everything that has no UI yet — cancellation, governance,
+cross-chain joins, withdrawals — see
 [docs/SIMULATE.md](docs/SIMULATE.md), which drives the same fork with `cast`.
 
 `FORK_RPC_URL` swaps the public RPC for your own — worth doing for long

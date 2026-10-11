@@ -2,7 +2,6 @@ import {
   Action,
   commitMove,
   type ActionValue,
-  type BookSnapshot,
   type PublicMatchState,
   type ServerMessage,
 } from '@lms/protocol';
@@ -14,7 +13,7 @@ import { forgetMatch, freshSalt, recallMove, rememberMove } from '../game/salts.
 import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
-import { betTargetOptions, bookRows, readsTable, targetOptions } from '../ui/views.js';
+import { readsTable, targetOptions } from '../ui/views.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -29,8 +28,6 @@ let replayTimer: ReturnType<typeof setTimeout> | null = null;
 // ---------------------------------------------------------------- server feed
 
 export function onRound(message: Extract<ServerMessage, { type: 'round' }>): void {
-  app.book = message.book;
-  setChips(message.chips);
   appendRound(message.lines, message.record.round, message.record.eliminated);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
@@ -79,7 +76,6 @@ function endReplay(): void {
 }
 
 function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
-  setChips(message.chips);
   const winner = message.ranking[0];
   const youWon = winner !== undefined && winner === app.you;
   appendLine(
@@ -97,15 +93,11 @@ export function onState(
   state: PublicMatchState,
   you: number | null,
   deadline: number,
-  chips: number,
-  book: BookSnapshot,
 ): void {
   const switched = app.match?.matchId !== state.matchId;
   app.match = state;
   app.you = you;
   app.deadline = deadline;
-  app.book = book;
-  setChips(chips);
 
   if (switched) {
     app.committedRound = null;
@@ -123,7 +115,6 @@ export function onState(
 
   void renderArena(state, you);
   renderTargets(state, you);
-  renderBook(state);
   renderReads(state, you);
   syncPhase(state);
 }
@@ -149,7 +140,6 @@ function syncPhase(state: PublicMatchState): void {
   dom.phaseLabel.textContent = plan.label;
   setActionsEnabled(plan.actionsEnabled);
   dom.lockIn.disabled = plan.lockInDisabled;
-  dom.placeBet.disabled = plan.betDisabled;
   if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
   // The send stays exactly where it was in the sequence; it is simply no longer
   // buried inside the predicate that decides it.
@@ -204,24 +194,6 @@ async function renderArena(state: PublicMatchState, you: number | null): Promise
 
 function renderTargets(state: PublicMatchState, you: number | null): void {
   fillSelect(dom.target, targetOptions(state, you));
-  fillSelect(dom.betTarget, betTargetOptions(state, you));
-}
-
-function renderBook(state: PublicMatchState): void {
-  const book = app.book;
-  dom.bookRound.textContent = `round ${state.round}`;
-  if (!book) return;
-
-  dom.bookList.replaceChildren(
-    ...bookRows(book).map((row) => {
-      const li = document.createElement('li');
-      li.innerHTML =
-        `<span>#${row.seat}</span>` +
-        `<span class="muted small">${row.chips} chips · ${row.odds}×` +
-        `${row.yours ? ` · you ${row.yours}` : ''}</span>`;
-      return li;
-    }),
-  );
 }
 
 function renderReads(state: PublicMatchState, you: number | null): void {
@@ -266,14 +238,6 @@ export function wireMatchControls(): void {
   };
 
   dom.lockIn.onclick = lockIn;
-
-  dom.placeBet.onclick = () => {
-    net.send({
-      type: 'bet',
-      target: Number(dom.betTarget.value),
-      chips: Number(dom.betChips.value),
-    });
-  };
 
   dom.tabFeed.onclick = () => switchTab(true);
   dom.tabReads.onclick = () => switchTab(false);
@@ -322,10 +286,5 @@ function setActionsEnabled(enabled: boolean): void {
 function lockControls(reason: string): void {
   setActionsEnabled(false);
   dom.lockIn.disabled = true;
-  dom.placeBet.disabled = true;
   dom.moveStatus.textContent = reason;
-}
-
-function setChips(chips: number): void {
-  dom.chipsLabel.textContent = `${chips} chips`;
 }

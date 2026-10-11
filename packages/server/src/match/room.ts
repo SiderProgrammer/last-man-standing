@@ -2,7 +2,6 @@ import {
   MatchPhase,
   addressKey,
   type AvatarEntry,
-  type BookSnapshot,
   type MatchResult,
   type RoundRecord,
   type SealedMove,
@@ -10,7 +9,6 @@ import {
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
-import { ChipLedger } from '../betting/chips.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -24,7 +22,6 @@ export type MatchFinished = (result: MatchResult, history: readonly RoundRecord[
 export interface RoomOptions {
   commitMs: number;
   revealMs: number;
-  startingChips: number;
   /** Seats played by the server's bots. Empty for a fully human lobby. */
   botSeats: readonly number[];
   /**
@@ -37,7 +34,7 @@ export interface RoomOptions {
 }
 
 /**
- * One authoritative match plus its spectator book.
+ * One authoritative match.
  *
  * The room owns the clock but never reads it: `tick(now)` is driven from the
  * outside, so tests can run a whole match in a loop and the production server
@@ -49,7 +46,6 @@ export class Room {
 
   private readonly options: RoomOptions;
   private readonly bots: BotDriver;
-  private readonly chips: ChipLedger;
   private readonly clients = new Set<Client>();
   private readonly seatByAddress = new Map<string, number>();
   /** Cosmetic only, and resolved off the match's critical path. */
@@ -68,11 +64,9 @@ export class Room {
     this.match = new Match(setup);
     this.options = options;
     this.bots = new BotDriver(options.botSeats);
-    this.chips = new ChipLedger(options.startingChips);
 
     for (const seat of setup.seats) {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
-      if (!this.bots.has(seat.index)) this.chips.grant(seat.address);
     }
 
     this.deadlineAt = now + options.commitMs;
@@ -95,14 +89,8 @@ export class Room {
     return this.seatByAddress.get(addressKey(address)) ?? null;
   }
 
-  chipsOf(address: `0x${string}` | null): number {
-    return this.chips.balanceOf(address);
-  }
-
   attach(client: Client): void {
     this.clients.add(client);
-    // A spectator who never staked still gets a stack, so the book stays lively.
-    if (client.address) this.chips.grant(client.address);
     this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
   }
@@ -140,25 +128,6 @@ export class Room {
     else this.broadcastState();
   }
 
-  /**
-   * Backs a seat to be eliminated this round. Chips are escrowed immediately so
-   * a player cannot bet the same stack twice, and the book locks with the
-   * commit window — betting after commitments are in would leak information.
-   */
-  placeBet(address: `0x${string}`, target: number, chips: number): void {
-    if (this.match.phase !== MatchPhase.Commit) {
-      throw new Error('the book is closed for this round');
-    }
-    if (!Number.isSafeInteger(chips) || chips <= 0) {
-      throw new Error('chips must be a positive integer');
-    }
-    if (chips > this.chipsOf(address)) throw new Error('not enough chips');
-    if (!this.match.playerState(target).alive) throw new Error('target is already eliminated');
-
-    this.chips.place(address, target, chips);
-    this.broadcastState();
-  }
-
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
@@ -176,10 +145,6 @@ export class Room {
     if (now < this.deadlineAt) return;
     if (this.match.phase === MatchPhase.Commit) this.openReveal(now);
     else if (this.match.phase === MatchPhase.Reveal) this.resolveRound(now);
-  }
-
-  bookSnapshot(address: `0x${string}` | null): BookSnapshot {
-    return this.chips.snapshot(this.match.round, address);
   }
 
   private requireSeat(address: `0x${string}`): number {
@@ -206,7 +171,6 @@ export class Room {
     if (this.match.phase !== MatchPhase.Reveal) return;
 
     const record = this.match.resolve();
-    this.chips.settle(record.eliminated);
     const replayMs = this.options.replayMs ?? 0;
 
     for (const client of this.clients) {
@@ -214,8 +178,6 @@ export class Room {
         type: 'round',
         record,
         lines: describeRound(record),
-        book: this.bookSnapshot(client.address),
-        chips: this.chipsOf(client.address),
         replayMs,
       });
     }
@@ -242,9 +204,7 @@ export class Room {
 
     const result = this.match.result();
     const ranking = this.match.ranking();
-    for (const client of this.clients) {
-      client.send({ type: 'finished', result, ranking, chips: this.chipsOf(client.address) });
-    }
+    for (const client of this.clients) client.send({ type: 'finished', result, ranking });
     this.options.onFinished?.(result, this.match.history);
   }
 
@@ -262,8 +222,6 @@ export class Room {
       state: this.match.publicState(),
       you: client.address ? this.seatOf(client.address) : null,
       deadline: this.deadlineAt,
-      chips: this.chipsOf(client.address),
-      book: this.bookSnapshot(client.address),
     });
   }
 }

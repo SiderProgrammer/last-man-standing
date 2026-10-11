@@ -75,7 +75,6 @@ function harness(extras: Partial<Extras> = {}) {
     relayer: nullRelayer,
     commitMs: 10_000,
     revealMs: 5_000,
-    startingChips: 500,
   });
   const gateway = new Gateway({
     lobby,
@@ -133,7 +132,6 @@ describe('gateway', () => {
 
     expect(lobby.size).toBe(1);
     expect(socket.last('state')?.you).toBe(0);
-    expect(socket.last('state')?.chips).toBe(500);
     expect(socket.last('state')?.state.players).toHaveLength(4);
   });
 

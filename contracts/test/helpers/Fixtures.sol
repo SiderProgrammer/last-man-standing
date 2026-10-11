@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
-import {MatchMarket} from "../../src/MatchMarket.sol";
 import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
@@ -27,7 +26,6 @@ contract Fixtures is Test {
 
     ProtocolConfig internal config;
     GameEscrow internal escrow;
-    MatchMarket internal market;
     MockRandomnessOracle internal oracle;
     MockMessenger internal messenger;
     SettlementHarness internal harness;
@@ -78,7 +76,6 @@ contract Fixtures is Test {
         vm.stopPrank();
 
         escrow = new GameEscrow(config);
-        market = new MatchMarket(escrow);
 
         vm.prank(owner);
         config.setRemoteChain(421_614, address(messenger), bytes32(uint256(uint160(address(0xBEEF)))));

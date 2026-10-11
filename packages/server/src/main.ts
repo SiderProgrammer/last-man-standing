@@ -34,7 +34,6 @@ async function main(): Promise<void> {
     commitMs: config.commitMs,
     revealMs: config.revealMs,
     replayMs: config.replayMs,
-    startingChips: config.startingChips,
     avatars,
   });
 

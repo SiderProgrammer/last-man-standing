@@ -12,7 +12,6 @@ import { FakeClient, HUMAN, botSeats, bytes32, setupWithBots } from './helpers.j
 const OPTIONS: RoomOptions = {
   commitMs: 10_000,
   revealMs: 5_000,
-  startingChips: 1_000,
   botSeats: [],
 };
 
@@ -236,53 +235,13 @@ describe('replay hold', () => {
   });
 });
 
-describe('spectator book', () => {
-  it('escrows chips when a bet is placed and pays the winners', () => {
-    const instance = room(4, 'book');
-    const client = new FakeClient(HUMAN);
-    instance.attach(client);
-
-    // Seat 1 is on the brink, so back it to fall this round.
-    instance.placeBet(HUMAN, 1, 200);
-    expect(instance.chipsOf(HUMAN)).toBe(800);
-    expect(instance.bookSnapshot(HUMAN).yours[1]).toBe(200);
-
-    const move = humanMove(instance, Action.Attack, 1);
-    instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, move), 100);
-    instance.submitReveal(HUMAN, move, 200);
-
-    const record = client.last('round')?.record;
-    const hit = record?.eliminated.includes(1) ?? false;
-    // The only ticket in the book: a hit returns the whole pot, a miss refunds.
-    expect(instance.chipsOf(HUMAN)).toBe(1_000);
-    expect(hit || instance.chipsOf(HUMAN) === 1_000).toBe(true);
-  });
-
-  it('closes the book once the commit window has closed', () => {
-    const instance = room(4, 'closed');
-    instance.tick(OPTIONS.commitMs + 1);
-    instance.tick(OPTIONS.commitMs + 2);
-
-    const move = humanMove(instance, Action.Hide);
-    instance.submitCommit(HUMAN, commitMove(instance.matchId, instance.match.round, 0, move), 1);
-    expect(instance.match.phase).toBe(MatchPhase.Reveal);
-    expect(() => instance.placeBet(HUMAN, 2, 10)).toThrow(/book is closed/);
-  });
-
-  it('rejects a bet larger than the stack or on a dead seat', () => {
-    const instance = room(4, 'limits');
-    expect(() => instance.placeBet(HUMAN, 1, 5_000)).toThrow(/not enough chips/);
-    expect(() => instance.placeBet(HUMAN, 1, 0)).toThrow(/positive integer/);
-  });
-
-  it('gives a spectator a stack without seating them', () => {
+describe('spectators', () => {
+  it('attaches a spectator without seating them', () => {
     const instance = room(4, 'spectator');
     const spectator = new FakeClient('0x00000000000000000000000000000000000000cc');
     instance.attach(spectator);
 
-    expect(instance.chipsOf(spectator.address)).toBe(1_000);
     expect(instance.seatOf(spectator.address as `0x${string}`)).toBeNull();
-    instance.placeBet(spectator.address as `0x${string}`, 2, 100);
-    expect(instance.chipsOf(spectator.address)).toBe(900);
+    expect(spectator.last('state')?.you).toBeNull();
   });
 });

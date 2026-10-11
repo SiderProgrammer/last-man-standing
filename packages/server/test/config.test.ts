@@ -18,7 +18,6 @@ describe('server configuration', () => {
     expect(config.chainId).toBe(11155111);
     expect(config.commitMs).toBe(20_000);
     expect(config.revealMs).toBe(12_000);
-    expect(config.startingChips).toBe(1_000);
     expect(config.rpcUrl).toBe('');
     expect(config.escrow).toBe(ZERO_ADDRESS);
     expect(config.onChain).toBe(false);

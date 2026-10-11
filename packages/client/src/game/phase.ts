@@ -5,7 +5,6 @@ export interface PhasePlan {
   label: string;
   actionsEnabled: boolean;
   lockInDisabled: boolean;
-  betDisabled: boolean;
   /**
    * New status line, or null to leave the current one alone.
    *
@@ -52,9 +51,6 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
       label: `Round ${state.round} — replay`,
       actionsEnabled: false,
       lockInDisabled: true,
-      // The book is open during the hold on the server, but a bet placed while
-      // the last round is still playing out is almost certainly a misclick.
-      betDisabled: true,
       statusText: 'Watching the last round…',
       shouldReveal: false,
     };
@@ -65,7 +61,6 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
       label: `Round ${state.round} — commit`,
       actionsEnabled: seated && !committed,
       lockInDisabled: !seated || committed || context.draft === null,
-      betDisabled: !seated,
       statusText: committed
         ? 'Move sealed. Waiting for the table.'
         : seated
@@ -80,7 +75,6 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
       label: `Round ${state.round} — reveal`,
       actionsEnabled: false,
       lockInDisabled: true,
-      betDisabled: true,
       statusText: null,
       shouldReveal: seated && context.revealedRound !== state.round,
     };
@@ -90,7 +84,6 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
     label: state.phase === MatchPhase.Finished ? 'Finished' : 'Waiting',
     actionsEnabled: false,
     lockInDisabled: true,
-    betDisabled: true,
     statusText: null,
     shouldReveal: false,
   };

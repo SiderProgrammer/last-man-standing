@@ -253,8 +253,7 @@ button.wide {
   font-size: 12px;
 }
 
-.lobby-list,
-.book-list {
+.lobby-list {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
@@ -263,8 +262,7 @@ button.wide {
   gap: 6px;
 }
 
-.lobby-list li,
-.book-list li {
+.lobby-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
