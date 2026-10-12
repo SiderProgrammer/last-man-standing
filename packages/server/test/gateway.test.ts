@@ -5,6 +5,7 @@ import {
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
+  type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
 import { Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
@@ -67,6 +68,7 @@ interface Extras {
   verify: SignatureVerifier;
   sessionDelegate: `0x${string}` | null;
   zap: ZapInfo | null;
+  staking: StakingInfo | null;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -85,6 +87,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.verify ? { verify: extras.verify } : {}),
     sessionDelegate: extras.sessionDelegate ?? null,
     zap: extras.zap ?? null,
+    staking: extras.staking ?? null,
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -214,6 +217,16 @@ describe('gateway', () => {
     };
     const { socket } = harness({ escrow: ESCROW, zap });
     expect(socket.last('hello')?.zap).toEqual(zap);
+  });
+
+  it('advertises the staking vault and airdrop so the client can show the panel', () => {
+    const staking: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, airdrop: `0x${'ad'.repeat(20)}` };
+    const { socket } = harness({ staking });
+    expect(socket.last('hello')?.staking).toEqual(staking);
+  });
+
+  it('hides staking when none is configured', () => {
+    expect(harness().socket.last('hello')?.staking).toBeNull();
   });
 
   it('offers only ETH when no zap is configured', () => {

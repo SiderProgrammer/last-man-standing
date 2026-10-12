@@ -8,6 +8,7 @@ import {
   http,
   parseAbi,
   parseEther,
+  parseSignature,
   toFunctionSelector,
   type Abi,
   type AbiFunction,
@@ -18,11 +19,15 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import type { StakingPosition } from '../ui/staking.js';
 import {
   AUTH_PREFIX,
   ZERO_ADDRESS,
   gameEscrowAbi,
+  lmsAirdropAbi,
+  lmsTokenAbi,
   playerAvatarsAbi,
+  stakedLmsAbi,
   sessionKeyDelegateAbi,
   v4QuoterAbi,
   zapJoinAbi,
@@ -53,6 +58,9 @@ function selectorOf(abi: Abi, name: string): Hex {
  * token that actually refuses the approval still reverts.
  */
 const approveAbi = parseAbi(['function approve(address spender, uint256 amount)']);
+
+/** How long a staking permit signature stays valid, in seconds. */
+const PERMIT_SECONDS = 10 * 60;
 
 /**
  * What a session key may call, and nothing else.
@@ -339,6 +347,124 @@ export class Wallet {
       }),
     ]);
     return { equipped, minted, totalMinted, maxSupply };
+  }
+
+  /** Everything the staking panel shows, read in one round trip. */
+  async stakingPosition(vault: Address): Promise<StakingPosition> {
+    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
+    const [lmsBalance, shares, votes, sharePrice, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
+      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [this.address] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [this.address] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'convertToAssets', args: [10n ** 18n] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'cooldown' }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [this.address] }),
+      this.rpc.getBlock(),
+    ]);
+    const value =
+      shares === 0n
+        ? 0n
+        : await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'convertToAssets', args: [shares] });
+    return {
+      lmsBalance,
+      shares,
+      value,
+      votes,
+      sharePrice,
+      cooldown: Number(cooldown),
+      pending: { assets: pendingAssets, unlockAt: Number(unlockAt) },
+      chainTime: Number(block.timestamp),
+    };
+  }
+
+  /**
+   * Stakes `amount` LMS in one transaction: an EIP-2612 signature grants the
+   * vault its allowance, and `depositWithPermit` uses it straight away. The
+   * signature is free, so a player sees one signing prompt and one
+   * transaction instead of an approval and a deposit.
+   */
+  async stake(vault: Address, amount: bigint): Promise<Hex> {
+    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
+    const [name, nonce] = await Promise.all([
+      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
+      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'nonces', args: [this.address] }),
+    ]);
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_SECONDS);
+    const signature = await this.wallet.signTypedData({
+      account: this.account,
+      domain: { name, version: '1', chainId: this.chainId, verifyingContract: lms },
+      types: {
+        Permit: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+      primaryType: 'Permit',
+      message: { owner: this.address, spender: vault, value: amount, nonce, deadline },
+    });
+    const { r, s, v, yParity } = parseSignature(signature);
+
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: vault,
+      abi: stakedLmsAbi,
+      functionName: 'depositWithPermit',
+      args: [amount, this.address, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /** Burns `shares` now and starts the cooldown on what they are worth. */
+  async requestUnstake(vault: Address, shares: bigint): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: vault,
+      abi: stakedLmsAbi,
+      functionName: 'requestUnstake',
+      args: [shares],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /** Withdraws unstaked LMS once the cooldown has passed. */
+  async claimUnstaked(vault: Address): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: vault,
+      abi: stakedLmsAbi,
+      functionName: 'claim',
+      args: [this.address],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  airdropClaimed(airdrop: Address): Promise<boolean> {
+    return this.rpc.readContract({ address: airdrop, abi: lmsAirdropAbi, functionName: 'claimed', args: [this.address] });
+  }
+
+  /** Claims this wallet's allocation, straight into the vault when `stake` is set. */
+  async claimAirdrop(airdrop: Address, amount: bigint, proof: Hex[], stake: boolean): Promise<Hex> {
+    if (stake) {
+      const { request } = await this.rpc.simulateContract({
+        account: this.address,
+        address: airdrop,
+        abi: lmsAirdropAbi,
+        functionName: 'claimAndStake',
+        args: [amount, proof],
+      });
+      return this.wallet.writeContract({ ...request, chain: null });
+    }
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: airdrop,
+      abi: lmsAirdropAbi,
+      functionName: 'claim',
+      args: [this.address, amount, proof],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
   }
 
   /**

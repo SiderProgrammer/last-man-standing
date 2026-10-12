@@ -4,6 +4,7 @@ import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
+import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
 import {
   onAvatars,
   onFinished,
@@ -15,6 +16,7 @@ import {
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
+import { httpOrigin } from './ui/staking.js';
 import {
   authenticate,
   renderAvatarPanel,
@@ -51,7 +53,12 @@ export function start(): void {
   wireWalletControls();
   wireLobbyControls();
   wireMatchControls();
+  wireStakingControls(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
+  // Keeps the unstake countdown and the share price current while the page is open.
+  setInterval(() => {
+    if (app.wallet && app.staking) void renderStakingPanel();
+  }, 30_000);
 }
 
 /** Routes each server message to the screen that owns it. */
@@ -64,10 +71,12 @@ function onServerMessage(message: ServerMessage): void {
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
       app.zap = message.zap;
+      app.staking = message.staking;
       renderPayWith();
       renderHubLabel();
       renderSessionPanel();
       void renderAvatarPanel();
+      void renderStakingPanel();
       dom.createLobby.disabled = !message.escrow;
       break;
 
@@ -76,6 +85,7 @@ function onServerMessage(message: ServerMessage): void {
       dom.connect.disabled = true;
       net.flush();
       net.send({ type: 'lobbies' });
+      void renderStakingPanel();
       // A reconnect drops the socket, not the seat: ask to be re-attached to the
       // match that is still running on the server.
       if (app.match && app.match.phase !== MatchPhase.Finished) {

@@ -4,6 +4,7 @@ import type {
   AvatarEntry,
   PublicMatchState,
   ServerMessage,
+  StakingInfo,
   ZapInfo,
 } from '@lms/protocol';
 import type { Net } from './io/net.js';
@@ -34,6 +35,8 @@ export interface AppState {
   session: Session | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /** The staking vault and any airdrop, or null when the server offers neither. */
+  staking: StakingInfo | null;
   match: PublicMatchState | null;
   /**
    * Avatars for the current match, held here rather than pushed straight at the
@@ -72,6 +75,7 @@ export const app: AppState = {
   sessionDelegate: null,
   session: null,
   zap: null,
+  staking: null,
   match: null,
   avatars: [],
   you: null,

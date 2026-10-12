@@ -66,6 +66,37 @@
           </div>
         </div>
 
+        <div id="staking-panel" class="panel hidden">
+          <div class="panel-head">
+            <h2>Stake LMS</h2>
+            <span id="staking-rate" class="pill">—</span>
+          </div>
+          <p class="muted small">
+            Staked LMS votes on how the protocol is run and earns a share of every match
+            fee, bought back as LMS — so each sLMS is worth more LMS over time.
+          </p>
+          <div id="airdrop-row" class="callout hidden">
+            <span id="airdrop-text"></span>
+            <div class="row">
+              <button id="airdrop-claim-stake" class="primary">Claim &amp; stake</button>
+              <button id="airdrop-claim" class="ghost">Claim to wallet</button>
+            </div>
+          </div>
+          <p id="staking-summary" class="small"></p>
+          <div class="row">
+            <label for="staking-amount">Amount (LMS)</label>
+            <input id="staking-amount" type="text" inputmode="decimal" placeholder="0.0" size="10" />
+            <button id="staking-max" class="ghost">Max</button>
+            <button id="stake-lms" disabled>Stake</button>
+            <button id="unstake-lms" class="ghost" disabled>Unstake</button>
+          </div>
+          <div class="row">
+            <span id="unstake-status" class="small"></span>
+            <button id="withdraw-unstaked" class="hidden">Withdraw</button>
+          </div>
+          <span id="staking-status" class="muted small">Connect a wallet to see your stake.</span>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>Staked lobbies</h2>

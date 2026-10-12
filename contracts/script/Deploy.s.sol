@@ -13,18 +13,31 @@ import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
+import {LmsToken} from "../src/governance/LmsToken.sol";
+import {StakedLms} from "../src/governance/StakedLms.sol";
+import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
+import {FeeRouter} from "../src/governance/FeeRouter.sol";
+import {ProtocolLiquidity} from "../src/governance/ProtocolLiquidity.sol";
 
-/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow.
+/// @notice Testnet deploy: token-governed config, mock oracle, hub escrow.
 /// @dev Governance ends up as:
 ///
-///        Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
-///         |                          (anyone may execute once       |
-///         |                           the delay has passed)         +--> read by GameEscrow
+///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
+///                                                           ^  (anyone may execute     StakedLms
+///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
+///         |                                                     has passed)
 ///         +- guardian: may pause GameEscrow at once, never unpause
-///         +- treasury: receives protocol fees
+///         +- receives the LMS supply, less the vault seed, to distribute
+///         +- treasury: receives the non-staker share of fees
 ///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
 ///
-///      The deployer holds no role once `run` returns.
+///      Fees: with `POOL_MANAGER` set, the escrow's treasury is `FeeRouter`,
+///      which buys LMS for the stakers' share and forwards the rest to the
+///      treasury. It buys through an LMS/ETH pool that `ProtocolLiquidity`
+///      creates and seeds when `LIQUIDITY_ETH` is set. Without it there is no route to buy LMS through, so fees go
+///      straight to the treasury and staking only carries votes.
+///
+///      The deployer holds no role and no tokens once `run` returns.
 ///
 ///      Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
 ///      `LayerZeroMessenger` once those endpoints exist on the target testnet. Both are
@@ -48,13 +61,27 @@ contract Deploy is Script {
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
         TimelockController timelock;
+        LmsToken lms;
+        StakedLms stakedLms;
+        LmsGovernor governor;
+        /// @dev Zero when `POOL_MANAGER` is unset.
+        FeeRouter feeRouter;
+        /// @dev Creates and holds the LMS/ETH pool. Zero when `POOL_MANAGER` is unset.
+        ProtocolLiquidity liquidity;
         address safe;
         address oracle;
         address messenger;
     }
 
+    /// @dev Shares minted to an unspendable address before anyone else can
+    ///      deposit, so the first real staker cannot be front-run by a
+    ///      donation that skews the vault's share price.
+    uint256 private constant VAULT_SEED = 1e18;
+    address private constant DEAD = address(0xdEaD);
+
     error SafeRequired();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
+    error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
 
     function run() external returns (Deployment memory deployment) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
@@ -91,9 +118,10 @@ contract Deploy is Script {
         );
         deployment.sessionDelegate = new SessionKeyDelegate();
         deployment.zap = _zap(deployment.escrow);
+        _governance(deployment, deployer);
 
         deployment.config.transferOwnership(address(deployment.timelock));
-        _handOver(deployment.timelock, deployment.config, deployment.safe, deployer);
+        _handOver(deployment, deployer);
 
         vm.stopBroadcast();
     }
@@ -158,18 +186,115 @@ contract Deploy is Script {
         return new ZapJoin(IPoolManager(manager), escrow);
     }
 
+    /// @dev Token, staking vault, governor and — where v4 exists — the fee
+    ///      router. The vault, the router and the timelock's roles are all
+    ///      owned by the timelock, so the governor reaches them only through
+    ///      the same delay as every other change.
+    function _governance(Deployment memory deployment, address deployer) private {
+        deployment.lms = new LmsToken(deployer, vm.envOr("LMS_SUPPLY", uint256(100_000_000e18)));
+
+        // A voter must still be staked when the proposal they voted for
+        // executes: a vote counts from the snapshot, so an unstake requested
+        // right after it has to outlast the voting period and the delay.
+        uint256 cooldown = vm.envOr("STAKE_COOLDOWN", uint256(7 days));
+        uint256 votingPeriod = vm.envOr("VOTING_PERIOD", uint256(5 days));
+        uint256 exposure = votingPeriod + _timelockDelay();
+        if (cooldown <= exposure) revert CooldownTooShort(cooldown, exposure);
+
+        deployment.stakedLms = new StakedLms(deployment.lms, address(deployment.timelock), uint64(cooldown));
+        deployment.lms.approve(address(deployment.stakedLms), VAULT_SEED);
+        deployment.stakedLms.deposit(VAULT_SEED, DEAD);
+
+        deployment.governor = new LmsGovernor(
+            deployment.stakedLms,
+            deployment.timelock,
+            uint48(vm.envOr("VOTING_DELAY", uint256(1 days))),
+            uint32(votingPeriod),
+            vm.envOr("PROPOSAL_THRESHOLD", uint256(100_000e18)),
+            vm.envOr("QUORUM_PERCENT", uint256(4))
+        );
+
+        deployment.feeRouter = _feeRouter(deployment);
+        if (address(deployment.feeRouter) != address(0)) {
+            // The deployer still owns the config, so this skips the timelock.
+            ProtocolConfig.Params memory params = deployment.config.getParams();
+            params.treasury = address(deployment.feeRouter);
+            deployment.config.setParams(params);
+        }
+        deployment.liquidity = _liquidity(deployment);
+
+        // Last, so the pool above can be seeded from the supply first.
+        deployment.lms.transfer(deployment.safe, deployment.lms.balanceOf(deployer));
+    }
+
+    /// @dev Same condition as `ZapJoin`: no `PoolManager`, no route to buy LMS
+    ///      through. Buybacks revert until the pool in `_liquidity` exists and
+    ///      has liquidity, and fees wait in `pendingBuyback` meanwhile.
+    function _feeRouter(Deployment memory deployment) private returns (FeeRouter) {
+        address manager = vm.envOr("POOL_MANAGER", address(0));
+        if (manager == address(0)) return FeeRouter(payable(address(0)));
+        return new FeeRouter(
+            IPoolManager(manager),
+            deployment.escrow,
+            deployment.lms,
+            address(deployment.stakedLms),
+            address(deployment.timelock),
+            deployment.config.treasury(),
+            vm.envOr("KEEPER", deployment.safe),
+            uint16(vm.envOr("STAKER_FEE_BPS", uint256(5_000))),
+            _poolConfig()
+        );
+    }
+
+    /// @dev Deploys the pool's owner on every v4 chain, and creates and seeds
+    ///      the pool only when `LIQUIDITY_ETH` is set: the deployer pairs that
+    ///      much of its own ETH with `LIQUIDITY_LMS` from the supply, and the
+    ///      ratio of the two is the pool's starting price. Left unset, the
+    ///      Safe can call `bootstrap` itself later.
+    function _liquidity(Deployment memory deployment) private returns (ProtocolLiquidity liquidity) {
+        address manager = vm.envOr("POOL_MANAGER", address(0));
+        if (manager == address(0)) return ProtocolLiquidity(address(0));
+
+        FeeRouter.PoolConfig memory pool = _poolConfig();
+        liquidity = new ProtocolLiquidity(
+            IPoolManager(manager), deployment.lms, address(deployment.timelock), pool.fee, pool.tickSpacing
+        );
+
+        uint256 eth = vm.envOr("LIQUIDITY_ETH", uint256(0));
+        if (eth == 0) return liquidity;
+        uint256 lmsAmount = vm.envOr("LIQUIDITY_LMS", uint256(1_000_000e18));
+        deployment.lms.approve(address(liquidity), lmsAmount);
+        liquidity.bootstrap{value: eth}(lmsAmount);
+    }
+
+    /// @dev One pool for both the router and the liquidity, so they cannot disagree.
+    function _poolConfig() private view returns (FeeRouter.PoolConfig memory) {
+        return FeeRouter.PoolConfig({
+            fee: uint24(vm.envOr("LMS_POOL_FEE", uint256(3_000))),
+            tickSpacing: int24(int256(vm.envOr("LMS_POOL_TICK_SPACING", uint256(60)))),
+            hooks: address(0)
+        });
+    }
+
+    /// @dev A queued change must not be able to land on a match that was
+    ///      already open when it was queued: the oracle and attestor set are
+    ///      read live, not snapshotted, so players need time to see it coming.
+    ///      Checked against the match lifetime in `_handOver`.
+    function _timelockDelay() private view returns (uint256) {
+        return vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+    }
+
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
     ///      proposes: the timelock has to call `acceptOwnership` itself. While
     ///      its delay is still zero that can be scheduled and executed at once,
     ///      in the same batch that raises the delay to its real value, so the
     ///      timelock never owns the config with a zero delay outside that call.
-    function _handOver(TimelockController timelock, ProtocolConfig config, address safe, address deployer)
-        private
-    {
-        // A queued change must not be able to land on a match that was
-        // already open when it was queued: the oracle and attestor set are
-        // read live, not snapshotted, so players need time to see it coming.
-        uint256 delay = vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+    function _handOver(Deployment memory deployment, address deployer) private {
+        TimelockController timelock = deployment.timelock;
+        ProtocolConfig config = deployment.config;
+        address safe = deployment.safe;
+
+        uint256 delay = _timelockDelay();
         ProtocolConfig.Params memory params = config.getParams();
         uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
@@ -193,7 +318,13 @@ contract Deploy is Script {
         // be the deployer itself, it keeps the roles it is meant to end with.
         timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
         timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
-        timelock.grantRole(timelock.PROPOSER_ROLE(), safe);
+        // The governor is the only proposer. It also needs the canceller
+        // role, which `GovernorTimelockControl` uses to cancel its own
+        // queued proposals.
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(deployment.governor));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(deployment.governor));
+        // The Safe's veto. Governance can revoke it through the timelock,
+        // which is its own admin once the deployer renounces below.
         timelock.grantRole(timelock.CANCELLER_ROLE(), safe);
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
     }

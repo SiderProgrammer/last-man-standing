@@ -49,4 +49,21 @@ export {
   type AvatarSubject,
 } from './chain/avatars.js';
 export { parseZapTokens, zapInfo } from './chain/zap.js';
+export {
+  DEFAULT_FEE_KEEPER_POLICY,
+  FeeKeeper,
+  feeKeeperPolicy,
+  viemFeeRouter,
+  type BuybackOutcome,
+  type FeeKeeperPolicy,
+  type FeeKeeperTick,
+  type FeeRouterPort,
+  type ViemFeeRouterOptions,
+} from './chain/feeKeeper.js';
+export {
+  airdropResponse,
+  loadAirdropFile,
+  parseAirdropFile,
+  type AirdropBook,
+} from './chain/airdropFile.js';
 export { config, loadConfig, type ServerConfig } from './config.js';

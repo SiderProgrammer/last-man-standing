@@ -8,6 +8,7 @@ import {
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
+  type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
@@ -64,6 +65,8 @@ export interface GatewayOptions {
   sessionDelegate?: `0x${string}` | null;
   /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
   zap?: ZapInfo | null;
+  /** Staking vault and airdrop. Null or omitted hides the staking panel. */
+  staking?: StakingInfo | null;
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
@@ -110,6 +113,7 @@ export class Gateway {
       avatarCollections: this.options.avatarCollections ?? [],
       sessionDelegate: this.options.sessionDelegate ?? null,
       zap: this.options.zap ?? null,
+      staking: this.options.staking ?? null,
     });
 
     socket.onMessage((data: unknown) => {

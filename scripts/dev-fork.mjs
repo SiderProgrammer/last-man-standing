@@ -10,7 +10,7 @@
  *   1. builds the TypeScript packages the server runs from,
  *   2. starts anvil forking mainnet, as chain 31337,
  *   3. deploys the protocol with `Deploy.s.sol`, including `ZapJoin` against
- *      the real v4 `PoolManager`,
+ *      the real v4 `PoolManager` and a seeded LMS/ETH pool for fee buybacks,
  *   4. plays the randomness oracle: every `lockMatch` gets its seed a block
  *      later, as it would from Chainlink VRF,
  *   5. funds the browser's dev burner (and `FORK_PLAYER`, if set) with USDC,
@@ -29,7 +29,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
@@ -120,7 +120,16 @@ const LOBBIES = [
   { stake: '0.05', seats: 6 },
 ];
 
-const erc20 = parseAbi(['function balanceOf(address) view returns (uint256)']);
+const erc20 = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+]);
+const vaultAbi = parseAbi(['function deposit(uint256 assets, address receiver) returns (uint256)']);
+/** Staked by the operator, so fee buybacks have someone to buy for. See `FeeKeeperPolicy.maxLockedShareBps`. */
+const OPERATOR_STAKE = '10000';
+/** Airdropped to each funded player, so the claim flow can be tried at once. */
+const DEV_AIRDROP_LMS = '250';
+const lmsTransferAbi = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
 const escrowAbi = parseAbi(['function createMatch(uint128 stake, uint16 maxSeats) returns (bytes32)']);
 const oracleAbi = parseAbi([
   'event RandomnessRequested(bytes32 indexed requestId, address indexed consumer, bytes32 context)',
@@ -271,9 +280,19 @@ async function waitForAnvil(publicClient) {
 function deploy() {
   // The deploy script reads these; a value left in the shell must not leak in.
   const env = { ...process.env, DEPLOYER_PK: OPERATOR_KEY, POOL_MANAGER };
-  for (const key of ['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY']) {
+  const deployKeys = [
+    ...['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
+    ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
+    ...['KEEPER', 'STAKER_FEE_BPS', 'LMS_POOL_FEE', 'LMS_POOL_TICK_SPACING', 'LIQUIDITY_ETH', 'LIQUIDITY_LMS'],
+  ];
+  for (const key of deployKeys) {
     delete env[key];
   }
+  // The operator runs the fee keeper too, and seeds the LMS/ETH pool at
+  // 100,000 LMS per ETH so buybacks work from the first settled match.
+  env.KEEPER = privateKeyToAccount(OPERATOR_KEY).address;
+  env.LIQUIDITY_ETH = parseEther('10').toString();
+  env.LIQUIDITY_LMS = parseEther('1000000').toString();
   run('forge script', 'forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast'], {
     cwd: CONTRACTS,
     env,
@@ -286,8 +305,8 @@ function deploy() {
   for (const tx of broadcast.transactions) {
     if (tx.transactionType === 'CREATE') addresses[tx.contractName] = tx.contractAddress;
   }
-  if (!addresses.GameEscrow || !addresses.ZapJoin || !addresses.MockRandomnessOracle) {
-    fail('Deploy did not produce a GameEscrow, a ZapJoin and a MockRandomnessOracle.');
+  if (!addresses.GameEscrow || !addresses.ZapJoin || !addresses.MockRandomnessOracle || !addresses.FeeRouter) {
+    fail('Deploy did not produce a GameEscrow, a ZapJoin, a MockRandomnessOracle and a FeeRouter.');
   }
   return addresses;
 }
@@ -346,6 +365,69 @@ async function seed(publicClient, escrow) {
     await publicClient.waitForTransactionReceipt({ hash });
   }
   return holders;
+}
+
+/**
+ * Stakes some of the LMS supply as the operator. With no `SAFE` on a local
+ * node the operator *is* the Safe and holds the supply. Without stakers the
+ * fee keeper holds buybacks back, because they would only enrich the vault's
+ * locked seed.
+ */
+/**
+ * A dev airdrop for the funded players, so the claim flow works the moment the
+ * page opens. A real one comes from `npm run airdrop`, which needs a history
+ * of settled matches that a fresh fork does not have.
+ */
+async function devAirdrop(publicClient, addresses, holders) {
+  const { buildAirdrop } = await import('@lms/protocol');
+  const airdrop = buildAirdrop(new Map(holders.map((holder) => [holder, parseEther(DEV_AIRDROP_LMS)])));
+  const operator = privateKeyToAccount(OPERATOR_KEY).address;
+
+  const env = {
+    ...process.env,
+    DEPLOYER_PK: OPERATOR_KEY,
+    LMS: addresses.LmsToken,
+    STAKED_LMS: addresses.StakedLms,
+    AIRDROP_ROOT: airdrop.root,
+    AIRDROP_TREASURY: operator,
+  };
+  delete env.AIRDROP_CLAIM_DAYS;
+  run('forge script', 'forge', ['script', 'script/Airdrop.s.sol:DeployAirdrop', '--rpc-url', RPC, '--broadcast'], {
+    cwd: CONTRACTS,
+    env,
+  });
+  const broadcast = JSON.parse(
+    readFileSync(new URL(`../contracts/broadcast/Airdrop.s.sol/${CHAIN_ID}/run-latest.json`, import.meta.url), 'utf8'),
+  );
+  const address = broadcast.transactions.find((tx) => tx.contractName === 'LmsAirdrop')?.contractAddress;
+  if (!address) fail('The airdrop script did not deploy an LmsAirdrop.');
+
+  const wallet = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
+  const hash = await wallet.writeContract({
+    chain: null,
+    address: addresses.LmsToken,
+    abi: lmsTransferAbi,
+    functionName: 'transfer',
+    args: [address, airdrop.total],
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+
+  // Inside `contracts/broadcast/`, which is gitignored like the rest of a run's output.
+  const file = fileURLToPath(new URL('../contracts/broadcast/dev-airdrop.json', import.meta.url));
+  writeFileSync(file, JSON.stringify(airdrop, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2));
+  return { address, file };
+}
+
+async function stakeAsOperator(publicClient, lms, vault) {
+  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
+  const amount = parseEther(OPERATOR_STAKE);
+  for (const [address, abi, functionName, args] of [
+    [lms, erc20, 'approve', [vault, amount]],
+    [vault, vaultAbi, 'deposit', [amount, operator.account.address]],
+  ]) {
+    const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });
+    await publicClient.waitForTransactionReceipt({ hash });
+  }
 }
 
 /**
@@ -415,11 +497,14 @@ async function main() {
   log('fork', 'Deploying the protocol (compiles on first run)…');
   const addresses = deploy();
   log('fork', `GameEscrow ${addresses.GameEscrow} · ZapJoin ${addresses.ZapJoin}`);
+  log('fork', `LMS ${addresses.LmsToken} · sLMS ${addresses.StakedLms} · FeeRouter ${addresses.FeeRouter}`);
 
   runOracleNode(publicClient, addresses.MockRandomnessOracle);
 
   log('fork', 'Funding players and opening lobbies…');
   const holders = await seed(publicClient, addresses.GameEscrow);
+  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms);
+  const airdrop = await devAirdrop(publicClient, addresses, holders);
 
   start('server', process.execPath, ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], {
     tagged: false,
@@ -434,6 +519,15 @@ async function main() {
       ZAP_JOIN: addresses.ZapJoin,
       V4_QUOTER,
       ZAP_TOKENS: zapTokens(),
+      // Harvest and buy back after every match, rather than waiting for the
+      // production thresholds a dev lobby's fees would never reach.
+      FEE_ROUTER: addresses.FeeRouter,
+      STAKED_LMS: addresses.StakedLms,
+      AIRDROP_ADDRESS: airdrop.address,
+      AIRDROP_FILE: airdrop.file,
+      FEE_KEEPER_POLL_MS: '10000',
+      HARVEST_MIN_WEI: '1',
+      BUYBACK_MIN_WEI: '1',
       // One-click play: anvil's fork runs the latest hardfork, so EIP-7702 works.
       SESSION_DELEGATE: addresses.SessionKeyDelegate,
       AVATAR_COLLECTIONS: JSON.stringify([

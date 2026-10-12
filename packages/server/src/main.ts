@@ -15,6 +15,9 @@ import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
+import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
+import { airdropResponse, loadAirdropFile, type AirdropBook } from './chain/airdropFile.js';
+import { lmsAirdropAbi } from '@lms/protocol';
 
 const TICK_MS = 250;
 
@@ -70,6 +73,10 @@ async function main(): Promise<void> {
     ? zapInfo(config.zapJoin, config.v4Quoter, parseZapTokens(config.zapTokens))
     : null;
 
+  // Proofs for the client's one-click claim. Served only when the file's root is
+  // the one the deployed airdrop checks, so a stale file cannot be offered.
+  const airdrop = await loadAirdrop(rpc);
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
@@ -81,9 +88,23 @@ async function main(): Promise<void> {
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
     zap,
+    staking:
+      config.stakedLms !== ZERO_ADDRESS
+        ? { vault: config.stakedLms, airdrop: airdrop ? config.airdrop : null }
+        : null,
   });
 
   const http = createServer((request, response) => {
+    const claim = airdropResponse(airdrop, request.url ?? '');
+    if (claim) {
+      // Read by the client from its own origin, which is not this one.
+      response.writeHead(claim.status, {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*',
+      });
+      response.end(claim.body);
+      return;
+    }
     if (request.url === '/health') {
       const directory = bridge?.directory() ?? { open: [], live: [] };
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -132,6 +153,24 @@ async function main(): Promise<void> {
     console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
   }
 
+  // Harvests fees and buys LMS for stakers. Holds no funds: the router sends
+  // the LMS straight to the vault, and only the router's keeper may call it.
+  let feeKeeper: FeeKeeper | null = null;
+  if (config.rpcUrl && config.keeperPk && config.feeRouter !== ZERO_ADDRESS && config.v4Quoter !== ZERO_ADDRESS) {
+    const port = await viemFeeRouter({
+      rpcUrl: config.rpcUrl,
+      chainId: config.chainId,
+      router: config.feeRouter,
+      quoter: config.v4Quoter,
+      keeperKey: config.keeperPk,
+    });
+    if (port) {
+      feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
+      feeKeeper.start(config.feeKeeperPollMs);
+      console.log(`[server] keeping fees for router ${config.feeRouter}`);
+    }
+  }
+
   if (!avatars.empty) {
     console.log(`[server] avatar collections on chains ${avatars.chains.join(', ')}`);
   }
@@ -142,6 +181,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     bridge?.stop();
+    feeKeeper?.stop();
     clearInterval(ticker);
     wss.close();
     http.close();
@@ -154,3 +194,22 @@ void main().catch((error: unknown) => {
   console.error('[server] failed to start', error);
   process.exitCode = 1;
 });
+
+async function loadAirdrop(rpc: ReturnType<typeof createPublicClient> | null): Promise<AirdropBook | null> {
+  if (!config.airdropFile || config.airdrop === ZERO_ADDRESS) return null;
+  try {
+    const book = loadAirdropFile(config.airdropFile);
+    if (rpc) {
+      const root = await rpc.readContract({ address: config.airdrop, abi: lmsAirdropAbi, functionName: 'merkleRoot' });
+      if (root.toLowerCase() !== book.root.toLowerCase()) {
+        console.error(`[server] ${config.airdropFile} has root ${book.root}, but the airdrop checks ${root}; not serving it`);
+        return null;
+      }
+    }
+    console.log(`[server] serving ${book.size} airdrop claims for ${config.airdrop}`);
+    return book;
+  } catch (error) {
+    console.error('[server] could not load the airdrop file:', error);
+    return null;
+  }
+}
