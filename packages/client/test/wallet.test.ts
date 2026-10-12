@@ -6,13 +6,22 @@ import { COLORS, hpColor } from '../src/arena/theme.js';
 
 describe('session scope', () => {
   /**
-   * These four selectors are what a session key is allowed to call. They are
-   * now derived from the ABIs rather than from hand-written signature strings,
-   * so these expectations pin the values that derivation must keep producing:
-   * a change here would silently widen or narrow what a granted key can do.
+   * These three selectors are what a session key is allowed to call. They are
+   * derived from the ABIs rather than from hand-written signature strings, so
+   * these expectations pin the values that derivation must keep producing: a
+   * change here would silently widen or narrow what a granted key can do.
    */
-  it('scopes the escrow to join and withdraw', () => {
-    expect(SESSION_SCOPE.escrow).toEqual(['0xad677d0b', '0x51cff8d9']);
+  it('scopes the escrow to join only', () => {
+    expect(SESSION_SCOPE.escrow).toEqual(['0xad677d0b']);
+  });
+
+  /**
+   * `withdraw(address)` is `0x51cff8d9`. A key holding it could send the
+   * account's whole escrow balance to any address, and the spend cap would
+   * never notice, because the value leaves the escrow and not the account.
+   */
+  it('never grants a payout selector', () => {
+    expect(SESSION_SCOPE.escrow).not.toContain('0x51cff8d9');
   });
 
   it('scopes the avatar collection to mint and equip', () => {
@@ -20,7 +29,7 @@ describe('session scope', () => {
   });
 
   it('grants nothing else', () => {
-    expect(SESSION_SCOPE.escrow.length + SESSION_SCOPE.avatars.length).toBe(4);
+    expect(SESSION_SCOPE.escrow.length + SESSION_SCOPE.avatars.length).toBe(3);
   });
 });
 

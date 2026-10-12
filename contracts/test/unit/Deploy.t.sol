@@ -76,6 +76,15 @@ contract DeployTest is Test {
         assertEq(d.config.attestorThreshold(), 1);
     }
 
+    /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script
+    ///      must refuse rather than fall back to the anyone-picks-the-seed mock.
+    function test_refusesTheMockOracleOffALocalChain() public {
+        vm.chainId(11_155_111);
+        Deploy script = new Deploy();
+        vm.expectRevert(Deploy.MockOffLocal.selector);
+        script.run();
+    }
+
     function test_guardianPausesAtOnce_butCannotUnpause() public {
         vm.prank(safe);
         d.escrow.pause();

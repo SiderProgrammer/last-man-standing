@@ -370,4 +370,57 @@ contract SessionKeyDelegateTest is Test {
 
         assertEq(digest, 0xa23e142a5be00813755910b17a5ea68658ea7c7c86e8aec3db159ad4bcf4a476);
     }
+
+    /// @dev Regression: permissions used to outlive the grant that wrote them,
+    ///      so re-granting a key with a narrower scope kept the wider one.
+    function test_RegrantingWithANarrowerScopeDropsTheOldSelectors() public {
+        address[] memory targets = new address[](2);
+        targets[0] = address(target);
+        targets[1] = address(target);
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = Target.ping.selector;
+        selectors[1] = Target.forbidden.selector;
+        vm.prank(player);
+        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 1 ether, targets, selectors);
+        assertTrue(SessionKeyDelegate(payable(player)).permitted(sessionKey, address(target), Target.forbidden.selector));
+
+        vm.prank(player);
+        SessionKeyDelegate(payable(player)).revokeSession(sessionKey);
+        _grant(1 ether);
+
+        assertTrue(SessionKeyDelegate(payable(player)).permitted(sessionKey, address(target), Target.ping.selector));
+        assertFalse(SessionKeyDelegate(payable(player)).permitted(sessionKey, address(target), Target.forbidden.selector));
+
+        bytes memory data = abi.encodeCall(Target.forbidden, ());
+        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SessionKeyDelegate.SessionNotPermitted.selector,
+                sessionKey,
+                address(target),
+                Target.forbidden.selector
+            )
+        );
+        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+    }
+
+    /// @dev The account's low slots belong to whatever else the player may
+    ///      delegate to one day; this delegate keeps to its ERC-7201 namespace.
+    function test_StateLivesOnlyInTheNamespace() public {
+        _grant(1 ether);
+        bytes memory data = abi.encodeCall(Target.ping, ());
+        bytes memory signature = _sign(SESSION_PK, address(target), 0.1 ether, data);
+        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.1 ether, data, 0, signature);
+
+        for (uint256 slot = 0; slot < 8; ++slot) {
+            assertEq(vm.load(player, bytes32(slot)), bytes32(0));
+        }
+        bytes32 root = 0x07ec1a45952760d8fb956aaf940b8ff509e88f045ea2d46fbee2898cc08df400;
+        assertEq(
+            root,
+            keccak256(abi.encode(uint256(keccak256("lms.session.v1")) - 1)) & ~bytes32(uint256(0xff))
+        );
+        // `nonce` is the fourth member of the layout.
+        assertEq(uint256(vm.load(player, bytes32(uint256(root) + 3))), 1);
+    }
 }

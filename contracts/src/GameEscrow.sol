@@ -126,6 +126,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
+    error ConfigIncomplete();
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -153,6 +154,11 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     {
         ProtocolConfig.Params memory params = config.getParams();
 
+        // A config deploys with neither set. A lobby opened against it could
+        // never be seeded, or would snapshot a rule set nobody plays under.
+        bytes32 rulesHash = config.rulesHash();
+        if (rulesHash == bytes32(0) || config.randomnessOracle() == address(0)) revert ConfigIncomplete();
+
         if (stake < params.minStake || stake > params.maxStake) revert StakeOutOfRange(stake);
         if (maxSeats < params.minSeats || maxSeats > params.maxSeats) revert SeatsOutOfRange(maxSeats);
 
@@ -169,7 +175,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
             settleDeadline: 0,
             settleWindow: params.settleWindow,
             treasury: params.treasury,
-            rulesHash: config.rulesHash(),
+            rulesHash: rulesHash,
             seed: bytes32(0),
             historyRoot: bytes32(0)
         });

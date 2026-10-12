@@ -57,12 +57,18 @@ const approveAbi = parseAbi(['function approve(address spender, uint256 amount)'
 /**
  * What a session key may call, and nothing else.
  *
- * Deliberately narrow: join and withdraw on the escrow, mint and equip on the
- * avatar collection. It cannot create lobbies and it cannot transfer the
- * player's avatar away.
+ * Deliberately narrow: join on the escrow, mint and equip on the avatar
+ * collection. It cannot create lobbies and it cannot transfer the player's
+ * avatar away.
+ *
+ * It cannot collect payouts either, on purpose. `withdraw(to)` moves no value
+ * out of the account, so the spend cap never sees it, and it pays any `to` — a
+ * leaked key could send the whole balance anywhere. Payouts go through
+ * `withdrawFor(account)` instead, which anyone may call and which only ever
+ * pays the account itself, so it needs no key at all.
  */
 export const SESSION_SCOPE = {
-  escrow: [selectorOf(gameEscrowAbi as Abi, 'join'), selectorOf(gameEscrowAbi as Abi, 'withdraw')],
+  escrow: [selectorOf(gameEscrowAbi as Abi, 'join')],
   avatars: [
     selectorOf(playerAvatarsAbi as Abi, 'mint'),
     selectorOf(playerAvatarsAbi as Abi, 'equip'),
@@ -350,10 +356,10 @@ export class Wallet {
    * to call because the authorization in the same transaction put it there.
    * That is what makes this a one-time cost rather than a setup ritual.
    *
-   * The scope is deliberately narrow. The key may join and withdraw from the
-   * escrow and mint or equip an avatar — nothing else — and it may move at most
-   * `spendCapWei` in total. It cannot create lobbies, and it cannot transfer
-   * the player's avatar away.
+   * The scope is deliberately narrow. The key may join a lobby and mint or
+   * equip an avatar — nothing else — and it may move at most `spendCapWei` in
+   * total. It cannot create lobbies, collect payouts, or transfer the player's
+   * avatar away; see `SESSION_SCOPE`.
    */
   async grantSession(
     delegate: Address,

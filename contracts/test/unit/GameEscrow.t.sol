@@ -5,7 +5,7 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {ZeroAddress} from "../../src/Errors.sol";
+import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -218,6 +218,30 @@ contract GameEscrowTest is Fixtures {
         assertEq(ranking[0].balance, before + owed);
         assertEq(escrow.withdrawable(ranking[0]), 0);
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    function test_withdrawFor_paysTheAccountNotTheCaller() public {
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(4)));
+        address[] memory ranking = _rankingOf(matchId);
+        escrow.settle(matchId, 5, keccak256("h"), ranking, _signResult(_twoAttestors(), matchId, 5, keccak256("h"), ranking));
+
+        address relayer = makeAddr("relayer");
+        uint256 before = ranking[0].balance;
+        uint256 owed = escrow.withdrawable(ranking[0]);
+        vm.prank(relayer);
+        uint256 paid = escrow.withdrawFor(ranking[0]);
+
+        assertEq(paid, owed);
+        assertEq(ranking[0].balance, before + owed);
+        assertEq(relayer.balance, 0);
+        assertEq(escrow.withdrawable(ranking[0]), 0);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    function test_withdrawFor_revertsOnEmptyBalance() public {
+        vm.expectRevert(NothingToWithdraw.selector);
+        escrow.withdrawFor(players[0]);
     }
 
     function test_withdrawToChain_forwardsValue() public {

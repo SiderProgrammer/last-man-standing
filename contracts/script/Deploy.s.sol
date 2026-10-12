@@ -14,7 +14,7 @@ import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
 
-/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow.
+/// @notice Hub deploy: multisig-governed config, randomness oracle, hub escrow.
 /// @dev Governance ends up as:
 ///
 ///        Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
@@ -26,11 +26,12 @@ import {MockMessenger} from "../src/mocks/MockMessenger.sol";
 ///
 ///      The deployer holds no role once `run` returns.
 ///
-///      Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
-///      `LayerZeroMessenger` once those endpoints exist on the target testnet. Both are
-///      `Ownable`, and whoever owns them can choose seeds or forge cross-chain joins, so
-///      deploy them with the timelock as `owner_`, never an EOA. The same goes for
-///      `SpokeEscrow` on every spoke, each behind its own Safe and timelock.
+///      The mock oracle and messenger are deployed on a local node only; anywhere
+///      else pass `ORACLE` (a `ChainlinkVrfAdapter`) and, once spokes exist,
+///      `MESSENGER` (a `LayerZeroMessenger`). Both are `Ownable2Step`, and whoever
+///      owns them can choose seeds or forge cross-chain joins, so deploy them with
+///      the timelock as `owner_`, never an EOA. The same goes for `SpokeEscrow`
+///      on every spoke, each behind its own Safe and timelock.
 contract Deploy is Script {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
@@ -54,6 +55,7 @@ contract Deploy is Script {
     }
 
     error SafeRequired();
+    error MockOffLocal();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
 
     function run() external returns (Deployment memory deployment) {
@@ -73,10 +75,7 @@ contract Deploy is Script {
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
         deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
-        // Answers nothing on its own: something must call `fulfill` after each
-        // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
-        deployment.oracle = address(new MockRandomnessOracle());
-        deployment.messenger = address(new MockMessenger());
+        (deployment.oracle, deployment.messenger) = _transport();
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
@@ -106,6 +105,26 @@ contract Deploy is Script {
         if (safe != address(0)) return safe;
         if (block.chainid != LOCAL_CHAIN_ID) revert SafeRequired();
         return deployer;
+    }
+
+    /// @dev The mocks are for a local node only. `MockRandomnessOracle.fulfill`
+    ///      is open to anyone, so on any other chain whoever calls it first
+    ///      chooses the seed of every match.
+    ///
+    ///      Elsewhere `ORACLE` is required — a `ChainlinkVrfAdapter` whose owner
+    ///      must then register the escrow with `setConsumer` — and `MESSENGER`
+    ///      is optional: unset means a hub with no spokes yet.
+    function _transport() private returns (address oracle, address messenger) {
+        oracle = vm.envOr("ORACLE", address(0));
+        messenger = vm.envOr("MESSENGER", address(0));
+        if (block.chainid != LOCAL_CHAIN_ID) {
+            if (oracle == address(0)) revert MockOffLocal();
+            return (oracle, messenger);
+        }
+        // Answers nothing on its own: something must call `fulfill` after each
+        // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
+        if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
+        if (messenger == address(0)) messenger = address(new MockMessenger());
     }
 
     function _params(address safe) private view returns (ProtocolConfig.Params memory) {

@@ -21,6 +21,7 @@ export const sessionKeyDelegateAbi = parseAbi([
   'function sessionActive(address sessionKey) view returns (bool)',
   'function sessions(address sessionKey) view returns (uint48 validUntil, uint128 spendCap, uint128 spent)',
   'function sessionNonce() view returns (uint256)',
+  'function permitted(address sessionKey, address target, bytes4 selector) view returns (bool)',
   'function callDigest(address target, uint256 value, bytes data, uint256 nonce) view returns (bytes32)',
   'function executeWithSession(address target, uint256 value, bytes data, uint256 nonce, bytes signature) payable returns (bytes)',
   'function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)',

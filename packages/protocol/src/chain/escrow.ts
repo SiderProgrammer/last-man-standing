@@ -18,6 +18,7 @@ export const gameEscrowAbi = parseAbi([
   'function lockMatch(bytes32 matchId) returns (bytes32)',
   'function settle(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] ranking, bytes signatures)',
   'function withdraw(address to) returns (uint256)',
+  'function withdrawFor(address account) returns (uint256)',
   'function withdrawToChain(uint32 dstChainId) payable returns (uint256)',
   'function withdrawable(address account) view returns (uint256)',
   'event MatchCreated(bytes32 indexed matchId, address indexed creator, uint128 stake, uint16 maxSeats, bytes32 rulesHash)',

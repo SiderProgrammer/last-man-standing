@@ -107,6 +107,13 @@ contract EscrowHandler is Test {
         vm.prank(actor);
         escrow.withdraw(actor);
     }
+
+    /// @dev Anyone pushes an actor's balance to that actor.
+    function withdrawFor(uint256 caller, uint256 who) public {
+        address account = actors[who % actors.length];
+        vm.prank(actors[caller % actors.length]);
+        escrow.withdrawFor(account);
+    }
 }
 
 contract EscrowInvariantTest is StdInvariant, Test {
@@ -145,8 +152,11 @@ contract EscrowInvariantTest is StdInvariant, Test {
         config.setAttestorThreshold(2);
         vm.stopPrank();
 
-        escrow = new GameEscrow(config);
         SettlementHarness harness = new SettlementHarness();
+        bytes32 rulesHash = harness.hashRulesDefault();
+        vm.prank(owner);
+        config.setRulesHash(rulesHash);
+        escrow = new GameEscrow(config);
 
         address[] memory actors = new address[](6);
         for (uint256 i = 0; i < actors.length; ++i) {

@@ -83,6 +83,7 @@ contract ProtocolConfig is Ownable2Step {
     error PayoutScheduleTooLong(uint256 length, uint16 minSeats);
     error PayoutScheduleNotExact(uint256 totalBps);
     error ThresholdOutOfRange(uint32 threshold, uint32 attestors);
+    error InvalidRulesHash();
 
     constructor(address owner_, Params memory initialParams, uint16[] memory initialPayoutBps)
         Ownable(owner_)
@@ -123,7 +124,10 @@ contract ProtocolConfig is Ownable2Step {
         _setParams(newParams);
     }
 
+    /// @dev Zero is reserved for "never set": the escrow refuses to open a
+    ///      lobby against it, so it must not be settable on purpose either.
     function setRulesHash(bytes32 newRulesHash) external onlyOwner {
+        if (newRulesHash == bytes32(0)) revert InvalidRulesHash();
         emit RulesHashUpdated(rulesHash, newRulesHash);
         rulesHash = newRulesHash;
     }

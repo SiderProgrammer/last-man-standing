@@ -16,8 +16,10 @@ contract AdapterTest is Fixtures {
             owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
         );
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         config.setRandomnessOracle(address(adapter));
+        adapter.setConsumer(address(escrow), true);
+        vm.stopPrank();
 
         bytes32 matchId = _createAndFill(4);
         bytes32 requestId = escrow.lockMatch(matchId);
@@ -26,6 +28,42 @@ contract AdapterTest is Fixtures {
 
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
         assertTrue(escrow.getMatch(matchId).seed != bytes32(0));
+        // A fulfilled request leaves nothing behind.
+        assertEq(adapter.vrfIdOf(requestId), 0);
+        (address consumer,) = adapter.pending(vrfId);
+        assertEq(consumer, address(0));
+    }
+
+    function test_vrfAdapterRefusesUnregisteredConsumers() public {
+        MockVrfCoordinator coordinator = new MockVrfCoordinator();
+        ChainlinkVrfAdapter adapter = new ChainlinkVrfAdapter(
+            owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
+        );
+
+        vm.prank(players[0]);
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.NotConsumer.selector, players[0]));
+        adapter.requestRandomness(bytes32(uint256(1)));
+    }
+
+    function test_vrfAdapterRejectsASecondCallback() public {
+        MockVrfCoordinator coordinator = new MockVrfCoordinator();
+        ChainlinkVrfAdapter adapter = new ChainlinkVrfAdapter(
+            owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
+        );
+        vm.startPrank(owner);
+        config.setRandomnessOracle(address(adapter));
+        adapter.setConsumer(address(escrow), true);
+        vm.stopPrank();
+
+        bytes32 matchId = _createAndFill(4);
+        uint256 vrfId = adapter.vrfIdOf(escrow.lockMatch(matchId));
+        coordinator.fulfill(vrfId, 1);
+
+        uint256[] memory words = new uint256[](1);
+        words[0] = 2;
+        vm.prank(address(coordinator));
+        vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.UnknownRequest.selector, vrfId));
+        adapter.rawFulfillRandomWords(vrfId, words);
     }
 
     function test_layerZeroMessengerQuotesAndSends() public {

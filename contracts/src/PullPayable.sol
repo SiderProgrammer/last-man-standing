@@ -38,16 +38,30 @@ abstract contract PullPayable is ReentrancyGuardTransient {
 
     /// @notice Withdraws the caller's balance to `to`.
     function withdraw(address to) external nonReentrant returns (uint256 amount) {
-        amount = withdrawable[msg.sender];
+        amount = _payOut(msg.sender, to);
+    }
+
+    /// @notice Pays `account`'s balance to `account` itself.
+    /// @dev Permissionless, because the recipient is never the caller's choice:
+    ///      the worst anyone can do is pay a player early. That lets a relayer
+    ///      or keeper push a payout to a player who holds no gas on this chain,
+    ///      and it means a session key never needs `withdraw`, whose free `to`
+    ///      would let a leaked key send the whole balance anywhere.
+    function withdrawFor(address account) external nonReentrant returns (uint256 amount) {
+        amount = _payOut(account, account);
+    }
+
+    function _payOut(address account, address to) private returns (uint256 amount) {
+        amount = withdrawable[account];
         if (amount == 0) revert NothingToWithdraw();
 
-        withdrawable[msg.sender] = 0;
+        withdrawable[account] = 0;
         totalOwed -= amount;
 
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert TransferFailed(to, amount);
 
-        emit Withdrawn(msg.sender, to, amount);
+        emit Withdrawn(account, to, amount);
     }
 
     /// @dev Credits without transferring. The recipient collects it themselves.
