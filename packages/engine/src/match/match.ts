@@ -16,6 +16,7 @@ import {
   type Rules,
   type SealedMove,
   type Seat,
+  ZERO_SALT,
 } from '@lms/protocol';
 import { resolveRound, type DeclaredMove } from '../kernel/resolve.js';
 
@@ -184,6 +185,7 @@ export class Match {
       action: move.action,
       target: move.action === Action.Attack ? move.target : 0,
       revealed: true,
+      salt: move.salt,
     });
   }
 
@@ -204,7 +206,14 @@ export class Match {
     this.requirePhase(MatchPhase.Reveal);
 
     const moves: DeclaredMove[] = this.alive.map(
-      (seat) => this.reveals.get(seat) ?? { index: seat, action: Action.None, target: 0, revealed: false },
+      (seat) =>
+        this.reveals.get(seat) ?? {
+          index: seat,
+          action: Action.None,
+          target: 0,
+          revealed: false,
+          salt: ZERO_SALT,
+        },
     );
 
     const resolution = resolveRound(this.rules, this.seed, this.roundValue, this.states, moves);
@@ -279,6 +288,8 @@ export class Match {
           alive: state.alive,
         };
       }),
+      // Which seats have acted, never what they did: a revealed salt would
+      // let anyone holding the rest of them preview the round's rolls.
       committed: [...this.commitments.keys()].sort((a, b) => a - b),
       revealed: [...this.reveals.keys()].sort((a, b) => a - b),
       history: this.rounds,

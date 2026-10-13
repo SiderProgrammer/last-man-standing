@@ -165,8 +165,26 @@ contract Deploy is Script {
         // Majority by default: 1 of 1, 2 of 3, 3 of 5.
         config.setAttestorThreshold(uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
 
-        config.setRulesHash(HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30));
+        config.setRulesHash(HashLib.hashRules(_rules()));
         config.setGuardian(safe);
+    }
+
+    /// @dev Read from `config/rules.json` rather than typed in here, so the
+    ///      deployed rules hash cannot drift from the rules the server plays:
+    ///      `packages/protocol/test/parity.test.ts` checks that file field by
+    ///      field against `DEFAULT_RULES`.
+    function _rules() private view returns (HashLib.Rules memory rules) {
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/config/rules.json"));
+        rules.minPlayers = uint16(vm.parseJsonUint(json, ".minPlayers"));
+        rules.maxPlayers = uint16(vm.parseJsonUint(json, ".maxPlayers"));
+        rules.startingHp = uint32(vm.parseJsonUint(json, ".startingHp"));
+        rules.attackDamage = uint32(vm.parseJsonUint(json, ".attackDamage"));
+        rules.riposteDamage = uint32(vm.parseJsonUint(json, ".riposteDamage"));
+        rules.hideEvadeBps = uint16(vm.parseJsonUint(json, ".hideEvadeBps"));
+        rules.hideStormBps = uint16(vm.parseJsonUint(json, ".hideStormBps"));
+        rules.stormGraceRounds = uint16(vm.parseJsonUint(json, ".stormGraceRounds"));
+        rules.stormBaseDamage = uint32(vm.parseJsonUint(json, ".stormBaseDamage"));
+        rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
     }
 
     /// @dev Only where Uniswap v4 is deployed. Ownerless, so there is nothing

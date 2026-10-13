@@ -3,16 +3,21 @@ import {
   Action,
   AttackOutcome,
   DEFAULT_RULES,
+  draw,
+  drawBps,
+  roundSeed,
+  saltsBySeat,
   stormDamageForRound,
+  ZERO_SALT,
   type PlayerState,
 } from '@lms/protocol';
-import { resolveRound, type DeclaredMove } from '@lms/engine';
+import { PARRY_NONCE_BASE, resolveRound, type DeclaredMove } from '@lms/engine';
 import { bytes32, freshStates } from './helpers.js';
 
 const SEED = bytes32('resolve-seed');
 
-function move(index: number, action: DeclaredMove['action'], target = 0): DeclaredMove {
-  return { index, action, target, revealed: true };
+function move(index: number, action: DeclaredMove['action'], target = 0, saltLabel = 'a'): DeclaredMove {
+  return { index, action, target, revealed: true, salt: bytes32(`salt:${saltLabel}:${index}`) };
 }
 
 describe('round resolution', () => {
@@ -30,7 +35,7 @@ describe('round resolution', () => {
     expect(record.attacks.every((attack) => attack.outcome === AttackOutcome.Hit)).toBe(true);
   });
 
-  it('punishes an attack into a defender with a riposte', () => {
+  it('punishes a lone attack into a defender with a riposte', () => {
     const states = freshStates(2);
     const { states: next, record } = resolveRound(DEFAULT_RULES, SEED, 1, states, [
       move(0, Action.Attack, 1),
@@ -53,7 +58,9 @@ describe('round resolution', () => {
 
     expect(storm).toBeGreaterThan(0);
     expect(next[0]?.hp).toBe(DEFAULT_RULES.startingHp - storm);
-    expect(next[1]?.hp).toBe(DEFAULT_RULES.startingHp - Math.floor(storm / 2));
+    expect(next[1]?.hp).toBe(
+      DEFAULT_RULES.startingHp - Math.floor((storm * DEFAULT_RULES.hideStormBps) / 10_000),
+    );
     // This gap is the only reason hiding beats turtling.
     expect(next[1]?.hp as number).toBeGreaterThan(next[0]?.hp as number);
   });
@@ -103,15 +110,92 @@ describe('round resolution', () => {
     expect(record.eliminated).toEqual([0, 1, 2]);
   });
 
-  it('counts a missing move as a timeout with weak evasion', () => {
+  it('counts a missing move as a timeout that takes every hit', () => {
     const states = freshStates(2);
     const { states: next, record } = resolveRound(DEFAULT_RULES, SEED, 1, states, [
       move(0, Action.Attack, 1),
     ]);
 
-    expect(record.moves.find((entry) => entry.index === 1)?.revealed).toBe(false);
+    const silent = record.moves.find((entry) => entry.index === 1);
+    expect(silent?.revealed).toBe(false);
+    expect(silent?.salt).toBe(ZERO_SALT);
     expect(next[1]?.timeouts).toBe(1);
     expect(next[0]?.timeouts).toBe(0);
+    // No evade bonus for not playing: the attack always lands.
+    expect(record.attacks[0]?.outcome).toBe(AttackOutcome.Hit);
+    expect(next[1]?.hp).toBe(DEFAULT_RULES.startingHp - DEFAULT_RULES.attackDamage);
+  });
+
+  it('never lets an absent player evade, whatever the seed', () => {
+    for (let i = 0; i < 50; i += 1) {
+      const { record } = resolveRound(DEFAULT_RULES, bytes32(`absent:${i}`), 1, freshStates(2), [
+        move(0, Action.Attack, 1),
+      ]);
+      expect(record.attacks[0]?.outcome).toBe(AttackOutcome.Hit);
+    }
+  });
+
+  it('parries exactly one attacker and lets the rest connect', () => {
+    const states = freshStates(4);
+    const { states: next, record } = resolveRound(DEFAULT_RULES, SEED, 1, states, [
+      move(0, Action.Attack, 3),
+      move(1, Action.Attack, 3),
+      move(2, Action.Attack, 3),
+      move(3, Action.Defend),
+    ]);
+
+    const outcomes = record.attacks.map((attack) => attack.outcome);
+    expect(outcomes.filter((outcome) => outcome === AttackOutcome.Parried)).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome === AttackOutcome.Hit)).toHaveLength(2);
+    expect(next[3]?.hp).toBe(DEFAULT_RULES.startingHp - 2 * DEFAULT_RULES.attackDamage);
+
+    const parried = record.attacks.find((attack) => attack.outcome === AttackOutcome.Parried);
+    const riposted = next[parried?.attacker as number];
+    expect(riposted?.hp).toBe(DEFAULT_RULES.startingHp - DEFAULT_RULES.riposteDamage);
+  });
+
+  it('picks the parried attacker from the round seed, not from seat order', () => {
+    const states = freshStates(3);
+    const picks = new Set<number>();
+    for (let i = 0; i < 40 && picks.size < 2; i += 1) {
+      const moves = [
+        move(0, Action.Attack, 2, `p${i}`),
+        move(1, Action.Attack, 2, `p${i}`),
+        move(2, Action.Defend, 0, `p${i}`),
+      ];
+      const { record } = resolveRound(DEFAULT_RULES, SEED, 1, states, moves);
+      const parried = record.attacks.find((attack) => attack.outcome === AttackOutcome.Parried);
+      picks.add(parried?.attacker as number);
+
+      // And it is exactly the documented draw.
+      const entropy = roundSeed(SEED, 1, saltsBySeat(3, moves));
+      expect(parried?.attacker).toBe(Number(draw(entropy, PARRY_NONCE_BASE + 2) % 2n));
+    }
+    expect([...picks].sort()).toEqual([0, 1]);
+  });
+
+  it('rolls a hider\'s evade from every revealed salt', () => {
+    const states = freshStates(2);
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 40; i += 1) {
+      const moves = [move(0, Action.Attack, 1, `h${i}`), move(1, Action.Hide, 0, `h${i}`)];
+      const { record } = resolveRound(DEFAULT_RULES, SEED, 1, states, moves);
+      const entropy = roundSeed(SEED, 1, saltsBySeat(2, moves));
+      const expected =
+        drawBps(entropy, 0) < DEFAULT_RULES.hideEvadeBps ? AttackOutcome.Missed : AttackOutcome.Hit;
+      expect(record.attacks[0]?.outcome).toBe(expected);
+      outcomes.add(record.attacks[0]?.outcome as string);
+    }
+    // Same seed and round, different salts: both outcomes occur, so the roll is
+    // not knowable from the public seed alone.
+    expect([...outcomes].sort()).toEqual([AttackOutcome.Hit, AttackOutcome.Missed].sort());
+  });
+
+  it('records each revealed salt in the round', () => {
+    const states = freshStates(2);
+    const moves = [move(0, Action.Defend), move(1, Action.Hide)];
+    const { record } = resolveRound(DEFAULT_RULES, SEED, 1, states, moves);
+    expect(record.moves.map((entry) => entry.salt)).toEqual(moves.map((entry) => entry.salt));
   });
 
   it('ignores the order in which moves are supplied', () => {

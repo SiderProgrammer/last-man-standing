@@ -1,0 +1,12 @@
+{
+  "minPlayers": 4,
+  "maxPlayers": 8,
+  "startingHp": 100,
+  "attackDamage": 34,
+  "riposteDamage": 5,
+  "hideEvadeBps": 2500,
+  "hideStormBps": 7500,
+  "stormGraceRounds": 1,
+  "stormBaseDamage": 6,
+  "maxRounds": 30
+}

@@ -9,7 +9,7 @@
 
 /** Action identifiers. Values are part of the wire format and the commit hash. */
 export const Action = {
-  /** No action recorded (player timed out). Resolved as a weaker Hide. */
+  /** No action recorded (player timed out). Takes every attack and the full storm. */
   None: 0,
   /** Attempt to eliminate another player. */
   Attack: 1,
@@ -68,7 +68,11 @@ export interface PlayerState {
 export const AttackOutcome = {
   /** Damage applied to the target. */
   Hit: 'hit',
-  /** Target was defending: no damage, attacker takes riposte damage. */
+  /**
+   * Target was defending and chose this attacker to parry: no damage, the
+   * attacker takes riposte damage. A defender parries one attacker per round;
+   * the others connect.
+   */
   Parried: 'parried',
   /** Target was hiding and evaded the roll. */
   Missed: 'missed',
@@ -92,8 +96,18 @@ export interface AttackRecord {
 /** The public, post-reveal record of a single round. */
 export interface RoundRecord {
   round: number;
-  /** Declared move of every player that was alive at the start of the round. */
-  moves: Array<{ index: number; action: ActionValue; target: number; revealed: boolean }>;
+  /**
+   * Declared move of every player that was alive at the start of the round,
+   * with the salt it was revealed under (`ZERO_SALT` if it was not revealed).
+   * The salts are published so anyone can recompute the round's rolls.
+   */
+  moves: Array<{
+    index: number;
+    action: ActionValue;
+    target: number;
+    revealed: boolean;
+    salt: `0x${string}`;
+  }>;
   attacks: AttackRecord[];
   /** Storm damage applied to every surviving player at the end of the round. */
   stormDamage: number;

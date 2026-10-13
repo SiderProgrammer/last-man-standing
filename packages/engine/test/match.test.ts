@@ -128,6 +128,25 @@ describe('commit / reveal lifecycle', () => {
     expect(broadcast).not.toContain('"action"');
   });
 
+  it('never publishes a salt before the round resolves', () => {
+    const setup = setupFor(4);
+    const match = new Match(setup);
+    const moves = [0, 1, 2, 3].map((seat) => sealed(Action.Hide, 0, `leak-${seat}`));
+    moves.forEach((move, seat) => match.submitCommit(seat, commitMove(setup.matchId, 1, seat, move)));
+    match.openRevealPhase();
+    // Three of four revealed: anyone holding those salts and the fourth would
+    // know the round's rolls, so none of them may be in the broadcast yet.
+    moves.slice(0, 3).forEach((move, seat) => match.submitReveal(seat, move));
+
+    const broadcast = JSON.stringify(match.publicState());
+    for (const move of moves) expect(broadcast).not.toContain(move.salt.slice(2));
+
+    // Once resolved, the salts are published so the rolls can be audited.
+    match.submitReveal(3, moves[3] as SealedMove);
+    const record = match.resolve();
+    expect(record.moves.map((entry) => entry.salt)).toEqual(moves.map((move) => move.salt));
+  });
+
   it('rejects a lobby outside the configured seat range', () => {
     expect(() => new Match(setupFor(3))).toThrow(/outside \[4, 8\]/);
     expect(() => new Match(setupFor(9))).toThrow(/outside \[4, 8\]/);

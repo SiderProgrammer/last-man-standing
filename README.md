@@ -10,8 +10,8 @@ Each round every surviving player secretly picks one of three actions:
 | Action | Effect |
 | --- | --- |
 | ⚔️ Attack | Damage a chosen seat, unless they parry or evade |
-| 🛡️ Defend | Block incoming attacks and riposte the attacker |
-| 🏃 Hide | Likely to dodge attacks, but exposed to the closing storm |
+| 🛡️ Defend | Parry one attacker and riposte them; any others still connect |
+| 🏃 Hide | Sometimes dodge attacks, and take less of the closing storm |
 
 Choices are committed as hashes and opened together, so nobody can react to
 anybody else. After the reveal the entire round is published, which is the point

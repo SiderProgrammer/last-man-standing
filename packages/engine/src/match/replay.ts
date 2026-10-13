@@ -75,6 +75,27 @@ export function replayMatch(setup: MatchSetup, moveLog: readonly (readonly Decla
   };
 }
 
+/**
+ * The move log a published history implies, ready to hand to `replayMatch`.
+ *
+ * Every `RoundRecord` carries each living seat's action, target, reveal flag
+ * and salt, which is exactly what resolution consumes. Extracting them is pure
+ * data plumbing — no rule is applied here — so it does not weaken the
+ * independence of the replay: a fabricated record still has to hash to the
+ * root the attestors signed.
+ */
+export function moveLogFromHistory(history: readonly RoundRecord[]): DeclaredMove[][] {
+  return history.map((record) =>
+    record.moves.map((move) => ({
+      index: move.index,
+      action: move.action,
+      target: move.target,
+      revealed: move.revealed,
+      salt: move.salt,
+    })),
+  );
+}
+
 /** True when a claimed result matches an independent replay of the move log. */
 export function verifyResult(
   setup: MatchSetup,

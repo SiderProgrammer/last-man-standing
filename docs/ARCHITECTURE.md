@@ -20,25 +20,36 @@ Each round every living player secretly picks one of three actions:
 | Action | Effect |
 | --- | --- |
 | **Attack** `#n` | Tries to take 34 HP off seat `#n` |
-| **Defend** | Blocks incoming attacks and reflects 20 HP onto each attacker |
-| **Hide** | Evades an attack 60% of the time, and takes only half storm damage |
+| **Defend** | Parries one attacker, who takes 5 HP of riposte; any others connect |
+| **Hide** | Evades an attack 25% of the time, and takes three quarters of the storm |
 
-A player who fails to submit anything in time is recorded as `None`: they behave like
-a much worse Hide (30% evade) and take full storm damage.
+A player who fails to submit anything in time is recorded as `None`: every attack on
+them lands and they take the full storm. Not playing earns nothing.
 
 ### Resolving a round
 
 1. **Attacks resolve simultaneously** against the state at the *start* of the round.
    A player who dies this round still lands the attack they declared — there is no
    initiative order and no advantage to acting "first", because nobody acts first.
-2. **Defend beats Attack.** The attack deals nothing and the attacker takes 20 HP of
-   riposte. Attacking into a read is a losing trade.
-3. **Attack beats Hide, slowly.** A hider evades on a 60% roll, but chip damage adds
+2. **Defend beats one Attack.** A defender parries one of the attackers that came
+   at it — picked by the round's entropy, not by seat — and that attacker deals
+   nothing and takes 5 HP of riposte. The rest connect, so focus fire is the answer
+   to a turtle.
+3. **Attack beats Hide, slowly.** A hider evades on a 25% roll, but chip damage adds
    up and hiding never makes progress of its own.
-4. **Hide beats Defend.** Both are passive, but the storm hits a turtle twice as hard.
-5. **The storm** is applied last, to everyone: `(round - 2) * 6` HP from round 3
-   onward, halved for hiders. The storm is the clock. Without it, everyone defending
-   forever would be a stable equilibrium and no one would ever be eliminated.
+4. **Hide beats Defend.** Both are passive, but the storm hits a turtle harder.
+5. **The storm** is applied last, to everyone: `(round - 1) * 6` HP from round 2
+   onward, three quarters of it for hiders. The storm is the clock. Without it,
+   everyone defending forever would be a stable equilibrium.
+
+Every roll in a round — each hider's evade, each defender's parry pick — comes from
+`roundSeed(matchSeed, round, salts)`, where `salts` are the salts every player
+revealed that round. Nobody can compute a roll until every reveal is in, and the
+salts are published with the round so anyone can re-derive it.
+
+The numbers are not hand-picked: `npm run sim` plays thousands of bot matches and
+checks that no mindless strategy (always Defend, always Hide, always Attack) wins
+more than 1.5× the share a seat would get by chance.
 6. **Elimination** takes everyone at or below 0 HP, ordered worst-first by HP and then
    by seat index. If a round would wipe the entire lobby, the player with the least
    overkill survives on 1 HP, so a match always produces exactly one winner.

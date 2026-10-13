@@ -4,6 +4,7 @@ import {
   type ActionValue,
   type PublicMatchState,
   type RoundRecord,
+  ZERO_SALT,
 } from '@lms/protocol';
 
 export function bytes32(label: string): `0x${string}` {
@@ -31,6 +32,7 @@ export function round(number: number, moves: MoveSpec[], hpAfter: number[]): Rou
       action: move.action,
       target: move.target ?? 0,
       revealed: move.revealed ?? true,
+      salt: ZERO_SALT,
     })),
     attacks: [],
     stormDamage: 0,
