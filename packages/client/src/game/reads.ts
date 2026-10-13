@@ -1,4 +1,11 @@
-import { Action, type PublicMatchState, type RoundRecord } from '@lms/protocol';
+import {
+  Action,
+  addressKey,
+  describeStyle,
+  type PlayStyle,
+  type PublicMatchState,
+  type RoundRecord,
+} from '@lms/protocol';
 
 export interface Read {
   seat: number;
@@ -13,6 +20,8 @@ export interface Read {
   againstYou: number;
   /** Short human-readable pattern, empty when nothing stands out. */
   tell: string;
+  /** Their record from earlier settled matches, empty for a stranger. */
+  past: string;
 }
 
 /**
@@ -24,12 +33,17 @@ export interface Read {
  * everyone sees — nothing here is privileged, it is just bookkeeping the player
  * would otherwise do on paper.
  */
-export function readOpponents(state: PublicMatchState, you: number | null): Read[] {
+export function readOpponents(
+  state: PublicMatchState,
+  you: number | null,
+  dossier: ReadonlyMap<string, PlayStyle> = new Map(),
+): Read[] {
   const reads = new Map<number, Read>();
 
   for (const player of state.players) {
     if (player.index === you) continue;
     reads.set(player.index, {
+      past: describeStyle(dossier.get(addressKey(player.address))),
       seat: player.index,
       alive: player.alive,
       attacks: 0,

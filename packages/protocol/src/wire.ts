@@ -1,6 +1,7 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
+import type { PlayStyle } from './game/style.js';
 
 /** Largest client frame the server will parse. Every legitimate message is far smaller. */
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
@@ -11,7 +12,17 @@ export type ClientMessage =
   | { type: 'lobbies' }
   | { type: 'practice'; bots?: number }
   | { type: 'watch'; matchId: `0x${string}` }
-  | { type: 'commit'; commitment: `0x${string}` }
+  | {
+      type: 'commit';
+      commitment: `0x${string}`;
+      /**
+       * Opt-in: the move behind the commitment, for the server to reveal on
+       * the player's behalf if their socket drops before the reveal window.
+       * It must open `commitment` or the commit is refused. The cost is that
+       * the server learns the move a phase earlier than it otherwise would.
+       */
+      hold?: { action: ActionValue; target: number; salt: `0x${string}` };
+    }
   | { type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` }
   /**
    * A call the player's session key authorised, for the server to submit and
@@ -89,6 +100,12 @@ export type ServerMessage =
    * cosmetics out of the match snapshot keeps them out of the engine.
    */
   | { type: 'avatars'; matchId: `0x${string}`; entries: AvatarEntry[] }
+  /**
+   * What the table's wallets have done in earlier settled matches, for the
+   * reads panel. Sent apart from `state` for the same reason as `avatars`: it
+   * arrives after a database read, and it is not part of the match.
+   */
+  | { type: 'dossier'; matchId: `0x${string}`; entries: Array<{ address: `0x${string}`; style: PlayStyle }> }
   | { type: 'finished'; result: MatchResult; ranking: number[] }
   /**
    * The settlement transaction for a finished match, or null if it could not

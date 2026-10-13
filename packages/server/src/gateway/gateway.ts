@@ -218,7 +218,9 @@ export class Gateway {
         return;
       }
       case 'commit': {
-        this.requireRoom(address).submitCommit(address, message.commitment, now);
+        const hold = message.hold;
+        if (hold && !isActionValue(hold.action)) throw new Error('unknown action');
+        this.requireRoom(address).submitCommit(address, message.commitment, now, hold);
         return;
       }
       case 'reveal': {

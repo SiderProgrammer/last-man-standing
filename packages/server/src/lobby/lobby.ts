@@ -6,6 +6,7 @@ import {
   ZERO_ADDRESS,
   deriveMatchId,
   errorMessage,
+  tallyStyles,
   type MatchResult,
   type RoundRecord,
   type Rules,
@@ -16,6 +17,7 @@ import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
 import type { MatchArchive } from './store.js';
 import type { RoundJournal } from './journal.js';
+import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
 
 export interface LobbyOptions {
@@ -32,6 +34,8 @@ export interface LobbyOptions {
   journal?: RoundJournal;
   /** Ceiling on practice rooms across all wallets. Defaults to 200. */
   maxPracticeRooms?: number;
+  /** Play styles by wallet, for the reads panel. Omitted, nobody has a record. */
+  styles?: StyleBook;
 }
 
 const DEFAULT_MAX_PRACTICE_ROOMS = 200;
@@ -145,6 +149,7 @@ export class Lobby {
         );
         this.rooms.set(room.matchId.toLowerCase(), room);
         void this.decorate(room, entry.setup);
+        void this.brief(room, entry.setup);
         restored += 1;
       } catch (error) {
         console.error(`[lobby] could not restore ${entry.setup.matchId}:`, errorMessage(error));
@@ -187,7 +192,28 @@ export class Lobby {
     const room = new Room(setup, this.roomOptions(botSeats, setup.matchId, staked), now);
     this.rooms.set(room.matchId.toLowerCase(), room);
     void this.decorate(room, setup);
+    if (staked) void this.brief(room, setup);
     return room;
+  }
+
+  /**
+   * Looks up what the table's wallets have done before. Off the match's
+   * critical path, like avatars: the first round never waits on a database.
+   */
+  private async brief(room: Room, setup: MatchSetup): Promise<void> {
+    const book = this.options.styles;
+    if (!book) return;
+    try {
+      const styles = await book.lookup(setup.seats.map((seat) => seat.address));
+      room.setDossier(
+        setup.seats.flatMap((seat) => {
+          const style = styles.get(seat.address.toLowerCase());
+          return style ? [{ address: seat.address, style }] : [];
+        }),
+      );
+    } catch (error) {
+      console.warn('[lobby] style lookup failed:', errorMessage(error));
+    }
   }
 
   private roomOptions(botSeats: readonly number[], matchId: `0x${string}`, staked: boolean): RoomOptions {
@@ -238,6 +264,14 @@ export class Lobby {
       console.error('[lobby] settlement failed', errorMessage(error));
     }
     await this.options.archive.save({ result, history, settledTx });
+    if (staked && this.options.styles) {
+      const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];
+      try {
+        await this.options.styles.record(tallyStyles(result, history, seats));
+      } catch (error) {
+        console.warn('[lobby] style record failed:', errorMessage(error));
+      }
+    }
     if (staked) {
       this.options.journal?.close(result.matchId);
       this.get(result.matchId)?.announceSettled(settledTx as `0x${string}` | null);

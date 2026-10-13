@@ -6,6 +6,7 @@ import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
 import {
   onAvatars,
+  onDossier,
   onFinished,
   onRound,
   onState,
@@ -99,6 +100,10 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'avatars':
       onAvatars(message);
+      break;
+
+    case 'dossier':
+      onDossier(message);
       break;
 
     case 'round':

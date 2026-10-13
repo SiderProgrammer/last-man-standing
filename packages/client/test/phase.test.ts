@@ -102,6 +102,11 @@ describe('reveal phase', () => {
     expect(phasePlan(at(MatchPhase.Reveal), { ...SEATED, revealedRound: 2 }).shouldReveal).toBe(true);
   });
 
+  it('does not reveal a move the server already opened for us', () => {
+    const state = { ...at(MatchPhase.Reveal), revealed: [SEATED.you as number] };
+    expect(phasePlan(state, { ...SEATED, revealedRound: null }).shouldReveal).toBe(false);
+  });
+
   it('never asks a spectator to reveal', () => {
     expect(phasePlan(at(MatchPhase.Reveal), SPECTATOR).shouldReveal).toBe(false);
   });

@@ -162,4 +162,16 @@ describe('reads panel', () => {
     expect(one?.againstYou).toBe(1);
     expect(one?.tell).toBe('hunts the leader');
   });
+
+  it('carries a returning player\'s record from earlier matches', () => {
+    const state = stateWith(3, []);
+    const regular = state.players[1]?.address as `0x${string}`;
+    const dossier = new Map([
+      [regular.toLowerCase(), { matches: 4, wins: 2, attacks: 6, defends: 3, hides: 1, noShows: 0 }],
+    ]);
+    const reads = readOpponents(state, 0, dossier);
+    expect(reads.find((read) => read.seat === 1)?.past).toBe('4 matches · 2 won · ⚔️60% 🛡️30% 🏃10%');
+    // A stranger has no record to show.
+    expect(reads.find((read) => read.seat === 2)?.past).toBe('');
+  });
 });

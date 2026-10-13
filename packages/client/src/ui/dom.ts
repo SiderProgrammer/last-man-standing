@@ -45,6 +45,7 @@ export function queryDom(doc: Document = document) {
     targetRow: el<HTMLDivElement>('target-row'),
     target: el<HTMLSelectElement>('target'),
     lockIn: el<HTMLButtonElement>('lock-in'),
+    holdMoves: el<HTMLInputElement>('hold-moves'),
     moveStatus: el<HTMLParagraphElement>('move-status'),
     tabFeed: el<HTMLButtonElement>('tab-feed'),
     tabReads: el<HTMLButtonElement>('tab-reads'),

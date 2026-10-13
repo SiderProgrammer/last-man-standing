@@ -7,6 +7,7 @@
  */
 export { Room, type Client, type MatchFinished, type RoomEvent, type RoomOptions } from './match/room.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
+export { MemoryStyleBook, PostgresStyleBook, createStyleBook, type StyleBook } from './lobby/styles.js';
 export {
   MemoryJournal,
   PostgresJournal,

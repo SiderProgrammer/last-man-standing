@@ -8,6 +8,9 @@ docs.
 | --- | --- | --- | --- | --- |
 | 92 | 64 | 21 | 4 | 3 |
 
+> **Since this review:** the fixes are on branch `fix/protocol-review`; see the
+> status table in [FIX_PLAN.md](FIX_PLAN.md). Verdicts below are as reviewed.
+
 The first pass (17 Sep) covered 64 features. The 13 Oct update re-checked every
 one of them against the code and added 28 that landed since: governance and
 fees, ZapJoin, session keys, avatars, and the real oracle and transport

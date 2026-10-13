@@ -40,7 +40,12 @@ export function readsTable(reads: Read[]): string {
         <td>${read.hides}</td>
         <td>${read.favourite === null ? '—' : `#${read.favourite}`}</td>
         <td class="tell">${read.tell}</td>
-      </tr>`,
+      </tr>${
+        read.past
+          ? `
+      <tr class="past" style="opacity:${read.alive ? 1 : 0.45}"><td></td><td colspan="5">${read.past}</td></tr>`
+          : ''
+      }`,
     )
     .join('');
 

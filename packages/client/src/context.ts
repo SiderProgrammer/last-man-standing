@@ -1,5 +1,6 @@
 import type {
   ActionValue,
+  PlayStyle,
   AvatarCollectionInfo,
   AvatarEntry,
   PublicMatchState,
@@ -43,6 +44,8 @@ export interface AppState {
    * rebuilt on every match switch.
    */
   avatars: AvatarEntry[];
+  /** Earlier play styles of this table's wallets, by lowercased address. */
+  dossier: Map<string, PlayStyle>;
   you: number | null;
   deadline: number;
   /** Action the player has selected but not yet sealed. */
@@ -77,6 +80,7 @@ export const app: AppState = {
   collect: false,
   match: null,
   avatars: [],
+  dossier: new Map(),
   you: null,
   deadline: 0,
   draft: null,

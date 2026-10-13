@@ -413,3 +413,16 @@ button.wide {
   color: var(--accent);
   font-weight: 600;
 }
+
+.check {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.reads tr.past td {
+  color: var(--muted);
+  font-size: 11px;
+  padding-top: 0;
+}

@@ -7,6 +7,15 @@ trust-minimisation story, and operational work.
 
 Items are ordered roughly by what blocks the next demo.
 
+> **Closed on `fix/protocol-review`** (see the status table in `FIX_PLAN.md`):
+> withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
+> entries (§2.2), the Redis decision — dropped (§2.3), the fraud proof (§3.1),
+> unlimited practice rooms, round persistence and gateway rate limiting (§3.2),
+> the stored ranking (§3.3), and the hardwired deploy mocks (§3.4). The LayerZero
+> adapter now builds per-message options and authenticates the originating app
+> (§2.1), but the real `@layerzerolabs` interfaces are still not vendored and no
+> two-testnet run has happened.
+
 ---
 
 ## 1. Blocking — nothing works end-to-end without these

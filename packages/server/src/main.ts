@@ -11,6 +11,7 @@ import { Gateway } from './gateway/gateway.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createJournal } from './lobby/journal.js';
+import { createStyleBook } from './lobby/styles.js';
 import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
     replayMs: config.replayMs,
     avatars,
     journal,
+    styles: await createStyleBook(config.databaseUrl),
     maxPracticeRooms: config.maxPracticeRooms,
   });
 

@@ -1,8 +1,10 @@
 import {
   MatchPhase,
   addressKey,
+  commitMove,
   type AvatarEntry,
   type MatchResult,
+  type PlayStyle,
   type RoundRecord,
   type SealedMove,
   type ServerMessage,
@@ -27,7 +29,7 @@ export type MatchFinished = (result: MatchResult, history: readonly RoundRecord[
  * ticks that moved the phase reproduces the room exactly.
  */
 export type RoomEvent =
-  | { kind: 'commit'; address: `0x${string}`; commitment: `0x${string}`; at: number }
+  | { kind: 'commit'; address: `0x${string}`; commitment: `0x${string}`; at: number; hold?: SealedMove }
   | { kind: 'reveal'; address: `0x${string}`; move: SealedMove; at: number }
   /** A `tick` that advanced the phase. Ticks that changed nothing are not recorded. */
   | { kind: 'tick'; at: number };
@@ -65,6 +67,8 @@ export class Room {
   private readonly seatByAddress = new Map<string, number>();
   /** Cosmetic only, and resolved off the match's critical path. */
   private avatars: AvatarEntry[] = [];
+  /** Earlier play styles of the seated wallets, for the reads panel. */
+  private dossier: Array<{ address: `0x${string}`; style: PlayStyle }> = [];
   private deadlineAt: number;
   /**
    * End of the replay hold after the last round. Commits are accepted during
@@ -74,6 +78,8 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  /** Moves players asked the server to reveal for them this round, by seat. */
+  private readonly held = new Map<number, SealedMove>();
   private journal: ((event: RoomEvent) => void) | undefined;
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
@@ -107,7 +113,7 @@ export class Room {
     const { journal, ...quiet } = options;
     const room = new Room(setup, quiet, openedAt);
     for (const event of events) {
-      if (event.kind === 'commit') room.submitCommit(event.address, event.commitment, event.at);
+      if (event.kind === 'commit') room.submitCommit(event.address, event.commitment, event.at, event.hold);
       else if (event.kind === 'reveal') room.submitReveal(event.address, event.move, event.at);
       else room.tick(event.at);
     }
@@ -155,6 +161,18 @@ export class Room {
     this.clients.add(client);
     this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
+    if (this.dossier.length > 0) this.pushDossier(client);
+  }
+
+  /** Publishes the seated wallets' records from earlier settled matches. */
+  setDossier(entries: ReadonlyArray<{ address: `0x${string}`; style: PlayStyle }>): void {
+    this.dossier = [...entries];
+    if (this.dossier.length === 0) return;
+    for (const client of this.clients) this.pushDossier(client);
+  }
+
+  private pushDossier(client: Client): void {
+    client.send({ type: 'dossier', matchId: this.matchId, entries: this.dossier });
   }
 
   /**
@@ -174,10 +192,27 @@ export class Room {
     this.clients.delete(client);
   }
 
-  submitCommit(address: `0x${string}`, commitment: `0x${string}`, now: number = Date.now()): void {
+  /**
+   * @param hold The move behind `commitment`, if the player wants the server to
+   *        reveal it for them. Checked against the commitment up front, so a
+   *        held move can never be one the player could not have revealed.
+   */
+  submitCommit(
+    address: `0x${string}`,
+    commitment: `0x${string}`,
+    now: number = Date.now(),
+    hold?: SealedMove,
+  ): void {
     const seat = this.requireSeat(address);
+    if (hold) {
+      const opened = commitMove(this.matchId, this.match.round, seat, hold);
+      if (opened.toLowerCase() !== commitment.toLowerCase()) {
+        throw new Error('the held move does not open the commitment');
+      }
+    }
     this.match.submitCommit(seat, commitment);
-    this.journal?.({ kind: 'commit', address, commitment, at: now });
+    if (hold) this.held.set(seat, hold);
+    this.journal?.({ kind: 'commit', address, commitment, at: now, ...(hold ? { hold } : {}) });
     // During the hold the commit is kept but the fast path waits: `tick` opens
     // the reveal once the replay has finished.
     if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
@@ -228,6 +263,9 @@ export class Room {
     if (this.match.phase !== MatchPhase.Commit) return;
     this.match.openRevealPhase();
     this.bots.reveal(this.match);
+    // Held moves open at once, whether or not their players are still here.
+    for (const [seat, move] of this.held) this.match.submitReveal(seat, move);
+    this.held.clear();
 
     if (this.match.allRevealed()) {
       this.resolveRound(now);
