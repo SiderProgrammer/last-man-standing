@@ -69,14 +69,4 @@ abstract contract PullPayable is ReentrancyGuardTransient {
         withdrawable[account] += amount;
         totalOwed += amount;
     }
-
-    /// @dev Clears a balance for a caller that is sending it somewhere other
-    ///      than a plain transfer, such as across a bridge.
-    function _takeBalance(address account) internal returns (uint256 amount) {
-        amount = withdrawable[account];
-        if (amount == 0) revert NothingToWithdraw();
-
-        withdrawable[account] = 0;
-        totalOwed -= amount;
-    }
 }

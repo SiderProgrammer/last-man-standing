@@ -1,33 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {ICrossChainMessenger} from "./interfaces/ICrossChainMessenger.sol";
 import {TransferFailed, ZeroAddress} from "./Errors.sol";
-import {PullPayable} from "./PullPayable.sol";
 
 /// @title SpokeEscrow
-/// @notice Spoke-chain gate for joining a hub match and receiving payouts.
+/// @notice Spoke-chain gate for joining a hub match.
 ///
 /// @dev The hub `GameEscrow` holds the prize pool. A player on this chain
-///      stakes here; the messenger forwards the stake and the join payload
-///      to the hub. After settlement the hub bridges the payout back and
-///      this contract credits a pull-based balance.
-contract SpokeEscrow is Ownable, PullPayable, ICrossChainReceiver {
+///      stakes here; the messenger delivers the stake and the join payload to
+///      the hub, which seats the player — or, if the seat can no longer be
+///      taken, credits the stake back to the player on the hub. Either way the
+///      value ends up the player's, and nothing is held here.
+///
+///      Payouts stay on the hub. There used to be a bridged way back out, but
+///      it was a second irreversible transport path with the same
+///      lost-in-transit failure mode as joining, to save a player one manual
+///      bridge; and the hub's `withdrawFor` lets a keeper push a payout to a
+///      player who holds no gas there.
+contract SpokeEscrow is Ownable2Step, ReentrancyGuardTransient {
     address public messenger;
     uint32 public hubChainId;
     bytes32 public hubEscrow;
 
-
     event HubSet(uint32 hubChainId, bytes32 hubEscrow, address messenger);
     event JoinForwarded(bytes32 indexed matchId, address indexed player, uint128 stake);
-    event PayoutCredited(address indexed player, uint256 amount);
 
-    error UntrustedMessenger(address caller);
-    error UntrustedPeer(uint32 srcChainId, bytes32 srcSender);
     error InsufficientValue(uint256 sent, uint256 required);
-    error IncorrectPayout(uint256 sent, uint256 expected);
 
     constructor(address owner_, address messenger_, uint32 hubChainId_, address hubEscrow_)
         Ownable(owner_)
@@ -39,16 +41,22 @@ contract SpokeEscrow is Ownable, PullPayable, ICrossChainReceiver {
         _setHub(messenger_, hubChainId_, hubEscrow_);
     }
 
-    /// @notice Stakes into a hub match. `msg.value` must cover the stake plus the transport fee.
-    function join(bytes32 matchId, uint128 stake) external payable nonReentrant {
-        if (messenger == address(0) || hubEscrow == bytes32(0)) revert ZeroAddress();
+    /// @notice What `join` costs for a given stake: the stake itself, delivered
+    ///         on the hub, plus the transport fee.
+    function quoteJoin(bytes32 matchId, uint128 stake) public view returns (uint256) {
+        return ICrossChainMessenger(messenger).quote(hubChainId, hubEscrow, abi.encode(matchId, msg.sender), stake);
+    }
 
+    /// @notice Stakes into a hub match. `msg.value` must cover `quoteJoin`;
+    ///         anything above it is returned.
+    /// @dev `stake` must be the lobby's stake on the hub. A wrong one is not
+    ///      lost — the hub refunds a join it cannot seat — but it does not seat.
+    function join(bytes32 matchId, uint128 stake) external payable nonReentrant {
         bytes memory payload = abi.encode(matchId, msg.sender);
-        uint256 fee = ICrossChainMessenger(messenger).quote(hubChainId, hubEscrow, payload);
-        uint256 required = uint256(stake) + fee;
+        uint256 required = ICrossChainMessenger(messenger).quote(hubChainId, hubEscrow, payload, stake);
         if (msg.value < required) revert InsufficientValue(msg.value, required);
 
-        ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId, hubEscrow, payload);
+        ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId, hubEscrow, payload, stake);
 
         uint256 extra = msg.value - required;
         if (extra > 0) {
@@ -57,23 +65,6 @@ contract SpokeEscrow is Ownable, PullPayable, ICrossChainReceiver {
         }
 
         emit JoinForwarded(matchId, msg.sender, stake);
-    }
-
-    /// @inheritdoc ICrossChainReceiver
-    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
-        external
-        payable
-    {
-        if (msg.sender != messenger) revert UntrustedMessenger(msg.sender);
-        if (srcChainId != hubChainId || srcSender != hubEscrow) {
-            revert UntrustedPeer(srcChainId, srcSender);
-        }
-
-        (address player, uint256 amount) = abi.decode(payload, (address, uint256));
-        if (msg.value != amount) revert IncorrectPayout(msg.value, amount);
-
-        _credit(player, amount);
-        emit PayoutCredited(player, amount);
     }
 
     function _setHub(address messenger_, uint32 hubChainId_, address hubEscrow_) private {

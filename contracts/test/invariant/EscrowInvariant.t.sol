@@ -7,6 +7,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
+import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
 
@@ -108,6 +109,27 @@ contract EscrowHandler is Test {
         escrow.withdraw(actor);
     }
 
+    MockMessenger public messenger;
+    uint32 public constant REMOTE_CHAIN = 421_614;
+    bytes32 public constant REMOTE_PEER = bytes32(uint256(0xBEEF));
+
+    /// @dev Set once by `setUp`. The fuzzer calls every public function on the
+    ///      handler, so a re-settable messenger would be pointed at junk.
+    function setMessenger(MockMessenger messenger_) external {
+        if (address(messenger) == address(0)) messenger = messenger_;
+    }
+
+    /// @dev A stake arriving from a spoke. Sometimes the wrong amount, often
+    ///      for a lobby that has since filled, locked or settled: every one of
+    ///      those must be refunded on the hub, and the books must still balance.
+    function crossChainJoin(uint256 who, bool wrongStake) public {
+        if (current == bytes32(0) || address(messenger) == address(0)) return;
+        address actor = actors[who % actors.length];
+        uint256 value = wrongStake ? STAKE / 2 : STAKE;
+        vm.deal(address(messenger), address(messenger).balance + value);
+        messenger.deliver(address(escrow), REMOTE_CHAIN, REMOTE_PEER, abi.encode(current, actor), value);
+    }
+
     /// @dev Anyone pushes an actor's balance to that actor.
     function withdrawFor(uint256 caller, uint256 who) public {
         address account = actors[who % actors.length];
@@ -169,6 +191,12 @@ contract EscrowInvariantTest is StdInvariant, Test {
         pks[1] = pkB;
 
         handler = new EscrowHandler(escrow, oracle, harness, actors, pks);
+        MockMessenger messenger = new MockMessenger();
+        handler.setMessenger(messenger);
+        uint32 remoteChain = handler.REMOTE_CHAIN();
+        bytes32 remotePeer = handler.REMOTE_PEER();
+        vm.prank(owner);
+        config.setRemoteChain(remoteChain, address(messenger), remotePeer);
         targetContract(address(handler));
     }
 

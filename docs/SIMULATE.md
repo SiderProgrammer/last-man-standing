@@ -148,6 +148,6 @@ cast send --unlocked --from $FAN $MESSENGER 'deliver(address,uint32,bytes32,byte
 cast call $ESCROW 'seatOrigin(bytes32,address)(uint32)' $M $SPOKE_PLAYER --rpc-url $R   # 421614
 ```
 
-A different `PEER` reverts with `UntrustedPeer`. A player with a balance sends
-it back out with `withdrawToChain(421614)`; `MockMessenger.sentCount()` shows
-the outbound message.
+A different `PEER` reverts with `UntrustedPeer`. Delivering the same join again
+is refunded rather than reverted: `withdrawable(SPOKE_PLAYER)` shows the stake
+credited back on the hub, and `withdrawFor(SPOKE_PLAYER)` pays it out.

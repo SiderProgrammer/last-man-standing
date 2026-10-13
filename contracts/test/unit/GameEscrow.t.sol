@@ -244,23 +244,75 @@ contract GameEscrowTest is Fixtures {
         escrow.withdrawFor(players[0]);
     }
 
-    function test_withdrawToChain_forwardsValue() public {
-        bytes32 matchId = _createAndFill(4);
-        _lockAndSeed(matchId, bytes32(uint256(5)));
-        address[] memory ranking = _rankingOf(matchId);
-        escrow.settle(matchId, 2, keccak256("h2"), ranking, _signResult(_twoAttestors(), matchId, 2, keccak256("h2"), ranking));
+    // --- Cross-chain joins that cannot seat are refunded, never reverted ---
 
-        uint256 owed = escrow.withdrawable(ranking[0]);
-        vm.prank(ranking[0]);
-        escrow.withdrawToChain(421_614);
-        assertEq(escrow.withdrawable(ranking[0]), 0);
-        assertEq(messenger.sentCount(), 1);
-        MockMessenger.SentMessage memory sent = messenger.getSent(0);
-        assertEq(sent.dstChainId, 421_614);
-        assertEq(sent.value, owed);
-        (address who, uint256 amount) = abi.decode(sent.payload, (address, uint256));
-        assertEq(who, ranking[0]);
-        assertEq(amount, owed);
+    /// @dev Delivers a cross-chain join through the trusted messenger and
+    ///      checks it was refunded for `reason` rather than seated or reverted.
+    function _assertRefunded(bytes32 matchId, address player, uint256 value, GameEscrow.JoinFailure reason)
+        internal
+    {
+        bytes32 peer = config.peerFor(421_614);
+        uint256 owedBefore = escrow.withdrawable(player);
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit GameEscrow.JoinRefunded(matchId, player, value, reason);
+        messenger.deliver{value: value}(address(escrow), 421_614, peer, abi.encode(matchId, player), value);
+
+        assertEq(escrow.withdrawable(player), owedBefore + value);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    function test_crossChainJoin_refundsALockedLobby() public {
+        bytes32 matchId = _createAndFill(4);
+        escrow.lockMatch(matchId);
+        _assertRefunded(matchId, makeAddr("late"), STAKE, GameEscrow.JoinFailure.NotOpen);
+    }
+
+    function test_crossChainJoin_refundsALobbyThatFilledInFlight() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        for (uint256 i = 0; i < 4; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+        // Full but not yet locked: still Open, with no seat left.
+        _assertRefunded(matchId, makeAddr("late"), STAKE, GameEscrow.JoinFailure.LobbyFull);
+        assertFalse(escrow.hasSeat(matchId, makeAddr("late")));
+    }
+
+    function test_crossChainJoin_refundsAWrongStake() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        _assertRefunded(matchId, makeAddr("remote"), STAKE / 2, GameEscrow.JoinFailure.WrongStake);
+    }
+
+    function test_crossChainJoin_refundsADuplicateSeat() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.prank(players[1]);
+        escrow.join{value: STAKE}(matchId);
+        _assertRefunded(matchId, players[1], STAKE, GameEscrow.JoinFailure.AlreadyJoined);
+    }
+
+    function test_crossChainJoin_refundsAnUnknownMatchOrClosedWindow() public {
+        _assertRefunded(keccak256("nope"), makeAddr("remote"), STAKE, GameEscrow.JoinFailure.UnknownMatch);
+
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.warp(block.timestamp + 2 hours);
+        _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.WindowClosed);
+    }
+
+    function test_crossChainJoin_refundsWhilePaused() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.prank(owner);
+        escrow.pause();
+        _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.Paused);
+
+        // The refund is an ordinary balance: withdrawable even while paused.
+        address remote = makeAddr("remote");
+        escrow.withdrawFor(remote);
+        assertEq(remote.balance, STAKE);
     }
 
     function test_crossChainJoin_viaTrustedMessenger() public {

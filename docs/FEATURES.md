@@ -258,8 +258,9 @@ player on spoke → SpokeEscrow.join(matchId, stake)
                 → hub records seatOrigin[matchId][player] = srcChainId
 ```
 
-On the way out, `withdrawToChain` pushes a balance back through the same
-transport.
+A stake that arrives for a seat that can no longer be taken is credited to the
+player on the hub, never reverted, so nothing is stranded in transit. Payouts
+stay on the hub, where `withdrawFor` lets a keeper push them to the player.
 
 ### Why
 

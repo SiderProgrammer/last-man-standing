@@ -344,7 +344,7 @@ fulfillRandomness()               seed = keccak(randomness, matchId) → status 
   ↓  MatchStarted event           the server adopts the match and plays it
 settle(rounds, historyRoot, ranking, signatures)
   ↓                               quorum verified, ranking must be the seat set
-withdraw() / withdrawToChain()    pull-based, always
+withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the account itself
 ```
 
 **Security properties the contracts enforce**
@@ -459,18 +459,24 @@ challenge that turns that proof into slashing — see `docs/TODO.md`.
 Hub-and-spoke. The hub chain holds all escrowed value and all match state; spokes hold
 nothing but a forwarding gate. A player on a spoke calls `SpokeEscrow.join`, which sends
 the stake and `(matchId, player)` through the messenger; the hub seats them and records
-their origin chain. On the way out, `withdrawToChain` pushes the balance back through
-the same transport. The `ICrossChainMessenger` interface is modelled on LayerZero v2's
-shape but is transport-agnostic, so the adapter can be swapped without touching game
-logic.
+their origin chain. If the seat can no longer be taken when the message lands — the lobby
+filled or locked in flight, the stake was wrong, the escrow is paused — the hub credits
+the stake to the player there instead of reverting, because a revert would strand it with
+the transport. Payouts stay on the hub; `withdrawFor` lets a keeper push one to a player
+who holds no gas there. The `ICrossChainMessenger` interface is transport-agnostic, so
+the adapter can be swapped without touching game logic.
 
-**Two id spaces.** `GameEscrow.seatOrigin` stores the `srcChainId` the messenger
-delivered, which for LayerZero v2 is an *endpoint id* (`40161`), not an EVM chain id
-(`11155111`). Everything the player sees is in chain ids, so `ChainBridge` runs every
-origin through `normaliseOriginChainId` before it reaches a `Seat`: zero means the hub,
-a known endpoint id maps to its chain, and anything else passes through unchanged — a
-transport whose id space already is chain ids stays correct, and an unrecognised
-endpoint degrades to a number rather than to the wrong chain. Origins are read from
+**Authentication.** `LayerZeroMessenger` serves one local app. It only sends for that
+app, puts the app's address in the envelope, checks the remote messenger against its
+configured peer on receipt, and hands the escrow the *originating app* as `srcSender`. So
+the escrow's peer check names the remote `SpokeEscrow`, not merely the messenger that
+carried the message. Each message's executor options deliver exactly that lobby's stake.
+
+**One id space.** The messenger translates LayerZero endpoint ids (`40161`) to EVM chain
+ids (`11155111`) at its boundary, so `GameEscrow.seatOrigin` holds chain ids. `ChainBridge`
+still runs every origin through `normaliseOriginChainId` — zero means the hub, a known
+endpoint id maps to its chain, anything else passes through — which keeps an escrow fed
+by an older adapter readable. Origins are read from
 `PlayerJoined`, which already carries them, and cached per seat; the escrow is only read
 for a seat that joined before the backfill window.
 

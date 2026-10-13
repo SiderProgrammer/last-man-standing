@@ -81,11 +81,12 @@ export function eidForChainId(chainId: number): number | null {
 /**
  * Turns a `GameEscrow.seatOrigin` value into an EVM chain id.
  *
- * The escrow stores whatever `srcChainId` the messenger delivered, which for
- * LayerZero is an endpoint id, and stores zero for a player who staked on the
- * hub directly. An id that matches no known endpoint is passed through: a
- * transport whose id space already *is* chain ids stays correct, and an
- * unrecognised endpoint renders as a number rather than as the wrong chain.
+ * The escrow stores whatever `srcChainId` the messenger delivered, and zero
+ * for a player who staked on the hub directly. `LayerZeroMessenger` now
+ * translates endpoint ids to chain ids before the escrow sees them, so the
+ * value is normally already a chain id and passes straight through; mapping a
+ * known endpoint id is kept for escrows fed by an older adapter. An id that
+ * matches no known endpoint renders as a number rather than as the wrong chain.
  */
 export function normaliseOriginChainId(origin: number, hubChainId: number): number {
   if (origin === 0) return hubChainId;

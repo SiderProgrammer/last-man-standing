@@ -7,7 +7,7 @@ import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
 import {ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
-import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
 import {SeatSetLib} from "./libraries/SeatSetLib.sol";
@@ -28,8 +28,8 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      server nor a player can pick moves against known rolls.
 ///
 ///      Value handling is pull-based throughout. Settlement only ever credits
-///      an internal balance; nothing is transferred until the recipient calls
-///      `withdraw` or bridges the balance out.
+///      an internal balance; nothing is transferred until the recipient — or
+///      anyone, on their behalf and to their address — withdraws it.
 contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver {
     enum MatchStatus {
         None,
@@ -61,6 +61,18 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         bytes32 rulesHash;
         bytes32 seed;
         bytes32 historyRoot;
+    }
+
+    /// @notice Why a seat could not be taken. `None` means it could.
+    enum JoinFailure {
+        None,
+        Paused,
+        UnknownMatch,
+        NotOpen,
+        WindowClosed,
+        LobbyFull,
+        AlreadyJoined,
+        WrongStake
     }
 
     uint16 private constant BPS_DENOMINATOR = 10_000;
@@ -101,7 +113,9 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
     event MatchCancelled(bytes32 indexed matchId, string reason);
-    event WithdrawalBridged(address indexed account, uint32 indexed dstChainId, uint256 amount);
+    /// @notice A cross-chain stake arrived for a seat that could no longer be
+    ///         taken, and was credited back to the player here instead.
+    event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
     event PausedSet(bool paused);
 
     error Paused();
@@ -121,7 +135,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error UnknownRequest(bytes32 requestId);
     error UntrustedMessenger(uint32 srcChainId, address caller);
     error UntrustedPeer(uint32 srcChainId, bytes32 peer);
-    error NoMessengerForChain(uint32 dstChainId);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);
@@ -209,10 +222,16 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     ///      so the hub always holds the full prize pool. Both the calling
     ///      messenger and the originating peer contract are authenticated:
     ///      a trusted transport still relays messages from untrusted senders.
+    ///
+    ///      Once authenticated, this never reverts. The stake has already left
+    ///      the spoke; a revert here would leave it with the transport, stuck.
+    ///      If the seat cannot be taken — the lobby filled or closed while the
+    ///      message was in flight, the stake was wrong, the escrow is paused —
+    ///      the value is credited to the player on this chain instead, to
+    ///      withdraw like any other refund.
     function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
         external
         payable
-        whenNotPaused
     {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
@@ -221,8 +240,13 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
         (bytes32 matchId, address player) = abi.decode(payload, (bytes32, address));
 
-        MatchInfo storage info = _open(matchId);
-        if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
+        MatchInfo storage info = matchInfo[matchId];
+        JoinFailure failure = _joinFailure(matchId, info, player, msg.value);
+        if (failure != JoinFailure.None) {
+            _credit(player, msg.value);
+            emit JoinRefunded(matchId, player, msg.value, failure);
+            return;
+        }
         _seat(matchId, info, player, srcChainId);
     }
 
@@ -380,24 +404,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         emit MatchCancelled(matchId, reason);
     }
 
-    // --- Balances ----------------------------------------------------------
-
-    /// @notice Sends the caller's balance to another chain through the transport.
-    /// @dev `msg.value` pays the transport fee; the balance itself is forwarded
-    ///      alongside the message. Used by players who staked from a spoke chain.
-    function withdrawToChain(uint32 dstChainId) external payable nonReentrant returns (uint256 amount) {
-        address messenger = config.messengerFor(dstChainId);
-        if (messenger == address(0)) revert NoMessengerForChain(dstChainId);
-
-        amount = _takeBalance(msg.sender);
-
-        ICrossChainMessenger(messenger).sendMessage{value: amount + msg.value}(
-            dstChainId, config.peerFor(dstChainId), abi.encode(msg.sender, amount)
-        );
-
-        emit WithdrawalBridged(msg.sender, dstChainId, amount);
-    }
-
     // --- Governance --------------------------------------------------------
 
     /// @notice Halts new lobbies, joins, and settlement. Refunds stay open.
@@ -449,6 +455,23 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (info.status != MatchStatus.Open) {
             revert WrongStatus(matchId, MatchStatus.Open, info.status);
         }
+    }
+
+    /// @dev The same conditions `join` reverts on, as a value: the
+    ///      cross-chain path must refund rather than revert.
+    function _joinFailure(bytes32 matchId, MatchInfo storage info, address player, uint256 value)
+        private
+        view
+        returns (JoinFailure)
+    {
+        if (paused) return JoinFailure.Paused;
+        if (info.status == MatchStatus.None) return JoinFailure.UnknownMatch;
+        if (info.status != MatchStatus.Open) return JoinFailure.NotOpen;
+        if (block.timestamp >= info.joinDeadline) return JoinFailure.WindowClosed;
+        if (info.seatCount >= info.maxSeats) return JoinFailure.LobbyFull;
+        if (hasSeat[matchId][player]) return JoinFailure.AlreadyJoined;
+        if (value != info.stake) return JoinFailure.WrongStake;
+        return JoinFailure.None;
     }
 
     function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId)

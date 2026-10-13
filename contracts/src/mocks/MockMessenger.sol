@@ -5,9 +5,8 @@ import {ICrossChainMessenger, ICrossChainReceiver} from "../interfaces/ICrossCha
 
 /// @notice Test double for a value-carrying cross-chain transport.
 /// @dev Both directions are modelled. `deliver` plays the part of the remote
-///      chain calling into the hub, and `sendMessage` records what the hub
-///      pushed outward so tests can assert on bridged withdrawals without a
-///      second EVM instance.
+///      chain calling into a receiver, and `sendMessage` records what was sent
+///      so tests can assert on it without a second EVM instance.
 contract MockMessenger is ICrossChainMessenger {
     struct SentMessage {
         uint32 dstChainId;
@@ -33,18 +32,21 @@ contract MockMessenger is ICrossChainMessenger {
         return sent[index];
     }
 
+    error Underpaid(uint256 sent, uint256 required);
+
     /// @inheritdoc ICrossChainMessenger
-    function sendMessage(uint32 dstChainId, bytes32 receiver, bytes calldata payload)
+    function sendMessage(uint32 dstChainId, bytes32 receiver, bytes calldata payload, uint128 deliverValue)
         external
         payable
         returns (bytes32 messageId)
     {
+        if (msg.value < fee + deliverValue) revert Underpaid(msg.value, fee + deliverValue);
         sent.push(
             SentMessage({
                 dstChainId: dstChainId,
                 receiver: receiver,
                 payload: payload,
-                value: msg.value - fee
+                value: deliverValue
             })
         );
         messageId = keccak256(abi.encode(dstChainId, receiver, payload, sent.length));
@@ -52,8 +54,8 @@ contract MockMessenger is ICrossChainMessenger {
     }
 
     /// @inheritdoc ICrossChainMessenger
-    function quote(uint32, bytes32, bytes calldata) external view returns (uint256) {
-        return fee;
+    function quote(uint32, bytes32, bytes calldata, uint128 deliverValue) external view returns (uint256) {
+        return fee + deliverValue;
     }
 
     /// @notice Simulates inbound delivery from a remote chain.
