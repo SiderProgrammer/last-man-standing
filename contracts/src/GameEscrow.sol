@@ -522,6 +522,34 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Cancellation ------------------------------------------------------
 
+    /// @dev EIP-712 type of an abort: the quorum agreeing a live match cannot finish.
+    bytes32 private constant MATCH_ABORT_TYPEHASH = keccak256("MatchAbort(bytes32 matchId)");
+
+    /// @notice Cancels a live match at once and refunds every stake, on the
+    ///         word of a quorum of bonded attestors.
+    /// @dev For when the server lost the match — a restart drops a room's
+    ///      state, and a half-played match cannot be resumed honestly. Without
+    ///      this the players would wait out `settleDeadline` for the same
+    ///      refund `cancelMatch` gives them then.
+    ///
+    ///      It gives the quorum no power it lacked: by refusing to sign a
+    ///      result it could always force exactly this outcome, at the
+    ///      deadline. Aborting only gets everyone their stake back sooner.
+    function abortMatch(bytes32 matchId, bytes calldata signatures) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Live) {
+            revert WrongStatus(matchId, MatchStatus.Live, info.status);
+        }
+        _bondedQuorum(
+            SettlementLib.toTypedDataHash(
+                _domainSeparatorV4(), keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))
+            ),
+            signatures
+        );
+        _refundAll(matchId, info);
+        emit MatchCancelled(matchId, "aborted by attestors");
+    }
+
     /// @notice Refunds every stake in a match that can no longer complete.
     /// @dev Permissionless once the relevant deadline has passed, so players
     ///      are never dependent on the operator to recover their stake.

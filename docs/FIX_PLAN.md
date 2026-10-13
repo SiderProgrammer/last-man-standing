@@ -33,7 +33,7 @@ the branch's base, so nothing here touches it.
 | 1.5 Opening | Done | Grace 2 → 1, evade 25%, hide storm 75%, riposte 5: every pure strategy ≤ 1.5x. Matches still end in a storm wipe about half the time, so damage taken decides many of them — worth a design look |
 | 2.1 Payouts and result | Done | Result panel, Winnings panel, server-paid `collect` |
 | 2.2 Practice cap | Done | One per wallet, global ceiling, frame cap, per-socket rate limit |
-| 2.3 Round persistence | Done | Event journal (memory/Postgres), rebuilt on boot. Redis dropped |
+| 2.3 Round persistence | Changed | Not resumed: a match live before a restart is aborted by the attestor quorum (`GameEscrow.abortMatch`) and every stake refunded at once; without an attestor key, `cancelMatch` refunds at the settlement deadline. Redis dropped |
 | 2.4 In-browser verifier | Done | Replays from the broadcast; checks the escrow's root once proposed |
 | 3.1 `withdrawToChain` | Cut | Spoke is join-only |
 | 3.2 Messenger authentication | Done | Single-app OApp, peers, originating app forwarded, eid ↔ chain id |

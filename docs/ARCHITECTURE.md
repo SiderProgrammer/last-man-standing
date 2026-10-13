@@ -209,6 +209,15 @@ seed exists, and cannot choose moves against a roll it already knows. Locking a 
 expired lobby is permissionless; the keeper key is a convenience, and if it is offline
 any player can lock the lobby themselves.
 
+**Restarts.** A room lives only in memory, so a restart loses every match in progress.
+Those matches are not resumed or replayed from round one — players have seen rounds and
+know moves that a fresh room would deal again. Instead, on its first poll the bridge
+treats every match that is already `Live` as abandoned: it has the attestor quorum sign
+`MatchAbort` and call `GameEscrow.abortMatch`, which refunds every seat at once, and it
+tells a player who reconnects that the match was cancelled. If no attestor key is
+configured, the match is refunded through the permissionless `cancelMatch` once its
+settlement deadline passes. Practice rooms are simply gone.
+
 ### `packages/client` — the player's view
 
 | File | Responsibility |

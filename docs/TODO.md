@@ -10,7 +10,8 @@ Items are ordered roughly by what blocks the next demo.
 > **Closed on `fix/protocol-review`** (see the status table in `FIX_PLAN.md`):
 > withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
 > entries (§2.2), the Redis decision — dropped (§2.3), the fraud proof (§3.1),
-> unlimited practice rooms, round persistence and gateway rate limiting (§3.2),
+> unlimited practice rooms, a restart mid-match (now aborted and refunded rather
+> than resumed) and gateway rate limiting (§3.2),
 > the stored ranking (§3.3), and the hardwired deploy mocks (§3.4). The LayerZero
 > adapter now builds per-message options and authenticates the originating app
 > (§2.1), but the real `@layerzerolabs` interfaces are still not vendored and no
@@ -106,9 +107,10 @@ Until then, document honestly that settlement is quorum-trusted.
 ### 3.2 Server-side hardening
 
 - No rate limiting, message size cap, or connection cap on the gateway.
-- Commitments and reveals are held only in memory. A server restart mid-match loses the
-  round and the match can only end via `cancelMatch` after the deadline. Persist the round
-  log (Redis or Postgres) and restore on boot.
+- Commitments and reveals are held only in memory, deliberately. A match that was live
+  when the server restarts is not resumed: `ChainBridge` has the attestor quorum call
+  `GameEscrow.abortMatch`, which refunds every seat at once, and falls back to the
+  permissionless `cancelMatch` at the settlement deadline when it cannot.
 - The practice-room path lets any authenticated wallet create unlimited rooms.
 - The login nonce is single-use per connection but never expires within it.
 - The keeper key doubles as the attestor key by default. Splitting them would mean a

@@ -11,6 +11,8 @@ export interface EscrowMatch {
   status: number;
   joinDeadline: bigint;
   seed: `0x${string}`;
+  /** Unix seconds after which a live match with no result may be cancelled. */
+  settleDeadline: bigint;
   /** Unix seconds after which a proposed result may be finalised. */
   challengeDeadline: bigint;
 }
@@ -56,6 +58,8 @@ export interface EscrowReader {
    * `lockMatch`, permissionless and reported rather than thrown.
    */
   finalize(matchId: `0x${string}`, ranking: readonly Address[]): Promise<boolean>;
+  /** Refunds a match past its deadline. Permissionless; reported, not thrown. */
+  cancelMatch(matchId: `0x${string}`): Promise<boolean>;
 }
 
 export interface ViemEscrowReaderOptions {
@@ -134,6 +138,24 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
         fromBlock: 0n,
       });
       return logs[logs.length - 1]?.args.ranking ?? null;
+    },
+
+    async cancelMatch(matchId) {
+      if (!signer) return false;
+      try {
+        const { request } = await client.simulateContract({
+          account: signer.account,
+          address: escrow,
+          abi: gameEscrowAbi,
+          functionName: 'cancelMatch',
+          args: [matchId],
+        });
+        await signer.walletClient.writeContract(request);
+        return true;
+      } catch (error) {
+        console.warn('[chain] cancel skipped:', errorMessage(error));
+        return false;
+      }
     },
 
     async finalize(matchId, ranking) {

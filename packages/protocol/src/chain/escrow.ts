@@ -19,6 +19,8 @@ export const gameEscrowAbi = parseAbi([
   'function lockMatch(bytes32 matchId) returns (bytes32)',
   'function settle(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] ranking, bytes signatures, bytes log)',
   'function finalize(bytes32 matchId, address[] ranking)',
+  'function abortMatch(bytes32 matchId, bytes signatures)',
+  'function cancelMatch(bytes32 matchId)',
   'function challenge(bytes32 matchId, (uint16 minPlayers,uint16 maxPlayers,uint32 startingHp,uint32 attackDamage,uint32 riposteDamage,uint16 hideEvadeBps,uint16 hideStormBps,uint16 stormGraceRounds,uint32 stormBaseDamage,uint16 maxRounds) rules, bytes log, address[] signers)',
   'function withdraw(address to) returns (uint256)',
   'function withdrawFor(address account) returns (uint256)',

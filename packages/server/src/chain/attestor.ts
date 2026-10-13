@@ -1,6 +1,7 @@
 import { concatHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  MATCH_ABORT_TYPES,
   MATCH_RESULT_TYPES,
   addressKey,
   encodeRoundLog,
@@ -53,11 +54,18 @@ export interface Relayer {
    * No-op when unconfigured.
    */
   settle(result: MatchResult, history: readonly RoundRecord[]): Promise<Hex | null>;
+  /**
+   * Signs and submits an abort for a live match this server cannot finish,
+   * refunding every seat at once. Null when unconfigured; the escrow then
+   * refunds through `cancelMatch` once the settlement deadline passes.
+   */
+  abort(matchId: `0x${string}`): Promise<Hex | null>;
 }
 
 /** Relayer that logs instead of transacting: the default for practice lobbies. */
 export const nullRelayer: Relayer = {
   settle: async () => null,
+  abort: async () => null,
 };
 
 /**
@@ -80,6 +88,22 @@ export function createRelayer(options: {
   );
 
   return {
+    async abort(matchId) {
+      const signature = await privateKeyToAccount(options.privateKey).signTypedData({
+        domain: matchResultDomain(options.chainId, options.escrow),
+        types: MATCH_ABORT_TYPES,
+        primaryType: 'MatchAbort',
+        message: { matchId },
+      });
+      const { request } = await publicClient.simulateContract({
+        account,
+        address: options.escrow,
+        abi: gameEscrowAbi,
+        functionName: 'abortMatch',
+        args: [matchId, packSignatures([{ signer: account, signature }])],
+      });
+      return walletClient.writeContract(request);
+    },
     async settle(result, history) {
       const signature = await signResult(
         options.privateKey,

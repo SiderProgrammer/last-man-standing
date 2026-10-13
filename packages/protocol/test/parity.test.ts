@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { keccak256, toHex } from 'viem';
+import { concatHex, encodeAbiParameters, hashDomain, hashTypedData, keccak256, parseAbiParameters, toHex } from 'viem';
 import {
+  MATCH_ABORT_TYPES,
+  matchResultDomain,
   Action,
   DEFAULT_RULES,
   ZERO_SALT,
@@ -122,5 +124,44 @@ describe('hash parity with the Solidity mirror', () => {
         expect(drawBps(entropy, nonce)).toBe(roll);
       }
     }
+  });
+});
+
+describe('abort typed data', () => {
+  /**
+   * `GameEscrow.abortMatch` hashes `keccak256(abi.encode(keccak256("MatchAbort(bytes32 matchId)"), matchId))`
+   * under the escrow's domain. Rebuilding that by hand and comparing it with
+   * what viem signs pins the type string on both sides: a typo in either would
+   * make every abort the server sends recover to a stranger.
+   */
+  it('matches the digest the escrow verifies', () => {
+    const matchId = keccak256(toHex('aborted'));
+    const domain = matchResultDomain(31337, '0x00000000000000000000000000000000000000e5');
+    const structHash = keccak256(
+      encodeAbiParameters(parseAbiParameters('bytes32 typeHash, bytes32 matchId'), [
+        keccak256(toHex('MatchAbort(bytes32 matchId)')),
+        matchId,
+      ]),
+    );
+    const domainSeparator = hashDomain({
+      domain: {
+        name: 'LastManStanding',
+        version: '1',
+        chainId: 31337n,
+        verifyingContract: '0x00000000000000000000000000000000000000e5',
+      },
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+        ],
+      },
+    });
+    const expected = keccak256(concatHex(['0x1901', domainSeparator, structHash]));
+    expect(hashTypedData({ domain, types: MATCH_ABORT_TYPES, primaryType: 'MatchAbort', message: { matchId } })).toBe(
+      expected,
+    );
   });
 });

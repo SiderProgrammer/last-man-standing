@@ -1,128 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
-import {
-  Action,
-  AUTH_PREFIX,
-  MAX_CLIENT_FRAME_BYTES,
-  MatchPhase,
-  commitMove,
-  type ClientMessage,
-  type SealedMove,
-  type ServerMessage,
-} from '@lms/protocol';
+import { AUTH_PREFIX, MAX_CLIENT_FRAME_BYTES, type ClientMessage, type ServerMessage } from '@lms/protocol';
 import {
   Gateway,
   Lobby,
   MemoryArchive,
-  MemoryJournal,
   nullRelayer,
   nullSessionRelayer,
-  type Room,
   type SessionRelayer,
   type Socket,
 } from '@lms/server';
-import { FakeClient, HUMAN, botSeats, bytes32, lastOfType, setupWithBots } from './helpers.js';
+import { FakeClient, HUMAN, botSeats, lastOfType, setupWithBots } from './helpers.js';
 
 const COMMIT_MS = 10_000;
 const REVEAL_MS = 5_000;
 
-function lobbyWith(journal: MemoryJournal, extra: { maxPracticeRooms?: number } = {}): Lobby {
+function lobbyWith(extra: { maxPracticeRooms?: number } = {}): Lobby {
   return new Lobby({
     archive: new MemoryArchive(),
     relayer: nullRelayer,
     commitMs: COMMIT_MS,
     revealMs: REVEAL_MS,
-    journal,
     ...extra,
   });
 }
 
-function sealedFor(room: Room, label: string): SealedMove {
-  const opponent = room.match.alive.find((seat) => seat !== 0) ?? 1;
-  return { action: Action.Attack, target: opponent, salt: bytes32(`${label}:${room.match.round}`) };
-}
-
-/** Plays the human seat for one round: commit, then reveal once the window opens. */
-function playRound(room: Room, now: number, label: string): number {
-  const move = sealedFor(room, label);
-  room.submitCommit(HUMAN, commitMove(room.matchId, room.match.round, 0, move), now);
-  // Bots committed at round start, so the human's commit opens the reveal.
-  expect(room.match.phase).toBe(MatchPhase.Reveal);
-  room.submitReveal(HUMAN, move, now + 1);
-  return now + 2;
-}
-
-describe('round journal', () => {
-  it('rebuilds a staked room exactly as it was', async () => {
-    const journal = new MemoryJournal();
-    const before = lobbyWith(journal);
-    const room = before.adopt(setupWithBots(4, 'journal'), botSeats(4), 1_000);
-
-    let now = playRound(room, 2_000, 'j');
-    now = playRound(room, now + 100, 'j');
-    // Leave round 3 half done: the human has committed, the reveal is open.
-    const move = sealedFor(room, 'j');
-    room.submitCommit(HUMAN, commitMove(room.matchId, room.match.round, 0, move), now + 100);
-
-    const after = lobbyWith(journal);
-    expect(await after.restore(now + 200)).toBe(1);
-    const rebuilt = after.get(room.matchId) as Room;
-
-    const { history: a, ...restA } = room.match.publicState();
-    const { history: b, ...restB } = rebuilt.match.publicState();
-    expect(restB).toEqual(restA);
-    expect(b.map((record) => record.hash)).toEqual(a.map((record) => record.hash));
-
-    // And it keeps playing: the human's reveal lands on the rebuilt room.
-    rebuilt.submitReveal(HUMAN, move, now + 300);
-    expect(rebuilt.match.history).toHaveLength(3);
-  });
-
-  it('records a clock tick that moved the phase, and replays it', async () => {
-    const journal = new MemoryJournal();
-    const room = lobbyWith(journal).adopt(setupWithBots(4, 'tick'), botSeats(4), 0);
-    const move = sealedFor(room, 't');
-    room.submitCommit(HUMAN, commitMove(room.matchId, 1, 0, move), 1);
-    // The human never reveals; the clock closes the window and resolves.
-    room.tick(REVEAL_MS + 2);
-    expect(room.match.history).toHaveLength(1);
-
-    const [entry] = await journal.live();
-    expect(entry?.events.map((event) => event.kind)).toEqual(['commit', 'tick']);
-
-    const after = lobbyWith(journal);
-    await after.restore(REVEAL_MS + 3);
-    const rebuilt = after.get(room.matchId) as Room;
-    expect(rebuilt.match.round).toBe(2);
-    expect(rebuilt.match.historyRoot).toBe(room.match.historyRoot);
-  });
-
-  it('gives the open window its full length after a restart', async () => {
-    const journal = new MemoryJournal();
-    const room = lobbyWith(journal).adopt(setupWithBots(4, 'grace'), botSeats(4), 0);
-    room.submitCommit(HUMAN, commitMove(room.matchId, 1, 0, sealedFor(room, 'g')), 1);
-    expect(room.match.phase).toBe(MatchPhase.Reveal);
-
-    // The server was down far longer than the reveal window.
-    const restartedAt = 60_000;
-    const after = lobbyWith(journal);
-    await after.restore(restartedAt);
-    const rebuilt = after.get(room.matchId) as Room;
-
-    expect(rebuilt.deadline).toBe(restartedAt + REVEAL_MS);
-    rebuilt.tick(restartedAt + 1);
-    expect(rebuilt.match.history).toHaveLength(0);
-  });
-
-  it('journals staked rooms only', async () => {
-    const journal = new MemoryJournal();
-    lobbyWith(journal).createPractice(HUMAN, 3, 0);
-    expect(await journal.live()).toEqual([]);
-  });
-
-  it('forgets a room once its result is archived, and tells watchers how it settled', async () => {
-    const journal = new MemoryJournal();
-    const lobby = lobbyWith(journal);
+describe('settlement announcement', () => {
+  it('tells watchers how a staked match settled', async () => {
+    const lobby = lobbyWith();
     const room = lobby.adopt(setupWithBots(4, 'settle'), botSeats(4), 0);
     const watcher = new FakeClient(null);
     room.attach(watcher);
@@ -132,17 +37,16 @@ describe('round journal', () => {
       now += COMMIT_MS + 1;
       room.tick(now);
     }
-    // `finalise` is asynchronous: settle, archive, then close and announce.
+    // `finalise` is asynchronous: settle, archive, then announce.
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(await journal.live()).toEqual([]);
     expect(watcher.last('settled')).toEqual({ type: 'settled', matchId: room.matchId, tx: null });
   });
 });
 
 describe('practice limits', () => {
   it('keeps one practice room per wallet, replacing the old one', () => {
-    const lobby = lobbyWith(new MemoryJournal());
+    const lobby = lobbyWith();
     const first = lobby.createPractice(HUMAN, 3, 0);
     const second = lobby.createPractice(HUMAN, 3, 0);
 
@@ -152,7 +56,7 @@ describe('practice limits', () => {
   });
 
   it('refuses new practice rooms past the global ceiling', () => {
-    const lobby = lobbyWith(new MemoryJournal(), { maxPracticeRooms: 2 });
+    const lobby = lobbyWith({ maxPracticeRooms: 2 });
     lobby.createPractice('0x00000000000000000000000000000000000000b1', 3, 0);
     lobby.createPractice('0x00000000000000000000000000000000000000b2', 3, 0);
     expect(() => lobby.createPractice('0x00000000000000000000000000000000000000b3', 3, 0)).toThrow(
@@ -191,7 +95,7 @@ class FakeSocket implements Socket {
 }
 
 function gatewayHarness(relayer: SessionRelayer, clock = { now: 0 }) {
-  const lobby = lobbyWith(new MemoryJournal());
+  const lobby = lobbyWith();
   const gateway = new Gateway({
     lobby,
     chainId: 11155111,
