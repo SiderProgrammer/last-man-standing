@@ -4,6 +4,8 @@ import { dom } from '../context.js';
 
 export function showMatchScreen(): void {
   dom.lobbyScreen.classList.add('hidden');
+  dom.governanceScreen.classList.add('hidden');
+  dom.navGovernance.classList.add('hidden');
   dom.matchScreen.classList.remove('hidden');
 }
 

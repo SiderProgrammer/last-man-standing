@@ -13,18 +13,27 @@ import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
+import {LmsToken} from "../src/governance/LmsToken.sol";
+import {StakedLms} from "../src/governance/StakedLms.sol";
+import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
+import {FeeRouter} from "../src/governance/FeeRouter.sol";
 
-/// @notice Testnet deploy: multisig-governed config, mock oracle, hub escrow.
+/// @notice Testnet deploy: token-governed config, mock oracle, hub escrow.
 /// @dev Governance ends up as:
 ///
-///        Safe --proposes, cancels--> TimelockController --owns--> ProtocolConfig
-///         |                          (anyone may execute once       |
-///         |                           the delay has passed)         +--> read by GameEscrow
+///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
+///                                                           ^  (anyone may execute     StakedLms
+///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
+///         |                                                     has passed)
 ///         +- guardian: may pause GameEscrow at once, never unpause
-///         +- treasury: receives protocol fees
+///         +- receives the LMS supply, to distribute
+///         +- treasury: receives the non-staker share of fees
 ///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
 ///
-///      The deployer holds no role once `run` returns.
+///      Fees: the escrow's treasury is `FeeRouter`, which passes the stakers'
+///      share to `StakedLms` as ETH and forwards the rest to the treasury.
+///
+///      The deployer holds no role and no tokens once `run` returns.
 ///
 ///      Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
 ///      `LayerZeroMessenger` once those endpoints exist on the target testnet. Both are
@@ -48,6 +57,10 @@ contract Deploy is Script {
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
         TimelockController timelock;
+        LmsToken lms;
+        StakedLms stakedLms;
+        LmsGovernor governor;
+        FeeRouter feeRouter;
         address safe;
         address oracle;
         address messenger;
@@ -55,6 +68,7 @@ contract Deploy is Script {
 
     error SafeRequired();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
+    error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
 
     function run() external returns (Deployment memory deployment) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
@@ -91,9 +105,10 @@ contract Deploy is Script {
         );
         deployment.sessionDelegate = new SessionKeyDelegate();
         deployment.zap = _zap(deployment.escrow);
+        _governance(deployment, deployer);
 
         deployment.config.transferOwnership(address(deployment.timelock));
-        _handOver(deployment.timelock, deployment.config, deployment.safe, deployer);
+        _handOver(deployment, deployer);
 
         vm.stopBroadcast();
     }
@@ -158,18 +173,66 @@ contract Deploy is Script {
         return new ZapJoin(IPoolManager(manager), escrow);
     }
 
+    /// @dev Token, staking vault, governor and — where v4 exists — the fee
+    ///      router. The vault, the router and the timelock's roles are all
+    ///      owned by the timelock, so the governor reaches them only through
+    ///      the same delay as every other change.
+    function _governance(Deployment memory deployment, address deployer) private {
+        deployment.lms = new LmsToken(deployer, vm.envOr("LMS_SUPPLY", uint256(100_000_000e18)));
+
+        // A voter must still be staked when the proposal they voted for
+        // executes: a vote counts from the snapshot, so an unstake requested
+        // right after it has to outlast the voting period and the delay.
+        uint256 cooldown = vm.envOr("STAKE_COOLDOWN", uint256(7 days));
+        uint256 votingPeriod = vm.envOr("VOTING_PERIOD", uint256(5 days));
+        uint256 exposure = votingPeriod + _timelockDelay();
+        if (cooldown <= exposure) revert CooldownTooShort(cooldown, exposure);
+
+        deployment.stakedLms = new StakedLms(deployment.lms, address(deployment.timelock), uint64(cooldown));
+
+        deployment.governor = new LmsGovernor(
+            deployment.stakedLms,
+            deployment.timelock,
+            uint48(vm.envOr("VOTING_DELAY", uint256(1 days))),
+            uint32(votingPeriod),
+            vm.envOr("PROPOSAL_THRESHOLD", uint256(100_000e18)),
+            vm.envOr("QUORUM_PERCENT", uint256(4))
+        );
+
+        deployment.feeRouter = new FeeRouter(
+            deployment.escrow,
+            deployment.stakedLms,
+            address(deployment.timelock),
+            deployment.config.treasury(),
+            uint16(vm.envOr("STAKER_FEE_BPS", uint256(5_000)))
+        );
+        // The deployer still owns the config, so this skips the timelock.
+        ProtocolConfig.Params memory params = deployment.config.getParams();
+        params.treasury = address(deployment.feeRouter);
+        deployment.config.setParams(params);
+
+        deployment.lms.transfer(deployment.safe, deployment.lms.balanceOf(deployer));
+    }
+
+    /// @dev A queued change must not be able to land on a match that was
+    ///      already open when it was queued: the oracle and attestor set are
+    ///      read live, not snapshotted, so players need time to see it coming.
+    ///      Checked against the match lifetime in `_handOver`.
+    function _timelockDelay() private view returns (uint256) {
+        return vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+    }
+
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
     ///      proposes: the timelock has to call `acceptOwnership` itself. While
     ///      its delay is still zero that can be scheduled and executed at once,
     ///      in the same batch that raises the delay to its real value, so the
     ///      timelock never owns the config with a zero delay outside that call.
-    function _handOver(TimelockController timelock, ProtocolConfig config, address safe, address deployer)
-        private
-    {
-        // A queued change must not be able to land on a match that was
-        // already open when it was queued: the oracle and attestor set are
-        // read live, not snapshotted, so players need time to see it coming.
-        uint256 delay = vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+    function _handOver(Deployment memory deployment, address deployer) private {
+        TimelockController timelock = deployment.timelock;
+        ProtocolConfig config = deployment.config;
+        address safe = deployment.safe;
+
+        uint256 delay = _timelockDelay();
         ProtocolConfig.Params memory params = config.getParams();
         uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
@@ -193,7 +256,13 @@ contract Deploy is Script {
         // be the deployer itself, it keeps the roles it is meant to end with.
         timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
         timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
-        timelock.grantRole(timelock.PROPOSER_ROLE(), safe);
+        // The governor is the only proposer. It also needs the canceller
+        // role, which `GovernorTimelockControl` uses to cancel its own
+        // queued proposals.
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(deployment.governor));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(deployment.governor));
+        // The Safe's veto. Governance can revoke it through the timelock,
+        // which is its own admin once the deployer renounces below.
         timelock.grantRole(timelock.CANCELLER_ROLE(), safe);
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
     }

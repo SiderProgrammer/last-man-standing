@@ -1,5 +1,6 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
+import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
@@ -51,6 +52,12 @@ export type ServerMessage =
        * Lives on the hub, like the escrow it pays into.
        */
       zap: ZapInfo | null;
+      /**
+       * The staking vault and any running airdrop, or null when this server
+       * has none configured. Both live on the hub, like the escrow whose fees
+       * fund them.
+       */
+      staking: StakingInfo | null;
     }
   | { type: 'authed'; address: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
