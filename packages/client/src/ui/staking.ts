@@ -13,11 +13,11 @@ export interface StakingPosition {
   lmsBalance: bigint;
   /** sLMS held. */
   shares: bigint;
-  /** What those shares redeem for, in LMS. */
+  /** What those shares redeem for, in LMS. Always equal to `shares`: one sLMS is one LMS. */
   value: bigint;
   votes: bigint;
-  /** LMS per 1e18 sLMS. Starts at 1e18 and only grows, as buybacks land. */
-  sharePrice: bigint;
+  /** ETH from match fees, waiting to be claimed. */
+  earned: bigint;
   /** Seconds between requesting an unstake and withdrawing it. */
   cooldown: number;
   /** LMS on its way out, fixed when requested. `assets` is zero when there is none. */
@@ -48,7 +48,9 @@ export interface StakingPanelInput {
 
 export interface StakingPanel {
   visible: boolean;
-  rate: string;
+  /** ETH waiting to be claimed, for the header pill. */
+  rewards: string;
+  claimRewardsVisible: boolean;
   summary: string;
   airdrop: { visible: boolean; text: string };
   stakeDisabled: boolean;
@@ -60,7 +62,8 @@ export interface StakingPanel {
 export function stakingPanel(input: StakingPanelInput): StakingPanel {
   const hidden: StakingPanel = {
     visible: Boolean(input.info),
-    rate: '—',
+    rewards: '—',
+    claimRewardsVisible: false,
     summary: '',
     airdrop: { visible: false, text: '' },
     stakeDisabled: true,
@@ -77,7 +80,8 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
 
   return {
     visible: true,
-    rate: `1 sLMS = ${formatLms(position.sharePrice, 4)} LMS`,
+    rewards: `${formatLms(position.earned, 6)} ETH earned`,
+    claimRewardsVisible: position.earned > 0n,
     summary:
       position.shares > 0n
         ? `Staked ${formatLms(position.value)} LMS · ${formatLms(position.votes)} votes · ${formatLms(position.lmsBalance)} LMS in wallet`
@@ -100,7 +104,7 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
   };
 }
 
-/** LMS in wei, as a readable number: thousands separators, at most `decimals` places, no trailing zeros. */
+/** An 18-decimal amount (LMS or ETH), readable: thousands separators, at most `decimals` places, no trailing zeros. */
 export function formatLms(wei: bigint, decimals = 2): string {
   const [whole = '0', fraction = ''] = formatUnits(wei, 18).split('.');
   const grouped = BigInt(whole).toLocaleString('en-US');

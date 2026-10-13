@@ -5,3 +5,4 @@ avatars loading in preloader?
 database integration
 Keeper bot on server (running particular smart contract functions)
 assets
+bots logic

@@ -37,7 +37,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | Session keys without changing the player's address — see [Account abstraction](#account-abstraction) |
 | **ERC-721** non-fungible token | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
-| **ERC-4626** tokenised vault | `StakedLms` | Staking as a vault: fee buybacks raise the share price instead of needing a reward-claim system — see [Token governance and staking](#token-governance-and-staking) |
+| **ERC-4626** tokenised vault | `StakedLms` | A standard staking interface, with the exchange rate fixed at 1:1 — see [Token governance and staking](#token-governance-and-staking) |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
 | **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` | Lets the game server accept a login signed by a session key rather than the account key |
@@ -482,22 +482,19 @@ but unusable state that only the deploy script currently prevents.
 ## Token governance and staking
 
 `contracts/src/governance/` · `packages/server/src/chain/feeKeeper.ts` ·
-`packages/protocol/src/chain/airdrop.ts` · `scripts/airdrop.mjs` · **Unit-tested**; the pool,
-liquidity and buyback also **fork-tested** against mainnet Uniswap v4
-(`test/fork/FeeBuybackFork.t.sol`)
+`packages/protocol/src/chain/airdrop.ts` · `scripts/airdrop.mjs` · **Unit-tested**
 
 ### What it does
 
 Staking LMS does three things at once: it gives you **votes**, it **earns** a
-share of protocol fees, and it **commits** you to the outcome of your vote.
+share of protocol fees in ETH, and it **commits** you to the outcome of your vote.
 
 ```
-GameEscrow --fees--> FeeRouter --harvest--> treasury (Safe)       [100% - stakerBps]
+GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100% - stakerBps]
                          |
-                         +--buyback (server keeper)--> Uniswap v4 LMS/ETH --LMS--> StakedLms vault
-                                                        ^ created and seeded         |
-                                                        | by ProtocolLiquidity       |
-LMS --deposit--> sLMS (ERC-4626 shares, ERC20Votes) --votes--> LmsGovernor ----------+
+                         +--ETH--> StakedLms vault --claimRewards--> each staker, pro rata
+                                        ^
+LMS --deposit--> sLMS (1:1, ERC20Votes) +--votes--> LmsGovernor
  ^
  +-- LmsAirdrop: past players, weighted by fees paid (claim, or claim-and-stake)
 ```
@@ -505,11 +502,10 @@ LMS --deposit--> sLMS (ERC-4626 shares, ERC20Votes) --votes--> LmsGovernor -----
 | Contract | Role |
 | --- | --- |
 | `LmsToken` | Plain fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
-| `StakedLms` | ERC-4626 vault over LMS whose shares (sLMS) are the voting token. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
+| `StakedLms` | Staking vault whose shares (sLMS) are the voting token, always one per LMS. Collects the stakers' share of fees as ETH and splits it pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
 | `LmsGovernor` | Stock OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock. |
-| `FeeRouter` | The escrow's `treasury`. `harvest` pulls fees and splits them; `buyback` swaps the stakers' share for LMS into the vault. |
-| `ProtocolLiquidity` | Creates the LMS/ETH pool and seeds it with one full-range, protocol-owned position, in a single `bootstrap` call. Only governance can withdraw it. |
-| `FeeKeeper` (server) | Calls `harvest` and `buyback` on a timer, with a quoted floor. See [The fee keeper](#the-fee-keeper). |
+| `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
+| `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
 | `LmsAirdrop` | Merkle airdrop of LMS to past players. `claim` pays the account; `claimAndStake` stakes it in one step. Unclaimed LMS is swept to the treasury after the deadline. |
 
 Defaults, all overridable through the deploy environment:
@@ -522,9 +518,6 @@ Defaults, all overridable through the deploy environment:
 | Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
 | Quorum | 4% of staked supply | `QUORUM_PERCENT` |
 | Stakers' share of fees | 50% | `STAKER_FEE_BPS` |
-| Buyback keeper | the Safe | `KEEPER` |
-| Pool | 0.3% fee, tick spacing 60, no hooks | `LMS_POOL_FEE`, `LMS_POOL_TICK_SPACING` |
-| Starting liquidity | none; pool not created | `LIQUIDITY_ETH`, `LIQUIDITY_LMS` (default 1M) |
 
 ### Why
 
@@ -533,28 +526,28 @@ Defaults, all overridable through the deploy environment:
   receipt, so staking alone is enough to vote. Votes are read at the proposal's
   snapshot, so stake bought after a proposal appears cannot vote on it.
 - **A cooldown instead of slashing.** Purpose: commitment without a fraud
-  proof. `requestUnstake` burns the shares immediately (so they stop voting) and
-  the LMS is released only after the cooldown. The deploy script refuses a
-  cooldown that does not outlast `votingPeriod + timelock delay`, so whoever
-  voted for a proposal is still staked when it executes.
-- **The unstake price is fixed at request time.** Purpose: fees that arrive
-  during the cooldown go to the stakers who stayed, so cycling out around a
-  buyback earns nothing.
-- **Yield as share price, not rewards.** Purpose: no claim function, no
-  per-user reward accounting. Buybacks transfer LMS into the vault; every share
-  is simply worth more.
-- **The keeper, not anyone, triggers buybacks.** Purpose: an open swap with a
-  caller-chosen minimum output could be sandwiched by its own caller, with
-  stakers' fees as the prize. The keeper quotes off-chain and passes
-  `minLmsOut`; governance can replace a bad one.
-- **A seeded vault.** Purpose: the deploy script deposits 1 LMS to `0xdEaD`
-  before anyone else can, so the first real staker cannot be front-run by a
-  donation that inflates the share price (the ERC-4626 inflation attack).
-- **The pool is created and seeded in one transaction.** Purpose: nobody can
-  trade between creation and the first deposit and make the protocol fill its
-  position at a price it did not choose. The starting price is simply the ratio
-  of the two amounts. Full range, because the pool's only job is to keep a
-  buyback possible at any price.
+  proof. `requestUnstake` burns the shares immediately (so they stop voting and
+  stop earning) and the LMS is released only after the cooldown. The deploy
+  script refuses a cooldown that does not outlast `votingPeriod + timelock
+  delay`, so whoever voted for a proposal is still staked when it executes.
+- **Fees are paid out in ETH, not used to buy LMS.** Purpose: nothing to
+  sandwich, nothing to price, nothing to trust. An earlier design swapped the
+  stakers' share for LMS on Uniswap; that needed a pool, a keeper trusted with
+  the timing and a price floor, and still left a sandwich window open. Paying
+  the ETH itself needs none of it. The cost is that stakers claim, and there is
+  no buy pressure on LMS.
+- **A reward-per-share accumulator.** Purpose: pay every staker exactly their
+  share without looping over stakers. `rewardPerShare` only grows; each account
+  is settled in `_update` before any balance moves, so a deposit, transfer or
+  unstake can never carry rewards earned by someone else. ETH that arrives while
+  nothing is staked waits in `queuedRewards` for the first stakers.
+- **One sLMS is always one LMS.** Purpose: rule out the ERC-4626 donation
+  ("inflation") attack without a locked seed deposit. `totalAssets` is the LMS
+  actually staked, tracked by the vault, not its token balance, so LMS sent to
+  it directly cannot move the rate; governance can sweep it with `sweepStray`.
+- **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
+  only moves fees to where the router already sends them, so the worst a caller
+  can do is pay the gas for everyone else.
 - **The airdrop is weighted by fees paid, not matches played.** Purpose: a
   farmer playing against themselves pays the fee on every match, so farming
   only pays if the airdrop is worth more than the fees. `scripts/airdrop.mjs`
@@ -566,11 +559,11 @@ Defaults, all overridable through the deploy environment:
   make farming lose money, not just cost money. Someone filling a lobby with
   their own wallets gets every stake back, so the fee is their whole cost. Each
   allocation is capped at `AIRDROP_CAP_BPS` (default 25%) of the fees paid,
-  valued at `AIRDROP_LMS_PER_ETH` — the pool's starting price is the natural
-  reference. 25% leaves room for LMS to trade 4× above it before farming
-  breaks even. What the cap cuts is **not** redistributed: that would push
-  everyone else towards their own caps and reward whoever farmed hardest. It
-  stays with the Safe for a later season.
+  valued at `AIRDROP_LMS_PER_ETH`, the price you expect LMS to trade at. 25%
+  leaves room for LMS to trade 4× above that before farming breaks even. What
+  the cap cuts is **not** redistributed: that would push everyone else towards
+  their own caps and reward whoever farmed hardest. It stays with the Safe for
+  a later season.
 - **Only players who met several different opponents qualify.** Purpose: a
   farmer's wallets only ever play each other. `AIRDROP_MIN_OPPONENTS` (default
   3) distinct opponents means the stake was put against people who could win
@@ -578,26 +571,9 @@ Defaults, all overridable through the deploy environment:
 
 ### The fee keeper
 
-`FeeKeeper` runs in the game server when `FEE_ROUTER`, `V4_QUOTER` and a
-`KEEPER_PK` that is the router's keeper are all set. Each tick:
-
-1. **Harvest** once at least `HARVEST_MIN_WEI` is credited.
-2. **Wait for stakers.** A buyback raises every share's value pro rata, including
-   the locked seed's. While the seed is more than
-   `BUYBACK_MAX_LOCKED_SHARE_BPS` (1%) of sLMS, that much of each buyback would
-   be stuck at `0xdEaD` forever, so the ETH waits.
-3. **Quote** at most `BUYBACK_MAX_WEI` through `V4Quoter`, so a backlog is
-   bought in steps rather than one trade that moves the pool.
-4. **Compare** against a running average of its own quotes, and decline a quote
-   more than `BUYBACK_MAX_DEVIATION_BPS` (5%) below it. The slippage floor
-   bounds movement *after* the quote; this bounds a pool that was pushed *before*
-   it, which is what a sandwich does. A one-block push barely moves the average;
-   a real repricing pulls it along within a few ticks.
-5. **Buy** with `minLmsOut` = quote less `BUYBACK_SLIPPAGE_BPS` (1%).
-
-`npm run dev:fork` seeds the pool at 100,000 LMS per ETH, stakes 10,000 LMS as
-the operator, and runs the keeper with every threshold at 1 wei, so each
-settled match is bought back within ten seconds.
+`FeeKeeper` runs in the game server when `FEE_ROUTER` and `KEEPER_PK` are set,
+and calls `harvest` whenever at least `HARVEST_MIN_WEI` (0.05 ETH) is waiting in
+the escrow. Any funded key works: harvesting needs no role.
 
 ### Distributing the supply
 
@@ -619,8 +595,9 @@ The lobby screen shows a **Stake LMS** panel whenever the server has
   **Claim & stake** (one transaction, straight into sLMS) or **Claim to
   wallet**. The proof comes from the server's `GET /airdrop/<address>`, which
   serves `AIRDROP_FILE` only when its root matches the deployed contract.
-- **Position.** Staked value in LMS, votes, wallet balance, and the share price
-  (`1 sLMS = … LMS`), which only rises as buybacks land.
+- **Rewards.** ETH earned from fees, in the header, and a **Claim ETH** button
+  once there is any.
+- **Position.** Staked LMS, votes and wallet balance.
 - **Stake** in one transaction: an EIP-2612 permit signature plus
   `depositWithPermit`, instead of an approval and a deposit. The permit is
   attempted rather than required, so a copied signature submitted first cannot
@@ -628,17 +605,51 @@ The lobby screen shows a **Stake LMS** panel whenever the server has
 - **Unstake** an amount of LMS (converted to sLMS, rounded up so it covers the
   amount), then a countdown and a **Withdraw** button once the cooldown ends.
 
-Voting is not built in: `LmsGovernor` is a stock OpenZeppelin Governor, which
-Tally reads directly.
+### The governance screen
 
-`npm run dev:fork` airdrops 250 LMS to the dev burner and `FORK_PLAYER` so the
-whole flow can be tried at once.
+A **Governance** button in the top bar opens every proposal made to
+`LmsGovernor`, newest first, when the server has `GOVERNOR_ADDRESS` set:
+
+- **Where proposals come from.** The governor cannot list its own proposals, so
+  the server indexes `ProposalCreated` from `GOVERNOR_FROM_BLOCK` in 10k-block
+  chunks and serves them at `/proposals`. That list holds only what the event
+  says, which never changes; state, tallies, quorum and the voter's power are
+  read live from the chain by the client.
+- **What a proposal does.** Each action is decoded against every function the
+  timelock is expected to call, with the known contracts named and timelock
+  roles spelled out, so revoking the Safe's veto reads as
+  `revokeRole(CANCELLER_ROLE, 0x…)`. A call that matches nothing is shown raw and
+  flagged, never hidden; so is any action that sends ETH. Proposal text is
+  untrusted, and is only ever written into the page as text.
+- **Voting.** For, Against or Abstain, with an optional on-chain reason. Power is
+  the sLMS held when voting opened; before then the card shows the power held
+  now, which is what it will be if nothing changes. Quorum counts For and
+  Abstain, as `GovernorCountingSimple` does.
+- **Queue and Execute.** Anyone can move a passed proposal into the timelock and
+  execute it once the delay is over; the card offers each step when it is
+  possible and says how long is left otherwise.
+
+- **Making a proposal.** **New proposal** opens a form: a title, a reason, and
+  one or more actions picked from templates — the stakers' share of fees, the
+  protocol fee, the treasury, the guardian, the unstake cooldown, the voting
+  period, resuming play, and removing the multisig's veto. Each template takes
+  plain values (a percentage, a number of days, an address), checks them
+  against the limits the contracts enforce — a fee above 10% or a cooldown
+  outside 1–30 days is refused before a vote is wasted on it — and encodes the
+  one call that does it. Every action is previewed with the decoder voters
+  see. A custom call is the escape hatch, and is flagged like any other
+  unrecognised call. The form shows the proposer's power against the
+  threshold up front, read one second in the past as the governor reads it.
+  The protocol-fee template resends every other parameter as it is now, and
+  says so: it would undo another parameter change that executes first.
+
+`npm run dev:fork` shortens voting to open in a minute and last thirty, lowers
+the proposal threshold to 1,000 sLMS, stakes 1,000 LMS for each dev player
+(enough to propose), airdrops them 250 LMS more, harvests after every match,
+and makes a demo proposal to raise the stakers' fee share to 60%.
 
 ### What is missing
 
-- **The keeper's price reference lives in memory.** It restarts from the first
-  quote after a server restart, and buybacks go through the public mempool.
-  Sending them through a private relay would close the sandwich window properly.
 - **Hub chain only.** Spokes take no fees today; if they ever do, each needs
   its own route back to the hub's router.
 - **Regulatory.** A token that pays holders a share of a gambling protocol's

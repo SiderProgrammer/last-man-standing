@@ -20,17 +20,27 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { StakingPosition } from '../ui/staking.js';
+import type { ProposalLive } from '../ui/governance.js';
+import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
 import {
   AUTH_PREFIX,
   ZERO_ADDRESS,
+  ProposalState,
+  descriptionHash,
   gameEscrowAbi,
   lmsAirdropAbi,
+  lmsGovernorAbi,
+  protocolConfigAbi,
   lmsTokenAbi,
   playerAvatarsAbi,
   stakedLmsAbi,
   sessionKeyDelegateAbi,
   v4QuoterAbi,
   zapJoinAbi,
+  type ProposalStateValue,
+  type ProtocolParams,
+  type ProposalSummary,
+  type VoteSupportValue,
   type ZapPathKey,
 } from '@lms/protocol';
 
@@ -352,11 +362,11 @@ export class Wallet {
   /** Everything the staking panel shows, read in one round trip. */
   async stakingPosition(vault: Address): Promise<StakingPosition> {
     const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
-    const [lmsBalance, shares, votes, sharePrice, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
+    const [lmsBalance, shares, votes, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'convertToAssets', args: [10n ** 18n] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'earned', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'cooldown' }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [this.address] }),
       this.rpc.getBlock(),
@@ -370,7 +380,7 @@ export class Wallet {
       shares,
       value,
       votes,
-      sharePrice,
+      earned,
       cooldown: Number(cooldown),
       pending: { assets: pendingAssets, unlockAt: Number(unlockAt) },
       chainTime: Number(block.timestamp),
@@ -441,6 +451,18 @@ export class Wallet {
     return this.wallet.writeContract({ ...request, chain: null });
   }
 
+  /** Pays the ETH this wallet has earned from fees to itself. */
+  async claimRewards(vault: Address): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: vault,
+      abi: stakedLmsAbi,
+      functionName: 'claimRewards',
+      args: [this.address],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
   airdropClaimed(airdrop: Address): Promise<boolean> {
     return this.rpc.readContract({ address: airdrop, abi: lmsAirdropAbi, functionName: 'claimed', args: [this.address] });
   }
@@ -463,6 +485,165 @@ export class Wallet {
       abi: lmsAirdropAbi,
       functionName: 'claim',
       args: [this.address, amount, proof],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
+   * A proposal's state and this wallet's part in it.
+   *
+   * Voting power and quorum are fixed at the snapshot, which is the vote's
+   * start. While that is still ahead the governor refuses to look it up, so a
+   * pending proposal shows the wallet's power now, read from the vault.
+   */
+  async proposalLive(governor: Address, vault: Address, proposal: ProposalSummary): Promise<ProposalLive> {
+    const id = BigInt(proposal.id);
+    const [state, [against, forVotes, abstain], hasVoted, eta, block] = await Promise.all([
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'state', args: [id] }),
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalVotes', args: [id] }),
+      this.rpc.readContract({
+        address: governor,
+        abi: lmsGovernorAbi,
+        functionName: 'hasVoted',
+        args: [id, this.address],
+      }),
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalEta', args: [id] }),
+      this.rpc.getBlock(),
+    ]);
+    const pending = state === ProposalState.Pending;
+    const snapshot = BigInt(proposal.voteStart);
+    const [power, quorum] = pending
+      ? [
+          await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
+          null,
+        ]
+      : await Promise.all([
+          this.rpc.readContract({
+            address: governor,
+            abi: lmsGovernorAbi,
+            functionName: 'getVotes',
+            args: [this.address, snapshot],
+          }),
+          this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'quorum', args: [snapshot] }),
+        ]);
+    return {
+      state: state as ProposalStateValue,
+      votes: { for: forVotes, against, abstain },
+      quorum,
+      power,
+      hasVoted,
+      eta: Number(eta),
+      chainTime: Number(block.timestamp),
+    };
+  }
+
+  /** Votes on a proposal, with a reason recorded on-chain when one is given. */
+  async castVote(governor: Address, proposalId: string, support: VoteSupportValue, reason: string): Promise<Hex> {
+    const id = BigInt(proposalId);
+    if (reason.trim()) {
+      const { request } = await this.rpc.simulateContract({
+        account: this.address,
+        address: governor,
+        abi: lmsGovernorAbi,
+        functionName: 'castVoteWithReason',
+        args: [id, support, reason.trim()],
+      });
+      return this.wallet.writeContract({ ...request, chain: null });
+    }
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: governor,
+      abi: lmsGovernorAbi,
+      functionName: 'castVote',
+      args: [id, support],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
+   * Everything the proposal form needs: where each governed contract is, the
+   * config's current parameters, and whether this wallet may propose at all.
+   *
+   * The governor checks the proposer's votes one second in the past, so that
+   * is the number compared against the threshold here too.
+   */
+  async proposalContext(
+    governor: Address,
+    known: { vault: Address; feeRouter: Address | null; escrow: Address | null },
+  ): Promise<{ context: ProposalContext; power: bigint; threshold: bigint }> {
+    const [timelock, threshold, clock, config] = await Promise.all([
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'timelock' }),
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalThreshold' }),
+      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'clock' }),
+      known.escrow
+        ? this.rpc.readContract({ address: known.escrow, abi: protocolConfigAbi, functionName: 'config' })
+        : Promise.resolve(null),
+    ]);
+    const [power, params] = await Promise.all([
+      clock > 0
+        ? this.rpc.readContract({
+            address: governor,
+            abi: lmsGovernorAbi,
+            functionName: 'getVotes',
+            args: [this.address, BigInt(clock - 1)],
+          })
+        : Promise.resolve(0n),
+      config
+        ? this.rpc.readContract({ address: config, abi: protocolConfigAbi, functionName: 'getParams' })
+        : Promise.resolve(null),
+    ]);
+    return {
+      context: { governor, timelock, config, params: params as ProtocolParams | null, ...known },
+      power,
+      threshold,
+    };
+  }
+
+  /** Submits a proposal. Simulated first, so a missing threshold reads as the governor's own error. */
+  async propose(governor: Address, actions: readonly ProposalAction[], description: string): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: governor,
+      abi: lmsGovernorAbi,
+      functionName: 'propose',
+      args: [
+        actions.map((action) => action.target),
+        actions.map((action) => action.value),
+        actions.map((action) => action.calldata),
+        description,
+      ],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
+   * Queues a passed proposal in the timelock, or executes a queued one once
+   * its delay is over. Both are open to anyone; the governor re-derives the
+   * proposal from exactly these arguments, so they must match what was proposed.
+   */
+  async advanceProposal(governor: Address, proposal: ProposalSummary, step: 'queue' | 'execute'): Promise<Hex> {
+    const args = [
+      proposal.targets,
+      proposal.values.map((value) => BigInt(value)),
+      proposal.calldatas,
+      descriptionHash(proposal.description),
+    ] as const;
+    if (step === 'queue') {
+      const { request } = await this.rpc.simulateContract({
+        account: this.address,
+        address: governor,
+        abi: lmsGovernorAbi,
+        functionName: 'queue',
+        args,
+      });
+      return this.wallet.writeContract({ ...request, chain: null });
+    }
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: governor,
+      abi: lmsGovernorAbi,
+      functionName: 'execute',
+      args,
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }

@@ -220,7 +220,12 @@ describe('gateway', () => {
   });
 
   it('advertises the staking vault and airdrop so the client can show the panel', () => {
-    const staking: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, airdrop: `0x${'ad'.repeat(20)}` };
+    const staking: StakingInfo = {
+      vault: `0x${'5a'.repeat(20)}`,
+      airdrop: `0x${'ad'.repeat(20)}`,
+      governor: `0x${'60'.repeat(20)}`,
+      feeRouter: `0x${'fe'.repeat(20)}`,
+    };
     const { socket } = harness({ staking });
     expect(socket.last('hello')?.staking).toEqual(staking);
   });

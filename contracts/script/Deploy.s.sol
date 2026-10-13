@@ -17,7 +17,6 @@ import {LmsToken} from "../src/governance/LmsToken.sol";
 import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
-import {ProtocolLiquidity} from "../src/governance/ProtocolLiquidity.sol";
 
 /// @notice Testnet deploy: token-governed config, mock oracle, hub escrow.
 /// @dev Governance ends up as:
@@ -27,15 +26,12 @@ import {ProtocolLiquidity} from "../src/governance/ProtocolLiquidity.sol";
 ///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
 ///         |                                                     has passed)
 ///         +- guardian: may pause GameEscrow at once, never unpause
-///         +- receives the LMS supply, less the vault seed, to distribute
+///         +- receives the LMS supply, to distribute
 ///         +- treasury: receives the non-staker share of fees
 ///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
 ///
-///      Fees: with `POOL_MANAGER` set, the escrow's treasury is `FeeRouter`,
-///      which buys LMS for the stakers' share and forwards the rest to the
-///      treasury. It buys through an LMS/ETH pool that `ProtocolLiquidity`
-///      creates and seeds when `LIQUIDITY_ETH` is set. Without it there is no route to buy LMS through, so fees go
-///      straight to the treasury and staking only carries votes.
+///      Fees: the escrow's treasury is `FeeRouter`, which passes the stakers'
+///      share to `StakedLms` as ETH and forwards the rest to the treasury.
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
@@ -64,20 +60,11 @@ contract Deploy is Script {
         LmsToken lms;
         StakedLms stakedLms;
         LmsGovernor governor;
-        /// @dev Zero when `POOL_MANAGER` is unset.
         FeeRouter feeRouter;
-        /// @dev Creates and holds the LMS/ETH pool. Zero when `POOL_MANAGER` is unset.
-        ProtocolLiquidity liquidity;
         address safe;
         address oracle;
         address messenger;
     }
-
-    /// @dev Shares minted to an unspendable address before anyone else can
-    ///      deposit, so the first real staker cannot be front-run by a
-    ///      donation that skews the vault's share price.
-    uint256 private constant VAULT_SEED = 1e18;
-    address private constant DEAD = address(0xdEaD);
 
     error SafeRequired();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
@@ -202,8 +189,6 @@ contract Deploy is Script {
         if (cooldown <= exposure) revert CooldownTooShort(cooldown, exposure);
 
         deployment.stakedLms = new StakedLms(deployment.lms, address(deployment.timelock), uint64(cooldown));
-        deployment.lms.approve(address(deployment.stakedLms), VAULT_SEED);
-        deployment.stakedLms.deposit(VAULT_SEED, DEAD);
 
         deployment.governor = new LmsGovernor(
             deployment.stakedLms,
@@ -214,66 +199,19 @@ contract Deploy is Script {
             vm.envOr("QUORUM_PERCENT", uint256(4))
         );
 
-        deployment.feeRouter = _feeRouter(deployment);
-        if (address(deployment.feeRouter) != address(0)) {
-            // The deployer still owns the config, so this skips the timelock.
-            ProtocolConfig.Params memory params = deployment.config.getParams();
-            params.treasury = address(deployment.feeRouter);
-            deployment.config.setParams(params);
-        }
-        deployment.liquidity = _liquidity(deployment);
-
-        // Last, so the pool above can be seeded from the supply first.
-        deployment.lms.transfer(deployment.safe, deployment.lms.balanceOf(deployer));
-    }
-
-    /// @dev Same condition as `ZapJoin`: no `PoolManager`, no route to buy LMS
-    ///      through. Buybacks revert until the pool in `_liquidity` exists and
-    ///      has liquidity, and fees wait in `pendingBuyback` meanwhile.
-    function _feeRouter(Deployment memory deployment) private returns (FeeRouter) {
-        address manager = vm.envOr("POOL_MANAGER", address(0));
-        if (manager == address(0)) return FeeRouter(payable(address(0)));
-        return new FeeRouter(
-            IPoolManager(manager),
+        deployment.feeRouter = new FeeRouter(
             deployment.escrow,
-            deployment.lms,
-            address(deployment.stakedLms),
+            deployment.stakedLms,
             address(deployment.timelock),
             deployment.config.treasury(),
-            vm.envOr("KEEPER", deployment.safe),
-            uint16(vm.envOr("STAKER_FEE_BPS", uint256(5_000))),
-            _poolConfig()
+            uint16(vm.envOr("STAKER_FEE_BPS", uint256(5_000)))
         );
-    }
+        // The deployer still owns the config, so this skips the timelock.
+        ProtocolConfig.Params memory params = deployment.config.getParams();
+        params.treasury = address(deployment.feeRouter);
+        deployment.config.setParams(params);
 
-    /// @dev Deploys the pool's owner on every v4 chain, and creates and seeds
-    ///      the pool only when `LIQUIDITY_ETH` is set: the deployer pairs that
-    ///      much of its own ETH with `LIQUIDITY_LMS` from the supply, and the
-    ///      ratio of the two is the pool's starting price. Left unset, the
-    ///      Safe can call `bootstrap` itself later.
-    function _liquidity(Deployment memory deployment) private returns (ProtocolLiquidity liquidity) {
-        address manager = vm.envOr("POOL_MANAGER", address(0));
-        if (manager == address(0)) return ProtocolLiquidity(address(0));
-
-        FeeRouter.PoolConfig memory pool = _poolConfig();
-        liquidity = new ProtocolLiquidity(
-            IPoolManager(manager), deployment.lms, address(deployment.timelock), pool.fee, pool.tickSpacing
-        );
-
-        uint256 eth = vm.envOr("LIQUIDITY_ETH", uint256(0));
-        if (eth == 0) return liquidity;
-        uint256 lmsAmount = vm.envOr("LIQUIDITY_LMS", uint256(1_000_000e18));
-        deployment.lms.approve(address(liquidity), lmsAmount);
-        liquidity.bootstrap{value: eth}(lmsAmount);
-    }
-
-    /// @dev One pool for both the router and the liquidity, so they cannot disagree.
-    function _poolConfig() private view returns (FeeRouter.PoolConfig memory) {
-        return FeeRouter.PoolConfig({
-            fee: uint24(vm.envOr("LMS_POOL_FEE", uint256(3_000))),
-            tickSpacing: int24(int256(vm.envOr("LMS_POOL_TICK_SPACING", uint256(60)))),
-            hooks: address(0)
-        });
+        deployment.lms.transfer(deployment.safe, deployment.lms.balanceOf(deployer));
     }
 
     /// @dev A queued change must not be able to land on a match that was

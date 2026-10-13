@@ -30,7 +30,6 @@ contract DeployTest is Test {
         vm.setEnv("SAFE", vm.toString(safe));
         poolManager = address(new MockPoolManager());
         vm.setEnv("POOL_MANAGER", vm.toString(poolManager));
-        vm.setEnv("LIQUIDITY_ETH", vm.toString(uint256(1 ether)));
         d = new Deploy().run();
     }
 
@@ -62,38 +61,18 @@ contract DeployTest is Test {
         assertEq(d.avatars.owner(), safe);
         assertEq(d.config.treasury(), address(d.feeRouter));
         assertEq(d.feeRouter.treasury(), safe);
-        assertEq(d.feeRouter.keeper(), safe);
         assertEq(d.feeRouter.stakerBps(), 5_000);
     }
 
-    function test_routerPointsAtEscrowVaultAndPoolManager() public view {
+    function test_routerPaysTheVaultFromTheEscrow() public view {
         assertEq(address(d.feeRouter.escrow()), address(d.escrow));
-        assertEq(address(d.feeRouter.poolManager()), poolManager);
-        assertEq(address(d.feeRouter.lms()), address(d.lms));
-        assertEq(d.feeRouter.vault(), address(d.stakedLms));
+        assertEq(address(d.feeRouter.vault()), address(d.stakedLms));
     }
 
-    function test_supplyGoesToSafe_lessVaultSeedAndPoolLiquidity() public view {
-        assertEq(d.stakedLms.balanceOf(address(0xdEaD)), 1e18);
-        uint256 inPool = d.lms.balanceOf(poolManager);
-        assertApproxEqAbs(inPool, 1_000_000e18, 1e12, "LIQUIDITY_LMS default, less rounding dust");
-        assertEq(d.lms.balanceOf(safe), d.lms.totalSupply() - 1e18 - inPool);
+    function test_wholeSupplyGoesToTheSafe() public view {
         assertEq(d.lms.totalSupply(), 100_000_000e18);
-    }
-
-    function test_poolIsCreatedAndSeeded_ownedByTheTimelock() public view {
-        assertEq(d.liquidity.owner(), address(d.timelock));
-        assertGt(d.liquidity.liquidity(), 0);
-        assertApproxEqAbs(poolManager.balance, 1 ether, 1e6);
-
-        (uint256 rate,,) =
-            MockPoolManager(payable(poolManager)).pools(keccak256(abi.encode(d.liquidity.poolKey())));
-        assertApproxEqRel(rate, 1_000_000e18, 1e9, "1M LMS per ETH");
-
-        (uint24 fee, int24 tickSpacing, address hooks) = d.feeRouter.pool();
-        assertEq(fee, d.liquidity.fee());
-        assertEq(tickSpacing, d.liquidity.tickSpacing());
-        assertEq(hooks, address(0));
+        assertEq(d.lms.balanceOf(safe), d.lms.totalSupply());
+        assertEq(d.stakedLms.totalSupply(), 0, "no seed needed: the rate is fixed at 1:1");
     }
 
     function test_governorVotesWithStakedLms_andCooldownOutlastsExposure() public view {

@@ -12,15 +12,15 @@ import {
 
 const E18 = 10n ** 18n;
 const NOW = 1_700_000_000;
-const INFO: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, airdrop: `0x${'ad'.repeat(20)}` };
+const INFO: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, airdrop: `0x${'ad'.repeat(20)}`, governor: null, feeRouter: null };
 
 function position(overrides: Partial<StakingPosition> = {}): StakingPosition {
   return {
     lmsBalance: 500n * E18,
     shares: 1_000n * E18,
-    value: 1_100n * E18,
+    value: 1_000n * E18,
     votes: 1_000n * E18,
-    sharePrice: (11n * E18) / 10n,
+    earned: 0n,
     cooldown: 7 * 86_400,
     pending: { assets: 0n, unlockAt: 0 },
     chainTime: NOW,
@@ -50,14 +50,23 @@ describe('stakingPanel', () => {
     expect(view.unstakeDisabled).toBe(true);
   });
 
-  it('summarises a position and the share price', () => {
+  it('summarises a position', () => {
     const view = stakingPanel(input());
 
-    expect(view.rate).toBe('1 sLMS = 1.1 LMS');
-    expect(view.summary).toBe('Staked 1,100 LMS · 1,000 votes · 500 LMS in wallet');
+    expect(view.summary).toBe('Staked 1,000 LMS · 1,000 votes · 500 LMS in wallet');
     expect(view.stakeDisabled).toBe(false);
     expect(view.unstakeDisabled).toBe(false);
     expect(view.status).toBe('Unstaking takes 7d. Your vote stops the moment you request it.');
+  });
+
+  it('shows earned ETH and offers to claim it only when there is some', () => {
+    const nothing = stakingPanel(input());
+    expect(nothing.rewards).toBe('0 ETH earned');
+    expect(nothing.claimRewardsVisible).toBe(false);
+
+    const some = stakingPanel(input({ position: position({ earned: 1_234_567_000_000_000n }) }));
+    expect(some.rewards).toBe('0.001234 ETH earned');
+    expect(some.claimRewardsVisible).toBe(true);
   });
 
   it('only offers what the wallet can do', () => {

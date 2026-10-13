@@ -112,10 +112,10 @@ Until then, document honestly that settlement is quorum-trusted.
 - `SpokeEscrow.join` trusts the caller's `stake` argument for the event only; the hub is
   the authority, but a mismatch produces a confusing failure. Quote the hub's stake instead.
 - Token governance is in place (`LmsGovernor` over staked LMS), with the
-  LMS/ETH pool, the fee keeper, a capped fee-weighted airdrop and a staking
-  panel in the lobby. Still open: the Safe's veto over the timelock has no
-  planned removal, and buybacks go through the public mempool. See FEATURES.md
-  "Token governance and staking".
+  fee keeper, ETH rewards for stakers, a capped fee-weighted airdrop, a staking
+  panel and a governance screen. Still open: the Safe's veto over the timelock
+  has no planned removal, and the token supply still needs a distribution plan
+  beyond the airdrop. See FEATURES.md "Token governance and staking".
 - No deploy script for spokes. `SpokeEscrow`, `LayerZeroMessenger` and
   `ChainlinkVrfAdapter` are plain `Ownable`; each must be constructed with a timelock
   (fed by a Safe on that chain) as owner. Consider `Ownable2Step` for them too.

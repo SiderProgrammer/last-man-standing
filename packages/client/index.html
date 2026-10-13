@@ -10,6 +10,7 @@
     <header class="topbar">
       <h1>Last&nbsp;Man&nbsp;Standing</h1>
       <div class="topbar-right">
+        <button id="nav-governance" class="ghost hidden">Governance</button>
         <span id="chain-label" class="pill">offline</span>
         <button id="connect" class="primary">Connect wallet</button>
       </div>
@@ -69,11 +70,11 @@
         <div id="staking-panel" class="panel hidden">
           <div class="panel-head">
             <h2>Stake LMS</h2>
-            <span id="staking-rate" class="pill">—</span>
+            <span id="staking-rewards" class="pill">—</span>
           </div>
           <p class="muted small">
             Staked LMS votes on how the protocol is run and earns a share of every match
-            fee, bought back as LMS — so each sLMS is worth more LMS over time.
+            fee, paid in ETH. One sLMS is always one LMS.
           </p>
           <div id="airdrop-row" class="callout hidden">
             <span id="airdrop-text"></span>
@@ -82,7 +83,10 @@
               <button id="airdrop-claim" class="ghost">Claim to wallet</button>
             </div>
           </div>
-          <p id="staking-summary" class="small"></p>
+          <div class="row">
+            <span id="staking-summary" class="small"></span>
+            <button id="claim-rewards" class="primary hidden">Claim ETH</button>
+          </div>
           <div class="row">
             <label for="staking-amount">Amount (LMS)</label>
             <input id="staking-amount" type="text" inputmode="decimal" placeholder="0.0" size="10" />
@@ -120,6 +124,57 @@
           </div>
           <ul id="lobby-list" class="lobby-list"></ul>
         </div>
+      </section>
+
+      <section id="governance-screen" class="screen hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Governance</h2>
+            <div class="row">
+              <button id="new-proposal" class="ghost hidden">New proposal</button>
+              <button id="governance-back" class="ghost">Back to lobby</button>
+            </div>
+          </div>
+          <p class="muted small">
+            Staked LMS decides how the protocol is run. Your voting power on a proposal is
+            the sLMS you held when its vote opened. A passed proposal waits out the timelock
+            delay before it can execute, and the multisig can still veto it during that time.
+          </p>
+          <span id="governance-status" class="muted small"></span>
+        </div>
+
+        <div id="proposal-form" class="panel hidden">
+          <div class="panel-head">
+            <h2>New proposal</h2>
+            <span id="proposer-power" class="pill">—</span>
+          </div>
+          <div class="field">
+            <label for="proposal-title">Title</label>
+            <input id="proposal-title" type="text" maxlength="120" placeholder="Raise the stakers' share of fees to 60%" />
+          </div>
+          <div class="field">
+            <label for="proposal-body">Why (voters read this)</label>
+            <textarea id="proposal-body" rows="4" placeholder="What changes, and why it is worth it."></textarea>
+          </div>
+          <label>Actions, executed in order</label>
+          <ol id="draft-actions" class="proposal-actions"></ol>
+          <div class="field">
+            <select id="action-template"></select>
+            <p id="action-help" class="muted small"></p>
+            <div id="action-fields" class="row"></div>
+          </div>
+          <div class="row">
+            <button id="add-action">Add action</button>
+            <span id="action-error" class="small warn-text"></span>
+          </div>
+          <div class="row">
+            <button id="submit-proposal" class="primary" disabled>Submit proposal</button>
+            <button id="cancel-proposal" class="ghost">Cancel</button>
+            <span id="proposal-status" class="muted small"></span>
+          </div>
+        </div>
+
+        <ul id="proposal-list" class="proposal-list"></ul>
       </section>
 
       <section id="match-screen" class="screen hidden">

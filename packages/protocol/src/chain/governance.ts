@@ -1,64 +1,22 @@
 import { parseAbi } from 'viem';
 
 /**
- * The fee-to-stakers path: `FeeRouter` turns escrow fees into LMS bought for
- * the `StakedLms` vault.
+ * The fee-to-stakers path: `FeeRouter` passes the stakers' share of every fee
+ * to `StakedLms` as ETH, and each staker claims theirs.
  *
- * Shared because the server's fee keeper drives the router today, and anything
- * that shows stakers their yield will read the same contracts.
+ * Shared because the server's fee keeper harvests the router, and the client
+ * shows and claims what a staker has earned.
  */
 
-/** The `FeeRouter` surface. Errors are included so a failed simulation reads as its cause. */
+/** The `FeeRouter` surface. */
 export const feeRouterAbi = parseAbi([
   'function harvest() returns (uint256 amount)',
-  'function buyback(uint256 amountIn, uint256 minLmsOut, uint256 deadline) returns (uint256 lmsOut)',
-  'function pendingBuyback() view returns (uint256)',
-  'function keeper() view returns (address)',
   'function escrow() view returns (address)',
-  'function lms() view returns (address)',
   'function vault() view returns (address)',
-  'function pool() view returns (uint24 fee, int24 tickSpacing, address hooks)',
+  'function stakerBps() view returns (uint16)',
   'event Harvested(uint256 amount, uint256 toStakers, uint256 toTreasury)',
-  'event BoughtBack(uint256 ethIn, uint256 lmsOut)',
-  'error NotKeeper(address caller)',
-  'error DeadlinePassed(uint256 deadline)',
-  'error InsufficientPending(uint256 requested, uint256 pending)',
-  'error PartialFill(uint256 requested, uint256 paid)',
-  'error SlippageExceeded(uint256 lmsOut, uint256 minLmsOut)',
-  'error UnexpectedDelta(int128 amountIn)',
   'error NothingToWithdraw()',
 ]);
-
-/**
- * v4-periphery's `V4Quoter`, single-pool exact input.
- *
- * Like the exact-output quote in `zap.ts`, it runs the swap and reverts with
- * the result, so it has to be simulated rather than read.
- */
-export const v4QuoterExactInputAbi = parseAbi([
-  'struct PoolKey { address currency0; address currency1; uint24 fee; int24 tickSpacing; address hooks; }',
-  'struct QuoteExactSingleParams { PoolKey poolKey; bool zeroForOne; uint128 exactAmount; bytes hookData; }',
-  'function quoteExactInputSingle(QuoteExactSingleParams params) returns (uint256 amountOut, uint256 gasEstimate)',
-]);
-
-/** Where `Deploy.s.sol` locks the vault's seed shares, which nobody can ever redeem. */
-export const VAULT_SEED_HOLDER = '0x000000000000000000000000000000000000dEaD' as const;
-
-/** How long a submitted buyback stays valid, in seconds. */
-export const BUYBACK_DEADLINE_SECONDS = 5 * 60;
-
-/**
- * The least LMS a buyback may return for a quote, rounded down.
- *
- * Rounded down so a zero tolerance still admits the quote itself.
- */
-export function minOutFor(quote: bigint, slippageBps: number): bigint {
-  if (quote < 0n) throw new Error('quote cannot be negative');
-  if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
-    throw new Error('slippage must be a whole number of basis points between 0 and 10000');
-  }
-  return (quote * BigInt(10_000 - slippageBps)) / 10_000n;
-}
 
 /** What the client needs to show the staking panel, sent in `hello`. */
 export interface StakingInfo {
@@ -66,6 +24,10 @@ export interface StakingInfo {
   vault: `0x${string}`;
   /** `LmsAirdrop`, or null when there is no airdrop running. */
   airdrop: `0x${string}` | null;
+  /** `LmsGovernor`, or null when this server indexes no proposals. */
+  governor: `0x${string}` | null;
+  /** `FeeRouter`, so proposals that change it are labelled. Null when there is none. */
+  feeRouter: `0x${string}` | null;
 }
 
 /** One address's airdrop allocation, as the server's `/airdrop/<address>` returns it. */
@@ -87,7 +49,10 @@ export const stakedLmsAbi = parseAbi([
   'function depositWithPermit(uint256 assets, address receiver, uint256 deadline, uint8 v, bytes32 r, bytes32 s) returns (uint256 shares)',
   'function requestUnstake(uint256 shares) returns (uint256 assets)',
   'function claim(address receiver) returns (uint256 assets)',
+  'function earned(address account) view returns (uint256)',
+  'function claimRewards(address to) returns (uint256 amount)',
   'error ZeroShares()',
+  'error NothingToWithdraw()',
   'error NothingToClaim()',
   'error StillCoolingDown(uint64 unlockAt)',
 ]);

@@ -17,6 +17,7 @@ import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { airdropResponse, loadAirdropFile, type AirdropBook } from './chain/airdropFile.js';
+import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { lmsAirdropAbi } from '@lms/protocol';
 
 const TICK_MS = 250;
@@ -77,6 +78,17 @@ async function main(): Promise<void> {
   // the one the deployed airdrop checks, so a stale file cannot be offered.
   const airdrop = await loadAirdrop(rpc);
 
+  // Proposals made to the governor, which cannot list its own.
+  const proposals =
+    config.rpcUrl && config.governor !== ZERO_ADDRESS
+      ? ProposalIndex.start({
+          rpcUrl: config.rpcUrl,
+          chainId: config.chainId,
+          governor: config.governor,
+          fromBlock: config.governorFromBlock,
+        })
+      : null;
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
@@ -90,19 +102,24 @@ async function main(): Promise<void> {
     zap,
     staking:
       config.stakedLms !== ZERO_ADDRESS
-        ? { vault: config.stakedLms, airdrop: airdrop ? config.airdrop : null }
+        ? {
+            vault: config.stakedLms,
+            airdrop: airdrop ? config.airdrop : null,
+            governor: proposals ? config.governor : null,
+            feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
+          }
         : null,
   });
 
   const http = createServer((request, response) => {
-    const claim = airdropResponse(airdrop, request.url ?? '');
-    if (claim) {
+    const route = airdropResponse(airdrop, request.url ?? '') ?? proposalsResponse(proposals, request.url ?? '');
+    if (route) {
       // Read by the client from its own origin, which is not this one.
-      response.writeHead(claim.status, {
+      response.writeHead(route.status, {
         'content-type': 'application/json',
         'access-control-allow-origin': '*',
       });
-      response.end(claim.body);
+      response.end(route.body);
       return;
     }
     if (request.url === '/health') {
@@ -153,22 +170,19 @@ async function main(): Promise<void> {
     console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
   }
 
-  // Harvests fees and buys LMS for stakers. Holds no funds: the router sends
-  // the LMS straight to the vault, and only the router's keeper may call it.
+  // Harvests fees on a timer so they reach stakers. Holds no authority:
+  // `harvest` is open to anyone and pays only where the router already sends.
   let feeKeeper: FeeKeeper | null = null;
-  if (config.rpcUrl && config.keeperPk && config.feeRouter !== ZERO_ADDRESS && config.v4Quoter !== ZERO_ADDRESS) {
+  if (config.rpcUrl && config.keeperPk && config.feeRouter !== ZERO_ADDRESS) {
     const port = await viemFeeRouter({
       rpcUrl: config.rpcUrl,
       chainId: config.chainId,
       router: config.feeRouter,
-      quoter: config.v4Quoter,
       keeperKey: config.keeperPk,
     });
-    if (port) {
-      feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
-      feeKeeper.start(config.feeKeeperPollMs);
-      console.log(`[server] keeping fees for router ${config.feeRouter}`);
-    }
+    feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
+    feeKeeper.start(config.feeKeeperPollMs);
+    console.log(`[server] harvesting fees for router ${config.feeRouter}`);
   }
 
   if (!avatars.empty) {
@@ -182,6 +196,7 @@ async function main(): Promise<void> {
   const shutdown = () => {
     bridge?.stop();
     feeKeeper?.stop();
+    proposals?.stop();
     clearInterval(ticker);
     wss.close();
     http.close();

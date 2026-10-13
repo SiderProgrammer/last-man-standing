@@ -25,7 +25,7 @@
  *   AIRDROP_TOTAL    LMS to distribute, in whole tokens     required
  *   FROM_BLOCK       first block to scan                    default 0
  *   TO_BLOCK         last block to scan                     default latest
- *   AIRDROP_LMS_PER_ETH  reference price for the cap, e.g. the pool's starting price   required
+ *   AIRDROP_LMS_PER_ETH  reference price for the cap: what you expect LMS to trade at   required
  *   AIRDROP_CAP_BPS  most anyone receives, as a share of the
  *                    value of the fees they paid            default 2500 (tolerates a 4× price rise)
  *   AIRDROP_MIN_OPPONENTS  distinct opponents an address must

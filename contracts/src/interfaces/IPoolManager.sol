@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @dev The slice of Uniswap v4 that swaps and protocol-owned liquidity need,
-///      mirrored from `v4-core/src/interfaces/IPoolManager.sol` and
-///      `v4-core/src/types/`.
+/// @dev The slice of Uniswap v4 that an exact-output swap needs, mirrored from
+///      `v4-core/src/interfaces/IPoolManager.sol` and `v4-core/src/types/`.
 ///
 ///      v4 wraps these in user-defined value types — `Currency` and `IHooks`
 ///      are addresses, `BalanceDelta` is an `int256` — which erase to exactly
@@ -28,28 +27,7 @@ struct SwapParams {
     uint160 sqrtPriceLimitX96;
 }
 
-struct ModifyLiquidityParams {
-    int24 tickLower;
-    int24 tickUpper;
-    /// @dev Positive adds liquidity, negative removes it.
-    int256 liquidityDelta;
-    /// @dev Distinguishes positions with the same owner and range.
-    bytes32 salt;
-}
-
 interface IPoolManager {
-    /// @notice Creates a pool at a starting price. Reverts if it already exists.
-    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick);
-
-    /// @notice Adds or removes liquidity for the caller's position. Must run inside `unlock`.
-    /// @return callerDelta Principal and accrued fees together, as a `BalanceDelta`.
-    /// @return feesAccrued The fee part of `callerDelta`, for information.
-    function modifyLiquidity(
-        PoolKey memory key,
-        ModifyLiquidityParams memory params,
-        bytes calldata hookData
-    ) external returns (int256 callerDelta, int256 feesAccrued);
-
     /// @notice Opens a flash-accounting session and calls back
     ///         `IUnlockCallback(msg.sender).unlockCallback(data)`. Every
     ///         currency delta must be zero again when the callback returns.

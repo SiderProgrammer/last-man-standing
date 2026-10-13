@@ -54,9 +54,7 @@ export {
   FeeKeeper,
   feeKeeperPolicy,
   viemFeeRouter,
-  type BuybackOutcome,
   type FeeKeeperPolicy,
-  type FeeKeeperTick,
   type FeeRouterPort,
   type ViemFeeRouterOptions,
 } from './chain/feeKeeper.js';
@@ -66,4 +64,10 @@ export {
   parseAirdropFile,
   type AirdropBook,
 } from './chain/airdropFile.js';
+export {
+  ProposalIndex,
+  proposalsResponse,
+  viemProposalReader,
+  type ProposalReader,
+} from './chain/proposals.js';
 export { config, loadConfig, type ServerConfig } from './config.js';

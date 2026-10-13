@@ -52,26 +52,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     /** Tokens offered through the zap, each with its v4 route to ETH, as JSON. See `chain/zap.ts`. */
     zapTokens: env.ZAP_TOKENS ?? '',
     /**
-     * `FeeRouter` on the hub chain. With `KEEPER_PK` set to the router's keeper
-     * and `V4_QUOTER` set, the server harvests fees and buys LMS for stakers.
-     * Blank disables it. See `chain/feeKeeper.ts`.
+     * `FeeRouter` on the hub chain. With `KEEPER_PK` set, the server harvests
+     * it on a timer so fees reach stakers. Blank disables it; anyone else can
+     * still harvest. See `chain/feeKeeper.ts`.
      */
     feeRouter: (env.FEE_ROUTER ?? ZERO_ADDRESS) as `0x${string}`,
+    feeKeeperPollMs: Number(env.FEE_KEEPER_POLL_MS ?? 60_000),
+    /** Overrides for `DEFAULT_FEE_KEEPER_POLICY`, in wei. Unset keeps the default. */
+    feeKeeper: {
+      minHarvest: optionalBigInt(env.HARVEST_MIN_WEI),
+    },
     /** `StakedLms` on the hub chain. Blank hides the staking panel. */
     stakedLms: (env.STAKED_LMS ?? ZERO_ADDRESS) as `0x${string}`,
     /** `LmsAirdrop` on the hub chain, and the `airdrop.json` its root came from. */
     airdrop: (env.AIRDROP_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
     airdropFile: env.AIRDROP_FILE ?? '',
-    feeKeeperPollMs: Number(env.FEE_KEEPER_POLL_MS ?? 60_000),
-    /** Overrides for `DEFAULT_FEE_KEEPER_POLICY`; amounts in wei. Unset keeps the default. */
-    feeKeeper: {
-      minHarvest: optionalBigInt(env.HARVEST_MIN_WEI),
-      minBuyback: optionalBigInt(env.BUYBACK_MIN_WEI),
-      maxBuyback: optionalBigInt(env.BUYBACK_MAX_WEI),
-      slippageBps: optionalNumber(env.BUYBACK_SLIPPAGE_BPS),
-      maxDeviationBps: optionalNumber(env.BUYBACK_MAX_DEVIATION_BPS),
-      maxLockedShareBps: optionalNumber(env.BUYBACK_MAX_LOCKED_SHARE_BPS),
-    },
+    /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
+    governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
+    /** First block to look for proposals in: the governor's deployment block. */
+    governorFromBlock: optionalBigInt(env.GOVERNOR_FROM_BLOCK) ?? 0n,
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
@@ -82,13 +81,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
 /** Throws on a value that is not an integer, rather than carrying on with garbage. */
 function optionalBigInt(value: string | undefined): bigint | undefined {
   return value === undefined || value === '' ? undefined : BigInt(value);
-}
-
-function optionalNumber(value: string | undefined): number | undefined {
-  if (value === undefined || value === '') return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) throw new Error(`expected a whole number, got ${value}`);
-  return parsed;
 }
 
 export const config = loadConfig();

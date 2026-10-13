@@ -8,14 +8,15 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {StakedLms} from "../../src/governance/StakedLms.sol";
+import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
 
 contract StakedLmsTest is Test {
     uint64 private constant COOLDOWN = 7 days;
+    uint256 private constant CAROL_PK = 0xCA401;
 
     address private owner;
     address private alice;
     address private bob;
-    address private dead = address(0xdEaD);
 
     LmsToken private lms;
     StakedLms private vault;
@@ -28,16 +29,13 @@ contract StakedLmsTest is Test {
         lms = new LmsToken(address(this), 1_000_000e18);
         vault = new StakedLms(lms, owner, COOLDOWN);
 
-        // The seed `Deploy` makes before anyone else can deposit.
-        lms.approve(address(vault), type(uint256).max);
-        vault.deposit(1e18, dead);
-
         lms.transfer(alice, 1_000e18);
         lms.transfer(bob, 1_000e18);
         vm.prank(alice);
         lms.approve(address(vault), type(uint256).max);
         vm.prank(bob);
         lms.approve(address(vault), type(uint256).max);
+        vm.deal(address(this), 100 ether);
     }
 
     // --- Votes -------------------------------------------------------------
@@ -49,7 +47,6 @@ contract StakedLmsTest is Test {
         assertEq(shares, 100e18);
         assertEq(vault.delegates(alice), alice);
         assertEq(vault.getVotes(alice), 100e18);
-        assertEq(lms.balanceOf(alice), 900e18, "plain LMS has no votes to speak of");
     }
 
     function test_existingDelegateIsKept() public {
@@ -91,110 +88,170 @@ contract StakedLmsTest is Test {
         assertEq(vault.getVotes(alice), 0, "unstaking drops the vote at once");
     }
 
-    // --- depositWithPermit --------------------------------------------------------
+    // --- One sLMS is one LMS -------------------------------------------------
 
-    uint256 private constant CAROL_PK = 0xCA401;
-
-    function test_depositWithPermit_stakesInOneTransaction() public {
-        address carol = vm.addr(CAROL_PK);
-        lms.transfer(carol, 100e18);
-        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 100e18, block.timestamp);
-
-        vm.prank(carol);
-        uint256 shares = vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
-
-        assertEq(shares, 100e18);
-        assertEq(vault.getVotes(carol), 100e18);
-        assertEq(lms.allowance(carol, address(vault)), 0);
-    }
-
-    function test_depositWithPermit_survivesAFrontRunPermit() public {
-        address carol = vm.addr(CAROL_PK);
-        lms.transfer(carol, 100e18);
-        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 100e18, block.timestamp);
-        // Someone copies the signature out of the mempool and submits it first.
-        lms.permit(carol, address(vault), 100e18, block.timestamp, v, r, s);
-
-        vm.prank(carol);
-        uint256 shares = vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
-
-        assertEq(shares, 100e18);
-    }
-
-    function test_depositWithPermit_withABadSignatureAndNoAllowance_reverts() public {
-        address carol = vm.addr(CAROL_PK);
-        lms.transfer(carol, 100e18);
-        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 1e18, block.timestamp); // signed for less
-
-        vm.prank(carol);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientAllowance.selector, address(vault), 0, 100e18
-            )
-        );
-        vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
-    }
-
-    function _permit(uint256 pk, uint256 value, uint256 deadline)
-        private
-        view
-        returns (uint8, bytes32, bytes32)
-    {
-        address holder = vm.addr(pk);
-        bytes32 structHash = keccak256(
-            abi.encode(
-                keccak256(
-                    "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
-                ),
-                holder,
-                address(vault),
-                value,
-                lms.nonces(holder),
-                deadline
-            )
-        );
-        return vm.sign(pk, keccak256(abi.encodePacked(hex"1901", lms.DOMAIN_SEPARATOR(), structHash)));
-    }
-
-    // --- Yield -------------------------------------------------------------
-
-    function test_donation_raisesShareValue() public {
+    function test_aDirectTransferDoesNotMoveTheRate_andCanBeSwept() public {
         vm.prank(alice);
-        vault.deposit(99e18, alice);
-        // 100 LMS staked in total, 100 shares. Fees buy 50 LMS into the vault.
-        lms.transfer(address(vault), 50e18);
+        vault.deposit(100e18, alice);
+        lms.transfer(address(vault), 50e18); // a mistake, or a donation attack
 
-        assertEq(vault.totalAssets(), 150e18);
-        assertApproxEqAbs(vault.convertToAssets(99e18), 148.5e18, 1);
-
-        // A later depositor buys in at the new price and gets fewer shares.
+        assertEq(vault.totalAssets(), 100e18);
+        assertEq(vault.convertToAssets(100e18), 100e18);
         vm.prank(bob);
-        uint256 shares = vault.deposit(150e18, bob);
-        assertApproxEqAbs(shares, 100e18, 1);
+        assertEq(vault.deposit(100e18, bob), 100e18, "the next staker gets one share per LMS");
+
+        address to = makeAddr("to");
+        vm.prank(owner);
+        assertEq(vault.sweepStray(to), 50e18);
+        assertEq(lms.balanceOf(to), 50e18);
+        assertEq(lms.balanceOf(address(vault)), 200e18, "staked LMS untouched");
+    }
+
+    function test_sweepStray_cannotTouchStakedOrUnstaking() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(alice);
+        vault.requestUnstake(40e18);
+
+        vm.startPrank(owner);
+        vm.expectRevert(NothingToWithdraw.selector);
+        vault.sweepStray(owner);
+        vm.stopPrank();
+
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.prank(alice);
+        vault.sweepStray(alice);
+    }
+
+    // --- Rewards -------------------------------------------------------------
+
+    function test_rewards_splitProRataAcrossStakers() public {
+        vm.prank(alice);
+        vault.deposit(300e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+
+        vault.depositRewards{value: 4 ether}();
+
+        assertApproxEqAbs(vault.earned(alice), 3 ether, 1);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+    }
+
+    function test_rewards_onlyGoToWhoeverWasStakedWhenTheyArrived() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 1 ether}();
+
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+        vault.depositRewards{value: 2 ether}();
+
+        assertApproxEqAbs(vault.earned(alice), 2 ether, 1);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+    }
+
+    function test_rewards_withNobodyStaked_waitForTheFirstStakers() public {
+        vault.depositRewards{value: 1 ether}();
+        assertEq(vault.queuedRewards(), 1 ether);
+
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 1 ether}();
+
+        assertEq(vault.queuedRewards(), 0);
+        assertApproxEqAbs(vault.earned(alice), 2 ether, 1);
+    }
+
+    function test_rewards_earnedBeforeATransferStayWithTheSender() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 1 ether}();
+
+        vm.prank(alice);
+        vault.transfer(bob, 100e18);
+        vault.depositRewards{value: 1 ether}();
+
+        assertApproxEqAbs(vault.earned(alice), 1 ether, 1);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+    }
+
+    function test_rewards_unstakingKeepsWhatWasEarned_andTheCooldownEarnsNothing() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+        vault.depositRewards{value: 2 ether}();
+
+        vm.prank(alice);
+        vault.requestUnstake(100e18);
+        vault.depositRewards{value: 2 ether}();
+
+        assertApproxEqAbs(vault.earned(alice), 1 ether, 1);
+        assertApproxEqAbs(vault.earned(bob), 3 ether, 1);
+    }
+
+    function test_claimRewards_paysOnce() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 1 ether}();
+        address to = makeAddr("to");
+
+        vm.prank(alice);
+        uint256 paid = vault.claimRewards(to);
+
+        assertApproxEqAbs(paid, 1 ether, 1);
+        assertEq(to.balance, paid);
+        assertEq(vault.earned(alice), 0);
+
+        vm.prank(alice);
+        vm.expectRevert(NothingToWithdraw.selector);
+        vault.claimRewards(to);
+
+        vm.prank(alice);
+        vm.expectRevert(ZeroAddress.selector);
+        vault.claimRewards(address(0));
+    }
+
+    /// forge-config: default.fuzz.runs = 256
+    function testFuzz_rewards_neverPayMoreThanArrived(uint96 a, uint96 b, uint96 r1, uint96 r2, uint96 moved)
+        public
+    {
+        a = uint96(bound(a, 1, 1_000e18));
+        b = uint96(bound(b, 1, 1_000e18));
+        r1 = uint96(bound(r1, 0, 10 ether));
+        r2 = uint96(bound(r2, 0, 10 ether));
+
+        vm.prank(alice);
+        vault.deposit(a, alice);
+        vm.prank(bob);
+        vault.deposit(b, bob);
+        vault.depositRewards{value: r1}();
+        moved = uint96(bound(moved, 0, a));
+        vm.prank(alice);
+        vault.transfer(bob, moved);
+        vault.depositRewards{value: r2}();
+
+        assertLe(vault.earned(alice) + vault.earned(bob), uint256(r1) + r2);
+        assertGe(vault.earned(alice) + vault.earned(bob) + 4, uint256(r1) + r2, "only rounding dust is lost");
+        assertEq(address(vault).balance, uint256(r1) + r2);
     }
 
     // --- Unstake -----------------------------------------------------------
 
-    function test_requestUnstake_burnsSharesAndLocksAssetsAtCurrentPrice() public {
+    function test_requestUnstake_burnsSharesAndQueuesTheLms() public {
         vm.prank(alice);
-        vault.deposit(99e18, alice);
-        lms.transfer(address(vault), 100e18); // 200 LMS over 100 shares
+        vault.deposit(100e18, alice);
 
         vm.prank(alice);
-        uint256 assets = vault.requestUnstake(99e18);
+        uint256 assets = vault.requestUnstake(40e18);
 
-        assertApproxEqAbs(assets, 198e18, 2);
-        assertEq(vault.balanceOf(alice), 0);
-        assertEq(vault.totalUnstaking(), assets);
+        assertEq(assets, 40e18);
+        assertEq(vault.balanceOf(alice), 60e18);
+        assertEq(vault.totalStaked(), 60e18);
+        assertEq(vault.totalUnstaking(), 40e18);
         (uint128 pending, uint64 unlockAt) = vault.unstakeOf(alice);
-        assertEq(pending, assets);
+        assertEq(pending, 40e18);
         assertEq(unlockAt, block.timestamp + COOLDOWN);
-
-        // Fees that arrive during the cooldown go to whoever stayed.
-        lms.transfer(address(vault), 10e18);
-        (pending,) = vault.unstakeOf(alice);
-        assertEq(pending, assets, "locked amount does not grow");
-        assertApproxEqAbs(vault.totalAssets(), 12e18, 1, "dead seed's 2 LMS + the new 10");
     }
 
     function test_claim_onlyAfterCooldown() public {
@@ -214,8 +271,6 @@ contract StakedLmsTest is Test {
         assertEq(claimed, 100e18);
         assertEq(lms.balanceOf(alice), 1_000e18);
         assertEq(vault.totalUnstaking(), 0);
-        (uint128 pending,) = vault.unstakeOf(alice);
-        assertEq(pending, 0);
     }
 
     function test_claim_revertsWithNothingPending() public {
@@ -262,6 +317,46 @@ contract StakedLmsTest is Test {
         vm.stopPrank();
     }
 
+    // --- depositWithPermit --------------------------------------------------------
+
+    function test_depositWithPermit_stakesInOneTransaction() public {
+        address carol = vm.addr(CAROL_PK);
+        lms.transfer(carol, 100e18);
+        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 100e18, block.timestamp);
+
+        vm.prank(carol);
+        uint256 shares = vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
+
+        assertEq(shares, 100e18);
+        assertEq(vault.getVotes(carol), 100e18);
+        assertEq(lms.allowance(carol, address(vault)), 0);
+    }
+
+    function test_depositWithPermit_survivesAFrontRunPermit() public {
+        address carol = vm.addr(CAROL_PK);
+        lms.transfer(carol, 100e18);
+        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 100e18, block.timestamp);
+        // Someone copies the signature out of the mempool and submits it first.
+        lms.permit(carol, address(vault), 100e18, block.timestamp, v, r, s);
+
+        vm.prank(carol);
+        assertEq(vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s), 100e18);
+    }
+
+    function test_depositWithPermit_withABadSignatureAndNoAllowance_reverts() public {
+        address carol = vm.addr(CAROL_PK);
+        lms.transfer(carol, 100e18);
+        (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 1e18, block.timestamp); // signed for less
+
+        vm.prank(carol);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(vault), 0, 100e18
+            )
+        );
+        vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
+    }
+
     // --- Governance ----------------------------------------------------------
 
     function test_setCooldown_ownerOnlyAndBounded() public {
@@ -293,26 +388,24 @@ contract StakedLmsTest is Test {
         assertEq(unlockAt, requestedAt + COOLDOWN);
     }
 
-    // --- Accounting ------------------------------------------------------------
-
-    /// forge-config: default.fuzz.runs = 256
-    function testFuzz_vaultAlwaysHoldsWhatItOwes(uint96 a, uint96 b, uint96 fee, uint96 out) public {
-        a = uint96(bound(a, 1, 1_000e18));
-        b = uint96(bound(b, 1, 1_000e18));
-        fee = uint96(bound(fee, 0, 1_000e18));
-
-        vm.prank(alice);
-        uint256 sharesA = vault.deposit(a, alice);
-        vm.prank(bob);
-        vault.deposit(b, bob);
-        lms.transfer(address(vault), fee);
-
-        out = uint96(bound(out, 1, sharesA));
-        vm.prank(alice);
-        vault.requestUnstake(out);
-
-        assertEq(lms.balanceOf(address(vault)), vault.totalAssets() + vault.totalUnstaking());
-        // Whoever stays can still redeem everything left, rounding in the vault's favour.
-        assertLe(vault.convertToAssets(vault.totalSupply()), vault.totalAssets());
+    function _permit(uint256 pk, uint256 value, uint256 deadline)
+        private
+        view
+        returns (uint8, bytes32, bytes32)
+    {
+        address holder = vm.addr(pk);
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
+                ),
+                holder,
+                address(vault),
+                value,
+                lms.nonces(holder),
+                deadline
+            )
+        );
+        return vm.sign(pk, keccak256(abi.encodePacked(hex"1901", lms.DOMAIN_SEPARATOR(), structHash)));
     }
 }

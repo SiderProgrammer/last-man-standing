@@ -4,7 +4,8 @@ import { toast } from '../ui/chrome.js';
 import { parseLms, stakingPanel, type AirdropState, type StakingPosition } from '../ui/staking.js';
 
 /**
- * The staking panel: claim the airdrop, stake, unstake, withdraw.
+ * The staking panel: claim the airdrop, stake, unstake, withdraw, and claim
+ * the ETH that staking earns.
  *
  * Reads the chain through the player's own wallet and the airdrop proof from
  * the game server; neither is trusted for anything the contracts do not check
@@ -27,6 +28,7 @@ export function wireStakingControls(origin: string): void {
   dom.stakeLms.onclick = () => void act('Staked.', stake());
   dom.unstakeLms.onclick = () => void act('Unstake requested. Your vote stops now.', unstake());
   dom.withdrawUnstaked.onclick = () => void act('Withdrawn to your wallet.', withdraw());
+  dom.claimRewards.onclick = () => void act('ETH sent to your wallet.', claimRewards());
 }
 
 export async function renderStakingPanel(): Promise<void> {
@@ -60,7 +62,9 @@ export async function renderStakingPanel(): Promise<void> {
     error,
   });
   dom.stakingPanel.classList.toggle('hidden', !view.visible);
-  dom.stakingRate.textContent = view.rate;
+  dom.stakingRewards.textContent = view.rewards;
+  dom.claimRewards.classList.toggle('hidden', !view.claimRewardsVisible);
+  dom.claimRewards.disabled = busy;
   dom.stakingSummary.textContent = view.summary;
   dom.airdropRow.classList.toggle('hidden', !view.airdrop.visible);
   dom.airdropText.textContent = view.airdrop.text;
@@ -129,6 +133,13 @@ async function unstake(): Promise<`0x${string}` | null> {
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
   return wallet.requestUnstake(vault, sharesForUnstake(amount, position.shares, position.value));
+}
+
+async function claimRewards(): Promise<`0x${string}` | null> {
+  const wallet = app.wallet;
+  const vault = app.staking?.vault;
+  if (!wallet || !vault) return null;
+  return wallet.claimRewards(vault);
 }
 
 async function withdraw(): Promise<`0x${string}` | null> {

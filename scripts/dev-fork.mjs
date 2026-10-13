@@ -10,7 +10,7 @@
  *   1. builds the TypeScript packages the server runs from,
  *   2. starts anvil forking mainnet, as chain 31337,
  *   3. deploys the protocol with `Deploy.s.sol`, including `ZapJoin` against
- *      the real v4 `PoolManager` and a seeded LMS/ETH pool for fee buybacks,
+ *      the real v4 `PoolManager`, plus the staking, fee and governance contracts,
  *   4. plays the randomness oracle: every `lockMatch` gets its seed a block
  *      later, as it would from Chainlink VRF,
  *   5. funds the browser's dev burner (and `FORK_PLAYER`, if set) with USDC,
@@ -36,6 +36,7 @@ import {
   createPublicClient,
   createWalletClient,
   encodeAbiParameters,
+  encodeFunctionData,
   formatUnits,
   http,
   keccak256,
@@ -125,8 +126,20 @@ const erc20 = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
 ]);
 const vaultAbi = parseAbi(['function deposit(uint256 assets, address receiver) returns (uint256)']);
-/** Staked by the operator, so fee buybacks have someone to buy for. See `FeeKeeperPolicy.maxLockedShareBps`. */
-const OPERATOR_STAKE = '10000';
+/** Staked by the operator: enough to clear the 100,000 sLMS proposal threshold. */
+const OPERATOR_STAKE = '200000';
+/** Staked for each funded player, so they can vote on the demo proposal from the start. */
+const PLAYER_STAKE = '1000';
+const governorAbi = parseAbi([
+  'function propose(address[] targets, uint256[] values, bytes[] calldatas, string description) returns (uint256)',
+]);
+const feeRouterSetterAbi = parseAbi(['function setStakerBps(uint16 stakerBps)']);
+const DEMO_PROPOSAL = [
+  "# Raise the stakers' share of fees to 60%",
+  '',
+  'A demo proposal created by `npm run dev:fork`. Voting opens a minute after',
+  'the fork starts and closes thirty minutes later.',
+].join('\n');
 /** Airdropped to each funded player, so the claim flow can be tried at once. */
 const DEV_AIRDROP_LMS = '250';
 const lmsTransferAbi = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
@@ -283,16 +296,17 @@ function deploy() {
   const deployKeys = [
     ...['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
     ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
-    ...['KEEPER', 'STAKER_FEE_BPS', 'LMS_POOL_FEE', 'LMS_POOL_TICK_SPACING', 'LIQUIDITY_ETH', 'LIQUIDITY_LMS'],
+    ...['STAKER_FEE_BPS'],
   ];
   for (const key of deployKeys) {
     delete env[key];
   }
-  // The operator runs the fee keeper too, and seeds the LMS/ETH pool at
-  // 100,000 LMS per ETH so buybacks work from the first settled match.
-  env.KEEPER = privateKeyToAccount(OPERATOR_KEY).address;
-  env.LIQUIDITY_ETH = parseEther('10').toString();
-  env.LIQUIDITY_LMS = parseEther('1000000').toString();
+  // Votes that open in a minute and last half an hour, so a proposal can be
+  // voted on, and run to completion, in one sitting.
+  env.VOTING_DELAY = '60';
+  env.VOTING_PERIOD = '1800';
+  // Low enough that each dev player's 1,000 staked LMS can make a proposal.
+  env.PROPOSAL_THRESHOLD = parseEther(PLAYER_STAKE).toString();
   run('forge script', 'forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast'], {
     cwd: CONTRACTS,
     env,
@@ -308,6 +322,8 @@ function deploy() {
   if (!addresses.GameEscrow || !addresses.ZapJoin || !addresses.MockRandomnessOracle || !addresses.FeeRouter) {
     fail('Deploy did not produce a GameEscrow, a ZapJoin, a MockRandomnessOracle and a FeeRouter.');
   }
+  // Where the server starts looking for proposals.
+  addresses.deployBlock = Math.min(...broadcast.receipts.map((receipt) => Number(receipt.blockNumber)));
   return addresses;
 }
 
@@ -344,6 +360,15 @@ async function fundToken(publicClient, token, holder) {
 async function seed(publicClient, escrow) {
   const player = privateKeyToAccount(PLAYER_KEY).address;
   const holders = [player];
+  // Anvil's dev keys are public, and on mainnet someone has delegated these
+  // accounts (EIP-7702) to a sweeper that forwards every incoming wei
+  // elsewhere. The fork inherits that code, so winnings, fee shares and staking
+  // rewards would vanish the moment they arrived. Clear it: these accounts are
+  // plain EOAs here. `FORK_PLAYER` is left alone; its delegation, if any, is
+  // its owner's.
+  for (const account of [player, privateKeyToAccount(OPERATOR_KEY).address]) {
+    await rpc('anvil_setCode', [account, '0x']);
+  }
   if (EXTRA_PLAYER) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(EXTRA_PLAYER)) fail(`FORK_PLAYER is not an address: ${EXTRA_PLAYER}`);
     holders.push(EXTRA_PLAYER);
@@ -367,12 +392,6 @@ async function seed(publicClient, escrow) {
   return holders;
 }
 
-/**
- * Stakes some of the LMS supply as the operator. With no `SAFE` on a local
- * node the operator *is* the Safe and holds the supply. Without stakers the
- * fee keeper holds buybacks back, because they would only enrich the vault's
- * locked seed.
- */
 /**
  * A dev airdrop for the funded players, so the claim flow works the moment the
  * page opens. A real one comes from `npm run airdrop`, which needs a history
@@ -418,16 +437,46 @@ async function devAirdrop(publicClient, addresses, holders) {
   return { address, file };
 }
 
-async function stakeAsOperator(publicClient, lms, vault) {
+/**
+ * Stakes part of the LMS supply: the operator's own stake, enough to propose,
+ * and some for each funded player so they can vote and earn from the first
+ * match. With no `SAFE` on a local node the operator *is* the Safe and holds
+ * the supply.
+ */
+async function stakeAsOperator(publicClient, lms, vault, holders) {
   const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
-  const amount = parseEther(OPERATOR_STAKE);
-  for (const [address, abi, functionName, args] of [
-    [lms, erc20, 'approve', [vault, amount]],
-    [vault, vaultAbi, 'deposit', [amount, operator.account.address]],
-  ]) {
+  const own = parseEther(OPERATOR_STAKE);
+  const each = parseEther(PLAYER_STAKE);
+  const calls = [
+    [lms, erc20, 'approve', [vault, own + each * BigInt(holders.length)]],
+    [vault, vaultAbi, 'deposit', [own, operator.account.address]],
+    // Deposited *for* each player: the shares, and the votes, are theirs.
+    ...holders.map((holder) => [vault, vaultAbi, 'deposit', [each, holder]]),
+  ];
+  for (const [address, abi, functionName, args] of calls) {
     const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });
     await publicClient.waitForTransactionReceipt({ hash });
   }
+}
+
+/**
+ * Proposes raising the stakers' share of fees, so the governance screen has
+ * something to vote on. The operator holds enough sLMS to clear the threshold.
+ */
+async function demoProposal(publicClient, governor, router) {
+  // Voting power is read one second in the past, and the stake above may
+  // share a timestamp with this transaction: step the clock first.
+  await rpc('evm_increaseTime', [2]);
+  await rpc('evm_mine', []);
+  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
+  const hash = await operator.writeContract({
+    chain: null,
+    address: governor,
+    abi: governorAbi,
+    functionName: 'propose',
+    args: [[router], [0n], [encodeFunctionData({ abi: feeRouterSetterAbi, functionName: 'setStakerBps', args: [6_000] })], DEMO_PROPOSAL],
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
 }
 
 /**
@@ -503,8 +552,9 @@ async function main() {
 
   log('fork', 'Funding players and opening lobbies…');
   const holders = await seed(publicClient, addresses.GameEscrow);
-  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms);
+  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms, holders);
   const airdrop = await devAirdrop(publicClient, addresses, holders);
+  await demoProposal(publicClient, addresses.LmsGovernor, addresses.FeeRouter);
 
   start('server', process.execPath, ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], {
     tagged: false,
@@ -519,15 +569,16 @@ async function main() {
       ZAP_JOIN: addresses.ZapJoin,
       V4_QUOTER,
       ZAP_TOKENS: zapTokens(),
-      // Harvest and buy back after every match, rather than waiting for the
-      // production thresholds a dev lobby's fees would never reach.
+      // Harvest after every match, rather than waiting for the production
+      // threshold a dev lobby's fees would never reach.
       FEE_ROUTER: addresses.FeeRouter,
       STAKED_LMS: addresses.StakedLms,
       AIRDROP_ADDRESS: airdrop.address,
       AIRDROP_FILE: airdrop.file,
+      GOVERNOR_ADDRESS: addresses.LmsGovernor,
+      GOVERNOR_FROM_BLOCK: String(addresses.deployBlock),
       FEE_KEEPER_POLL_MS: '10000',
       HARVEST_MIN_WEI: '1',
-      BUYBACK_MIN_WEI: '1',
       // One-click play: anvil's fork runs the latest hardfork, so EIP-7702 works.
       SESSION_DELEGATE: addresses.SessionKeyDelegate,
       AVATAR_COLLECTIONS: JSON.stringify([

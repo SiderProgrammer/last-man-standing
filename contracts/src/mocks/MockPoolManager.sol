@@ -2,16 +2,9 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import {
-    IPoolManager,
-    IUnlockCallback,
-    ModifyLiquidityParams,
-    PoolKey,
-    SwapParams
-} from "../interfaces/IPoolManager.sol";
+import {IPoolManager, IUnlockCallback, PoolKey, SwapParams} from "../interfaces/IPoolManager.sol";
 
 /// @notice Test double for the Uniswap v4 `PoolManager`.
 /// @dev Models the parts an integrator depends on rather than the AMM:
@@ -19,14 +12,11 @@ import {
 ///        - flash accounting: every swap, settle and take moves a per-currency
 ///          delta, and `unlock` reverts unless all of them are back to zero;
 ///        - `sync`/`settle` credit only what actually arrived;
-///        - a swap that runs out of liquidity stops short instead of
-///          reverting, as v4 does.
+///        - an exact-output swap that runs out of liquidity stops short
+///          instead of reverting, as v4 does.
 ///
-///      Each pool trades at a fixed rate, set with `setPool` or by
-///      `initialize`, and pays out of this contract's own balances, so a test
-///      must fund it first. Liquidity is bookkeeping only: `modifyLiquidity`
-///      charges or pays the full-range amounts at the initial price and never
-///      moves it.
+///      Each pool trades at a fixed rate, set with `setPool`, and pays out of
+///      this contract's own balances, so a test must fund it first.
 contract MockPoolManager is IPoolManager {
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -36,15 +26,11 @@ contract MockPoolManager is IPoolManager {
         uint256 rate;
         /// @dev Largest output one swap can produce; zero means unlimited.
         uint256 maxOut;
-        /// @dev Set by `initialize` only; `setPool` pools cannot take liquidity.
-        uint160 sqrtPriceX96;
     }
 
     uint256 private constant ONE = 1e18;
-    uint256 private constant Q96 = 1 << 96;
 
     mapping(bytes32 poolId => Pool) public pools;
-    mapping(bytes32 positionId => uint256) public positionLiquidity;
 
     bool private unlocked;
     address[] private touched;
@@ -58,56 +44,10 @@ contract MockPoolManager is IPoolManager {
     error ManagerLocked();
     error PoolNotInitialized();
     error CurrencyNotSettled();
-    error ZeroAmount();
-    error PoolAlreadyInitialized();
-    error InsufficientPosition();
+    error NotExactOutput();
 
     function setPool(PoolKey calldata key, uint256 rate, uint256 maxOut) external {
-        pools[keccak256(abi.encode(key))] = Pool({rate: rate, maxOut: maxOut, sqrtPriceX96: 0});
-    }
-
-    /// @inheritdoc IPoolManager
-    function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24) {
-        bytes32 id = keccak256(abi.encode(key));
-        if (pools[id].rate != 0) revert PoolAlreadyInitialized();
-        uint256 rate = Math.mulDiv(Math.mulDiv(sqrtPriceX96, sqrtPriceX96, Q96), ONE, Q96);
-        pools[id] = Pool({rate: rate, maxOut: 0, sqrtPriceX96: sqrtPriceX96});
-        return 0;
-    }
-
-    /// @inheritdoc IPoolManager
-    /// @dev Full-range amounts with the range bounds ignored: currency0 is
-    ///      `L / sqrtP`, currency1 is `L * sqrtP`. Adding rounds up and
-    ///      removing rounds down, in the pool's favour, as v4 does.
-    function modifyLiquidity(PoolKey memory key, ModifyLiquidityParams memory params, bytes calldata)
-        external
-        returns (int256 callerDelta, int256 feesAccrued)
-    {
-        if (!unlocked) revert ManagerLocked();
-        Pool memory pool = pools[keccak256(abi.encode(key))];
-        if (pool.sqrtPriceX96 == 0) revert PoolNotInitialized();
-
-        bytes32 position =
-            keccak256(abi.encode(key, msg.sender, params.tickLower, params.tickUpper, params.salt));
-        bool add = params.liquidityDelta > 0;
-        uint256 amount = (add ? params.liquidityDelta : -params.liquidityDelta).toUint256();
-        Math.Rounding rounding = add ? Math.Rounding.Ceil : Math.Rounding.Floor;
-        uint256 amount0 = Math.mulDiv(amount, Q96, pool.sqrtPriceX96, rounding);
-        uint256 amount1 = Math.mulDiv(amount, pool.sqrtPriceX96, Q96, rounding);
-
-        if (add) {
-            positionLiquidity[position] += amount;
-            _account(key.currency0, -amount0.toInt256());
-            _account(key.currency1, -amount1.toInt256());
-            callerDelta = _pack(-amount0.toInt256().toInt128(), -amount1.toInt256().toInt128());
-        } else {
-            if (positionLiquidity[position] < amount) revert InsufficientPosition();
-            positionLiquidity[position] -= amount;
-            _account(key.currency0, amount0.toInt256());
-            _account(key.currency1, amount1.toInt256());
-            callerDelta = _pack(amount0.toInt256().toInt128(), amount1.toInt256().toInt128());
-        }
-        feesAccrued = 0;
+        pools[keccak256(abi.encode(key))] = Pool({rate: rate, maxOut: maxOut});
     }
 
     /// @inheritdoc IPoolManager
@@ -125,36 +65,23 @@ contract MockPoolManager is IPoolManager {
     }
 
     /// @inheritdoc IPoolManager
-    /// @dev Exact output for `ZapJoin`, exact input for `FeeRouter`.
+    /// @dev Exact output only, which is all `ZapJoin` asks for.
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata)
         external
         returns (int256 swapDelta)
     {
         if (!unlocked) revert ManagerLocked();
-        if (params.amountSpecified == 0) revert ZeroAmount();
+        if (params.amountSpecified <= 0) revert NotExactOutput();
 
         Pool memory pool = pools[keccak256(abi.encode(key))];
         if (pool.rate == 0) revert PoolNotInitialized();
 
-        uint256 amountIn;
-        uint256 amountOut;
-        if (params.amountSpecified > 0) {
-            amountOut = params.amountSpecified.toUint256();
-        } else {
-            amountIn = (-params.amountSpecified).toUint256();
-            // Rounded down, in the pool's favour, as a real exact-input quote is.
-            amountOut = params.zeroForOne ? amountIn * pool.rate / ONE : amountIn * ONE / pool.rate;
-        }
+        uint256 amountOut = params.amountSpecified.toUint256();
+        if (pool.maxOut != 0 && amountOut > pool.maxOut) amountOut = pool.maxOut;
 
-        // Out of liquidity: stop short, charging only for what was delivered.
-        bool drained = pool.maxOut != 0 && amountOut > pool.maxOut;
-        if (drained) amountOut = pool.maxOut;
-        if (params.amountSpecified > 0 || drained) {
-            // Rounded up, in the pool's favour, as a real exact-output quote is.
-            amountIn = params.zeroForOne
-                ? _ceilDiv(amountOut * ONE, pool.rate)
-                : _ceilDiv(amountOut * pool.rate, ONE);
-        }
+        // Rounded up, in the pool's favour, as a real exact-output quote is.
+        uint256 amountIn =
+            params.zeroForOne ? _ceilDiv(amountOut * ONE, pool.rate) : _ceilDiv(amountOut * pool.rate, ONE);
 
         (address currencyIn, address currencyOut) =
             params.zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
