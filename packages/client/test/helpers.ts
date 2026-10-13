@@ -1,5 +1,6 @@
 import { keccak256, toHex } from 'viem';
 import {
+  DEFAULT_RULES,
   MatchPhase,
   type ActionValue,
   type PublicMatchState,
@@ -49,6 +50,8 @@ export function stateWith(
 ): PublicMatchState {
   return {
     matchId: bytes32('match'),
+    seed: bytes32('seed'),
+    rules: DEFAULT_RULES,
     phase: MatchPhase.Commit,
     round: history.length + 1,
     players: Array.from({ length: seatCount }, (_, index) => ({

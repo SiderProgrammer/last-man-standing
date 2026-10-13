@@ -10,6 +10,7 @@ import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
+import { createJournal } from './lobby/journal.js';
 import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
@@ -20,6 +21,7 @@ const TICK_MS = 250;
 
 async function main(): Promise<void> {
   const archive = await createArchive(config.databaseUrl);
+  const journal = await createJournal(config.databaseUrl);
   const relayer = relayerFromEnv();
 
   const avatarCollections = parseCollections(config.avatarCollections);
@@ -35,7 +37,15 @@ async function main(): Promise<void> {
     revealMs: config.revealMs,
     replayMs: config.replayMs,
     avatars,
+    journal,
+    maxPracticeRooms: config.maxPracticeRooms,
   });
+
+  // Before the bridge starts: a room the journal brings back must already be
+  // in the lobby when the bridge sees its match is live, or it would open a
+  // second, empty room for it.
+  const restored = await lobby.restore();
+  if (restored > 0) console.log(`[server] resumed ${restored} live match(es) from the journal`);
 
   const bridge = config.onChain
     ? ChainBridge.start({
@@ -54,14 +64,16 @@ async function main(): Promise<void> {
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
 
-  // Pays gas for session-authorised calls. It holds no authority over any
-  // player account: the delegate checks the session signature on-chain.
+  // Pays gas for session-authorised calls and for pushing payouts. It holds no
+  // authority over any player account: the delegate checks the session
+  // signature on-chain, and `withdrawFor` only ever pays the account itself.
   const sessionRelayer =
-    rpc && config.keeperPk && config.sessionDelegate !== ZERO_ADDRESS
+    rpc && config.keeperPk && (config.sessionDelegate !== ZERO_ADDRESS || config.onChain)
       ? createSessionRelayer({
           rpcUrl: config.rpcUrl,
           chainId: config.chainId,
           relayerKey: config.keeperPk,
+          ...(config.onChain ? { escrow: config.escrow } : {}),
         })
       : nullSessionRelayer;
 

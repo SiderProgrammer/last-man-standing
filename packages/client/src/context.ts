@@ -34,6 +34,8 @@ export interface AppState {
   session: Session | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /** True when the server pays the gas to push payouts. */
+  collect: boolean;
   match: PublicMatchState | null;
   /**
    * Avatars for the current match, held here rather than pushed straight at the
@@ -72,6 +74,7 @@ export const app: AppState = {
   sessionDelegate: null,
   session: null,
   zap: null,
+  collect: false,
   match: null,
   avatars: [],
   you: null,

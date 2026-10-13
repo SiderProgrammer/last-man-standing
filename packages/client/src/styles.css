@@ -389,3 +389,27 @@ button.wide {
   transform: scaleX(0);
   transform-origin: left center;
 }
+
+.pill.ok {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill.bad {
+  border-color: #c0392b;
+  color: #e57368;
+}
+
+.result-ranking {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.result-ranking li {
+  padding: 2px 0;
+}
+
+.result-ranking li.winner {
+  color: var(--accent);
+  font-weight: 600;
+}

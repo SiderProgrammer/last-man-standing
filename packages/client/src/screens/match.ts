@@ -14,6 +14,7 @@ import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { readsTable, targetOptions } from '../ui/views.js';
+import { hideResult, showResult } from './result.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -87,6 +88,7 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   if (winner !== undefined) arena?.showWinner(winner);
   forgetMatch(message.result.matchId);
   lockControls('Match finished.');
+  if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
 }
 
 export function onState(
@@ -110,6 +112,7 @@ export function onState(
     app.replaying = false;
     app.pendingFinish = null;
     dom.feed.replaceChildren();
+    hideResult();
     showMatchScreen();
   }
 

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { verifyMessage } from 'viem';
 import {
   AUTH_PREFIX,
+  MAX_CLIENT_FRAME_BYTES,
   errorMessage,
   isActionValue,
   type AvatarCollectionInfo,
@@ -48,9 +49,22 @@ export interface Socket {
 
 const OPEN = 1;
 
+/**
+ * Per-connection message budget: a token bucket refilled at `RATE_PER_SECOND`
+ * up to `BURST`. Generous for a human — a round is a commit and a reveal — and
+ * tight enough that one socket cannot make the server spin on its frames.
+ */
+const RATE_PER_SECOND = 10;
+const BURST = 30;
+/** One `collect` per connection per window: each one can cost the relayer gas. */
+const COLLECT_COOLDOWN_MS = 30_000;
+
 interface Session extends Client {
   readonly nonce: string;
   socket: Socket;
+  tokens: number;
+  refilledAt: number;
+  lastCollectAt: number;
 }
 
 export interface GatewayOptions {
@@ -100,6 +114,9 @@ export class Gateway {
       address: null,
       nonce: randomBytes(16).toString('hex'),
       send: (message) => this.write(socket, message),
+      tokens: BURST,
+      refilledAt: this.options.now?.() ?? Date.now(),
+      lastCollectAt: Number.NEGATIVE_INFINITY,
     };
     this.sessions.set(socket, session);
     session.send({
@@ -110,10 +127,20 @@ export class Gateway {
       avatarCollections: this.options.avatarCollections ?? [],
       sessionDelegate: this.options.sessionDelegate ?? null,
       zap: this.options.zap ?? null,
+      collect: this.options.relayer?.canCollect ?? false,
     });
 
     socket.onMessage((data: unknown) => {
-      void this.dispatch(session, String(data)).catch((error: unknown) => {
+      const raw = String(data);
+      if (raw.length > MAX_CLIENT_FRAME_BYTES) {
+        session.send(errorFrame(new Error('message too large')));
+        return;
+      }
+      if (!this.spend(session)) {
+        session.send(errorFrame(new Error('slow down: too many messages')));
+        return;
+      }
+      void this.dispatch(session, raw).catch((error: unknown) => {
         session.send(errorFrame(error));
       });
     });
@@ -177,6 +204,19 @@ export class Gateway {
         session.send({ type: 'relayed', hash });
         return;
       }
+      case 'collect': {
+        const relayer = this.options.relayer;
+        if (!relayer?.canCollect) throw new Error('this server does not push payouts');
+        if (now - session.lastCollectAt < COLLECT_COOLDOWN_MS) {
+          throw new Error('a payout was just requested; give it a moment');
+        }
+        session.lastCollectAt = now;
+        // Always the authenticated account: `withdrawFor` pays the account
+        // itself, so there is nothing else a client could ask for here.
+        const hash = await relayer.collect(address);
+        session.send({ type: 'relayed', hash });
+        return;
+      }
       case 'commit': {
         this.requireRoom(address).submitCommit(address, message.commitment, now);
         return;
@@ -194,6 +234,17 @@ export class Gateway {
         throw new Error('unsupported message');
       }
     }
+  }
+
+  /** Takes one message from the session's bucket. False when it is empty. */
+  private spend(session: Session): boolean {
+    const now = this.options.now?.() ?? Date.now();
+    const elapsed = Math.max(0, now - session.refilledAt);
+    session.tokens = Math.min(BURST, session.tokens + (elapsed * RATE_PER_SECOND) / 1000);
+    session.refilledAt = now;
+    if (session.tokens < 1) return false;
+    session.tokens -= 1;
+    return true;
   }
 
   private requireRoom(address: `0x${string}`) {

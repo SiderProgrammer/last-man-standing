@@ -15,6 +15,7 @@ import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
 import type { MatchArchive } from './store.js';
+import type { RoundJournal } from './journal.js';
 import type { Relayer } from '../chain/attestor.js';
 
 export interface LobbyOptions {
@@ -27,7 +28,13 @@ export interface LobbyOptions {
   rules?: Rules;
   /** Resolves the NFT avatars seats are wearing. Omitted, nobody wears one. */
   avatars?: AvatarRegistry;
+  /** Persists staked rooms so a restart can resume them. Omitted, nothing survives one. */
+  journal?: RoundJournal;
+  /** Ceiling on practice rooms across all wallets. Defaults to 200. */
+  maxPracticeRooms?: number;
 }
+
+const DEFAULT_MAX_PRACTICE_ROOMS = 200;
 
 /**
  * Registry of live rooms.
@@ -39,6 +46,8 @@ export interface LobbyOptions {
  */
 export class Lobby {
   private readonly rooms = new Map<string, Room>();
+  /** The one practice room each wallet may hold, keyed by address. */
+  private readonly practiceOf = new Map<string, string>();
   private practiceNonce = 0n;
 
   constructor(private readonly options: LobbyOptions) {}
@@ -63,7 +72,26 @@ export class Lobby {
     return null;
   }
 
+  /**
+   * Opens a practice room against house bots.
+   *
+   * One per wallet: asking for another ends the previous one, which is what a
+   * player clicking "practice" again means anyway. And a global ceiling, so a
+   * flood of fresh wallets cannot grow the room table without bound — each room
+   * holds a match, a bot driver and a timer.
+   */
   createPractice(human: `0x${string}`, opponents: number, now: number = Date.now()): Room {
+    const owner = human.toLowerCase();
+    const previous = this.practiceOf.get(owner);
+    if (previous) {
+      this.rooms.delete(previous);
+      this.practiceOf.delete(owner);
+    }
+    const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
+    if (this.practiceOf.size >= ceiling) {
+      throw new Error('the server is at its practice-room limit; try again shortly');
+    }
+
     const rules = this.options.rules ?? DEFAULT_RULES;
     const seatCount = clamp(opponents + 1, rules.minPlayers, rules.maxPlayers);
     const matchId = deriveMatchId(PRACTICE_CHAIN_ID, ZERO_ADDRESS, this.practiceNonce++);
@@ -80,18 +108,50 @@ export class Lobby {
       rules,
     };
 
-    return this.open(
+    const room = this.open(
       setup,
       Array.from({ length: seatCount - 1 }, (_, i) => i + 1),
       now,
+      false,
     );
+    this.practiceOf.set(owner, room.matchId.toLowerCase());
+    return room;
   }
 
   /** Starts a room for a match whose stakes are already escrowed on-chain. */
   adopt(setup: MatchSetup, botSeats: readonly number[] = [], now: number = Date.now()): Room {
     const existing = this.get(setup.matchId);
     if (existing) return existing;
-    return this.open(setup, botSeats, now);
+    return this.open(setup, botSeats, now, true);
+  }
+
+  /**
+   * Rebuilds every staked room the journal still holds, after a restart.
+   * Returns how many came back. A room that fails to replay is dropped from
+   * the journal and logged: its escrow still refunds everyone at the deadline.
+   */
+  async restore(now: number = Date.now()): Promise<number> {
+    const journal = this.options.journal;
+    if (!journal) return 0;
+    let restored = 0;
+    for (const entry of await journal.live()) {
+      try {
+        const room = Room.restore(
+          entry.setup,
+          this.roomOptions(entry.botSeats, entry.setup.matchId, true),
+          entry.openedAt,
+          entry.events,
+          now,
+        );
+        this.rooms.set(room.matchId.toLowerCase(), room);
+        void this.decorate(room, entry.setup);
+        restored += 1;
+      } catch (error) {
+        console.error(`[lobby] could not restore ${entry.setup.matchId}:`, errorMessage(error));
+        journal.close(entry.setup.matchId);
+      }
+    }
+    return restored;
   }
 
   tick(now: number = Date.now()): void {
@@ -99,7 +159,12 @@ export class Lobby {
       room.tick(now);
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
-      if (room.finished && now > room.deadline + 60_000) this.rooms.delete(key);
+      if (room.finished && now > room.deadline + 60_000) {
+        this.rooms.delete(key);
+        for (const [owner, matchKey] of this.practiceOf) {
+          if (matchKey === key) this.practiceOf.delete(owner);
+        }
+      }
     }
   }
 
@@ -110,21 +175,33 @@ export class Lobby {
     return room;
   }
 
-  private open(setup: MatchSetup, botSeats: readonly number[], now: number): Room {
-    const options: RoomOptions = {
+  /**
+   * @param staked Whether the room holds escrowed stakes. Only those are
+   *        journaled and settled: a practice room lost to a restart costs
+   *        nobody anything.
+   */
+  private open(setup: MatchSetup, botSeats: readonly number[], now: number, staked: boolean): Room {
+    if (staked) {
+      this.options.journal?.open(setup.matchId, { setup, botSeats: [...botSeats], openedAt: now });
+    }
+    const room = new Room(setup, this.roomOptions(botSeats, setup.matchId, staked), now);
+    this.rooms.set(room.matchId.toLowerCase(), room);
+    void this.decorate(room, setup);
+    return room;
+  }
+
+  private roomOptions(botSeats: readonly number[], matchId: `0x${string}`, staked: boolean): RoomOptions {
+    const journal = staked ? this.options.journal : undefined;
+    return {
       commitMs: this.options.commitMs,
       revealMs: this.options.revealMs,
       replayMs: this.options.replayMs ?? 0,
       botSeats,
       onFinished: (result, history) => {
-        void this.finalise(result, history);
+        void this.finalise(result, history, staked);
       },
+      ...(journal ? { journal: (event) => journal.append(matchId, event) } : {}),
     };
-
-    const room = new Room(setup, options, now);
-    this.rooms.set(room.matchId.toLowerCase(), room);
-    void this.decorate(room, setup);
-    return room;
   }
 
   /**
@@ -150,6 +227,7 @@ export class Lobby {
   private async finalise(
     result: MatchResult,
     history: readonly RoundRecord[],
+    staked: boolean,
   ): Promise<void> {
     let settledTx: string | null = null;
     try {
@@ -160,6 +238,10 @@ export class Lobby {
       console.error('[lobby] settlement failed', errorMessage(error));
     }
     await this.options.archive.save({ result, history, settledTx });
+    if (staked) {
+      this.options.journal?.close(result.matchId);
+      this.get(result.matchId)?.announceSettled(settledTx as `0x${string}` | null);
+    }
   }
 }
 

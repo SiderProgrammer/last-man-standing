@@ -1,3 +1,5 @@
+import type { Rules } from './rules.js';
+
 /**
  * Core protocol types shared by the game engine, the authoritative server,
  * the browser client, and the Solidity settlement layer.
@@ -137,6 +139,14 @@ export type MatchPhaseValue = (typeof MatchPhase)[keyof typeof MatchPhase];
 /** Snapshot safe to broadcast to every player, including spectators. */
 export interface PublicMatchState {
   matchId: `0x${string}`;
+  /**
+   * The oracle seed. Public on-chain from `MatchStarted` anyway, and safe to
+   * publish: rolls come from each round's revealed salts, not from this alone.
+   * Together with `rules`, the seats and `history`, it is everything a client
+   * needs to replay the match and check the result for itself.
+   */
+  seed: `0x${string}`;
+  rules: Rules;
   phase: MatchPhaseValue;
   round: number;
   players: Array<{

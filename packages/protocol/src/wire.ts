@@ -2,6 +2,9 @@ import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 
+/** Largest client frame the server will parse. Every legitimate message is far smaller. */
+export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
+
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =
   | { type: 'auth'; address: `0x${string}`; signature: `0x${string}` }
@@ -25,7 +28,13 @@ export type ClientMessage =
       /** The account's session nonce, decimal string. */
       nonce: string;
       signature: `0x${string}`;
-    };
+    }
+  /**
+   * Asks the server to push the authenticated account's escrow balance to it,
+   * paying the gas. `GameEscrow.withdrawFor` only ever pays the account
+   * itself, so this needs no signature beyond the login.
+   */
+  | { type: 'collect' };
 
 export type ServerMessage =
   | {
@@ -51,6 +60,8 @@ export type ServerMessage =
        * Lives on the hub, like the escrow it pays into.
        */
       zap: ZapInfo | null;
+      /** True when the server will pay the gas to push payouts (`collect`). */
+      collect: boolean;
     }
   | { type: 'authed'; address: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
@@ -79,6 +90,12 @@ export type ServerMessage =
    */
   | { type: 'avatars'; matchId: `0x${string}`; entries: AvatarEntry[] }
   | { type: 'finished'; result: MatchResult; ranking: number[] }
+  /**
+   * The settlement transaction for a finished match, or null if it could not
+   * be submitted (the escrow then refunds everyone after its deadline).
+   * Practice matches never settle and never get one.
+   */
+  | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
   | { type: 'error'; code: string; message: string };

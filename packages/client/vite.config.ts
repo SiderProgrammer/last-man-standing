@@ -11,6 +11,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@lms/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),
+      // The in-browser verifier replays matches with the same kernel the server runs.
+      '@lms/engine': fileURLToPath(new URL('../engine/src/index.ts', import.meta.url)),
     },
   },
   server: {

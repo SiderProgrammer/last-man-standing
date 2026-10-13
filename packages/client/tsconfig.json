@@ -15,7 +15,8 @@
     // Resolved to source, exactly as vite.config.ts aliases it, so tsc and the
     // bundler agree on which files are being compiled.
     "paths": {
-      "@lms/protocol": ["../protocol/src/index.ts"]
+      "@lms/protocol": ["../protocol/src/index.ts"],
+      "@lms/engine": ["../engine/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"]

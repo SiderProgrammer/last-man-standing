@@ -11,7 +11,8 @@
     "moduleResolution": "Bundler",
     "types": ["vite/client"],
     "paths": {
-      "@lms/protocol": ["../protocol/src/index.ts"]
+      "@lms/protocol": ["../protocol/src/index.ts"],
+      "@lms/engine": ["../engine/src/index.ts"]
     }
   },
   "include": ["test/**/*.ts"]

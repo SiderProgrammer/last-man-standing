@@ -276,6 +276,8 @@ export class Match {
   publicState(): PublicMatchState {
     return {
       matchId: this.matchId,
+      seed: this.seed,
+      rules: this.rules,
       phase: this.phaseValue,
       round: this.roundValue,
       players: this.states.map((state) => {

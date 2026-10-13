@@ -42,12 +42,27 @@
           <p class="muted small">
             Delegate your wallet once (EIP-7702) and this browser gets a scoped, expiring
             key. It signs you back in after every reconnect without a wallet prompt, and
-            can only join matches, withdraw, and handle your avatar.
+            can only join matches and handle your avatar — never move your winnings.
           </p>
           <div class="row">
             <button id="enable-session" class="primary" disabled>Enable one-click play</button>
             <button id="revoke-session" class="ghost hidden">Revoke</button>
             <span id="session-status" class="muted small">Connect a wallet to set up.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Winnings</h2>
+            <span id="winnings" class="pill">–</span>
+          </div>
+          <p class="muted small">
+            Payouts and refunds wait in the escrow until you collect them. Collecting always
+            pays your own address.
+          </p>
+          <div class="row">
+            <button id="collect" class="primary" disabled>Collect</button>
+            <span id="collect-status" class="muted small">Connect a wallet to check.</span>
           </div>
         </div>
 
@@ -111,6 +126,20 @@
             </div>
             <button id="lock-in" class="primary wide">Lock in move</button>
             <p id="move-status" class="muted small">Pick an action before the timer runs out.</p>
+          </div>
+
+          <div id="result-panel" class="panel hidden">
+            <div class="panel-head">
+              <h2>Result</h2>
+              <span id="result-verify" class="pill">checking…</span>
+            </div>
+            <ol id="result-ranking" class="result-ranking"></ol>
+            <p id="result-detail" class="muted small"></p>
+            <p id="result-settle" class="muted small"></p>
+            <div class="row">
+              <button id="result-collect" class="primary hidden">Collect winnings</button>
+              <button id="result-back" class="ghost">Back to lobby</button>
+            </div>
           </div>
 
           <div class="panel grow">

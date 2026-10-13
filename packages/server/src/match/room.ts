@@ -19,6 +19,19 @@ export interface Client {
 /** Called once a match reaches a signable result. */
 export type MatchFinished = (result: MatchResult, history: readonly RoundRecord[]) => void;
 
+/**
+ * Everything that changed a room, in order, with the time it happened.
+ *
+ * The bots are not in here and need not be: their moves derive from the match
+ * seed and the public history, so replaying the human inputs and the clock
+ * ticks that moved the phase reproduces the room exactly.
+ */
+export type RoomEvent =
+  | { kind: 'commit'; address: `0x${string}`; commitment: `0x${string}`; at: number }
+  | { kind: 'reveal'; address: `0x${string}`; move: SealedMove; at: number }
+  /** A `tick` that advanced the phase. Ticks that changed nothing are not recorded. */
+  | { kind: 'tick'; at: number };
+
 export interface RoomOptions {
   commitMs: number;
   revealMs: number;
@@ -31,6 +44,8 @@ export interface RoomOptions {
    */
   replayMs?: number;
   onFinished?: MatchFinished;
+  /** Receives every `RoomEvent` as it happens, for persistence. */
+  journal?: (event: RoomEvent) => void;
 }
 
 /**
@@ -59,6 +74,7 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  private journal: ((event: RoomEvent) => void) | undefined;
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
     this.match = new Match(setup);
@@ -69,8 +85,54 @@ export class Room {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
     }
 
+    this.journal = options.journal;
     this.deadlineAt = now + options.commitMs;
     this.bots.commit(this.match);
+  }
+
+  /**
+   * Rebuilds a room from its journal after a restart.
+   *
+   * The events are applied through the same methods that produced them, so the
+   * rebuilt room is the room that was running, not an approximation of it. The
+   * journal is attached only afterwards, so the replay does not record itself.
+   */
+  static restore(
+    setup: MatchSetup,
+    options: RoomOptions,
+    openedAt: number,
+    events: readonly RoomEvent[],
+    now: number,
+  ): Room {
+    const { journal, ...quiet } = options;
+    const room = new Room(setup, quiet, openedAt);
+    for (const event of events) {
+      if (event.kind === 'commit') room.submitCommit(event.address, event.commitment, event.at);
+      else if (event.kind === 'reveal') room.submitReveal(event.address, event.move, event.at);
+      else room.tick(event.at);
+    }
+    room.journal = journal;
+    room.resumeAfterRestart(now);
+    return room;
+  }
+
+  /**
+   * Gives the open window its full length again after downtime.
+   *
+   * Without this a restart that outlasted a reveal window would resolve the
+   * round on the first tick, scoring every player who could not reconnect in
+   * time as a no-show for the server's outage rather than their own.
+   */
+  private resumeAfterRestart(now: number): void {
+    if (this.match.finished) return;
+    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+    this.deadlineAt = Math.max(this.deadlineAt, now + window);
+    this.replayUntil = 0;
+  }
+
+  /** Tells everyone watching how the match settled on-chain. */
+  announceSettled(tx: `0x${string}` | null): void {
+    for (const client of this.clients) client.send({ type: 'settled', matchId: this.matchId, tx });
   }
 
   get matchId(): `0x${string}` {
@@ -115,6 +177,7 @@ export class Room {
   submitCommit(address: `0x${string}`, commitment: `0x${string}`, now: number = Date.now()): void {
     const seat = this.requireSeat(address);
     this.match.submitCommit(seat, commitment);
+    this.journal?.({ kind: 'commit', address, commitment, at: now });
     // During the hold the commit is kept but the fast path waits: `tick` opens
     // the reveal once the replay has finished.
     if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
@@ -124,6 +187,7 @@ export class Room {
   submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now()): void {
     const seat = this.requireSeat(address);
     this.match.submitReveal(seat, move);
+    this.journal?.({ kind: 'reveal', address, move, at: now });
     if (this.match.allRevealed()) this.resolveRound(now);
     else this.broadcastState();
   }
@@ -131,6 +195,12 @@ export class Room {
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
+    const before = `${this.match.round}:${this.match.phase}`;
+    this.advance(now);
+    if (`${this.match.round}:${this.match.phase}` !== before) this.journal?.({ kind: 'tick', at: now });
+  }
+
+  private advance(now: number): void {
     // A table that finished committing during the replay hold was waiting only
     // on the hold, not on the clock.
     if (
@@ -204,6 +274,9 @@ export class Room {
 
     const result = this.match.result();
     const ranking = this.match.ranking();
+    // The final snapshot first: it carries the last round, which is what a
+    // client needs to replay the whole match and check `result` for itself.
+    this.broadcastState();
     for (const client of this.clients) client.send({ type: 'finished', result, ranking });
     this.options.onFinished?.(result, this.match.history);
   }

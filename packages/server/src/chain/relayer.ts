@@ -1,5 +1,5 @@
 import type { Address, Hex } from 'viem';
-import { sessionKeyDelegateAbi } from '@lms/protocol';
+import { gameEscrowAbi, sessionKeyDelegateAbi } from '@lms/protocol';
 import { signerClients } from './viem.js';
 
 /** One call a player's session key has authorised. */
@@ -30,14 +30,26 @@ export interface SessionCall {
  */
 export interface SessionRelayer {
   readonly enabled: boolean;
+  /** True when `collect` can push payouts; needs the escrow address. */
+  readonly canCollect: boolean;
   submit(call: SessionCall): Promise<Hex>;
+  /**
+   * Pushes `account`'s escrow balance to `account` through `withdrawFor`.
+   * No signature is needed: the escrow only ever pays the account itself, so
+   * the worst a caller can do is pay a player early, at the relayer's expense.
+   */
+  collect(account: Address): Promise<Hex>;
 }
 
 /** Refuses everything, so the client falls back to the player's own wallet. */
 export const nullSessionRelayer: SessionRelayer = {
   enabled: false,
+  canCollect: false,
   submit() {
     return Promise.reject(new Error('session relaying is not enabled on this server'));
+  },
+  collect() {
+    return Promise.reject(new Error('this server does not push payouts'));
   },
 };
 
@@ -46,6 +58,8 @@ export interface ChainRelayerOptions {
   chainId: number;
   /** Key that pays the gas. Holds no authority over any player's account. */
   relayerKey: Hex;
+  /** Hub escrow, for `collect`. Omitted, payouts are left to the players. */
+  escrow?: Address;
 }
 
 export function createSessionRelayer(options: ChainRelayerOptions): SessionRelayer {
@@ -57,6 +71,21 @@ export function createSessionRelayer(options: ChainRelayerOptions): SessionRelay
 
   return {
     enabled: true,
+    canCollect: options.escrow !== undefined,
+    async collect(target) {
+      const escrow = options.escrow;
+      if (!escrow) throw new Error('this server does not push payouts');
+      // Simulated first: an account with nothing owed reverts here with
+      // `NothingToWithdraw`, so a spammed `collect` never costs any gas.
+      const { request } = await publicClient.simulateContract({
+        account,
+        address: escrow,
+        abi: gameEscrowAbi,
+        functionName: 'withdrawFor',
+        args: [target],
+      });
+      return wallet.writeContract(request);
+    },
     async submit(call) {
       // Simulated first so a call outside the session's scope is rejected with
       // the delegate's own error, before any gas is spent on it.

@@ -289,6 +289,17 @@ export class Wallet {
     return this.wallet.writeContract({ ...request, chain: null });
   }
 
+  /** History root the escrow stored when the match settled; zero before that. */
+  async settledRoot(escrow: Address, matchId: Hex): Promise<Hex> {
+    const info = await this.rpc.readContract({
+      address: escrow,
+      abi: gameEscrowAbi,
+      functionName: 'getMatch',
+      args: [matchId],
+    });
+    return info.historyRoot;
+  }
+
   async withdrawableEth(escrow: Address): Promise<string> {
     const wei = await this.rpc.readContract({
       address: escrow,
