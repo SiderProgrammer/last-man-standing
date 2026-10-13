@@ -6,6 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
+import {AttestorBonds} from "../../src/AttestorBonds.sol";
+import {MatchVerifier} from "../../src/MatchVerifier.sol";
+import {HonestMatch} from "./HonestMatch.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {Attest} from "./Attest.sol";
@@ -29,8 +32,12 @@ contract Fixtures is Test {
     MockRandomnessOracle internal oracle;
     MockMessenger internal messenger;
     SettlementHarness internal harness;
+    AttestorBonds internal bonds;
+    MatchVerifier internal verifier;
 
     uint128 internal constant STAKE = 1 ether;
+    uint256 internal constant BOND = 5 ether;
+    uint64 internal constant CHALLENGE_WINDOW = 1 hours;
 
     function setUp() public virtual {
         owner = makeAddr("owner");
@@ -77,8 +84,60 @@ contract Fixtures is Test {
 
         escrow = new GameEscrow(config);
 
-        vm.prank(owner);
+        // Bonded attestors, the verifier fraud proofs replay through, and a
+        // window to submit them in.
+        bonds = new AttestorBonds(owner, config, BOND, 1 days, 2_000);
+        verifier = new MatchVerifier();
+        vm.startPrank(owner);
         config.setRemoteChain(421_614, address(messenger), bytes32(uint256(uint160(address(0xBEEF)))));
+        config.setAttestorBonds(address(bonds));
+        config.setMatchVerifier(address(verifier));
+        config.setChallengeWindow(CHALLENGE_WINDOW);
+        bonds.setSlasher(address(escrow), true);
+        vm.stopPrank();
+
+        vm.deal(address(this), address(this).balance + 3 * BOND);
+        bonds.bond{value: BOND}(attestorA);
+        bonds.bond{value: BOND}(attestorB);
+        bonds.bond{value: BOND}(attestorC);
+    }
+
+    /// @dev Plays the seeded match honestly and returns its rounds and the
+    ///      ranking they imply, by wallet.
+    function _honest(bytes32 matchId)
+        internal
+        view
+        returns (HonestMatch.Played memory played, address[] memory ranking)
+    {
+        address[] memory seats = escrow.getSeats(matchId);
+        played = HonestMatch.play(verifier, matchId, escrow.getMatch(matchId).seed, seats.length);
+        ranking = new address[](played.ranking.length);
+        for (uint256 i = 0; i < ranking.length; ++i) {
+            ranking[i] = seats[played.ranking[i]];
+        }
+    }
+
+    /// @dev Signs and proposes `ranking` over the honest rounds of the match.
+    function _propose(bytes32 matchId, HonestMatch.Played memory played, address[] memory ranking) internal {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint32 rounds = uint32(played.rounds.length);
+        escrow.settle(
+            matchId,
+            rounds,
+            played.root,
+            ranking,
+            _signResult(_twoAttestors(), matchId, rounds, played.root, ranking),
+            HonestMatch.log(played)
+        );
+    }
+
+    /// @dev Proposes the honest result, waits out the challenge window, and pays it.
+    function _settleAndFinalize(bytes32 matchId) internal returns (address[] memory ranking) {
+        HonestMatch.Played memory played;
+        (played, ranking) = _honest(matchId);
+        _propose(matchId, played, ranking);
+        vm.warp(block.timestamp + CHALLENGE_WINDOW);
+        escrow.finalize(matchId, ranking);
     }
 
     function _createAndFill(uint16 seats) internal returns (bytes32 matchId) {

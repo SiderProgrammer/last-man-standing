@@ -11,6 +11,8 @@ export interface EscrowMatch {
   status: number;
   joinDeadline: bigint;
   seed: `0x${string}`;
+  /** Unix seconds after which a proposed result may be finalised. */
+  challengeDeadline: bigint;
 }
 
 export interface MatchCreatedLog {
@@ -47,6 +49,13 @@ export interface EscrowReader {
    * and the next poll reads the truth either way.
    */
   lockMatch(matchId: `0x${string}`): Promise<boolean>;
+  /** The ranking a proposed result would pay, from its `ResultProposed` event. */
+  proposedRanking(matchId: `0x${string}`): Promise<readonly Address[] | null>;
+  /**
+   * Pays out a proposed result whose challenge window has closed. Like
+   * `lockMatch`, permissionless and reported rather than thrown.
+   */
+  finalize(matchId: `0x${string}`, ranking: readonly Address[]): Promise<boolean>;
 }
 
 export interface ViemEscrowReaderOptions {
@@ -114,6 +123,35 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
         args: [matchId, player],
       });
       return Number(origin);
+    },
+
+    async proposedRanking(matchId) {
+      const logs = await client.getContractEvents({
+        address: escrow,
+        abi: gameEscrowAbi,
+        eventName: 'ResultProposed',
+        args: { matchId },
+        fromBlock: 0n,
+      });
+      return logs[logs.length - 1]?.args.ranking ?? null;
+    },
+
+    async finalize(matchId, ranking) {
+      if (!signer) return false;
+      try {
+        const { request } = await client.simulateContract({
+          account: signer.account,
+          address: escrow,
+          abi: gameEscrowAbi,
+          functionName: 'finalize',
+          args: [matchId, [...ranking]],
+        });
+        await signer.walletClient.writeContract(request);
+        return true;
+      } catch (error) {
+        console.warn('[chain] finalize skipped:', errorMessage(error));
+        return false;
+      }
     },
 
     async lockMatch(matchId) {

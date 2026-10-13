@@ -37,6 +37,8 @@ export interface ChainBridgeDeps {
 interface TrackedMatch {
   info: LobbyInfo;
   adopted: boolean;
+  /** A result is proposed: no longer a lobby to list, waiting to be finalised. */
+  proposed: boolean;
   /**
    * Chain each seat staked from, keyed by lowercased address and already
    * normalised to an EVM chain id. Filled from `PlayerJoined` as it is seen and
@@ -101,6 +103,7 @@ export class ChainBridge {
     const open: LobbyInfo[] = [];
     const live: LobbyInfo[] = [];
     for (const entry of this.tracked.values()) {
+      if (entry.proposed) continue;
       if (entry.info.status === 'open') open.push(entry.info);
       else live.push(entry.info);
     }
@@ -130,7 +133,7 @@ export class ChainBridge {
     for (const { matchId } of await this.reader.matchCreatedLogs(from, latest)) {
       const key = matchId.toLowerCase();
       if (this.tracked.has(key)) continue;
-      this.tracked.set(key, { adopted: false, info: placeholder(matchId), origins: new Map() });
+      this.tracked.set(key, { adopted: false, proposed: false, info: placeholder(matchId), origins: new Map() });
     }
 
     // Joins are read from the log rather than by polling `seatOrigin` per seat:
@@ -154,6 +157,11 @@ export class ChainBridge {
 
       if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled) {
         this.tracked.delete(key);
+        continue;
+      }
+      if (raw.status === MatchStatus.Proposed) {
+        entry.proposed = true;
+        await this.maybeFinalize(matchId, raw.challengeDeadline);
         continue;
       }
 
@@ -182,6 +190,19 @@ export class ChainBridge {
         this.adopt(matchId, raw.seed, seats);
       }
     }
+  }
+
+  /**
+   * Pays out a proposed result once its challenge window has closed. Like
+   * locking, permissionless: the keeper only saves the players the call.
+   * Driven from the chain's state rather than a timer, so a restart during
+   * the window loses nothing.
+   */
+  private async maybeFinalize(matchId: `0x${string}`, deadline: bigint): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
+    const ranking = await this.reader.proposedRanking(matchId);
+    if (!ranking) return;
+    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalised ${matchId}`);
   }
 
   /**

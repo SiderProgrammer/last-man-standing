@@ -44,7 +44,10 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
       'Settlement could not be submitted. The escrow refunds every stake after its deadline.';
     return;
   }
-  dom.resultSettle.textContent = `Settled on-chain · ${short(message.tx)}`;
+  // A proposal, not a payout: the result stays open to a fraud proof for the
+  // challenge window, and the winnings unlock when it closes unchallenged.
+  dom.resultSettle.textContent =
+    `Proposed on-chain · ${short(message.tx)} · winnings unlock once the challenge window closes`;
 
   const wallet = app.wallet;
   const escrow = app.escrow;

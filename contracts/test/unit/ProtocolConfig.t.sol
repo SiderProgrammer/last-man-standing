@@ -76,7 +76,25 @@ contract ProtocolConfigTest is Fixtures {
 
         vm.prank(owner);
         fresh.setRandomnessOracle(address(oracle));
+        // Nor is a seed: a result could still never be bonded, verified or finalised.
+        vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
         unusable.createMatch(STAKE, 4);
+
+        vm.startPrank(owner);
+        fresh.setAttestorBonds(address(bonds));
+        fresh.setMatchVerifier(address(verifier));
+        fresh.setChallengeWindow(CHALLENGE_WINDOW);
+        vm.stopPrank();
+        unusable.createMatch(STAKE, 4);
+    }
+
+    function test_challengeWindowIsBounded() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(0)));
+        config.setChallengeWindow(0);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days)));
+        config.setChallengeWindow(8 days);
+        vm.stopPrank();
     }
 
     function test_guardianCanBeSetAndRemoved() public {

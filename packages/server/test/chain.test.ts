@@ -27,6 +27,7 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     status: MatchStatus.Open,
     joinDeadline: 9_999_999_999n,
     seed: bytes32('seed'),
+    challengeDeadline: 0n,
     ...overrides,
   };
 }
@@ -44,6 +45,8 @@ class FakeEscrow implements EscrowReader {
   readonly locked: `0x${string}`[] = [];
   seatOriginReads = 0;
   lockSucceeds = true;
+  ranking = new Map<string, Address[]>();
+  readonly finalized: Array<[`0x${string}`, readonly Address[]]> = [];
 
   async blockNumber(): Promise<bigint> {
     return this.block;
@@ -74,6 +77,15 @@ class FakeEscrow implements EscrowReader {
   async lockMatch(matchId: `0x${string}`): Promise<boolean> {
     if (!this.lockSucceeds) return false;
     this.locked.push(matchId);
+    return true;
+  }
+
+  async proposedRanking(matchId: `0x${string}`): Promise<readonly Address[] | null> {
+    return this.ranking.get(matchId) ?? null;
+  }
+
+  async finalize(matchId: `0x${string}`, ranking: readonly Address[]): Promise<boolean> {
+    this.finalized.push([matchId, ranking]);
     return true;
   }
 }
@@ -255,5 +267,24 @@ describe('chain bridge adoption', () => {
     // rolls it already knows.
     expect(lobby.size).toBe(0);
     expect(bridge.directory().live).toHaveLength(1);
+  });
+
+  it('finalises a proposed result once its challenge window has closed, and not before', async () => {
+    const reader = new FakeEscrow();
+    const id = bytes32('proposed');
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Proposed, challengeDeadline: 2_000n }));
+    reader.ranking.set(id, [seat(2), seat(1), seat(3), seat(0)]);
+
+    let nowMs = 1_000_000; // 1 000 s: inside the window
+    const { bridge } = bridgeOver(reader, () => nowMs);
+    await bridge.poll();
+    expect(reader.finalized).toEqual([]);
+    // A proposed result is no longer a lobby anyone can join or watch.
+    expect(bridge.directory()).toEqual({ open: [], live: [] });
+
+    nowMs = 2_000_000;
+    await bridge.poll();
+    expect(reader.finalized).toEqual([[id, [seat(2), seat(1), seat(3), seat(0)]]]);
   });
 });

@@ -8,8 +8,11 @@ import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
+import {AttestorBonds} from "../../src/AttestorBonds.sol";
+import {MatchVerifier} from "../../src/MatchVerifier.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
+import {HonestMatch} from "../helpers/HonestMatch.sol";
 
 /// @dev Actor that drives GameEscrow through random sequences of public calls.
 contract EscrowHandler is Test {
@@ -85,11 +88,28 @@ contract EscrowHandler is Test {
         escrow.cancelMatch(current);
     }
 
-    function settle(bytes32 historyRoot, uint32 rounds) public {
+    MatchVerifier public verifier;
+
+    /// @dev Set once by `setUp`, for the same reason as `setMessenger`.
+    function setVerifier(MatchVerifier verifier_) external {
+        if (address(verifier) == address(0)) verifier = verifier_;
+    }
+
+    /// @dev Proposes the honest result over a real round log: `settle` checks
+    ///      the log against the signed root, so a made-up root no longer settles.
+    function settle() public {
         if (current == bytes32(0)) return;
-        if (rounds == 0) rounds = 1;
-        address[] memory ranking = escrow.getSeats(current);
-        if (ranking.length == 0) return;
+        address[] memory seats = escrow.getSeats(current);
+        if (seats.length == 0) return;
+
+        HonestMatch.Played memory played = HonestMatch.play(verifier, current, escrow.getMatch(current).seed, seats.length);
+        address[] memory ranking = new address[](seats.length);
+        for (uint256 i = 0; i < seats.length; ++i) {
+            ranking[i] = seats[played.ranking[i]];
+        }
+        bytes32 historyRoot = played.root;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint32 rounds = uint32(played.rounds.length);
 
         bytes32 structHash = harness.hashMatchResult(current, rounds, historyRoot, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
@@ -99,8 +119,20 @@ contract EscrowHandler is Test {
         for (uint256 i = 0; i < n; ++i) {
             pks[i] = attestorPks[i];
         }
-        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest));
+        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest), HonestMatch.log(played));
+        proposedRanking = ranking;
         ++settled;
+    }
+
+    address[] internal proposedRanking;
+    uint256 public finalized;
+
+    /// @dev Waits out the challenge window and pays the proposed result.
+    function finalize() public {
+        if (current == bytes32(0) || proposedRanking.length == 0) return;
+        vm.warp(block.timestamp + 2 hours);
+        escrow.finalize(current, proposedRanking);
+        ++finalized;
     }
 
     function withdraw(uint256 who) public {
@@ -141,6 +173,7 @@ contract EscrowHandler is Test {
 contract EscrowInvariantTest is StdInvariant, Test {
     GameEscrow internal escrow;
     EscrowHandler internal handler;
+    MatchVerifier internal verifier;
     address internal treasury;
 
     function setUp() public {
@@ -175,10 +208,7 @@ contract EscrowInvariantTest is StdInvariant, Test {
         vm.stopPrank();
 
         SettlementHarness harness = new SettlementHarness();
-        bytes32 rulesHash = harness.hashRulesDefault();
-        vm.prank(owner);
-        config.setRulesHash(rulesHash);
-        escrow = new GameEscrow(config);
+        _wireSettlement(config, owner, harness.hashRulesDefault(), pkA, pkB);
 
         address[] memory actors = new address[](6);
         for (uint256 i = 0; i < actors.length; ++i) {
@@ -191,6 +221,7 @@ contract EscrowInvariantTest is StdInvariant, Test {
         pks[1] = pkB;
 
         handler = new EscrowHandler(escrow, oracle, harness, actors, pks);
+        handler.setVerifier(verifier);
         MockMessenger messenger = new MockMessenger();
         handler.setMessenger(messenger);
         uint32 remoteChain = handler.REMOTE_CHAIN();
@@ -198,6 +229,27 @@ contract EscrowInvariantTest is StdInvariant, Test {
         vm.prank(owner);
         config.setRemoteChain(remoteChain, address(messenger), remotePeer);
         targetContract(address(handler));
+    }
+
+    /// @dev Rules, bonded attestors, the verifier and the escrow itself. Split
+    ///      out of `setUp` only to keep its stack within the legacy pipeline's limit.
+    function _wireSettlement(ProtocolConfig config, address owner, bytes32 rulesHash, uint256 pkA, uint256 pkB)
+        private
+    {
+        AttestorBonds bonds = new AttestorBonds(owner, config, 1 ether, 1 days, 2_000);
+        verifier = new MatchVerifier();
+        vm.startPrank(owner);
+        config.setRulesHash(rulesHash);
+        config.setAttestorBonds(address(bonds));
+        config.setMatchVerifier(address(verifier));
+        config.setChallengeWindow(1 hours);
+        vm.stopPrank();
+        escrow = new GameEscrow(config);
+        vm.prank(owner);
+        bonds.setSlasher(address(escrow), true);
+        vm.deal(address(this), 2 ether);
+        bonds.bond{value: 1 ether}(vm.addr(pkA));
+        bonds.bond{value: 1 ether}(vm.addr(pkB));
     }
 
     function invariant_solvency() public view {

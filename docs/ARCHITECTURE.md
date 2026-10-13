@@ -342,8 +342,11 @@ lockMatch()                       permissionless once full, or quorate and expir
   ↓  requestRandomness()
 fulfillRandomness()               seed = keccak(randomness, matchId) → status Live
   ↓  MatchStarted event           the server adopts the match and plays it
-settle(rounds, historyRoot, ranking, signatures)
-  ↓                               quorum verified, ranking must be the seat set
+settle(rounds, root, ranking, sigs, log)  bonded quorum, ranking = seat set, log hashes to root
+  ↓                               → Proposed: nothing paid yet
+challenge(rules, log, signers)    any time before challengeDeadline: replays the log on-chain;
+  ↓                               on fraud, slash every signer and refund every stake
+finalize(ranking)                 after challengeDeadline, permissionless → Settled, payouts credited
 withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the account itself
 ```
 
@@ -447,12 +450,24 @@ not corrupt a match, but every relayed call would silently stop recovering the s
 
 ### Trust model
 
-The attestor quorum is trusted for the **ordering** of a result, not for its
-**contents**. The signed digest commits to the history root, so anyone holding the
-published seed and move log can replay the match locally and prove a signed result was
-fabricated. The seed is drawn after the lobby closes, so neither the server nor a player
-can choose moves against known rolls. What is *not* yet implemented is an on-chain
-challenge that turns that proof into slashing — see `docs/TODO.md`.
+A result is signed by a quorum of **bonded** attestors (`AttestorBonds`, ETH) and is
+*proposed*, not paid. The signed root commits to every round's actions, targets, salts,
+HP and eliminations, and `settle` refuses the result unless those rounds come with it and
+hash to the root — so the evidence is always on-chain, in the settlement's calldata.
+
+For `challengeWindow` after that, anyone can submit the log to `challenge`. The escrow
+replays it through `MatchVerifier`, a Solidity port of `resolveRound` held to the
+TypeScript kernel by cross-language vectors (`contracts/test/vectors/matches.json`). If any
+round is not what its inputs resolve to, the match ended at the wrong time, or the ranking
+is not the one the rounds produce, every signer's bond is slashed — the challenger takes a
+share — and every stake is refunded. An attestor stops counting the moment it asks to
+unbond, and its bond cannot leave until the challenge window has also passed.
+
+What stays trusted: the quorum could invent a player's *move*. The published salt must
+open the player's commitment, but commitments are exchanged off-chain, so a forged move
+replayed faithfully looks valid. Everything downstream of the moves is enforced. The
+seed is drawn after the lobby closes, and each round's rolls also depend on every
+player's revealed salt, so nobody can choose moves against known rolls.
 
 ### Cross-chain model
 

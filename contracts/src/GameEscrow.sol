@@ -5,6 +5,9 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
+import {AttestorBonds} from "./AttestorBonds.sol";
+import {MatchVerifier} from "./MatchVerifier.sol";
+import {HashLib} from "./libraries/HashLib.sol";
 import {ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
@@ -20,12 +23,14 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      taking stakes, fixing an unpredictable seed before play starts,
 ///      accepting a result signed by a quorum of attestors, and paying out.
 ///
-///      Trust model. The attestor quorum is trusted for the *ordering* of a
-///      result but not for its *contents*: the signed digest commits to a
-///      history root, so anyone holding the seed and the published move log
-///      can replay the match and prove a signed result was fabricated. The
-///      seed is drawn from an oracle after the lobby closes, so neither the
-///      server nor a player can pick moves against known rolls.
+///      Trust model. A result is signed by a quorum of *bonded* attestors and
+///      then sits open to challenge before it pays. The signed digest commits
+///      to a history root, which commits to every round; anyone holding the
+///      published rounds can submit them, the escrow replays the match through
+///      `MatchVerifier`, and a result that does not follow from its rounds is
+///      thrown out, every signer's bond is slashed, and every stake refunded.
+///      The seed is drawn from an oracle after the lobby closes, and each
+///      round's rolls also depend on every player's revealed salt.
 ///
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient — or
@@ -39,10 +44,13 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         Pending,
         /// @dev Seed delivered; the server is running the match.
         Live,
-        /// @dev Result attested and payouts credited.
+        /// @dev Result final and payouts credited.
         Settled,
-        /// @dev Abandoned; every stake is refundable.
-        Cancelled
+        /// @dev Abandoned, or its result proven fraudulent; every stake is refundable.
+        Cancelled,
+        /// @dev Result signed and open to a fraud proof until `challengeDeadline`.
+        ///      Last in the list so the earlier values keep their numbers.
+        Proposed
     }
 
     /// @dev Terms are snapshotted when the lobby is created, so a governance
@@ -61,6 +69,15 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         bytes32 rulesHash;
         bytes32 seed;
         bytes32 historyRoot;
+        /// @dev Snapshotted at creation, like the rest of the terms.
+        uint64 challengeWindow;
+        uint64 challengeDeadline;
+        uint32 rounds;
+        /// @dev The ranking and signer set of a proposed result, by hash: both
+        ///      are in `ResultProposed`, and whoever finalises or challenges
+        ///      passes them back.
+        bytes32 rankingHash;
+        bytes32 signersHash;
     }
 
     /// @notice Why a seat could not be taken. `None` means it could.
@@ -83,8 +100,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     mapping(bytes32 matchId => MatchInfo) private matchInfo;
     mapping(bytes32 matchId => address[]) private matchSeats;
-    /// @notice Finishing order, best first. Populated only after settlement.
-    mapping(bytes32 matchId => address[]) private matchRanking;
     /// @notice Payout schedule snapshotted at lobby creation, in basis points.
     mapping(bytes32 matchId => uint16[]) private matchPayoutBps;
     mapping(bytes32 matchId => mapping(address player => bool)) public hasSeat;
@@ -107,8 +122,19 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     event PlayerJoined(bytes32 indexed matchId, address indexed player, uint16 seat, uint32 originChainId);
     event MatchLocked(bytes32 indexed matchId, bytes32 indexed requestId, uint16 seatCount);
     event MatchStarted(bytes32 indexed matchId, bytes32 seed, uint64 settleDeadline);
+    event ResultProposed(
+        bytes32 indexed matchId,
+        bytes32 indexed historyRoot,
+        uint32 rounds,
+        address[] ranking,
+        address[] signers,
+        uint64 challengeDeadline
+    );
     event MatchSettled(
         bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address indexed winner
+    );
+    event FraudProven(
+        bytes32 indexed matchId, address indexed challenger, MatchVerifier.Verdict verdict, uint256 badRound
     );
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
@@ -140,6 +166,14 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
     error ConfigIncomplete();
+    error ChallengeWindowOpen(uint64 deadline);
+    error ChallengeWindowClosed(uint64 deadline);
+    error RankingMismatch();
+    error SignersMismatch();
+    error RulesMismatch();
+    error NotTheSignedRounds();
+    error NoFraud();
+    error LogMismatch();
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -167,10 +201,11 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     {
         ProtocolConfig.Params memory params = config.getParams();
 
-        // A config deploys with neither set. A lobby opened against it could
-        // never be seeded, or would snapshot a rule set nobody plays under.
+        // A config deploys with none of these set. A lobby opened against it
+        // could never be seeded, would snapshot a rule set nobody plays
+        // under, or could never settle.
+        if (!config.isComplete()) revert ConfigIncomplete();
         bytes32 rulesHash = config.rulesHash();
-        if (rulesHash == bytes32(0) || config.randomnessOracle() == address(0)) revert ConfigIncomplete();
 
         if (stake < params.minStake || stake > params.maxStake) revert StakeOutOfRange(stake);
         if (maxSeats < params.minSeats || maxSeats > params.maxSeats) revert SeatsOutOfRange(maxSeats);
@@ -190,7 +225,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
             treasury: params.treasury,
             rulesHash: rulesHash,
             seed: bytes32(0),
-            historyRoot: bytes32(0)
+            historyRoot: bytes32(0),
+            challengeWindow: config.challengeWindow(),
+            challengeDeadline: 0,
+            rounds: 0,
+            rankingHash: bytes32(0),
+            signersHash: bytes32(0)
         });
         matchPayoutBps[matchId] = config.getPayoutSchedule();
 
@@ -298,15 +338,25 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Settlement --------------------------------------------------------
 
-    /// @notice Settles a match against a result signed by a quorum of attestors.
+    /// @notice Proposes a match result signed by a quorum of bonded attestors.
+    /// @dev Pays nothing yet. The result is open to `challenge` until
+    ///      `challengeDeadline`; after that anyone may `finalize` it.
+    ///
+    ///      The rounds come with it and must hash to the signed root. That is
+    ///      what makes a challenge always possible — the evidence is in this
+    ///      transaction's calldata, not in whatever a server chooses to publish
+    ///      — and what stops anyone submitting honest signatures with a forged
+    ///      log to get innocent attestors slashed.
     /// @param ranking Finishing order, best first. Must be exactly the seat set.
     /// @param signatures Concatenated 65-byte signatures in ascending signer order.
+    /// @param log `abi.encode(KernelLib.Round[])`: every round record, round 1 first.
     function settle(
         bytes32 matchId,
         uint32 rounds,
         bytes32 historyRoot,
         address[] calldata ranking,
-        bytes calldata signatures
+        bytes calldata signatures,
+        bytes calldata log
     ) external nonReentrant whenNotPaused {
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Live) {
@@ -314,30 +364,133 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         }
         if (rounds == 0) revert RoundsOutOfRange(rounds);
 
-        bytes32 digest = SettlementLib.toTypedDataHash(
-            _domainSeparatorV4(), SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)
+        address[] memory signers = _bondedQuorum(
+            SettlementLib.toTypedDataHash(
+                _domainSeparatorV4(), SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)
+            ),
+            signatures
         );
-
-        address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
-        uint32 threshold = config.attestorThreshold();
-        if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
-        for (uint256 i = 0; i < signers.length; ++i) {
-            if (!config.isAttestor(signers[i])) revert NotAnAttestor(signers[i]);
-        }
 
         // Reject any ranking that is not exactly the seat set: without this a
         // quorum could redirect the pool to addresses that never staked.
         SeatSetLib.assertPermutation(matchSeats[matchId], ranking);
+        _checkLog(matchId, info, historyRoot, rounds, log);
+
+        uint64 deadline = uint64(block.timestamp) + info.challengeWindow;
+        info.status = MatchStatus.Proposed;
+        info.historyRoot = historyRoot;
+        info.rounds = rounds;
+        info.challengeDeadline = deadline;
+        info.rankingHash = keccak256(abi.encode(ranking));
+        info.signersHash = keccak256(abi.encode(signers));
+
+        emit ResultProposed(matchId, historyRoot, rounds, ranking, signers, deadline);
+    }
+
+    /// @dev The signers of `digest`, provided they are a quorum and every one is
+    ///      bonded: what a fraud proof would slash has to exist at signing.
+    function _bondedQuorum(bytes32 digest, bytes calldata signatures) private view returns (address[] memory signers) {
+        signers = SignatureLib.recoverAscending(digest, signatures);
+        uint32 threshold = config.attestorThreshold();
+        if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
+        AttestorBonds bonds = AttestorBonds(config.attestorBonds());
+        for (uint256 i = 0; i < signers.length; ++i) {
+            if (!bonds.isActive(signers[i])) revert NotAnAttestor(signers[i]);
+        }
+    }
+
+    /// @dev The published rounds must be exactly the ones the root commits to.
+    function _checkLog(bytes32 matchId, MatchInfo storage info, bytes32 historyRoot, uint32 rounds, bytes calldata log)
+        private
+        view
+    {
+        (bytes32 logRoot, uint256 logRounds) =
+            MatchVerifier(config.matchVerifier()).rootOf(matchId, info.rulesHash, info.seed, log);
+        if (logRoot != historyRoot || logRounds != rounds) revert LogMismatch();
+    }
+
+    /// @notice Pays out a proposed result once nobody has disproved it in time.
+    /// @dev Permissionless, and deliberately not paused: a pause must never
+    ///      hold a result that has already survived its challenge window.
+    /// @param ranking The ranking from `ResultProposed`.
+    function finalize(bytes32 matchId, address[] calldata ranking) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (block.timestamp < info.challengeDeadline) revert ChallengeWindowOpen(info.challengeDeadline);
+        if (keccak256(abi.encode(ranking)) != info.rankingHash) revert RankingMismatch();
 
         info.status = MatchStatus.Settled;
-        info.historyRoot = historyRoot;
-
-        matchRanking[matchId] = ranking;
-
         totalEscrowed -= uint256(info.stake) * info.seatCount;
         _distribute(matchId, info, ranking);
 
-        emit MatchSettled(matchId, historyRoot, rounds, ranking[0]);
+        emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
+    }
+
+    /// @notice Disproves a proposed result with the rounds its root commits to.
+    /// @dev Replays the whole match through `MatchVerifier`. If any round is not
+    ///      what its inputs resolve to, the match ended at the wrong time, the
+    ///      round count is wrong, or the ranking is not the one the rounds
+    ///      produce, the result is void: every signer's bond is slashed — the
+    ///      challenger takes a share — and every stake is refunded. Reverts with
+    ///      `NoFraud` when the result holds up, and with `NotTheSignedRounds` when
+    ///      the rounds supplied are not the ones the attestors signed.
+    ///
+    ///      Never paused: a proof must always be submittable inside its window.
+    /// @param rules The rule set whose hash the lobby snapshotted.
+    /// @param log The round log from the `settle` transaction's calldata.
+    /// @param signers The signer set from `ResultProposed`.
+    function challenge(
+        bytes32 matchId,
+        HashLib.Rules calldata rules,
+        bytes calldata log,
+        address[] calldata signers
+    ) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (block.timestamp >= info.challengeDeadline) revert ChallengeWindowClosed(info.challengeDeadline);
+        if (HashLib.hashRules(rules) != info.rulesHash) revert RulesMismatch();
+        if (keccak256(abi.encode(signers)) != info.signersHash) revert SignersMismatch();
+
+        (MatchVerifier.Verdict verdict, uint256 badRound) = _findFraud(matchId, info, rules, log);
+
+        for (uint256 i = 0; i < signers.length; ++i) {
+            AttestorBonds(config.attestorBonds()).slash(signers[i], msg.sender);
+        }
+        _refundAll(matchId, info);
+        emit FraudProven(matchId, msg.sender, verdict, badRound);
+        emit MatchCancelled(matchId, "fraud proven");
+    }
+
+    /// @dev Reverts unless the rounds show the proposed result is wrong.
+    ///      A `Valid` replay is still fraud if it disagrees with what was
+    ///      signed on round count or ranking; that is reported as `Valid` with
+    ///      `badRound` zero.
+    function _findFraud(
+        bytes32 matchId,
+        MatchInfo storage info,
+        HashLib.Rules calldata rules,
+        bytes calldata log
+    ) private view returns (MatchVerifier.Verdict verdict, uint256 badRound) {
+        address[] storage seats = matchSeats[matchId];
+        uint8[] memory order;
+        uint256 rounds;
+        (verdict, badRound, order, rounds) = MatchVerifier(config.matchVerifier()).verify(
+            rules, matchId, info.seed, seats.length, info.historyRoot, log
+        );
+        if (verdict == MatchVerifier.Verdict.NotTheSignedRounds) revert NotTheSignedRounds();
+        if (verdict != MatchVerifier.Verdict.Valid) return (verdict, badRound);
+
+        if (rounds != info.rounds) return (verdict, 0);
+        address[] memory implied = new address[](order.length);
+        for (uint256 i = 0; i < order.length; ++i) {
+            implied[i] = seats[order[i]];
+        }
+        if (keccak256(abi.encode(implied)) != info.rankingHash) return (verdict, 0);
+        revert NoFraud();
     }
 
     function _distribute(bytes32 matchId, MatchInfo storage info, address[] calldata ranking) private {
@@ -392,6 +545,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
 
+        _refundAll(matchId, info);
+        emit MatchCancelled(matchId, reason);
+    }
+
+    /// @dev Cancels the match and credits every seat its stake back.
+    function _refundAll(bytes32 matchId, MatchInfo storage info) private {
         info.status = MatchStatus.Cancelled;
 
         address[] memory seats = matchSeats[matchId];
@@ -400,8 +559,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         for (uint256 i = 0; i < seats.length; ++i) {
             _credit(seats[i], stake);
         }
-
-        emit MatchCancelled(matchId, reason);
     }
 
     // --- Governance --------------------------------------------------------
@@ -433,10 +590,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     function getSeats(bytes32 matchId) external view returns (address[] memory) {
         return matchSeats[matchId];
-    }
-
-    function getRanking(bytes32 matchId) external view returns (address[] memory) {
-        return matchRanking[matchId];
     }
 
     function getPayoutSchedule(bytes32 matchId) external view returns (uint16[] memory) {

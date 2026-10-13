@@ -76,6 +76,19 @@ contract DeployTest is Test {
         assertEq(d.config.attestorThreshold(), 1);
     }
 
+    /// @dev A lobby can open straight away: bonds, verifier and window are set,
+    ///      the escrow may slash, and on a local node the attestor is bonded.
+    function test_settlementIsWiredAndTheBondsAreBehindTheTimelock() public view {
+        assertTrue(d.config.isComplete());
+        assertEq(d.config.attestorBonds(), address(d.bonds));
+        assertEq(d.config.matchVerifier(), address(d.verifier));
+        assertEq(d.config.challengeWindow(), 1 hours);
+        assertTrue(d.bonds.isSlasher(address(d.escrow)));
+        assertEq(d.bonds.owner(), address(d.timelock));
+        assertEq(d.bonds.pendingOwner(), address(0));
+        assertTrue(d.bonds.isActive(deployer));
+    }
+
     /// @dev `config/rules.json` → `Deploy` → the deployed hash, pinned to the
     ///      same vector `parity.test.ts` pins `hashRules(DEFAULT_RULES)` to.
     function test_deploysTheRulesTheServerPlays() public view {
