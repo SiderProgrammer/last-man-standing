@@ -55,6 +55,6 @@ contract SettlementHarness {
     /// @dev One copy of the tuple for the test tree; `Deploy.s.sol` keeps its
     ///      own, because a script importing from `test/` would be worse.
     function hashRulesDefault() external pure returns (bytes32) {
-        return HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30);
+        return HashLib.hashRules(HashLib.defaultRules());
     }
 }

@@ -13,12 +13,14 @@ import {
 } from './screens/governance.js';
 import {
   onAvatars,
+  onDossier,
   onFinished,
   onRound,
   onState,
   updateTimer,
   wireMatchControls,
 } from './screens/match.js';
+import { onSettled, wireResultControls } from './screens/result.js';
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
@@ -30,6 +32,7 @@ import {
   renderSessionPanel,
   wireWalletControls,
 } from './wallet/flows.js';
+import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:8787`;
 
@@ -59,6 +62,8 @@ export function start(): void {
   wireWalletControls();
   wireLobbyControls();
   wireMatchControls();
+  wirePayoutControls();
+  wireResultControls();
   wireStakingControls(httpOrigin(SERVER_URL));
   wireGovernanceControls(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
@@ -79,6 +84,7 @@ function onServerMessage(message: ServerMessage): void {
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
       app.zap = message.zap;
+      app.collect = message.collect;
       app.staking = message.staking;
       renderPayWith();
       renderHubLabel();
@@ -94,6 +100,7 @@ function onServerMessage(message: ServerMessage): void {
       dom.connect.disabled = true;
       net.flush();
       net.send({ type: 'lobbies' });
+      void renderWinnings();
       void renderStakingPanel();
       if (governanceVisible()) void renderGovernance();
       // A reconnect drops the socket, not the seat: ask to be re-attached to the
@@ -115,6 +122,10 @@ function onServerMessage(message: ServerMessage): void {
       onAvatars(message);
       break;
 
+    case 'dossier':
+      onDossier(message);
+      break;
+
     case 'round':
       onRound(message);
       break;
@@ -123,10 +134,16 @@ function onServerMessage(message: ServerMessage): void {
       onFinished(message);
       break;
 
+    case 'settled':
+      void onSettled(message);
+      break;
+
     case 'relayed':
       toast(`Sent without a wallet prompt · ${short(message.hash)}`);
       net.send({ type: 'lobbies' });
       void renderAvatarPanel();
+      // A pushed payout is a relayed transaction too; re-read once it lands.
+      void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
       break;
 
     case 'error':

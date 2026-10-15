@@ -17,3 +17,8 @@ export function toast(message: string): void {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => dom.toast.classList.add('hidden'), 5_000);
 }
+
+export function showLobbyScreen(): void {
+  dom.matchScreen.classList.add('hidden');
+  dom.lobbyScreen.classList.remove('hidden');
+}

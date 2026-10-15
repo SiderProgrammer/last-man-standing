@@ -13,6 +13,45 @@ it waits for the rules to stop moving.
 
 Effort: **S** under a day · **M** a few days · **L** a week or more.
 
+## Status — branch `fix/protocol-review`
+
+Implemented phase by phase, one commit each, on top of `4edb0f9`. The
+uncommitted staking/governance work (`contracts/src/governance/`) was not on
+the branch's base, so nothing here touches it.
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 0.1 Session keys and winnings | Done | `withdrawFor`; `withdraw` out of `SESSION_SCOPE` |
+| 0.2 Session allowlist | Done | ERC-7201 storage, per-grant epochs |
+| 0.3 VRF adapter | Done | Consumer allowlist, entries cleared, `Ownable2Step` |
+| 0.4 Deploy mocks | Done | `MockOffLocal`; `ORACLE`/`MESSENGER` from env. Address record file not done |
+| 0.5 Incomplete config | Done | `ConfigIncomplete`; zero rules hash refused |
+| 1.1 Round entropy | Done | Salts in `DeclaredMove`, round records, round hash and `HashLib` |
+| 1.2 Timeout evade | Cut | Rules are 10 fields; `contracts/config/rules.json` feeds `Deploy` |
+| 1.3 Simulator | Done | `npm run sim`, gated at 1.5x; a 300-match guard in the engine tests |
+| 1.4 Defend parries one | Done | Parried attacker drawn from the round seed |
+| 1.5 Opening | Done | Grace 2 → 1, evade 25%, hide storm 75%, riposte 5: every pure strategy ≤ 1.5x. Matches still end in a storm wipe about half the time, so damage taken decides many of them — worth a design look |
+| 2.1 Payouts and result | Done | Result panel, Winnings panel, server-paid `collect` |
+| 2.2 Practice cap | Done | One per wallet, global ceiling, frame cap, per-socket rate limit |
+| 2.3 Round persistence | Changed | Not resumed: a match live before a restart is aborted by the attestor quorum (`GameEscrow.abortMatch`) and every stake refunded at once; without an attestor key, `cancelMatch` refunds at the settlement deadline. Redis dropped |
+| 2.4 In-browser verifier | Done | Replays from the broadcast; checks the escrow's root once proposed |
+| 3.1 `withdrawToChain` | Cut | Spoke is join-only |
+| 3.2 Messenger authentication | Done | Single-app OApp, peers, originating app forwarded, eid ↔ chain id |
+| 3.3 Per-message value | Done | Options built per message from the stake |
+| 3.4 Hub refunds | Done | `JoinRefunded`; in the invariant campaign |
+| 4.1 Attestor bonds | Done | ETH, `AttestorBonds`; exit waits out delay + challenge window |
+| 4.2 Fraud proof | Done | `KernelLib` + `MatchVerifier`; settle carries the log; propose → challenge → finalize. Cross-language vectors in `contracts/test/vectors/` |
+| 5 Ranking storage | Done | Hash only; `getRanking` removed |
+| 5 Avatars auto-equip | Done | On mint only |
+| 5 Avatar mint gate | Not done | Conditional on a scarcity decision |
+| 5 Stream buybacks | Not done | `FeeRouter` is only in the uncommitted governance work |
+| 5 Read book | Done | Style book by wallet (memory/Postgres), dossier to the reads panel |
+| 5 Held moves | Done | Opt-in per player; the server learns the move at commit |
+| 5 Brackets | Not done | Needs a product decision on how stakes flow between tables |
+
+Still trusted after all of this: the quorum could invent a player's *move*
+(commitments are off-chain), and governance controls the verifier address.
+
 | Phase | Theme | Items | Effort | Gate |
 | --- | --- | --- | --- | --- |
 | 0 | Safe to deploy | 5 | S–M each | Before any non-local deployment |

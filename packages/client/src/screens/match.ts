@@ -10,10 +10,12 @@ import { app, dom, net } from '../context.js';
 import { phasePlan } from '../game/phase.js';
 import { readOpponents } from '../game/reads.js';
 import { forgetMatch, freshSalt, recallMove, rememberMove } from '../game/salts.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { readsTable, targetOptions } from '../ui/views.js';
+import { hideResult, showResult } from './result.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -38,6 +40,12 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
 export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
   if (app.replaying) app.pendingFinish = message;
   else showFinished(message);
+}
+
+export function onDossier(message: Extract<ServerMessage, { type: 'dossier' }>): void {
+  if (message.matchId !== app.match?.matchId) return;
+  app.dossier = new Map(message.entries.map((entry) => [entry.address.toLowerCase(), entry.style]));
+  renderReads(app.match, app.you);
 }
 
 export function onAvatars(message: Extract<ServerMessage, { type: 'avatars' }>): void {
@@ -87,6 +95,7 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   if (winner !== undefined) arena?.showWinner(winner);
   forgetMatch(message.result.matchId);
   lockControls('Match finished.');
+  if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
 }
 
 export function onState(
@@ -104,12 +113,14 @@ export function onState(
     app.revealedRound = null;
     app.draft = null;
     app.avatars = [];
+    app.dossier = new Map();
     // A replay from the previous match must not close this one's controls.
     if (replayTimer) clearTimeout(replayTimer);
     replayTimer = null;
     app.replaying = false;
     app.pendingFinish = null;
     dom.feed.replaceChildren();
+    hideResult();
     showMatchScreen();
   }
 
@@ -158,7 +169,7 @@ function lockIn(): void {
   rememberMove(state.matchId, state.round, sealed);
 
   const commitment = commitMove(state.matchId, state.round, app.you, sealed);
-  net.send({ type: 'commit', commitment });
+  net.send({ type: 'commit', commitment, ...(dom.holdMoves.checked ? { hold: sealed } : {}) });
   app.committedRound = state.round;
   dom.lockIn.disabled = true;
   setActionsEnabled(false);
@@ -197,8 +208,9 @@ function renderTargets(state: PublicMatchState, you: number | null): void {
 }
 
 function renderReads(state: PublicMatchState, you: number | null): void {
-  const reads = readOpponents(state, you);
-  if (reads.length === 0 || state.history.length === 0) {
+  const reads = readOpponents(state, you, app.dossier);
+  // A regular's record is worth showing before the first round, too.
+  if (reads.length === 0 || (state.history.length === 0 && app.dossier.size === 0)) {
     dom.reads.innerHTML = '<p class="muted small">Patterns appear once the first round resolves.</p>';
     return;
   }
@@ -228,7 +240,11 @@ export function updateTimer(): void {
 
 // ------------------------------------------------------------------- controls
 
+const HOLD_KEY = 'lms:hold-moves';
+
 export function wireMatchControls(): void {
+  dom.holdMoves.checked = readRaw(HOLD_KEY) === '1';
+  dom.holdMoves.onchange = () => writeRaw(HOLD_KEY, dom.holdMoves.checked ? '1' : '0');
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
     button.onclick = () => selectAction(Number(button.dataset.action) as ActionValue, button);
   }

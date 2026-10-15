@@ -4,6 +4,7 @@ import {
   AttackOutcome,
   type AttackRecord,
   type RoundRecord,
+  ZERO_SALT,
 } from '@lms/protocol';
 import { choreograph, type SeatSnapshot, type Timeline } from '../src/arena/choreography.js';
 import { buildReplay, type SeatDisplay } from '../src/arena/replay.js';
@@ -24,6 +25,7 @@ function record(fields: Partial<RoundRecord> & Pick<RoundRecord, 'hpAfter'>): Ro
       action: Action.Defend,
       target: 0,
       revealed: true,
+      salt: ZERO_SALT,
     })),
     attacks: [],
     stormDamage: 0,
@@ -200,8 +202,8 @@ describe('choreograph', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Defend, target: 0, revealed: true },
-          { index: 1, action: Action.Hide, target: 0, revealed: true },
+          { index: 0, action: Action.Defend, target: 0, revealed: true, salt: ZERO_SALT },
+          { index: 1, action: Action.Hide, target: 0, revealed: true, salt: ZERO_SALT },
         ],
         stormDamage: 12,
         // A hider takes a reduced share; the client learns that from hpAfter,
@@ -222,8 +224,8 @@ describe('choreograph', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Attack, target: 1, revealed: true },
-          { index: 1, action: Action.None, target: 0, revealed: false },
+          { index: 0, action: Action.Attack, target: 1, revealed: true, salt: ZERO_SALT },
+          { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
         ],
         hpAfter: [100, 100],
       }),
@@ -266,6 +268,7 @@ describe('choreograph', () => {
           action: Action.Attack,
           target: (index + 1) % 8,
           revealed: true,
+          salt: ZERO_SALT,
         })),
         attacks,
         stormDamage: 60,

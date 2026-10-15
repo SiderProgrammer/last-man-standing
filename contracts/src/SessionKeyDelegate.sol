@@ -52,6 +52,32 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         uint128 spent;
     }
 
+    /// @dev Everything this delegate stores, at one ERC-7201 namespace.
+    ///
+    ///      Under 7702 the storage is the player's own account, not this
+    ///      contract's. Plain slots 0, 1, 2 would be shared with any other
+    ///      delegate the player ever points their account at — a different
+    ///      wallet's implementation would read our session table as its own
+    ///      state. A namespaced root keeps the two layouts apart.
+    ///
+    /// @custom:storage-location erc7201:lms.session.v1
+    struct Layout {
+        mapping(address sessionKey => Session) sessions;
+        /// @dev Bumped on every grant, so each grant starts from an empty
+        ///      allowlist. Permissions are keyed by it, and the ones written
+        ///      under an earlier epoch are simply never read again.
+        mapping(address sessionKey => uint32) epochOf;
+        mapping(
+            address sessionKey
+                => mapping(uint32 epoch => mapping(address target => mapping(bytes4 selector => bool)))
+        ) permitted;
+        /// @dev Replay protection for relayed calls, per account.
+        uint256 nonce;
+    }
+
+    /// @dev `keccak256(abi.encode(uint256(keccak256("lms.session.v1")) - 1)) & ~bytes32(uint256(0xff))`
+    bytes32 private constant LAYOUT_SLOT = 0x07ec1a45952760d8fb956aaf940b8ff509e88f045ea2d46fbee2898cc08df400;
+
     bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
     bytes4 private constant ERC1271_INVALID = 0xffffffff;
 
@@ -64,13 +90,6 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant DOMAIN_NAME = keccak256("LastManStandingSession");
     bytes32 private constant DOMAIN_VERSION = keccak256("1");
-
-    mapping(address sessionKey => Session) public sessions;
-    /// @notice Calls a session key is allowed to make, by target and selector.
-    mapping(address sessionKey => mapping(address target => mapping(bytes4 selector => bool))) public
-        permitted;
-    /// @notice Replay protection for relayed calls, per account.
-    uint256 public sessionNonce;
 
     event SessionGranted(address indexed sessionKey, uint48 validUntil, uint128 spendCap);
     event SessionRevoked(address indexed sessionKey);
@@ -93,6 +112,10 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
     }
 
     /// @notice Grants a scoped, expiring session key.
+    /// @dev Replaces any earlier grant to the same key outright: the spend
+    ///      allowance restarts at zero and the allowlist is exactly `targets` ×
+    ///      `selectors`. Narrowing a key's scope by re-granting it therefore
+    ///      works, instead of silently keeping every call granted before.
     /// @param sessionKey Address of the key the client will hold.
     /// @param validUntil Expiry, in unix seconds. Must be in the future.
     /// @param spendCap Cumulative native value the key may move, in wei.
@@ -109,28 +132,48 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         if (validUntil <= block.timestamp) revert InvalidSession();
         if (targets.length != selectors.length) revert InvalidSession();
 
-        // Reset rather than merge: re-granting an existing key must not
-        // accumulate a spend allowance the player did not intend to give twice.
-        sessions[sessionKey] = Session({validUntil: validUntil, spendCap: spendCap, spent: 0});
+        Layout storage $ = _layout();
+        $.sessions[sessionKey] = Session({validUntil: validUntil, spendCap: spendCap, spent: 0});
+        uint32 epoch = ++$.epochOf[sessionKey];
         for (uint256 i = 0; i < targets.length; ++i) {
-            permitted[sessionKey][targets[i]][selectors[i]] = true;
+            $.permitted[sessionKey][epoch][targets[i]][selectors[i]] = true;
         }
 
         emit SessionGranted(sessionKey, validUntil, spendCap);
     }
 
     /// @notice Ends a session immediately.
-    /// @dev Deliberately leaves the permission entries in place: they are inert
-    ///      without a live session, and clearing them would cost an unbounded
-    ///      loop over a list this contract never stored.
+    /// @dev The allowlist needs no clearing: it is inert without a live
+    ///      session, and the next grant starts a fresh epoch anyway.
     function revokeSession(address sessionKey) external onlySelf {
-        delete sessions[sessionKey];
+        delete _layout().sessions[sessionKey];
         emit SessionRevoked(sessionKey);
+    }
+
+    /// @notice A session's expiry and spend, by key.
+    function sessions(address sessionKey)
+        external
+        view
+        returns (uint48 validUntil, uint128 spendCap, uint128 spent)
+    {
+        Session memory session = _layout().sessions[sessionKey];
+        return (session.validUntil, session.spendCap, session.spent);
+    }
+
+    /// @notice Whether the key's current grant may call `selector` on `target`.
+    function permitted(address sessionKey, address target, bytes4 selector) public view returns (bool) {
+        Layout storage $ = _layout();
+        return $.permitted[sessionKey][$.epochOf[sessionKey]][target][selector];
+    }
+
+    /// @notice Nonce the next relayed call must carry.
+    function sessionNonce() external view returns (uint256) {
+        return _layout().nonce;
     }
 
     /// @notice True while `sessionKey` may still act for this account.
     function sessionActive(address sessionKey) public view returns (bool) {
-        return sessions[sessionKey].validUntil > block.timestamp;
+        return _layout().sessions[sessionKey].validUntil > block.timestamp;
     }
 
     /// @notice Executes one call authorised by a session key.
@@ -144,19 +187,20 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         uint256 nonce,
         bytes calldata signature
     ) external payable returns (bytes memory result) {
-        if (nonce != sessionNonce) revert BadNonce(sessionNonce, nonce);
+        Layout storage $ = _layout();
+        if (nonce != $.nonce) revert BadNonce($.nonce, nonce);
 
         bytes32 digest =
             _hashTypedData(keccak256(abi.encode(CALL_TYPEHASH, target, value, keccak256(data), nonce)));
         address sessionKey = digest.recover(signature);
 
-        Session storage session = sessions[sessionKey];
+        Session storage session = $.sessions[sessionKey];
         if (session.validUntil <= block.timestamp) revert SessionExpired(sessionKey);
 
         // An empty calldata payload is a plain transfer; it has no selector, and
         // the zero selector is what such a permission must be granted against.
         bytes4 selector = data.length >= 4 ? bytes4(data[:4]) : bytes4(0);
-        if (!permitted[sessionKey][target][selector]) {
+        if (!permitted(sessionKey, target, selector)) {
             revert SessionNotPermitted(sessionKey, target, selector);
         }
 
@@ -171,7 +215,7 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         // Effects before interaction: the nonce advances first, so a target that
         // re-enters cannot replay this same authorisation.
         unchecked {
-            ++sessionNonce;
+            ++$.nonce;
         }
 
         bool ok;
@@ -212,6 +256,12 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         bytes32 domainSeparator =
             keccak256(abi.encode(DOMAIN_TYPEHASH, DOMAIN_NAME, DOMAIN_VERSION, block.chainid, address(this)));
         return MessageHashUtils.toTypedDataHash(domainSeparator, structHash);
+    }
+
+    function _layout() private pure returns (Layout storage $) {
+        assembly {
+            $.slot := LAYOUT_SLOT
+        }
     }
 
     /// @dev The account must be able to receive the payouts it wins.

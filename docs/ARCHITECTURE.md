@@ -20,25 +20,36 @@ Each round every living player secretly picks one of three actions:
 | Action | Effect |
 | --- | --- |
 | **Attack** `#n` | Tries to take 34 HP off seat `#n` |
-| **Defend** | Blocks incoming attacks and reflects 20 HP onto each attacker |
-| **Hide** | Evades an attack 60% of the time, and takes only half storm damage |
+| **Defend** | Parries one attacker, who takes 5 HP of riposte; any others connect |
+| **Hide** | Evades an attack 25% of the time, and takes three quarters of the storm |
 
-A player who fails to submit anything in time is recorded as `None`: they behave like
-a much worse Hide (30% evade) and take full storm damage.
+A player who fails to submit anything in time is recorded as `None`: every attack on
+them lands and they take the full storm. Not playing earns nothing.
 
 ### Resolving a round
 
 1. **Attacks resolve simultaneously** against the state at the *start* of the round.
    A player who dies this round still lands the attack they declared — there is no
    initiative order and no advantage to acting "first", because nobody acts first.
-2. **Defend beats Attack.** The attack deals nothing and the attacker takes 20 HP of
-   riposte. Attacking into a read is a losing trade.
-3. **Attack beats Hide, slowly.** A hider evades on a 60% roll, but chip damage adds
+2. **Defend beats one Attack.** A defender parries one of the attackers that came
+   at it — picked by the round's entropy, not by seat — and that attacker deals
+   nothing and takes 5 HP of riposte. The rest connect, so focus fire is the answer
+   to a turtle.
+3. **Attack beats Hide, slowly.** A hider evades on a 25% roll, but chip damage adds
    up and hiding never makes progress of its own.
-4. **Hide beats Defend.** Both are passive, but the storm hits a turtle twice as hard.
-5. **The storm** is applied last, to everyone: `(round - 2) * 6` HP from round 3
-   onward, halved for hiders. The storm is the clock. Without it, everyone defending
-   forever would be a stable equilibrium and no one would ever be eliminated.
+4. **Hide beats Defend.** Both are passive, but the storm hits a turtle harder.
+5. **The storm** is applied last, to everyone: `(round - 1) * 6` HP from round 2
+   onward, three quarters of it for hiders. The storm is the clock. Without it,
+   everyone defending forever would be a stable equilibrium.
+
+Every roll in a round — each hider's evade, each defender's parry pick — comes from
+`roundSeed(matchSeed, round, salts)`, where `salts` are the salts every player
+revealed that round. Nobody can compute a roll until every reveal is in, and the
+salts are published with the round so anyone can re-derive it.
+
+The numbers are not hand-picked: `npm run sim` plays thousands of bot matches and
+checks that no mindless strategy (always Defend, always Hide, always Attack) wins
+more than 1.5× the share a seat would get by chance.
 6. **Elimination** takes everyone at or below 0 HP, ordered worst-first by HP and then
    by seat index. If a round would wipe the entire lobby, the player with the least
    overkill survives on 1 HP, so a match always produces exactly one winner.
@@ -198,6 +209,15 @@ seed exists, and cannot choose moves against a roll it already knows. Locking a 
 expired lobby is permissionless; the keeper key is a convenience, and if it is offline
 any player can lock the lobby themselves.
 
+**Restarts.** A room lives only in memory, so a restart loses every match in progress.
+Those matches are not resumed or replayed from round one — players have seen rounds and
+know moves that a fresh room would deal again. Instead, on its first poll the bridge
+treats every match that is already `Live` as abandoned: it has the attestor quorum sign
+`MatchAbort` and call `GameEscrow.abortMatch`, which refunds every seat at once, and it
+tells a player who reconnects that the match was cancelled. If no attestor key is
+configured, the match is refunded through the permissionless `cancelMatch` once its
+settlement deadline passes. Practice rooms are simply gone.
+
 ### `packages/client` — the player's view
 
 | File | Responsibility |
@@ -331,9 +351,12 @@ lockMatch()                       permissionless once full, or quorate and expir
   ↓  requestRandomness()
 fulfillRandomness()               seed = keccak(randomness, matchId) → status Live
   ↓  MatchStarted event           the server adopts the match and plays it
-settle(rounds, historyRoot, ranking, signatures)
-  ↓                               quorum verified, ranking must be the seat set
-withdraw() / withdrawToChain()    pull-based, always
+settle(rounds, root, ranking, sigs, log)  bonded quorum, ranking = seat set, log hashes to root
+  ↓                               → Proposed: nothing paid yet
+challenge(rules, log, signers)    any time before challengeDeadline: replays the log on-chain;
+  ↓                               on fraud, slash every signer and refund every stake
+finalize(ranking)                 after challengeDeadline, permissionless → Settled, payouts credited
+withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the account itself
 ```
 
 **Security properties the contracts enforce**
@@ -436,30 +459,48 @@ not corrupt a match, but every relayed call would silently stop recovering the s
 
 ### Trust model
 
-The attestor quorum is trusted for the **ordering** of a result, not for its
-**contents**. The signed digest commits to the history root, so anyone holding the
-published seed and move log can replay the match locally and prove a signed result was
-fabricated. The seed is drawn after the lobby closes, so neither the server nor a player
-can choose moves against known rolls. What is *not* yet implemented is an on-chain
-challenge that turns that proof into slashing — see `docs/TODO.md`.
+A result is signed by a quorum of **bonded** attestors (`AttestorBonds`, ETH) and is
+*proposed*, not paid. The signed root commits to every round's actions, targets, salts,
+HP and eliminations, and `settle` refuses the result unless those rounds come with it and
+hash to the root — so the evidence is always on-chain, in the settlement's calldata.
+
+For `challengeWindow` after that, anyone can submit the log to `challenge`. The escrow
+replays it through `MatchVerifier`, a Solidity port of `resolveRound` held to the
+TypeScript kernel by cross-language vectors (`contracts/test/vectors/matches.json`). If any
+round is not what its inputs resolve to, the match ended at the wrong time, or the ranking
+is not the one the rounds produce, every signer's bond is slashed — the challenger takes a
+share — and every stake is refunded. An attestor stops counting the moment it asks to
+unbond, and its bond cannot leave until the challenge window has also passed.
+
+What stays trusted: the quorum could invent a player's *move*. The published salt must
+open the player's commitment, but commitments are exchanged off-chain, so a forged move
+replayed faithfully looks valid. Everything downstream of the moves is enforced. The
+seed is drawn after the lobby closes, and each round's rolls also depend on every
+player's revealed salt, so nobody can choose moves against known rolls.
 
 ### Cross-chain model
 
 Hub-and-spoke. The hub chain holds all escrowed value and all match state; spokes hold
 nothing but a forwarding gate. A player on a spoke calls `SpokeEscrow.join`, which sends
 the stake and `(matchId, player)` through the messenger; the hub seats them and records
-their origin chain. On the way out, `withdrawToChain` pushes the balance back through
-the same transport. The `ICrossChainMessenger` interface is modelled on LayerZero v2's
-shape but is transport-agnostic, so the adapter can be swapped without touching game
-logic.
+their origin chain. If the seat can no longer be taken when the message lands — the lobby
+filled or locked in flight, the stake was wrong, the escrow is paused — the hub credits
+the stake to the player there instead of reverting, because a revert would strand it with
+the transport. Payouts stay on the hub; `withdrawFor` lets a keeper push one to a player
+who holds no gas there. The `ICrossChainMessenger` interface is transport-agnostic, so
+the adapter can be swapped without touching game logic.
 
-**Two id spaces.** `GameEscrow.seatOrigin` stores the `srcChainId` the messenger
-delivered, which for LayerZero v2 is an *endpoint id* (`40161`), not an EVM chain id
-(`11155111`). Everything the player sees is in chain ids, so `ChainBridge` runs every
-origin through `normaliseOriginChainId` before it reaches a `Seat`: zero means the hub,
-a known endpoint id maps to its chain, and anything else passes through unchanged — a
-transport whose id space already is chain ids stays correct, and an unrecognised
-endpoint degrades to a number rather than to the wrong chain. Origins are read from
+**Authentication.** `LayerZeroMessenger` serves one local app. It only sends for that
+app, puts the app's address in the envelope, checks the remote messenger against its
+configured peer on receipt, and hands the escrow the *originating app* as `srcSender`. So
+the escrow's peer check names the remote `SpokeEscrow`, not merely the messenger that
+carried the message. Each message's executor options deliver exactly that lobby's stake.
+
+**One id space.** The messenger translates LayerZero endpoint ids (`40161`) to EVM chain
+ids (`11155111`) at its boundary, so `GameEscrow.seatOrigin` holds chain ids. `ChainBridge`
+still runs every origin through `normaliseOriginChainId` — zero means the hub, a known
+endpoint id maps to its chain, anything else passes through — which keeps an escrow fed
+by an older adapter readable. Origins are read from
 `PlayerJoined`, which already carries them, and cached per seat; the escrow is only read
 for a seat that joined before the backfill window.
 

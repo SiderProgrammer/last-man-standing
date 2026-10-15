@@ -6,6 +6,8 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
 import {GameEscrow} from "../src/GameEscrow.sol";
+import {AttestorBonds} from "../src/AttestorBonds.sol";
+import {MatchVerifier} from "../src/MatchVerifier.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
@@ -18,7 +20,7 @@ import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
 
-/// @notice Testnet deploy: token-governed config, mock oracle, hub escrow.
+/// @notice Hub deploy: token-governed config, randomness oracle, bonded attestors, hub escrow.
 /// @dev Governance ends up as:
 ///
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
@@ -35,11 +37,12 @@ import {FeeRouter} from "../src/governance/FeeRouter.sol";
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
-///      Swap `MockRandomnessOracle` for `ChainlinkVrfAdapter` and `MockMessenger` for
-///      `LayerZeroMessenger` once those endpoints exist on the target testnet. Both are
-///      `Ownable`, and whoever owns them can choose seeds or forge cross-chain joins, so
-///      deploy them with the timelock as `owner_`, never an EOA. The same goes for
-///      `SpokeEscrow` on every spoke, each behind its own Safe and timelock.
+///      The mock oracle and messenger are deployed on a local node only; anywhere
+///      else pass `ORACLE` (a `ChainlinkVrfAdapter`) and, once spokes exist,
+///      `MESSENGER` (a `LayerZeroMessenger`). Both are `Ownable2Step`, and whoever
+///      owns them can choose seeds or forge cross-chain joins, so deploy them with
+///      the timelock as `owner_`, never an EOA. The same goes for `SpokeEscrow`
+///      on every spoke, each behind its own Safe and timelock.
 contract Deploy is Script {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
@@ -57,6 +60,10 @@ contract Deploy is Script {
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
         TimelockController timelock;
+        /// @dev Behind the timelock, like the config: it can slash.
+        AttestorBonds bonds;
+        /// @dev Stateless; replaced by deploying another and pointing the config at it.
+        MatchVerifier verifier;
         LmsToken lms;
         StakedLms stakedLms;
         LmsGovernor governor;
@@ -67,6 +74,7 @@ contract Deploy is Script {
     }
 
     error SafeRequired();
+    error MockOffLocal();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
     error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
 
@@ -87,13 +95,11 @@ contract Deploy is Script {
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
         deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
-        // Answers nothing on its own: something must call `fulfill` after each
-        // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
-        deployment.oracle = address(new MockRandomnessOracle());
-        deployment.messenger = address(new MockMessenger());
+        (deployment.oracle, deployment.messenger) = _transport();
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
+        (deployment.bonds, deployment.verifier) = _settlement(deployment.config, deployment.escrow, deployer);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(
@@ -108,6 +114,7 @@ contract Deploy is Script {
         _governance(deployment, deployer);
 
         deployment.config.transferOwnership(address(deployment.timelock));
+        deployment.bonds.transferOwnership(address(deployment.timelock));
         _handOver(deployment, deployer);
 
         vm.stopBroadcast();
@@ -121,6 +128,26 @@ contract Deploy is Script {
         if (safe != address(0)) return safe;
         if (block.chainid != LOCAL_CHAIN_ID) revert SafeRequired();
         return deployer;
+    }
+
+    /// @dev The mocks are for a local node only. `MockRandomnessOracle.fulfill`
+    ///      is open to anyone, so on any other chain whoever calls it first
+    ///      chooses the seed of every match.
+    ///
+    ///      Elsewhere `ORACLE` is required — a `ChainlinkVrfAdapter` whose owner
+    ///      must then register the escrow with `setConsumer` — and `MESSENGER`
+    ///      is optional: unset means a hub with no spokes yet.
+    function _transport() private returns (address oracle, address messenger) {
+        oracle = vm.envOr("ORACLE", address(0));
+        messenger = vm.envOr("MESSENGER", address(0));
+        if (block.chainid != LOCAL_CHAIN_ID) {
+            if (oracle == address(0)) revert MockOffLocal();
+            return (oracle, messenger);
+        }
+        // Answers nothing on its own: something must call `fulfill` after each
+        // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
+        if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
+        if (messenger == address(0)) messenger = address(new MockMessenger());
     }
 
     function _params(address safe) private view returns (ProtocolConfig.Params memory) {
@@ -148,21 +175,78 @@ contract Deploy is Script {
     function _configure(ProtocolConfig config, address oracle, address safe, address deployer) private {
         config.setRandomnessOracle(oracle);
 
-        // The quorum is a multisig over results: independent attestor keys,
-        // most of which must agree. `ATTESTOR` is the single-key fallback.
-        address[] memory fallbackAttestors = new address[](1);
-        fallbackAttestors[0] = vm.envOr("ATTESTOR", deployer);
-        address[] memory attestors = vm.envOr("ATTESTORS", ",", fallbackAttestors);
-        // A blank `ATTESTORS=` parses as an empty list rather than as unset.
-        if (attestors.length == 0) attestors = fallbackAttestors;
+        address[] memory attestors = _attestors(deployer);
         for (uint256 i = 0; i < attestors.length; ++i) {
             config.setAttestor(attestors[i], true);
         }
         // Majority by default: 1 of 1, 2 of 3, 3 of 5.
         config.setAttestorThreshold(uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
 
-        config.setRulesHash(HashLib.hashRules(4, 8, 100, 34, 20, 6000, 3000, 5000, 2, 6, 30));
+        config.setRulesHash(HashLib.hashRules(_rules()));
         config.setGuardian(safe);
+    }
+
+    /// @dev The quorum is a multisig over results: independent attestor keys,
+    ///      most of which must agree. `ATTESTOR` is the single-key fallback.
+    function _attestors(address deployer) private view returns (address[] memory attestors) {
+        address[] memory fallbackAttestors = new address[](1);
+        fallbackAttestors[0] = vm.envOr("ATTESTOR", deployer);
+        attestors = vm.envOr("ATTESTORS", ",", fallbackAttestors);
+        // A blank `ATTESTORS=` parses as an empty list rather than as unset.
+        if (attestors.length == 0) attestors = fallbackAttestors;
+    }
+
+    /// @dev Bonds, the fraud-proof verifier and the challenge window. A lobby
+    ///      cannot open until all three are set.
+    ///
+    ///      On a local node the deployer funds every attestor's bond, so the dev
+    ///      stack settles out of the box. Anywhere else attestors bond
+    ///      themselves — a bond someone else put up restrains nobody — and no
+    ///      result settles until a quorum has.
+    function _settlement(ProtocolConfig config, GameEscrow escrow, address deployer)
+        private
+        returns (AttestorBonds bonds, MatchVerifier verifier)
+    {
+        uint256 requiredBond = vm.envOr("ATTESTOR_BOND", uint256(1 ether));
+        bonds = new AttestorBonds(
+            deployer,
+            config,
+            // Read before `_governance` points the config's treasury at
+            // `FeeRouter`, which could never collect a slashed share.
+            config.treasury(),
+            requiredBond,
+            uint64(vm.envOr("UNBOND_DELAY", uint256(7 days))),
+            uint16(vm.envOr("CHALLENGER_BPS", uint256(2_000)))
+        );
+        verifier = new MatchVerifier();
+        config.setAttestorBonds(address(bonds));
+        config.setMatchVerifier(address(verifier));
+        config.setChallengeWindow(uint64(vm.envOr("CHALLENGE_WINDOW", uint256(1 hours))));
+        bonds.setSlasher(address(escrow), true);
+
+        if (block.chainid != LOCAL_CHAIN_ID) return (bonds, verifier);
+        address[] memory attestors = _attestors(deployer);
+        for (uint256 i = 0; i < attestors.length; ++i) {
+            bonds.bond{value: requiredBond}(attestors[i]);
+        }
+    }
+
+    /// @dev Read from `config/rules.json` rather than typed in here, so the
+    ///      deployed rules hash cannot drift from the rules the server plays:
+    ///      `packages/protocol/test/parity.test.ts` checks that file field by
+    ///      field against `DEFAULT_RULES`.
+    function _rules() private view returns (HashLib.Rules memory rules) {
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/config/rules.json"));
+        rules.minPlayers = uint16(vm.parseJsonUint(json, ".minPlayers"));
+        rules.maxPlayers = uint16(vm.parseJsonUint(json, ".maxPlayers"));
+        rules.startingHp = uint32(vm.parseJsonUint(json, ".startingHp"));
+        rules.attackDamage = uint32(vm.parseJsonUint(json, ".attackDamage"));
+        rules.riposteDamage = uint32(vm.parseJsonUint(json, ".riposteDamage"));
+        rules.hideEvadeBps = uint16(vm.parseJsonUint(json, ".hideEvadeBps"));
+        rules.hideStormBps = uint16(vm.parseJsonUint(json, ".hideStormBps"));
+        rules.stormGraceRounds = uint16(vm.parseJsonUint(json, ".stormGraceRounds"));
+        rules.stormBaseDamage = uint32(vm.parseJsonUint(json, ".stormBaseDamage"));
+        rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
     }
 
     /// @dev Only where Uniswap v4 is deployed. Ownerless, so there is nothing
@@ -222,11 +306,11 @@ contract Deploy is Script {
         return vm.envOr("TIMELOCK_DELAY", uint256(1 days));
     }
 
-    /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
-    ///      proposes: the timelock has to call `acceptOwnership` itself. While
-    ///      its delay is still zero that can be scheduled and executed at once,
-    ///      in the same batch that raises the delay to its real value, so the
-    ///      timelock never owns the config with a zero delay outside that call.
+    /// @dev `ProtocolConfig` and `AttestorBonds` are `Ownable2Step`, so
+    ///      `transferOwnership` only proposes: the timelock has to accept itself.
+    ///      While its delay is still zero that can be scheduled and executed at
+    ///      once, in the same batch that raises the delay to its real value, so
+    ///      the timelock never owns either with a zero delay outside that call.
     function _handOver(Deployment memory deployment, address deployer) private {
         TimelockController timelock = deployment.timelock;
         ProtocolConfig config = deployment.config;
@@ -237,13 +321,15 @@ contract Deploy is Script {
         uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
-        address[] memory targets = new address[](2);
+        address[] memory targets = new address[](3);
         targets[0] = address(config);
-        targets[1] = address(timelock);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory payloads = new bytes[](2);
+        targets[1] = address(deployment.bonds);
+        targets[2] = address(timelock);
+        uint256[] memory values = new uint256[](3);
+        bytes[] memory payloads = new bytes[](3);
         payloads[0] = abi.encodeCall(config.acceptOwnership, ());
-        payloads[1] = abi.encodeCall(timelock.updateDelay, (delay));
+        payloads[1] = abi.encodeCall(deployment.bonds.acceptOwnership, ());
+        payloads[2] = abi.encodeCall(timelock.updateDelay, (delay));
         // The timelock marks executed operations with timestamp 1, so at the
         // in-memory dry run's starting timestamp of 1 a zero-delay operation
         // reads as already done. No real chain is there, and a cheatcode is

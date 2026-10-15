@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Action, DEFAULT_RULES, MatchPhase } from '@lms/protocol';
-import { replayMatch, verifyResult } from '@lms/engine';
+import { moveLogFromHistory, replayMatch, verifyResult } from '@lms/engine';
 import {
   always,
   bytes32,
@@ -121,6 +121,22 @@ describe('engine invariants', () => {
 
     expect(replayMatch(setup, moveLog).result).toEqual(match.result());
     expect(verifyResult(setup, moveLog, match.result())).toBe(true);
+  });
+
+  it('replays from nothing but the published history', () => {
+    const setup = setupFor(5, 'from-history');
+    const { match } = playMatch(setup, readerStrategy(new Prng(bytes32('from-history'))), new Set([2]));
+    expect(verifyResult(setup, moveLogFromHistory(match.history), match.result())).toBe(true);
+  });
+
+  it('rejects a replay whose salts were swapped', () => {
+    // Salts decide the rolls, so a history that keeps every move but changes
+    // one salt is a different match and must not verify.
+    const setup = setupFor(4, 'salt-tamper');
+    const { match, moveLog } = playMatch(setup, randomStrategy(new Prng(bytes32('salt-tamper'))));
+    const tampered = moveLog.map((round) => round.map((move) => ({ ...move })));
+    (tampered[0]?.[0] as { salt: `0x${string}` }).salt = bytes32('forged');
+    expect(verifyResult(setup, tampered, match.result())).toBe(false);
   });
 
   it('rejects a replay whose move log was tampered with', () => {

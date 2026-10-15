@@ -1,5 +1,6 @@
 import type {
   ActionValue,
+  PlayStyle,
   AvatarCollectionInfo,
   AvatarEntry,
   PublicMatchState,
@@ -35,6 +36,8 @@ export interface AppState {
   session: Session | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /** True when the server pays the gas to push payouts. */
+  collect: boolean;
   /** The staking vault and any airdrop, or null when the server offers neither. */
   staking: StakingInfo | null;
   match: PublicMatchState | null;
@@ -44,6 +47,8 @@ export interface AppState {
    * rebuilt on every match switch.
    */
   avatars: AvatarEntry[];
+  /** Earlier play styles of this table's wallets, by lowercased address. */
+  dossier: Map<string, PlayStyle>;
   you: number | null;
   deadline: number;
   /** Action the player has selected but not yet sealed. */
@@ -75,9 +80,11 @@ export const app: AppState = {
   sessionDelegate: null,
   session: null,
   zap: null,
+  collect: false,
   staking: null,
   match: null,
   avatars: [],
+  dossier: new Map(),
   you: null,
   deadline: 0,
   draft: null,

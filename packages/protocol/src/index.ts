@@ -2,6 +2,7 @@
 export * from './game/types.js';
 export * from './game/rules.js';
 export * from './game/hash.js';
+export * from './game/style.js';
 
 // Everything tied to a chain: chain ids, typed data, and the contract ABIs.
 export * from './chain/chains.js';

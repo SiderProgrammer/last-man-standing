@@ -21,6 +21,8 @@ export interface ChainBridgeOptions {
   /** Funds the permissionless `lockMatch` call. Without it, someone else must lock. */
   keeperKey?: Hex;
   pollMs?: number;
+  /** Aborts a live match this server cannot finish. See `ChainBridgeDeps.abort`. */
+  abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
 }
 
 /** What the bridge needs once the transport has been chosen. */
@@ -32,11 +34,21 @@ export interface ChainBridgeDeps {
   pollMs?: number;
   /** Injectable clock, so the lock window can be tested without waiting. */
   now?: () => number;
+  /**
+   * Has the attestor quorum abort a live match, refunding every seat at once.
+   * Omitted or returning null, the match is cancelled through the
+   * permissionless `cancelMatch` once its settlement deadline passes instead.
+   */
+  abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
 }
 
 interface TrackedMatch {
   info: LobbyInfo;
   adopted: boolean;
+  /** A result is proposed: no longer a lobby to list, waiting to be finalised. */
+  proposed: boolean;
+  /** Was live before this server started: being cancelled, never played. */
+  abandoned: boolean;
   /**
    * Chain each seat staked from, keyed by lowercased address and already
    * normalised to an EVM chain id. Filled from `PlayerJoined` as it is seen and
@@ -67,6 +79,12 @@ export class ChainBridge {
   private timer: ReturnType<typeof setInterval> | null = null;
   private cursor: bigint | null = null;
   private polling = false;
+  /**
+   * False until the first refresh has run. A match already live at that point
+   * went live before this process existed, so whatever was played of it died
+   * with the previous one.
+   */
+  private booted = false;
 
   constructor(private readonly deps: ChainBridgeDeps) {
     this.reader = deps.reader;
@@ -84,6 +102,7 @@ export class ChainBridge {
       }),
       lobby: options.lobby,
       chainId: options.chainId,
+      ...(options.abort ? { abort: options.abort } : {}),
     });
     void bridge.poll();
     bridge.timer = setInterval(() => void bridge.poll(), options.pollMs ?? 4_000);
@@ -101,6 +120,7 @@ export class ChainBridge {
     const open: LobbyInfo[] = [];
     const live: LobbyInfo[] = [];
     for (const entry of this.tracked.values()) {
+      if (entry.proposed || entry.abandoned) continue;
       if (entry.info.status === 'open') open.push(entry.info);
       else live.push(entry.info);
     }
@@ -114,6 +134,7 @@ export class ChainBridge {
     try {
       await this.discover();
       await this.refresh();
+      this.booted = true;
     } catch (error) {
       console.error('[chain] poll failed:', errorMessage(error));
     } finally {
@@ -130,7 +151,7 @@ export class ChainBridge {
     for (const { matchId } of await this.reader.matchCreatedLogs(from, latest)) {
       const key = matchId.toLowerCase();
       if (this.tracked.has(key)) continue;
-      this.tracked.set(key, { adopted: false, info: placeholder(matchId), origins: new Map() });
+      this.tracked.set(key, { adopted: false, proposed: false, abandoned: false, info: placeholder(matchId), origins: new Map() });
     }
 
     // Joins are read from the log rather than by polling `seatOrigin` per seat:
@@ -154,6 +175,19 @@ export class ChainBridge {
 
       if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled) {
         this.tracked.delete(key);
+        continue;
+      }
+      if (raw.status === MatchStatus.Proposed) {
+        entry.proposed = true;
+        await this.maybeFinalize(matchId, raw.challengeDeadline);
+        continue;
+      }
+      if (entry.abandoned) {
+        await this.maybeCancel(matchId, raw.settleDeadline);
+        continue;
+      }
+      if (raw.status === MatchStatus.Live && !entry.adopted && !this.booted) {
+        await this.abandon(entry, matchId);
         continue;
       }
 
@@ -182,6 +216,46 @@ export class ChainBridge {
         this.adopt(matchId, raw.seed, seats);
       }
     }
+  }
+
+  /**
+   * Gives up on a match that was live before this server started.
+   *
+   * Its room — commitments, reveals, the round in progress — lived only in the
+   * previous process. Restarting it from round one would replay rounds players
+   * already saw, against moves they already know, so the only fair outcome is
+   * to call it off and give every stake back. The quorum aborts it at once;
+   * if that cannot be sent, `maybeCancel` refunds at the settlement deadline.
+   */
+  private async abandon(entry: TrackedMatch, matchId: `0x${string}`): Promise<void> {
+    entry.abandoned = true;
+    this.deps.lobby.markAbandoned(matchId);
+    console.warn(`[chain] ${matchId} was live before this restart; cancelling and refunding`);
+    try {
+      const tx = await this.deps.abort?.(matchId);
+      if (tx) console.log(`[chain] aborted ${matchId}: ${tx}`);
+    } catch (error) {
+      console.error(`[chain] abort of ${matchId} failed:`, errorMessage(error));
+    }
+  }
+
+  /** The fallback for an abandoned match: the permissionless refund at its deadline. */
+  private async maybeCancel(matchId: `0x${string}`, settleDeadline: bigint): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < settleDeadline) return;
+    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelled ${matchId}`);
+  }
+
+  /**
+   * Pays out a proposed result once its challenge window has closed. Like
+   * locking, permissionless: the keeper only saves the players the call.
+   * Driven from the chain's state rather than a timer, so a restart during
+   * the window loses nothing.
+   */
+  private async maybeFinalize(matchId: `0x${string}`, deadline: bigint): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
+    const ranking = await this.reader.proposedRanking(matchId);
+    if (!ranking) return;
+    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalised ${matchId}`);
   }
 
   /**

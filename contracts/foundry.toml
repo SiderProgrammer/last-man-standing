@@ -12,6 +12,8 @@ via_ir = false
 bytecode_hash = "none"
 # The settlement libraries are hand-written Yul; keep the compiler honest about it.
 deny_warnings = false
+# `Deploy` reads the rule set from `config/rules.json`.
+fs_permissions = [{ access = "read", path = "./config" }, { access = "read", path = "./test/vectors" }]
 
 [profile.default.fuzz]
 runs = 512

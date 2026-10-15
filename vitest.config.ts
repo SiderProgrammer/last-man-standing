@@ -15,5 +15,8 @@ export default defineConfig({
   test: {
     include: ['packages/*/test/**/*.test.ts'],
     environment: 'node',
+    // The engine's property, balance and vector tests replay hundreds of
+    // matches; run alongside each other they outlast the 5 s default.
+    testTimeout: 30_000,
   },
 });

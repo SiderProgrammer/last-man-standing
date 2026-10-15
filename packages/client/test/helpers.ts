@@ -1,9 +1,11 @@
 import { keccak256, toHex } from 'viem';
 import {
+  DEFAULT_RULES,
   MatchPhase,
   type ActionValue,
   type PublicMatchState,
   type RoundRecord,
+  ZERO_SALT,
 } from '@lms/protocol';
 
 export function bytes32(label: string): `0x${string}` {
@@ -31,6 +33,7 @@ export function round(number: number, moves: MoveSpec[], hpAfter: number[]): Rou
       action: move.action,
       target: move.target ?? 0,
       revealed: move.revealed ?? true,
+      salt: ZERO_SALT,
     })),
     attacks: [],
     stormDamage: 0,
@@ -47,6 +50,8 @@ export function stateWith(
 ): PublicMatchState {
   return {
     matchId: bytes32('match'),
+    seed: bytes32('seed'),
+    rules: DEFAULT_RULES,
     phase: MatchPhase.Commit,
     round: history.length + 1,
     players: Array.from({ length: seatCount }, (_, index) => ({

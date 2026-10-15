@@ -27,6 +27,8 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     status: MatchStatus.Open,
     joinDeadline: 9_999_999_999n,
     seed: bytes32('seed'),
+    settleDeadline: 0n,
+    challengeDeadline: 0n,
     ...overrides,
   };
 }
@@ -44,6 +46,8 @@ class FakeEscrow implements EscrowReader {
   readonly locked: `0x${string}`[] = [];
   seatOriginReads = 0;
   lockSucceeds = true;
+  ranking = new Map<string, Address[]>();
+  readonly finalized: Array<[`0x${string}`, readonly Address[]]> = [];
 
   async blockNumber(): Promise<bigint> {
     return this.block;
@@ -76,16 +80,36 @@ class FakeEscrow implements EscrowReader {
     this.locked.push(matchId);
     return true;
   }
+
+  readonly cancelled: `0x${string}`[] = [];
+
+  async cancelMatch(matchId: `0x${string}`): Promise<boolean> {
+    this.cancelled.push(matchId);
+    return true;
+  }
+
+  async proposedRanking(matchId: `0x${string}`): Promise<readonly Address[] | null> {
+    return this.ranking.get(matchId) ?? null;
+  }
+
+  async finalize(matchId: `0x${string}`, ranking: readonly Address[]): Promise<boolean> {
+    this.finalized.push([matchId, ranking]);
+    return true;
+  }
 }
 
-function bridgeOver(reader: EscrowReader, now = () => 1_000_000): { bridge: ChainBridge; lobby: Lobby } {
+function bridgeOver(
+  reader: EscrowReader,
+  now = () => 1_000_000,
+  abort?: (matchId: `0x${string}`) => Promise<`0x${string}` | null>,
+): { bridge: ChainBridge; lobby: Lobby } {
   const lobby = new Lobby({
     archive: new MemoryArchive(),
     relayer: nullRelayer,
     commitMs: 1_000,
     revealMs: 1_000,
   });
-  return { bridge: new ChainBridge({ reader, lobby, chainId: HUB, now }), lobby };
+  return { bridge: new ChainBridge({ reader, lobby, chainId: HUB, now, ...(abort ? { abort } : {}) }), lobby };
 }
 
 describe('chain bridge discovery', () => {
@@ -226,14 +250,16 @@ describe('chain bridge locking', () => {
 });
 
 describe('chain bridge adoption', () => {
-  it('opens a room for a live match exactly once', async () => {
+  it('opens a room for a match that goes live while it runs, exactly once', async () => {
     const reader = new FakeEscrow();
     const id = bytes32('live');
     reader.created = [id];
-    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4 }));
+    reader.matches.set(id, match({ status: MatchStatus.Pending, seatCount: 4 }));
     reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
     const { bridge, lobby } = bridgeOver(reader);
 
+    await bridge.poll();
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4 }));
     await bridge.poll();
     expect(lobby.get(id)).not.toBeNull();
     expect(lobby.size).toBe(1);
@@ -255,5 +281,70 @@ describe('chain bridge adoption', () => {
     // rolls it already knows.
     expect(lobby.size).toBe(0);
     expect(bridge.directory().live).toHaveLength(1);
+  });
+
+  it('finalises a proposed result once its challenge window has closed, and not before', async () => {
+    const reader = new FakeEscrow();
+    const id = bytes32('proposed');
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Proposed, challengeDeadline: 2_000n }));
+    reader.ranking.set(id, [seat(2), seat(1), seat(3), seat(0)]);
+
+    let nowMs = 1_000_000; // 1 000 s: inside the window
+    const { bridge } = bridgeOver(reader, () => nowMs);
+    await bridge.poll();
+    expect(reader.finalized).toEqual([]);
+    // A proposed result is no longer a lobby anyone can join or watch.
+    expect(bridge.directory()).toEqual({ open: [], live: [] });
+
+    nowMs = 2_000_000;
+    await bridge.poll();
+    expect(reader.finalized).toEqual([[id, [seat(2), seat(1), seat(3), seat(0)]]]);
+  });
+});
+
+describe('chain bridge after a restart', () => {
+  function liveBeforeBoot() {
+    const reader = new FakeEscrow();
+    const id = bytes32('live-before-restart');
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4, settleDeadline: 5_000n }));
+    reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
+    return { reader, id };
+  }
+
+  it('aborts a match that was already live instead of replaying it from round one', async () => {
+    const { reader, id } = liveBeforeBoot();
+    const aborted: string[] = [];
+    const { bridge, lobby } = bridgeOver(reader, () => 1_000_000, async (matchId) => {
+      aborted.push(matchId);
+      return `0x${'ab'.repeat(32)}`;
+    });
+
+    await bridge.poll();
+    expect(aborted).toEqual([id]);
+    expect(lobby.get(id)).toBeNull();
+    expect(bridge.directory()).toEqual({ open: [], live: [] });
+    // A player reconnecting to it is told what happened rather than "unknown match".
+    expect(() => lobby.attach(id, { address: null, send: () => {} })).toThrow(/cancelled after a server restart/);
+
+    // Still `Live` on the next poll while the abort is in flight: no second abort, no room.
+    await bridge.poll();
+    expect(aborted).toEqual([id]);
+    expect(lobby.size).toBe(0);
+  });
+
+  it('falls back to the permissionless refund at the deadline when it cannot abort', async () => {
+    const { reader, id } = liveBeforeBoot();
+    let nowMs = 1_000_000; // 1 000 s: before the 5 000 s deadline
+    const { bridge, lobby } = bridgeOver(reader, () => nowMs, async () => null);
+
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([]);
+    expect(lobby.size).toBe(0);
+
+    nowMs = 5_000_000;
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([id]);
   });
 });

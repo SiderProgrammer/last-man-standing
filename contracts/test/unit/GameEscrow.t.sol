@@ -2,10 +2,11 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {HonestMatch} from "../helpers/HonestMatch.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {ZeroAddress} from "../../src/Errors.sol";
+import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -146,16 +147,23 @@ contract GameEscrowTest is Fixtures {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x51)));
 
-        address[] memory ranking = _rankingOf(matchId);
-        bytes32 historyRoot = keccak256("history");
-        bytes memory sigs = _signResult(_twoAttestors(), matchId, 7, historyRoot, ranking);
-
-        escrow.settle(matchId, 7, historyRoot, ranking, sigs);
-
+        (HonestMatch.Played memory played, address[] memory ranking) = _honest(matchId);
+        bytes32 historyRoot = played.root;
+        _propose(matchId, played, ranking);
         GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
+        assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Proposed));
+        assertEq(info.challengeDeadline, block.timestamp + CHALLENGE_WINDOW);
+        // Nothing is paid while the result can still be challenged.
+        assertEq(escrow.withdrawable(ranking[0]), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline));
+        escrow.finalize(matchId, ranking);
+        vm.warp(info.challengeDeadline);
+        escrow.finalize(matchId, ranking);
+
+        info = escrow.getMatch(matchId);
         assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Settled));
         assertEq(info.historyRoot, historyRoot);
-        assertEq(escrow.getRanking(matchId)[0], ranking[0]);
 
         uint256 pool = 4 * STAKE;
         uint256 fee = (pool * 500) / 10_000;
@@ -181,7 +189,7 @@ contract GameEscrowTest is Fixtures {
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
         vm.expectRevert();
-        escrow.settle(matchId, 3, historyRoot, ranking, bad);
+        escrow.settle(matchId, 3, historyRoot, ranking, bad, "");
 
         address[] memory shuffled = new address[](4);
         shuffled[0] = ranking[0];
@@ -190,7 +198,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
         vm.expectRevert();
-        escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
+        escrow.settle(matchId, 3, historyRoot, shuffled, sigs, "");
     }
 
     function test_settle_rejectsSingleAttestorWhenThresholdIsTwo() public {
@@ -201,14 +209,13 @@ contract GameEscrowTest is Fixtures {
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _signResult(one, matchId, 1, keccak256("r"), ranking);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.QuorumNotMet.selector, uint256(1), uint32(2)));
-        escrow.settle(matchId, 1, keccak256("r"), ranking, sigs);
+        escrow.settle(matchId, 1, keccak256("r"), ranking, sigs, "");
     }
 
     function test_withdraw_paysRecipient() public {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(4)));
-        address[] memory ranking = _rankingOf(matchId);
-        escrow.settle(matchId, 5, keccak256("h"), ranking, _signResult(_twoAttestors(), matchId, 5, keccak256("h"), ranking));
+        address[] memory ranking = _settleAndFinalize(matchId);
 
         uint256 before = players[0].balance;
         uint256 owed = escrow.withdrawable(ranking[0]);
@@ -220,23 +227,98 @@ contract GameEscrowTest is Fixtures {
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
     }
 
-    function test_withdrawToChain_forwardsValue() public {
+    function test_withdrawFor_paysTheAccountNotTheCaller() public {
         bytes32 matchId = _createAndFill(4);
-        _lockAndSeed(matchId, bytes32(uint256(5)));
-        address[] memory ranking = _rankingOf(matchId);
-        escrow.settle(matchId, 2, keccak256("h2"), ranking, _signResult(_twoAttestors(), matchId, 2, keccak256("h2"), ranking));
+        _lockAndSeed(matchId, bytes32(uint256(4)));
+        address[] memory ranking = _settleAndFinalize(matchId);
 
+        address relayer = makeAddr("relayer");
+        uint256 before = ranking[0].balance;
         uint256 owed = escrow.withdrawable(ranking[0]);
-        vm.prank(ranking[0]);
-        escrow.withdrawToChain(421_614);
+        vm.prank(relayer);
+        uint256 paid = escrow.withdrawFor(ranking[0]);
+
+        assertEq(paid, owed);
+        assertEq(ranking[0].balance, before + owed);
+        assertEq(relayer.balance, 0);
         assertEq(escrow.withdrawable(ranking[0]), 0);
-        assertEq(messenger.sentCount(), 1);
-        MockMessenger.SentMessage memory sent = messenger.getSent(0);
-        assertEq(sent.dstChainId, 421_614);
-        assertEq(sent.value, owed);
-        (address who, uint256 amount) = abi.decode(sent.payload, (address, uint256));
-        assertEq(who, ranking[0]);
-        assertEq(amount, owed);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    function test_withdrawFor_revertsOnEmptyBalance() public {
+        vm.expectRevert(NothingToWithdraw.selector);
+        escrow.withdrawFor(players[0]);
+    }
+
+    // --- Cross-chain joins that cannot seat are refunded, never reverted ---
+
+    /// @dev Delivers a cross-chain join through the trusted messenger and
+    ///      checks it was refunded for `reason` rather than seated or reverted.
+    function _assertRefunded(bytes32 matchId, address player, uint256 value, GameEscrow.JoinFailure reason)
+        internal
+    {
+        bytes32 peer = config.peerFor(421_614);
+        uint256 owedBefore = escrow.withdrawable(player);
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit GameEscrow.JoinRefunded(matchId, player, value, reason);
+        messenger.deliver{value: value}(address(escrow), 421_614, peer, abi.encode(matchId, player), value);
+
+        assertEq(escrow.withdrawable(player), owedBefore + value);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    function test_crossChainJoin_refundsALockedLobby() public {
+        bytes32 matchId = _createAndFill(4);
+        escrow.lockMatch(matchId);
+        _assertRefunded(matchId, makeAddr("late"), STAKE, GameEscrow.JoinFailure.NotOpen);
+    }
+
+    function test_crossChainJoin_refundsALobbyThatFilledInFlight() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        for (uint256 i = 0; i < 4; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+        // Full but not yet locked: still Open, with no seat left.
+        _assertRefunded(matchId, makeAddr("late"), STAKE, GameEscrow.JoinFailure.LobbyFull);
+        assertFalse(escrow.hasSeat(matchId, makeAddr("late")));
+    }
+
+    function test_crossChainJoin_refundsAWrongStake() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        _assertRefunded(matchId, makeAddr("remote"), STAKE / 2, GameEscrow.JoinFailure.WrongStake);
+    }
+
+    function test_crossChainJoin_refundsADuplicateSeat() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.prank(players[1]);
+        escrow.join{value: STAKE}(matchId);
+        _assertRefunded(matchId, players[1], STAKE, GameEscrow.JoinFailure.AlreadyJoined);
+    }
+
+    function test_crossChainJoin_refundsAnUnknownMatchOrClosedWindow() public {
+        _assertRefunded(keccak256("nope"), makeAddr("remote"), STAKE, GameEscrow.JoinFailure.UnknownMatch);
+
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.warp(block.timestamp + 2 hours);
+        _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.WindowClosed);
+    }
+
+    function test_crossChainJoin_refundsWhilePaused() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.prank(owner);
+        escrow.pause();
+        _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.Paused);
+
+        // The refund is an ordinary balance: withdrawable even while paused.
+        address remote = makeAddr("remote");
+        escrow.withdrawFor(remote);
+        assertEq(remote.balance, STAKE);
     }
 
     function test_crossChainJoin_viaTrustedMessenger() public {
@@ -280,10 +362,7 @@ contract GameEscrowTest is Fixtures {
     function test_pause_blocksJoinButNotWithdrawOrCancel() public {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(6)));
-        address[] memory ranking = _rankingOf(matchId);
-        escrow.settle(
-            matchId, 1, keccak256("p"), ranking, _signResult(_twoAttestors(), matchId, 1, keccak256("p"), ranking)
-        );
+        address[] memory ranking = _settleAndFinalize(matchId);
 
         vm.prank(owner);
         escrow.pause();

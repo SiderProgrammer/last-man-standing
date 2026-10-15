@@ -167,6 +167,42 @@ contract DeployTest is Test {
         d.governor.propose(new address[](1), new uint256[](1), new bytes[](1), DESCRIPTION);
     }
 
+    /// @dev A lobby can open straight away: bonds, verifier and window are set,
+    ///      the escrow may slash, and on a local node the attestor is bonded.
+    function test_settlementIsWiredAndTheBondsAreBehindTheTimelock() public view {
+        assertTrue(d.config.isComplete());
+        assertEq(d.config.attestorBonds(), address(d.bonds));
+        assertEq(d.config.matchVerifier(), address(d.verifier));
+        assertEq(d.config.challengeWindow(), 1 hours);
+        assertTrue(d.bonds.isSlasher(address(d.escrow)));
+        assertEq(d.bonds.owner(), address(d.timelock));
+        assertEq(d.bonds.pendingOwner(), address(0));
+        assertTrue(d.bonds.isActive(deployer));
+    }
+
+    /// @dev `config/rules.json` → `Deploy` → the deployed hash, pinned to the
+    ///      same vector `parity.test.ts` pins `hashRules(DEFAULT_RULES)` to.
+    /// @dev Match fees go to the router; slashed bonds go to the real treasury.
+    ///      The router only accepts ETH from the escrow, so a slashed share
+    ///      credited to it could never be collected.
+    function test_slashedBondsReachTheTreasuryNotTheFeeRouter() public view {
+        assertEq(d.config.treasury(), address(d.feeRouter));
+        assertEq(d.bonds.treasury(), safe);
+    }
+
+    function test_deploysTheRulesTheServerPlays() public view {
+        assertEq(d.config.rulesHash(), 0x51f49b7b1499dec3d067b46387f9a171346327f29942d32497e74e995181c334);
+    }
+
+    /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script
+    ///      must refuse rather than fall back to the anyone-picks-the-seed mock.
+    function test_refusesTheMockOracleOffALocalChain() public {
+        vm.chainId(11_155_111);
+        Deploy script = new Deploy();
+        vm.expectRevert(Deploy.MockOffLocal.selector);
+        script.run();
+    }
+
     function test_guardianPausesAtOnce_butCannotUnpause() public {
         vm.prank(safe);
         d.escrow.pause();

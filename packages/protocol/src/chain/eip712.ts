@@ -17,6 +17,14 @@ export const MATCH_RESULT_TYPES = {
   ],
 } as const;
 
+/**
+ * What the attestor quorum signs to abort a live match the server can no
+ * longer finish. `GameEscrow.abortMatch` refunds every seat on it.
+ */
+export const MATCH_ABORT_TYPES = {
+  MatchAbort: [{ name: 'matchId', type: 'bytes32' }],
+} as const;
+
 export function matchResultDomain(
   chainId: number,
   verifyingContract: `0x${string}`,

@@ -3,8 +3,12 @@ import {
   ACTION_NAMES,
   AttackOutcome,
   BPS_DENOMINATOR,
+  draw,
   drawBps,
+  roundSeed,
+  saltsBySeat,
   stormDamageForRound,
+  ZERO_SALT,
   type ActionValue,
   type AttackRecord,
   type PlayerState,
@@ -19,6 +23,8 @@ export interface DeclaredMove {
   target: number;
   /** False when the player never revealed and was defaulted to `Action.None`. */
   revealed: boolean;
+  /** Salt the move was revealed under; `ZERO_SALT` when it was not revealed. */
+  salt: `0x${string}`;
 }
 
 export interface RoundResolution {
@@ -29,6 +35,13 @@ export interface RoundResolution {
   eliminationOrder: number[];
 }
 
+/**
+ * Nonce space for the defender's parry pick. Evade rolls use the attacker's
+ * seat (below 256, since seats are `uint8`), so offsetting by 256 keeps the two
+ * kinds of draw independent.
+ */
+export const PARRY_NONCE_BASE = 256;
+
 /** Scratch state for one seat while a round is being resolved. */
 interface SeatContext {
   readonly seat: number;
@@ -36,6 +49,7 @@ interface SeatContext {
   action: ActionValue;
   target: number;
   revealed: boolean;
+  salt: `0x${string}`;
   /** Damage accumulated from attacks and ripostes this round. */
   incoming: number;
   /** Hit points after damage. Allowed to go negative to rank overkill. */
@@ -49,6 +63,9 @@ interface SeatContext {
  * it always produces the same output, with no reliance on the iteration order
  * of the input moves, wall-clock time, or floating point. This is what makes a
  * match independently replayable from its seed and move log.
+ *
+ * Every roll in the round is drawn from `roundSeed(seed, round, salts)`, which
+ * nobody can compute until every reveal is in.
  *
  * A seat is identified by its position in `states`; the `index` field of an
  * incoming state is not trusted.
@@ -66,6 +83,7 @@ export function resolveRound(
     action: Action.None,
     target: 0,
     revealed: false,
+    salt: ZERO_SALT,
     incoming: 0,
     hp: state.hp,
   }));
@@ -77,9 +95,39 @@ export function resolveRound(
     context.action = move.action;
     context.target = move.target;
     context.revealed = move.revealed;
+    context.salt = move.revealed ? move.salt : ZERO_SALT;
   }
 
   const living = contexts.filter((context) => context.before.alive);
+  const entropy = roundSeed(
+    seed,
+    round,
+    saltsBySeat(
+      states.length,
+      living.map((context) => ({ index: context.seat, revealed: context.revealed, salt: context.salt })),
+    ),
+  );
+
+  const isValidAttack = (attacker: SeatContext): boolean => {
+    if (attacker.action !== Action.Attack) return false;
+    const victim = contexts[attacker.target];
+    return victim !== undefined && victim.seat !== attacker.seat && victim.before.alive;
+  };
+
+  // A defender parries exactly one of the attackers that came at it, drawn
+  // from the round seed rather than by seat order: seat order is public, so
+  // "lowest seat is parried" would let the others coordinate around it.
+  const parried = new Map<number, number>();
+  for (const victim of living) {
+    if (victim.action !== Action.Defend) continue;
+    const attackers = living.filter(
+      (attacker) => isValidAttack(attacker) && attacker.target === victim.seat,
+    );
+    if (attackers.length === 0) continue;
+    const pick = Number(draw(entropy, PARRY_NONCE_BASE + victim.seat) % BigInt(attackers.length));
+    parried.set(victim.seat, (attackers[pick] as SeatContext).seat);
+  }
+
   const attacks: AttackRecord[] = [];
 
   // Attacks resolve simultaneously against the state at the start of the
@@ -88,8 +136,7 @@ export function resolveRound(
   for (const attacker of living) {
     if (attacker.action !== Action.Attack) continue;
 
-    const victim = contexts[attacker.target];
-    if (victim === undefined || victim.seat === attacker.seat || !victim.before.alive) {
+    if (!isValidAttack(attacker)) {
       attacks.push({
         attacker: attacker.seat,
         target: attacker.target,
@@ -99,8 +146,9 @@ export function resolveRound(
       });
       continue;
     }
+    const victim = contexts[attacker.target] as SeatContext;
 
-    if (victim.action === Action.Defend) {
+    if (victim.action === Action.Defend && parried.get(victim.seat) === attacker.seat) {
       attacker.incoming += rules.riposteDamage;
       attacks.push({
         attacker: attacker.seat,
@@ -112,18 +160,11 @@ export function resolveRound(
       continue;
     }
 
-    // Hiding players evade most attacks; players who never revealed are
-    // caught out of position and evade far less often.
-    const evadeBps =
-      victim.action === Action.Hide
-        ? rules.hideEvadeBps
-        : victim.action === Action.None
-          ? rules.timeoutEvadeBps
-          : 0;
-
+    // Only a hider evades. A defender's other attackers connect, and a player
+    // who never revealed is caught out of position and takes every hit.
     // The nonce is the attacker's seat, so each roll is independent of how
     // many attacks were resolved before it.
-    if (evadeBps > 0 && drawBps(seed, round, attacker.seat) < evadeBps) {
+    if (victim.action === Action.Hide && drawBps(entropy, attacker.seat) < rules.hideEvadeBps) {
       attacks.push({
         attacker: attacker.seat,
         target: victim.seat,
@@ -190,6 +231,7 @@ export function resolveRound(
       action: context.action,
       target: context.action === Action.Attack ? context.target : 0,
       revealed: context.revealed,
+      salt: context.salt,
     })),
     attacks,
     stormDamage: storm,

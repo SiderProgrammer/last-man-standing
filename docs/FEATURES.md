@@ -235,12 +235,10 @@ its own request ids so a fulfilment can be routed back to the right consumer.
 It currently targets a minimal local coordinator interface and runs against
 `MockVrfCoordinator`.
 
-> **Known issue.** `drawBps(seed, round, seat)` depends only on public inputs —
-> the seed is emitted in `MatchStarted` and returned by `getMatch`. Every
-> evasion roll in the match is therefore computable before the first commit,
-> which collapses Hide's 60% evade into a lookup table for anyone who reads the
-> contract. This is the review's critical finding; the proposed fix is to derive
-> each round's entropy from the revealed salts instead.
+> **Round entropy.** The match seed alone is public from `MatchStarted`, so it
+> never drives a roll directly. Each round's rolls come from
+> `roundSeed(seed, round, salts)` over every salt revealed that round, which
+> nobody knows until all reveals are in.
 
 ---
 
@@ -264,8 +262,9 @@ player on spoke → SpokeEscrow.join(matchId, stake)
                 → hub records seatOrigin[matchId][player] = srcChainId
 ```
 
-On the way out, `withdrawToChain` pushes a balance back through the same
-transport.
+A stake that arrives for a seat that can no longer be taken is credited to the
+player on the hub, never reverted, so nothing is stranded in transit. Payouts
+stay on the hub, where `withdrawFor` lets a keeper push them to the player.
 
 ### Why
 

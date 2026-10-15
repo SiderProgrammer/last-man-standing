@@ -502,3 +502,40 @@ button.wide {
   transform: scaleX(0);
   transform-origin: left center;
 }
+
+.pill.ok {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill.bad {
+  border-color: #c0392b;
+  color: #e57368;
+}
+
+.result-ranking {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.result-ranking li {
+  padding: 2px 0;
+}
+
+.result-ranking li.winner {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.check {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.reads tr.past td {
+  color: var(--muted);
+  font-size: 11px;
+  padding-top: 0;
+}

@@ -2,6 +2,10 @@ import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
+import type { PlayStyle } from './game/style.js';
+
+/** Largest client frame the server will parse. Every legitimate message is far smaller. */
+export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =
@@ -9,7 +13,17 @@ export type ClientMessage =
   | { type: 'lobbies' }
   | { type: 'practice'; bots?: number }
   | { type: 'watch'; matchId: `0x${string}` }
-  | { type: 'commit'; commitment: `0x${string}` }
+  | {
+      type: 'commit';
+      commitment: `0x${string}`;
+      /**
+       * Opt-in: the move behind the commitment, for the server to reveal on
+       * the player's behalf if their socket drops before the reveal window.
+       * It must open `commitment` or the commit is refused. The cost is that
+       * the server learns the move a phase earlier than it otherwise would.
+       */
+      hold?: { action: ActionValue; target: number; salt: `0x${string}` };
+    }
   | { type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` }
   /**
    * A call the player's session key authorised, for the server to submit and
@@ -26,7 +40,13 @@ export type ClientMessage =
       /** The account's session nonce, decimal string. */
       nonce: string;
       signature: `0x${string}`;
-    };
+    }
+  /**
+   * Asks the server to push the authenticated account's escrow balance to it,
+   * paying the gas. `GameEscrow.withdrawFor` only ever pays the account
+   * itself, so this needs no signature beyond the login.
+   */
+  | { type: 'collect' };
 
 export type ServerMessage =
   | {
@@ -52,6 +72,8 @@ export type ServerMessage =
        * Lives on the hub, like the escrow it pays into.
        */
       zap: ZapInfo | null;
+      /** True when the server will pay the gas to push payouts (`collect`). */
+      collect: boolean;
       /**
        * The staking vault and any running airdrop, or null when this server
        * has none configured. Both live on the hub, like the escrow whose fees
@@ -85,7 +107,19 @@ export type ServerMessage =
    * cosmetics out of the match snapshot keeps them out of the engine.
    */
   | { type: 'avatars'; matchId: `0x${string}`; entries: AvatarEntry[] }
+  /**
+   * What the table's wallets have done in earlier settled matches, for the
+   * reads panel. Sent apart from `state` for the same reason as `avatars`: it
+   * arrives after a database read, and it is not part of the match.
+   */
+  | { type: 'dossier'; matchId: `0x${string}`; entries: Array<{ address: `0x${string}`; style: PlayStyle }> }
   | { type: 'finished'; result: MatchResult; ranking: number[] }
+  /**
+   * The settlement transaction for a finished match, or null if it could not
+   * be submitted (the escrow then refunds everyone after its deadline).
+   * Practice matches never settle and never get one.
+   */
+  | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
   | { type: 'error'; code: string; message: string };

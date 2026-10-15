@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lms/engine": "0.1.0",
     "@lms/protocol": "0.1.0",
     "gsap": "^3.15.0",
     "pixi.js": "^8.20.1",

@@ -1,8 +1,10 @@
 import {
   MatchPhase,
   addressKey,
+  commitMove,
   type AvatarEntry,
   type MatchResult,
+  type PlayStyle,
   type RoundRecord,
   type SealedMove,
   type ServerMessage,
@@ -50,6 +52,8 @@ export class Room {
   private readonly seatByAddress = new Map<string, number>();
   /** Cosmetic only, and resolved off the match's critical path. */
   private avatars: AvatarEntry[] = [];
+  /** Earlier play styles of the seated wallets, for the reads panel. */
+  private dossier: Array<{ address: `0x${string}`; style: PlayStyle }> = [];
   private deadlineAt: number;
   /**
    * End of the replay hold after the last round. Commits are accepted during
@@ -59,6 +63,8 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  /** Moves players asked the server to reveal for them this round, by seat. */
+  private readonly held = new Map<number, SealedMove>();
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
     this.match = new Match(setup);
@@ -71,6 +77,11 @@ export class Room {
 
     this.deadlineAt = now + options.commitMs;
     this.bots.commit(this.match);
+  }
+
+  /** Tells everyone watching how the match settled on-chain. */
+  announceSettled(tx: `0x${string}` | null): void {
+    for (const client of this.clients) client.send({ type: 'settled', matchId: this.matchId, tx });
   }
 
   get matchId(): `0x${string}` {
@@ -93,6 +104,18 @@ export class Room {
     this.clients.add(client);
     this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
+    if (this.dossier.length > 0) this.pushDossier(client);
+  }
+
+  /** Publishes the seated wallets' records from earlier settled matches. */
+  setDossier(entries: ReadonlyArray<{ address: `0x${string}`; style: PlayStyle }>): void {
+    this.dossier = [...entries];
+    if (this.dossier.length === 0) return;
+    for (const client of this.clients) this.pushDossier(client);
+  }
+
+  private pushDossier(client: Client): void {
+    client.send({ type: 'dossier', matchId: this.matchId, entries: this.dossier });
   }
 
   /**
@@ -112,9 +135,26 @@ export class Room {
     this.clients.delete(client);
   }
 
-  submitCommit(address: `0x${string}`, commitment: `0x${string}`, now: number = Date.now()): void {
+  /**
+   * @param hold The move behind `commitment`, if the player wants the server to
+   *        reveal it for them. Checked against the commitment up front, so a
+   *        held move can never be one the player could not have revealed.
+   */
+  submitCommit(
+    address: `0x${string}`,
+    commitment: `0x${string}`,
+    now: number = Date.now(),
+    hold?: SealedMove,
+  ): void {
     const seat = this.requireSeat(address);
+    if (hold) {
+      const opened = commitMove(this.matchId, this.match.round, seat, hold);
+      if (opened.toLowerCase() !== commitment.toLowerCase()) {
+        throw new Error('the held move does not open the commitment');
+      }
+    }
     this.match.submitCommit(seat, commitment);
+    if (hold) this.held.set(seat, hold);
     // During the hold the commit is kept but the fast path waits: `tick` opens
     // the reveal once the replay has finished.
     if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
@@ -158,6 +198,9 @@ export class Room {
     if (this.match.phase !== MatchPhase.Commit) return;
     this.match.openRevealPhase();
     this.bots.reveal(this.match);
+    // Held moves open at once, whether or not their players are still here.
+    for (const [seat, move] of this.held) this.match.submitReveal(seat, move);
+    this.held.clear();
 
     if (this.match.allRevealed()) {
       this.resolveRound(now);
@@ -204,6 +247,9 @@ export class Room {
 
     const result = this.match.result();
     const ranking = this.match.ranking();
+    // The final snapshot first: it carries the last round, which is what a
+    // client needs to replay the whole match and check `result` for itself.
+    this.broadcastState();
     for (const client of this.clients) client.send({ type: 'finished', result, ranking });
     this.options.onFinished?.(result, this.match.history);
   }

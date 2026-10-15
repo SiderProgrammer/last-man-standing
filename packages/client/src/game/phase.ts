@@ -76,7 +76,12 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
       actionsEnabled: false,
       lockInDisabled: true,
       statusText: null,
-      shouldReveal: seated && context.revealedRound !== state.round,
+      // Not when the server already opened a move it was holding for us:
+      // a second reveal would only come back as an error.
+      shouldReveal:
+        seated &&
+        context.revealedRound !== state.round &&
+        !(context.you !== null && state.revealed.includes(context.you)),
     };
   }
 

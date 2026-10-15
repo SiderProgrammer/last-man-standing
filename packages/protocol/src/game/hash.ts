@@ -32,25 +32,81 @@ export function commitMove(
   );
 }
 
+/** Salt recorded for a seat that revealed nothing this round. */
+export const ZERO_SALT = `0x${'0'.repeat(64)}` as const;
+
+/**
+ * Every seat's revealed salt for a round, indexed by seat, with `ZERO_SALT`
+ * for any seat that was dead or did not reveal. The one canonical layout used
+ * by both the round seed and the round hash.
+ */
+export function saltsBySeat(
+  seats: number,
+  moves: ReadonlyArray<{ index: number; revealed: boolean; salt: `0x${string}` }>,
+): `0x${string}`[] {
+  const salts: `0x${string}`[] = new Array<`0x${string}`>(seats).fill(ZERO_SALT);
+  for (const move of moves) {
+    if (move.revealed && move.index >= 0 && move.index < seats) salts[move.index] = move.salt;
+  }
+  return salts;
+}
+
 const ROUND_ABI = parseAbiParameters(
-  'uint32 round, uint8[] actions, uint8[] targets, uint32[] hpAfter, uint8[] eliminated',
+  'uint32 round, uint8[] actions, uint8[] targets, bytes32[] salts, uint32[] hpAfter, uint8[] eliminated',
 );
 
-/** Canonical hash of one resolved round, ordered by seat index. */
-export function hashRound(
-  round: number,
-  seats: number,
-  record: Omit<RoundRecord, 'hash'>,
-): `0x${string}` {
+/**
+ * One round as the chain sees it: every field indexed by seat. This is the
+ * preimage of the round hash, and exactly the `KernelLib.Round` struct a fraud
+ * proof submits to `GameEscrow.challenge`.
+ */
+export interface RoundPreimage {
+  actions: number[];
+  targets: number[];
+  salts: `0x${string}`[];
+  hpAfter: number[];
+  eliminated: number[];
+}
+
+export function roundPreimage(seats: number, record: Omit<RoundRecord, 'hash'>): RoundPreimage {
   const actions: number[] = new Array<number>(seats).fill(Action.None);
   const targets: number[] = new Array<number>(seats).fill(0);
   for (const move of record.moves) {
     actions[move.index] = move.action;
     targets[move.index] = move.action === Action.Attack ? move.target : 0;
   }
-  const hpAfter = record.hpAfter.map((hp) => (hp > 0 ? hp : 0));
+  return {
+    actions,
+    targets,
+    salts: saltsBySeat(seats, record.moves),
+    hpAfter: record.hpAfter.map((hp) => (hp > 0 ? hp : 0)),
+    eliminated: [...record.eliminated],
+  };
+}
+
+/**
+ * Canonical hash of one resolved round, ordered by seat index.
+ *
+ * The salts are part of it because they are part of the outcome: they decide
+ * every roll in the round. A history root that left them out would let a
+ * quorum publish different salts after the fact, and a fraud proof could no
+ * longer re-derive the rolls the root was signed over.
+ */
+export function hashRound(
+  round: number,
+  seats: number,
+  record: Omit<RoundRecord, 'hash'>,
+): `0x${string}` {
+  const preimage = roundPreimage(seats, record);
   return keccak256(
-    encodeAbiParameters(ROUND_ABI, [round, actions, targets, hpAfter, [...record.eliminated]]),
+    encodeAbiParameters(ROUND_ABI, [
+      round,
+      preimage.actions,
+      preimage.targets,
+      preimage.salts,
+      preimage.hpAfter,
+      preimage.eliminated,
+    ]),
   );
 }
 
@@ -74,18 +130,37 @@ export function chainHistory(previous: `0x${string}`, roundHash: `0x${string}`):
   return keccak256(encodeAbiParameters(HISTORY_STEP_ABI, [previous, roundHash]));
 }
 
-const DRAW_ABI = parseAbiParameters('bytes32 seed, uint32 round, uint32 nonce');
+const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32[] salts');
 
 /**
- * Deterministic draw in `[0, 10000)` derived from the match seed.
+ * Entropy for one round's rolls: the match seed, the round, and every revealed
+ * salt, in seat order.
  *
- * The seed comes from a randomness oracle and is fixed before the first
- * commit, so the server cannot bias a roll and anyone holding the seed can
- * replay every roll in the match.
+ * The match seed alone is public from the moment the match starts, so rolls
+ * keyed on it could be computed before anyone committed — Hide's evade chance
+ * would be a lookup table. Mixing in the salts makes each round's rolls depend
+ * on every player's secret, so nobody can know them until all reveals are in.
+ * A player who withholds a reveal to change the roll forfeits their own move
+ * and takes every hit at no evade, which prices that grind honestly.
  */
-export function drawBps(seed: `0x${string}`, round: number, nonce: number): number {
-  const digest = keccak256(encodeAbiParameters(DRAW_ABI, [seed, round, nonce]));
-  return Number(BigInt(digest) % BigInt(BPS_DENOMINATOR));
+export function roundSeed(
+  seed: `0x${string}`,
+  round: number,
+  salts: readonly `0x${string}`[],
+): `0x${string}` {
+  return keccak256(encodeAbiParameters(ROUND_SEED_ABI, [seed, round, [...salts]]));
+}
+
+const DRAW_ABI = parseAbiParameters('bytes32 roundSeed, uint32 nonce');
+
+/** Deterministic 256-bit draw from a round seed. `nonce` separates independent draws. */
+export function draw(seedOfRound: `0x${string}`, nonce: number): bigint {
+  return BigInt(keccak256(encodeAbiParameters(DRAW_ABI, [seedOfRound, nonce])));
+}
+
+/** Deterministic draw in `[0, 10000)` from a round seed. */
+export function drawBps(seedOfRound: `0x${string}`, nonce: number): number {
+  return Number(draw(seedOfRound, nonce) % BigInt(BPS_DENOMINATOR));
 }
 
 const MATCH_ID_ABI = parseAbiParameters('uint256 chainId, address escrow, uint256 nonce');

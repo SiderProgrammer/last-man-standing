@@ -129,13 +129,11 @@ contract FeeRouterTest is Fixtures {
         router.setStakerBps(10_001);
     }
 
+    /// @dev Settlement now proposes and pays only after the challenge window,
+    ///      so a match's fee reaches the router on `finalize`, not on `settle`.
     function _playOneMatch() private {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x51)));
-        address[] memory ranking = _rankingOf(matchId);
-        bytes32 historyRoot = keccak256("history");
-        escrow.settle(
-            matchId, 7, historyRoot, ranking, _signResult(_twoAttestors(), matchId, 7, historyRoot, ranking)
-        );
+        _settleAndFinalize(matchId);
     }
 }

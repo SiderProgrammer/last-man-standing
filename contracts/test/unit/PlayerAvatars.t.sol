@@ -108,8 +108,22 @@ contract PlayerAvatarsTest is Test {
         assertEq(avatars.equipped(ALICE), 0);
         (uint256 tokenId,) = avatars.avatarOf(ALICE);
         assertEq(tokenId, 0);
-        // And the recipient, who had nothing, now wears it.
+        // The recipient owns it but does not wear it until they choose to.
+        assertEq(avatars.equipped(BOB), 0);
+        vm.prank(BOB);
+        avatars.equip(1);
         assertEq(avatars.equipped(BOB), 1);
+    }
+
+    /// @dev Regression: a transfer used to auto-equip, so anyone could put an
+    ///      avatar on someone else's seat by sending it to them.
+    function test_ASentAvatarIsNotWornWithoutConsent() public {
+        vm.prank(ALICE);
+        avatars.mint();
+        vm.prank(ALICE);
+        avatars.transferFrom(ALICE, BOB, 1);
+        (uint256 tokenId,) = avatars.avatarOf(BOB);
+        assertEq(tokenId, 0);
     }
 
     function test_UnequipKeepsTheToken() public {

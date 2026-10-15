@@ -5,9 +5,12 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
+import {AttestorBonds} from "./AttestorBonds.sol";
+import {MatchVerifier} from "./MatchVerifier.sol";
+import {HashLib} from "./libraries/HashLib.sol";
 import {ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
-import {ICrossChainMessenger, ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
 import {SeatSetLib} from "./libraries/SeatSetLib.sol";
@@ -20,16 +23,18 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      taking stakes, fixing an unpredictable seed before play starts,
 ///      accepting a result signed by a quorum of attestors, and paying out.
 ///
-///      Trust model. The attestor quorum is trusted for the *ordering* of a
-///      result but not for its *contents*: the signed digest commits to a
-///      history root, so anyone holding the seed and the published move log
-///      can replay the match and prove a signed result was fabricated. The
-///      seed is drawn from an oracle after the lobby closes, so neither the
-///      server nor a player can pick moves against known rolls.
+///      Trust model. A result is signed by a quorum of *bonded* attestors and
+///      then sits open to challenge before it pays. The signed digest commits
+///      to a history root, which commits to every round; anyone holding the
+///      published rounds can submit them, the escrow replays the match through
+///      `MatchVerifier`, and a result that does not follow from its rounds is
+///      thrown out, every signer's bond is slashed, and every stake refunded.
+///      The seed is drawn from an oracle after the lobby closes, and each
+///      round's rolls also depend on every player's revealed salt.
 ///
 ///      Value handling is pull-based throughout. Settlement only ever credits
-///      an internal balance; nothing is transferred until the recipient calls
-///      `withdraw` or bridges the balance out.
+///      an internal balance; nothing is transferred until the recipient — or
+///      anyone, on their behalf and to their address — withdraws it.
 contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver {
     enum MatchStatus {
         None,
@@ -39,10 +44,13 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         Pending,
         /// @dev Seed delivered; the server is running the match.
         Live,
-        /// @dev Result attested and payouts credited.
+        /// @dev Result final and payouts credited.
         Settled,
-        /// @dev Abandoned; every stake is refundable.
-        Cancelled
+        /// @dev Abandoned, or its result proven fraudulent; every stake is refundable.
+        Cancelled,
+        /// @dev Result signed and open to a fraud proof until `challengeDeadline`.
+        ///      Last in the list so the earlier values keep their numbers.
+        Proposed
     }
 
     /// @dev Terms are snapshotted when the lobby is created, so a governance
@@ -61,6 +69,27 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         bytes32 rulesHash;
         bytes32 seed;
         bytes32 historyRoot;
+        /// @dev Snapshotted at creation, like the rest of the terms.
+        uint64 challengeWindow;
+        uint64 challengeDeadline;
+        uint32 rounds;
+        /// @dev The ranking and signer set of a proposed result, by hash: both
+        ///      are in `ResultProposed`, and whoever finalises or challenges
+        ///      passes them back.
+        bytes32 rankingHash;
+        bytes32 signersHash;
+    }
+
+    /// @notice Why a seat could not be taken. `None` means it could.
+    enum JoinFailure {
+        None,
+        Paused,
+        UnknownMatch,
+        NotOpen,
+        WindowClosed,
+        LobbyFull,
+        AlreadyJoined,
+        WrongStake
     }
 
     uint16 private constant BPS_DENOMINATOR = 10_000;
@@ -71,8 +100,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     mapping(bytes32 matchId => MatchInfo) private matchInfo;
     mapping(bytes32 matchId => address[]) private matchSeats;
-    /// @notice Finishing order, best first. Populated only after settlement.
-    mapping(bytes32 matchId => address[]) private matchRanking;
     /// @notice Payout schedule snapshotted at lobby creation, in basis points.
     mapping(bytes32 matchId => uint16[]) private matchPayoutBps;
     mapping(bytes32 matchId => mapping(address player => bool)) public hasSeat;
@@ -95,13 +122,26 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     event PlayerJoined(bytes32 indexed matchId, address indexed player, uint16 seat, uint32 originChainId);
     event MatchLocked(bytes32 indexed matchId, bytes32 indexed requestId, uint16 seatCount);
     event MatchStarted(bytes32 indexed matchId, bytes32 seed, uint64 settleDeadline);
+    event ResultProposed(
+        bytes32 indexed matchId,
+        bytes32 indexed historyRoot,
+        uint32 rounds,
+        address[] ranking,
+        address[] signers,
+        uint64 challengeDeadline
+    );
     event MatchSettled(
         bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address indexed winner
+    );
+    event FraudProven(
+        bytes32 indexed matchId, address indexed challenger, MatchVerifier.Verdict verdict, uint256 badRound
     );
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
     event MatchCancelled(bytes32 indexed matchId, string reason);
-    event WithdrawalBridged(address indexed account, uint32 indexed dstChainId, uint256 amount);
+    /// @notice A cross-chain stake arrived for a seat that could no longer be
+    ///         taken, and was credited back to the player here instead.
+    event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
     event PausedSet(bool paused);
 
     error Paused();
@@ -121,11 +161,19 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error UnknownRequest(bytes32 requestId);
     error UntrustedMessenger(uint32 srcChainId, address caller);
     error UntrustedPeer(uint32 srcChainId, bytes32 peer);
-    error NoMessengerForChain(uint32 dstChainId);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
+    error ConfigIncomplete();
+    error ChallengeWindowOpen(uint64 deadline);
+    error ChallengeWindowClosed(uint64 deadline);
+    error RankingMismatch();
+    error SignersMismatch();
+    error RulesMismatch();
+    error NotTheSignedRounds();
+    error NoFraud();
+    error LogMismatch();
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -153,6 +201,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     {
         ProtocolConfig.Params memory params = config.getParams();
 
+        // A config deploys with none of these set. A lobby opened against it
+        // could never be seeded, would snapshot a rule set nobody plays
+        // under, or could never settle.
+        if (!config.isComplete()) revert ConfigIncomplete();
+        bytes32 rulesHash = config.rulesHash();
+
         if (stake < params.minStake || stake > params.maxStake) revert StakeOutOfRange(stake);
         if (maxSeats < params.minSeats || maxSeats > params.maxSeats) revert SeatsOutOfRange(maxSeats);
 
@@ -169,9 +223,14 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
             settleDeadline: 0,
             settleWindow: params.settleWindow,
             treasury: params.treasury,
-            rulesHash: config.rulesHash(),
+            rulesHash: rulesHash,
             seed: bytes32(0),
-            historyRoot: bytes32(0)
+            historyRoot: bytes32(0),
+            challengeWindow: config.challengeWindow(),
+            challengeDeadline: 0,
+            rounds: 0,
+            rankingHash: bytes32(0),
+            signersHash: bytes32(0)
         });
         matchPayoutBps[matchId] = config.getPayoutSchedule();
 
@@ -203,10 +262,16 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     ///      so the hub always holds the full prize pool. Both the calling
     ///      messenger and the originating peer contract are authenticated:
     ///      a trusted transport still relays messages from untrusted senders.
+    ///
+    ///      Once authenticated, this never reverts. The stake has already left
+    ///      the spoke; a revert here would leave it with the transport, stuck.
+    ///      If the seat cannot be taken — the lobby filled or closed while the
+    ///      message was in flight, the stake was wrong, the escrow is paused —
+    ///      the value is credited to the player on this chain instead, to
+    ///      withdraw like any other refund.
     function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
         external
         payable
-        whenNotPaused
     {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
@@ -215,8 +280,13 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
         (bytes32 matchId, address player) = abi.decode(payload, (bytes32, address));
 
-        MatchInfo storage info = _open(matchId);
-        if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
+        MatchInfo storage info = matchInfo[matchId];
+        JoinFailure failure = _joinFailure(matchId, info, player, msg.value);
+        if (failure != JoinFailure.None) {
+            _credit(player, msg.value);
+            emit JoinRefunded(matchId, player, msg.value, failure);
+            return;
+        }
         _seat(matchId, info, player, srcChainId);
     }
 
@@ -268,15 +338,25 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Settlement --------------------------------------------------------
 
-    /// @notice Settles a match against a result signed by a quorum of attestors.
+    /// @notice Proposes a match result signed by a quorum of bonded attestors.
+    /// @dev Pays nothing yet. The result is open to `challenge` until
+    ///      `challengeDeadline`; after that anyone may `finalize` it.
+    ///
+    ///      The rounds come with it and must hash to the signed root. That is
+    ///      what makes a challenge always possible — the evidence is in this
+    ///      transaction's calldata, not in whatever a server chooses to publish
+    ///      — and what stops anyone submitting honest signatures with a forged
+    ///      log to get innocent attestors slashed.
     /// @param ranking Finishing order, best first. Must be exactly the seat set.
     /// @param signatures Concatenated 65-byte signatures in ascending signer order.
+    /// @param log `abi.encode(KernelLib.Round[])`: every round record, round 1 first.
     function settle(
         bytes32 matchId,
         uint32 rounds,
         bytes32 historyRoot,
         address[] calldata ranking,
-        bytes calldata signatures
+        bytes calldata signatures,
+        bytes calldata log
     ) external nonReentrant whenNotPaused {
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Live) {
@@ -284,30 +364,133 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         }
         if (rounds == 0) revert RoundsOutOfRange(rounds);
 
-        bytes32 digest = SettlementLib.toTypedDataHash(
-            _domainSeparatorV4(), SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)
+        address[] memory signers = _bondedQuorum(
+            SettlementLib.toTypedDataHash(
+                _domainSeparatorV4(), SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)
+            ),
+            signatures
         );
-
-        address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
-        uint32 threshold = config.attestorThreshold();
-        if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
-        for (uint256 i = 0; i < signers.length; ++i) {
-            if (!config.isAttestor(signers[i])) revert NotAnAttestor(signers[i]);
-        }
 
         // Reject any ranking that is not exactly the seat set: without this a
         // quorum could redirect the pool to addresses that never staked.
         SeatSetLib.assertPermutation(matchSeats[matchId], ranking);
+        _checkLog(matchId, info, historyRoot, rounds, log);
+
+        uint64 deadline = uint64(block.timestamp) + info.challengeWindow;
+        info.status = MatchStatus.Proposed;
+        info.historyRoot = historyRoot;
+        info.rounds = rounds;
+        info.challengeDeadline = deadline;
+        info.rankingHash = keccak256(abi.encode(ranking));
+        info.signersHash = keccak256(abi.encode(signers));
+
+        emit ResultProposed(matchId, historyRoot, rounds, ranking, signers, deadline);
+    }
+
+    /// @dev The signers of `digest`, provided they are a quorum and every one is
+    ///      bonded: what a fraud proof would slash has to exist at signing.
+    function _bondedQuorum(bytes32 digest, bytes calldata signatures) private view returns (address[] memory signers) {
+        signers = SignatureLib.recoverAscending(digest, signatures);
+        uint32 threshold = config.attestorThreshold();
+        if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
+        AttestorBonds bonds = AttestorBonds(config.attestorBonds());
+        for (uint256 i = 0; i < signers.length; ++i) {
+            if (!bonds.isActive(signers[i])) revert NotAnAttestor(signers[i]);
+        }
+    }
+
+    /// @dev The published rounds must be exactly the ones the root commits to.
+    function _checkLog(bytes32 matchId, MatchInfo storage info, bytes32 historyRoot, uint32 rounds, bytes calldata log)
+        private
+        view
+    {
+        (bytes32 logRoot, uint256 logRounds) =
+            MatchVerifier(config.matchVerifier()).rootOf(matchId, info.rulesHash, info.seed, log);
+        if (logRoot != historyRoot || logRounds != rounds) revert LogMismatch();
+    }
+
+    /// @notice Pays out a proposed result once nobody has disproved it in time.
+    /// @dev Permissionless, and deliberately not paused: a pause must never
+    ///      hold a result that has already survived its challenge window.
+    /// @param ranking The ranking from `ResultProposed`.
+    function finalize(bytes32 matchId, address[] calldata ranking) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (block.timestamp < info.challengeDeadline) revert ChallengeWindowOpen(info.challengeDeadline);
+        if (keccak256(abi.encode(ranking)) != info.rankingHash) revert RankingMismatch();
 
         info.status = MatchStatus.Settled;
-        info.historyRoot = historyRoot;
-
-        matchRanking[matchId] = ranking;
-
         totalEscrowed -= uint256(info.stake) * info.seatCount;
         _distribute(matchId, info, ranking);
 
-        emit MatchSettled(matchId, historyRoot, rounds, ranking[0]);
+        emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
+    }
+
+    /// @notice Disproves a proposed result with the rounds its root commits to.
+    /// @dev Replays the whole match through `MatchVerifier`. If any round is not
+    ///      what its inputs resolve to, the match ended at the wrong time, the
+    ///      round count is wrong, or the ranking is not the one the rounds
+    ///      produce, the result is void: every signer's bond is slashed — the
+    ///      challenger takes a share — and every stake is refunded. Reverts with
+    ///      `NoFraud` when the result holds up, and with `NotTheSignedRounds` when
+    ///      the rounds supplied are not the ones the attestors signed.
+    ///
+    ///      Never paused: a proof must always be submittable inside its window.
+    /// @param rules The rule set whose hash the lobby snapshotted.
+    /// @param log The round log from the `settle` transaction's calldata.
+    /// @param signers The signer set from `ResultProposed`.
+    function challenge(
+        bytes32 matchId,
+        HashLib.Rules calldata rules,
+        bytes calldata log,
+        address[] calldata signers
+    ) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (block.timestamp >= info.challengeDeadline) revert ChallengeWindowClosed(info.challengeDeadline);
+        if (HashLib.hashRules(rules) != info.rulesHash) revert RulesMismatch();
+        if (keccak256(abi.encode(signers)) != info.signersHash) revert SignersMismatch();
+
+        (MatchVerifier.Verdict verdict, uint256 badRound) = _findFraud(matchId, info, rules, log);
+
+        for (uint256 i = 0; i < signers.length; ++i) {
+            AttestorBonds(config.attestorBonds()).slash(signers[i], msg.sender);
+        }
+        _refundAll(matchId, info);
+        emit FraudProven(matchId, msg.sender, verdict, badRound);
+        emit MatchCancelled(matchId, "fraud proven");
+    }
+
+    /// @dev Reverts unless the rounds show the proposed result is wrong.
+    ///      A `Valid` replay is still fraud if it disagrees with what was
+    ///      signed on round count or ranking; that is reported as `Valid` with
+    ///      `badRound` zero.
+    function _findFraud(
+        bytes32 matchId,
+        MatchInfo storage info,
+        HashLib.Rules calldata rules,
+        bytes calldata log
+    ) private view returns (MatchVerifier.Verdict verdict, uint256 badRound) {
+        address[] storage seats = matchSeats[matchId];
+        uint8[] memory order;
+        uint256 rounds;
+        (verdict, badRound, order, rounds) = MatchVerifier(config.matchVerifier()).verify(
+            rules, matchId, info.seed, seats.length, info.historyRoot, log
+        );
+        if (verdict == MatchVerifier.Verdict.NotTheSignedRounds) revert NotTheSignedRounds();
+        if (verdict != MatchVerifier.Verdict.Valid) return (verdict, badRound);
+
+        if (rounds != info.rounds) return (verdict, 0);
+        address[] memory implied = new address[](order.length);
+        for (uint256 i = 0; i < order.length; ++i) {
+            implied[i] = seats[order[i]];
+        }
+        if (keccak256(abi.encode(implied)) != info.rankingHash) return (verdict, 0);
+        revert NoFraud();
     }
 
     function _distribute(bytes32 matchId, MatchInfo storage info, address[] calldata ranking) private {
@@ -339,6 +522,34 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Cancellation ------------------------------------------------------
 
+    /// @dev EIP-712 type of an abort: the quorum agreeing a live match cannot finish.
+    bytes32 private constant MATCH_ABORT_TYPEHASH = keccak256("MatchAbort(bytes32 matchId)");
+
+    /// @notice Cancels a live match at once and refunds every stake, on the
+    ///         word of a quorum of bonded attestors.
+    /// @dev For when the server lost the match — a restart drops a room's
+    ///      state, and a half-played match cannot be resumed honestly. Without
+    ///      this the players would wait out `settleDeadline` for the same
+    ///      refund `cancelMatch` gives them then.
+    ///
+    ///      It gives the quorum no power it lacked: by refusing to sign a
+    ///      result it could always force exactly this outcome, at the
+    ///      deadline. Aborting only gets everyone their stake back sooner.
+    function abortMatch(bytes32 matchId, bytes calldata signatures) external nonReentrant {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Live) {
+            revert WrongStatus(matchId, MatchStatus.Live, info.status);
+        }
+        _bondedQuorum(
+            SettlementLib.toTypedDataHash(
+                _domainSeparatorV4(), keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))
+            ),
+            signatures
+        );
+        _refundAll(matchId, info);
+        emit MatchCancelled(matchId, "aborted by attestors");
+    }
+
     /// @notice Refunds every stake in a match that can no longer complete.
     /// @dev Permissionless once the relevant deadline has passed, so players
     ///      are never dependent on the operator to recover their stake.
@@ -362,6 +573,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
 
+        _refundAll(matchId, info);
+        emit MatchCancelled(matchId, reason);
+    }
+
+    /// @dev Cancels the match and credits every seat its stake back.
+    function _refundAll(bytes32 matchId, MatchInfo storage info) private {
         info.status = MatchStatus.Cancelled;
 
         address[] memory seats = matchSeats[matchId];
@@ -370,26 +587,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         for (uint256 i = 0; i < seats.length; ++i) {
             _credit(seats[i], stake);
         }
-
-        emit MatchCancelled(matchId, reason);
-    }
-
-    // --- Balances ----------------------------------------------------------
-
-    /// @notice Sends the caller's balance to another chain through the transport.
-    /// @dev `msg.value` pays the transport fee; the balance itself is forwarded
-    ///      alongside the message. Used by players who staked from a spoke chain.
-    function withdrawToChain(uint32 dstChainId) external payable nonReentrant returns (uint256 amount) {
-        address messenger = config.messengerFor(dstChainId);
-        if (messenger == address(0)) revert NoMessengerForChain(dstChainId);
-
-        amount = _takeBalance(msg.sender);
-
-        ICrossChainMessenger(messenger).sendMessage{value: amount + msg.value}(
-            dstChainId, config.peerFor(dstChainId), abi.encode(msg.sender, amount)
-        );
-
-        emit WithdrawalBridged(msg.sender, dstChainId, amount);
     }
 
     // --- Governance --------------------------------------------------------
@@ -423,10 +620,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         return matchSeats[matchId];
     }
 
-    function getRanking(bytes32 matchId) external view returns (address[] memory) {
-        return matchRanking[matchId];
-    }
-
     function getPayoutSchedule(bytes32 matchId) external view returns (uint16[] memory) {
         return matchPayoutBps[matchId];
     }
@@ -443,6 +636,23 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (info.status != MatchStatus.Open) {
             revert WrongStatus(matchId, MatchStatus.Open, info.status);
         }
+    }
+
+    /// @dev The same conditions `join` reverts on, as a value: the
+    ///      cross-chain path must refund rather than revert.
+    function _joinFailure(bytes32 matchId, MatchInfo storage info, address player, uint256 value)
+        private
+        view
+        returns (JoinFailure)
+    {
+        if (paused) return JoinFailure.Paused;
+        if (info.status == MatchStatus.None) return JoinFailure.UnknownMatch;
+        if (info.status != MatchStatus.Open) return JoinFailure.NotOpen;
+        if (block.timestamp >= info.joinDeadline) return JoinFailure.WindowClosed;
+        if (info.seatCount >= info.maxSeats) return JoinFailure.LobbyFull;
+        if (hasSeat[matchId][player]) return JoinFailure.AlreadyJoined;
+        if (value != info.stake) return JoinFailure.WrongStake;
+        return JoinFailure.None;
     }
 
     function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId)

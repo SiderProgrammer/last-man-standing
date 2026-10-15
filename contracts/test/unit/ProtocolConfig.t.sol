@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {GameEscrow} from "../../src/GameEscrow.sol";
 
 contract ProtocolConfigTest is Fixtures {
     function test_rejectsFeeAboveCap() public {
@@ -49,6 +50,51 @@ contract ProtocolConfigTest is Fixtures {
 
         vm.expectRevert();
         config.setGuardian(address(this));
+    }
+
+    function test_rejectsAZeroRulesHash() public {
+        vm.prank(owner);
+        vm.expectRevert(ProtocolConfig.InvalidRulesHash.selector);
+        config.setRulesHash(bytes32(0));
+    }
+
+    function test_escrowRefusesLobbiesOnAnIncompleteConfig() public {
+        uint16[] memory payout = new uint16[](1);
+        payout[0] = 10_000;
+        ProtocolConfig fresh = new ProtocolConfig(owner, config.getParams(), payout);
+        GameEscrow unusable = new GameEscrow(fresh);
+
+        vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
+        unusable.createMatch(STAKE, 4);
+
+        // Rules alone are not enough: nothing could ever seed the match.
+        bytes32 rulesHash = config.rulesHash();
+        vm.prank(owner);
+        fresh.setRulesHash(rulesHash);
+        vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
+        unusable.createMatch(STAKE, 4);
+
+        vm.prank(owner);
+        fresh.setRandomnessOracle(address(oracle));
+        // Nor is a seed: a result could still never be bonded, verified or finalised.
+        vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
+        unusable.createMatch(STAKE, 4);
+
+        vm.startPrank(owner);
+        fresh.setAttestorBonds(address(bonds));
+        fresh.setMatchVerifier(address(verifier));
+        fresh.setChallengeWindow(CHALLENGE_WINDOW);
+        vm.stopPrank();
+        unusable.createMatch(STAKE, 4);
+    }
+
+    function test_challengeWindowIsBounded() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(0)));
+        config.setChallengeWindow(0);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days)));
+        config.setChallengeWindow(8 days);
+        vm.stopPrank();
     }
 
     function test_guardianCanBeSetAndRemoved() public {

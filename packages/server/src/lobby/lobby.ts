@@ -6,6 +6,7 @@ import {
   ZERO_ADDRESS,
   deriveMatchId,
   errorMessage,
+  tallyStyles,
   type MatchResult,
   type RoundRecord,
   type Rules,
@@ -15,6 +16,7 @@ import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
 import type { MatchArchive } from './store.js';
+import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
 
 export interface LobbyOptions {
@@ -27,7 +29,13 @@ export interface LobbyOptions {
   rules?: Rules;
   /** Resolves the NFT avatars seats are wearing. Omitted, nobody wears one. */
   avatars?: AvatarRegistry;
+  /** Ceiling on practice rooms across all wallets. Defaults to 200. */
+  maxPracticeRooms?: number;
+  /** Play styles by wallet, for the reads panel. Omitted, nobody has a record. */
+  styles?: StyleBook;
 }
+
+const DEFAULT_MAX_PRACTICE_ROOMS = 200;
 
 /**
  * Registry of live rooms.
@@ -39,6 +47,14 @@ export interface LobbyOptions {
  */
 export class Lobby {
   private readonly rooms = new Map<string, Room>();
+  /**
+   * Staked matches that were live when this server started. Their rooms died
+   * with the previous process, so they are aborted and refunded rather than
+   * resumed; a player reconnecting to one is told so.
+   */
+  private readonly abandoned = new Set<string>();
+  /** The one practice room each wallet may hold, keyed by address. */
+  private readonly practiceOf = new Map<string, string>();
   private practiceNonce = 0n;
 
   constructor(private readonly options: LobbyOptions) {}
@@ -63,7 +79,26 @@ export class Lobby {
     return null;
   }
 
+  /**
+   * Opens a practice room against house bots.
+   *
+   * One per wallet: asking for another ends the previous one, which is what a
+   * player clicking "practice" again means anyway. And a global ceiling, so a
+   * flood of fresh wallets cannot grow the room table without bound — each room
+   * holds a match, a bot driver and a timer.
+   */
   createPractice(human: `0x${string}`, opponents: number, now: number = Date.now()): Room {
+    const owner = human.toLowerCase();
+    const previous = this.practiceOf.get(owner);
+    if (previous) {
+      this.rooms.delete(previous);
+      this.practiceOf.delete(owner);
+    }
+    const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
+    if (this.practiceOf.size >= ceiling) {
+      throw new Error('the server is at its practice-room limit; try again shortly');
+    }
+
     const rules = this.options.rules ?? DEFAULT_RULES;
     const seatCount = clamp(opponents + 1, rules.minPlayers, rules.maxPlayers);
     const matchId = deriveMatchId(PRACTICE_CHAIN_ID, ZERO_ADDRESS, this.practiceNonce++);
@@ -80,18 +115,26 @@ export class Lobby {
       rules,
     };
 
-    return this.open(
+    const room = this.open(
       setup,
       Array.from({ length: seatCount - 1 }, (_, i) => i + 1),
       now,
+      false,
     );
+    this.practiceOf.set(owner, room.matchId.toLowerCase());
+    return room;
   }
 
   /** Starts a room for a match whose stakes are already escrowed on-chain. */
   adopt(setup: MatchSetup, botSeats: readonly number[] = [], now: number = Date.now()): Room {
     const existing = this.get(setup.matchId);
     if (existing) return existing;
-    return this.open(setup, botSeats, now);
+    return this.open(setup, botSeats, now, true);
+  }
+
+  /** Records a staked match this server will not play: see `abandoned`. */
+  markAbandoned(matchId: `0x${string}`): void {
+    this.abandoned.add(matchId.toLowerCase());
   }
 
   tick(now: number = Date.now()): void {
@@ -99,32 +142,67 @@ export class Lobby {
       room.tick(now);
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
-      if (room.finished && now > room.deadline + 60_000) this.rooms.delete(key);
+      if (room.finished && now > room.deadline + 60_000) {
+        this.rooms.delete(key);
+        for (const [owner, matchKey] of this.practiceOf) {
+          if (matchKey === key) this.practiceOf.delete(owner);
+        }
+      }
     }
   }
 
   attach(matchId: `0x${string}`, client: Client): Room {
     const room = this.get(matchId);
+    if (!room && this.abandoned.has(matchId.toLowerCase())) {
+      throw new Error('this match was cancelled after a server restart; every stake is being refunded');
+    }
     if (!room) throw new Error('unknown match');
     room.attach(client);
     return room;
   }
 
-  private open(setup: MatchSetup, botSeats: readonly number[], now: number): Room {
-    const options: RoomOptions = {
+  /**
+   * @param staked Whether the room holds escrowed stakes. Only those settle,
+   *        and only those feed the style book.
+   */
+  private open(setup: MatchSetup, botSeats: readonly number[], now: number, staked: boolean): Room {
+    const room = new Room(setup, this.roomOptions(botSeats, staked), now);
+    this.rooms.set(room.matchId.toLowerCase(), room);
+    void this.decorate(room, setup);
+    if (staked) void this.brief(room, setup);
+    return room;
+  }
+
+  /**
+   * Looks up what the table's wallets have done before. Off the match's
+   * critical path, like avatars: the first round never waits on a database.
+   */
+  private async brief(room: Room, setup: MatchSetup): Promise<void> {
+    const book = this.options.styles;
+    if (!book) return;
+    try {
+      const styles = await book.lookup(setup.seats.map((seat) => seat.address));
+      room.setDossier(
+        setup.seats.flatMap((seat) => {
+          const style = styles.get(seat.address.toLowerCase());
+          return style ? [{ address: seat.address, style }] : [];
+        }),
+      );
+    } catch (error) {
+      console.warn('[lobby] style lookup failed:', errorMessage(error));
+    }
+  }
+
+  private roomOptions(botSeats: readonly number[], staked: boolean): RoomOptions {
+    return {
       commitMs: this.options.commitMs,
       revealMs: this.options.revealMs,
       replayMs: this.options.replayMs ?? 0,
       botSeats,
       onFinished: (result, history) => {
-        void this.finalise(result, history);
+        void this.finalise(result, history, staked);
       },
     };
-
-    const room = new Room(setup, options, now);
-    this.rooms.set(room.matchId.toLowerCase(), room);
-    void this.decorate(room, setup);
-    return room;
   }
 
   /**
@@ -150,16 +228,26 @@ export class Lobby {
   private async finalise(
     result: MatchResult,
     history: readonly RoundRecord[],
+    staked: boolean,
   ): Promise<void> {
     let settledTx: string | null = null;
     try {
-      settledTx = await this.options.relayer.settle(result);
+      settledTx = await this.options.relayer.settle(result, history);
     } catch (error) {
       // A failed settlement is recoverable: the escrow stays `Live` until the
       // deadline, so the result can be resubmitted or the match cancelled.
       console.error('[lobby] settlement failed', errorMessage(error));
     }
     await this.options.archive.save({ result, history, settledTx });
+    if (staked && this.options.styles) {
+      const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];
+      try {
+        await this.options.styles.record(tallyStyles(result, history, seats));
+      } catch (error) {
+        console.warn('[lobby] style record failed:', errorMessage(error));
+      }
+    }
+    if (staked) this.get(result.matchId)?.announceSettled(settledTx as `0x${string}` | null);
   }
 }
 

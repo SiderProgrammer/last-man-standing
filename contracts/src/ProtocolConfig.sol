@@ -61,6 +61,17 @@ contract ProtocolConfig is Ownable2Step {
     ///      never lift a pause that was put in place to stop an exploit.
     address public guardian;
 
+    /// @notice Where attestors post the bonds that make their signatures count.
+    address public attestorBonds;
+    /// @notice Replays a challenged match on-chain. See `MatchVerifier`.
+    address public matchVerifier;
+    /// @notice Seconds a proposed result stays open to a fraud proof before it pays out.
+    /// @dev Snapshotted into each lobby at creation, like the other terms.
+    uint64 public challengeWindow;
+
+    /// @dev Longest a payout may be held for challenges.
+    uint64 public constant MAX_CHALLENGE_WINDOW = 7 days;
+
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
     /// @notice Trusted peer contract per remote chain.
@@ -74,6 +85,9 @@ contract ProtocolConfig is Ownable2Step {
     event AttestorThresholdUpdated(uint32 previous, uint32 current);
     event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
     event GuardianUpdated(address indexed previous, address indexed current);
+    event AttestorBondsUpdated(address indexed previous, address indexed current);
+    event MatchVerifierUpdated(address indexed previous, address indexed current);
+    event ChallengeWindowUpdated(uint64 previous, uint64 current);
 
     error FeeTooHigh(uint16 feeBps);
     error InvalidSeatRange(uint16 minSeats, uint16 maxSeats);
@@ -83,6 +97,8 @@ contract ProtocolConfig is Ownable2Step {
     error PayoutScheduleTooLong(uint256 length, uint16 minSeats);
     error PayoutScheduleNotExact(uint256 totalBps);
     error ThresholdOutOfRange(uint32 threshold, uint32 attestors);
+    error InvalidRulesHash();
+    error InvalidChallengeWindow(uint64 window);
 
     constructor(address owner_, Params memory initialParams, uint16[] memory initialPayoutBps)
         Ownable(owner_)
@@ -123,7 +139,10 @@ contract ProtocolConfig is Ownable2Step {
         _setParams(newParams);
     }
 
+    /// @dev Zero is reserved for "never set": the escrow refuses to open a
+    ///      lobby against it, so it must not be settable on purpose either.
     function setRulesHash(bytes32 newRulesHash) external onlyOwner {
+        if (newRulesHash == bytes32(0)) revert InvalidRulesHash();
         emit RulesHashUpdated(rulesHash, newRulesHash);
         rulesHash = newRulesHash;
     }
@@ -165,6 +184,33 @@ contract ProtocolConfig is Ownable2Step {
     function setGuardian(address newGuardian) external onlyOwner {
         emit GuardianUpdated(guardian, newGuardian);
         guardian = newGuardian;
+    }
+
+    function setAttestorBonds(address bonds) external onlyOwner {
+        if (bonds == address(0)) revert ZeroAddress();
+        emit AttestorBondsUpdated(attestorBonds, bonds);
+        attestorBonds = bonds;
+    }
+
+    function setMatchVerifier(address verifier) external onlyOwner {
+        if (verifier == address(0)) revert ZeroAddress();
+        emit MatchVerifierUpdated(matchVerifier, verifier);
+        matchVerifier = verifier;
+    }
+
+    /// @dev Long enough for someone to notice and submit a proof; short enough
+    ///      that winners are not kept waiting. Never zero: a zero window would
+    ///      pay out before anyone could object.
+    function setChallengeWindow(uint64 window) external onlyOwner {
+        if (window == 0 || window > MAX_CHALLENGE_WINDOW) revert InvalidChallengeWindow(window);
+        emit ChallengeWindowUpdated(challengeWindow, window);
+        challengeWindow = window;
+    }
+
+    /// @notice True once everything a lobby needs from the config is set.
+    function isComplete() external view returns (bool) {
+        return rulesHash != bytes32(0) && randomnessOracle != address(0) && attestorBonds != address(0)
+            && matchVerifier != address(0) && challengeWindow != 0;
     }
 
     /// @notice Registers, or with zero arguments removes, a remote chain.

@@ -117,9 +117,11 @@ contract PlayerAvatars is ERC721, Ownable {
             delete equipped[from];
             emit Equipped(from, 0);
         }
-        // A wallet receiving its first avatar wears it without a second
-        // transaction; one that already has a choice keeps it.
-        if (to != address(0) && equipped[to] == 0) {
+        // A wallet minting its first avatar wears it without a second
+        // transaction. Only on mint: a transfer must not dress a wallet in
+        // something it never chose — anyone can send anyone an NFT, and the
+        // arena would show it on their seat. Received avatars wait for `equip`.
+        if (from == address(0) && to != address(0) && equipped[to] == 0) {
             equipped[to] = tokenId;
             emit Equipped(to, tokenId);
         }

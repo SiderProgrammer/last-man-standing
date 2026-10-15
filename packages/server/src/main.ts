@@ -10,6 +10,7 @@ import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
+import { createStyleBook } from './lobby/styles.js';
 import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
@@ -39,7 +40,10 @@ async function main(): Promise<void> {
     revealMs: config.revealMs,
     replayMs: config.replayMs,
     avatars,
+    styles: await createStyleBook(config.databaseUrl),
+    maxPracticeRooms: config.maxPracticeRooms,
   });
+
 
   const bridge = config.onChain
     ? ChainBridge.start({
@@ -48,6 +52,9 @@ async function main(): Promise<void> {
         escrow: config.escrow,
         lobby,
         ...(config.keeperPk ? { keeperKey: config.keeperPk } : {}),
+        // A restart loses every room in progress. Matches that were live are
+        // aborted and refunded rather than restarted from round one.
+        abort: (matchId) => relayer.abort(matchId),
       })
     : null;
 
@@ -58,14 +65,16 @@ async function main(): Promise<void> {
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
 
-  // Pays gas for session-authorised calls. It holds no authority over any
-  // player account: the delegate checks the session signature on-chain.
+  // Pays gas for session-authorised calls and for pushing payouts. It holds no
+  // authority over any player account: the delegate checks the session
+  // signature on-chain, and `withdrawFor` only ever pays the account itself.
   const sessionRelayer =
-    rpc && config.keeperPk && config.sessionDelegate !== ZERO_ADDRESS
+    rpc && config.keeperPk && (config.sessionDelegate !== ZERO_ADDRESS || config.onChain)
       ? createSessionRelayer({
           rpcUrl: config.rpcUrl,
           chainId: config.chainId,
           relayerKey: config.keeperPk,
+          ...(config.onChain ? { escrow: config.escrow } : {}),
         })
       : nullSessionRelayer;
 

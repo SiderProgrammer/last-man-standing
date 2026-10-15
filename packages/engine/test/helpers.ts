@@ -7,6 +7,7 @@ import {
   type PlayerState,
   type Rules,
   type Seat,
+  ZERO_SALT,
 } from '@lms/protocol';
 import { Match, type MatchSetup, type Strategy } from '@lms/engine';
 import type { DeclaredMove } from '@lms/engine';
@@ -81,7 +82,7 @@ export function playMatch(
     for (const seat of living) {
       const move = chosen.get(seat) as Move;
       if (silentSeats.has(seat)) {
-        revealedMoves.push({ index: seat, action: Action.None, target: 0, revealed: false });
+        revealedMoves.push({ index: seat, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT });
         continue;
       }
       const salt = bytes32(`salt:${setup.matchId}:${round}:${seat}`);
@@ -91,6 +92,7 @@ export function playMatch(
         action: move.action,
         target: move.action === Action.Attack ? move.target : 0,
         revealed: true,
+        salt,
       });
     }
 

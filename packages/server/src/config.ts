@@ -27,6 +27,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     /** Optional key that pays for the permissionless `lockMatch` call. */
     keeperPk: (env.KEEPER_PK ?? env.ATTESTOR_PK) as `0x${string}` | undefined,
     databaseUrl: env.DATABASE_URL ?? '',
+    /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */
+    maxPracticeRooms: Number(env.MAX_PRACTICE_ROOMS ?? 200),
     /**
      * `PlayerAvatars` deployments, as JSON:
      * `[{"chainId":11155111,"address":"0x…","rpcUrl":"https://…"}]`
