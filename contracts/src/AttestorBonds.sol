@@ -24,7 +24,11 @@ import {ZeroAddress} from "./Errors.sol";
 ///      the people it is meant to restrain could make it worth. ETH they cannot.
 ///
 ///      Slashed bonds are split between the challenger, who did the work, and
-///      the treasury, and both collect through `PullPayable` like anyone else.
+///      `treasury`, and both collect through `PullPayable` like anyone else.
+///      The treasury is set here rather than read from the config: the
+///      config's treasury is wherever match fees go — `FeeRouter`, which only
+///      accepts ETH from the escrow — and a slashed share credited there could
+///      never be collected.
 contract AttestorBonds is Ownable2Step, PullPayable {
     uint16 public constant BPS_DENOMINATOR = 10_000;
 
@@ -37,6 +41,8 @@ contract AttestorBonds is Ownable2Step, PullPayable {
     uint64 public unbondDelay;
     /// @notice Share of a slashed bond paid to the challenger.
     uint16 public challengerBps;
+    /// @notice Receives the rest of a slashed bond.
+    address public treasury;
 
     /// @notice Contracts allowed to slash: the escrows that verify fraud proofs.
     mapping(address slasher => bool) public isSlasher;
@@ -53,17 +59,24 @@ contract AttestorBonds is Ownable2Step, PullPayable {
     event UnbondDelayUpdated(uint64 delay);
     event ChallengerBpsUpdated(uint16 bps);
     event SlasherUpdated(address indexed slasher, bool allowed);
+    event TreasuryUpdated(address indexed previous, address indexed current);
 
     error NotSlasher(address caller);
     error NotUnbonding(address attestor);
     error StillUnbonding(uint64 unbondAt);
     error InvalidBps(uint16 bps);
 
-    constructor(address owner_, ProtocolConfig config_, uint256 requiredBond_, uint64 unbondDelay_, uint16 challengerBps_)
-        Ownable(owner_)
-    {
+    constructor(
+        address owner_,
+        ProtocolConfig config_,
+        address treasury_,
+        uint256 requiredBond_,
+        uint64 unbondDelay_,
+        uint16 challengerBps_
+    ) Ownable(owner_) {
         if (address(config_) == address(0)) revert ZeroAddress();
         config = config_;
+        _setTreasury(treasury_);
         _setRequiredBond(requiredBond_);
         _setUnbondDelay(unbondDelay_);
         _setChallengerBps(challengerBps_);
@@ -122,7 +135,7 @@ contract AttestorBonds is Ownable2Step, PullPayable {
         unbondAt[attestor] = 0;
         uint256 reward = (amount * challengerBps) / BPS_DENOMINATOR;
         if (reward > 0) _credit(challenger, reward);
-        if (amount > reward) _credit(config.treasury(), amount - reward);
+        if (amount > reward) _credit(treasury, amount - reward);
         emit Slashed(attestor, challenger, amount, reward);
     }
 
@@ -145,6 +158,16 @@ contract AttestorBonds is Ownable2Step, PullPayable {
 
     function setChallengerBps(uint16 bps) external onlyOwner {
         _setChallengerBps(bps);
+    }
+
+    function setTreasury(address treasury_) external onlyOwner {
+        _setTreasury(treasury_);
+    }
+
+    function _setTreasury(address treasury_) private {
+        if (treasury_ == address(0)) revert ZeroAddress();
+        emit TreasuryUpdated(treasury, treasury_);
+        treasury = treasury_;
     }
 
     function _setRequiredBond(uint256 amount) private {

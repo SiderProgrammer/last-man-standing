@@ -236,7 +236,7 @@ contract EscrowInvariantTest is StdInvariant, Test {
     function _wireSettlement(ProtocolConfig config, address owner, bytes32 rulesHash, uint256 pkA, uint256 pkB)
         private
     {
-        AttestorBonds bonds = new AttestorBonds(owner, config, 1 ether, 1 days, 2_000);
+        AttestorBonds bonds = new AttestorBonds(owner, config, config.treasury(), 1 ether, 1 days, 2_000);
         verifier = new MatchVerifier();
         vm.startPrank(owner);
         config.setRulesHash(rulesHash);

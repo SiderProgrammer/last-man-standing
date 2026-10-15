@@ -86,7 +86,7 @@ contract Fixtures is Test {
 
         // Bonded attestors, the verifier fraud proofs replay through, and a
         // window to submit them in.
-        bonds = new AttestorBonds(owner, config, BOND, 1 days, 2_000);
+        bonds = new AttestorBonds(owner, config, treasury, BOND, 1 days, 2_000);
         verifier = new MatchVerifier();
         vm.startPrank(owner);
         config.setRemoteChain(421_614, address(messenger), bytes32(uint256(uint160(address(0xBEEF)))));

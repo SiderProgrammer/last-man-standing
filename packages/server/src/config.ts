@@ -53,11 +53,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     v4Quoter: (env.V4_QUOTER ?? ZERO_ADDRESS) as `0x${string}`,
     /** Tokens offered through the zap, each with its v4 route to ETH, as JSON. See `chain/zap.ts`. */
     zapTokens: env.ZAP_TOKENS ?? '',
+    /**
+     * `FeeRouter` on the hub chain. With `KEEPER_PK` set, the server harvests
+     * it on a timer so fees reach stakers. Blank disables it; anyone else can
+     * still harvest. See `chain/feeKeeper.ts`.
+     */
+    feeRouter: (env.FEE_ROUTER ?? ZERO_ADDRESS) as `0x${string}`,
+    feeKeeperPollMs: Number(env.FEE_KEEPER_POLL_MS ?? 60_000),
+    /** Overrides for `DEFAULT_FEE_KEEPER_POLICY`, in wei. Unset keeps the default. */
+    feeKeeper: {
+      minHarvest: optionalBigInt(env.HARVEST_MIN_WEI),
+    },
+    /** `StakedLms` on the hub chain. Blank hides the staking panel. */
+    stakedLms: (env.STAKED_LMS ?? ZERO_ADDRESS) as `0x${string}`,
+    /** `LmsAirdrop` on the hub chain, and the `airdrop.json` its root came from. */
+    airdrop: (env.AIRDROP_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
+    airdropFile: env.AIRDROP_FILE ?? '',
+    /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
+    governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
+    /** First block to look for proposals in: the governor's deployment block. */
+    governorFromBlock: optionalBigInt(env.GOVERNOR_FROM_BLOCK) ?? 0n,
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
     },
   };
+}
+
+/** Throws on a value that is not an integer, rather than carrying on with garbage. */
+function optionalBigInt(value: string | undefined): bigint | undefined {
+  return value === undefined || value === '' ? undefined : BigInt(value);
 }
 
 export const config = loadConfig();

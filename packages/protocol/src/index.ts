@@ -11,6 +11,9 @@ export * from './chain/escrow.js';
 export * from './chain/avatars.js';
 export * from './chain/session.js';
 export * from './chain/zap.js';
+export * from './chain/governance.js';
+export * from './chain/airdrop.js';
+export * from './chain/proposals.js';
 
 // Messages between the browser and the server.
 export * from './wire.js';
