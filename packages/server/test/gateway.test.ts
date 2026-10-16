@@ -219,10 +219,9 @@ describe('gateway', () => {
     expect(socket.last('hello')?.zap).toEqual(zap);
   });
 
-  it('advertises the staking vault and airdrop so the client can show the panel', () => {
+  it('advertises the staking vault and governor so the client can show the panel', () => {
     const staking: StakingInfo = {
       vault: `0x${'5a'.repeat(20)}`,
-      airdrop: `0x${'ad'.repeat(20)}`,
       governor: `0x${'60'.repeat(20)}`,
       feeRouter: `0x${'fe'.repeat(20)}`,
     };

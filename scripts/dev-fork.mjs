@@ -29,7 +29,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
@@ -140,9 +140,6 @@ const DEMO_PROPOSAL = [
   'A demo proposal created by `npm run dev:fork`. Voting opens a minute after',
   'the fork starts and closes thirty minutes later.',
 ].join('\n');
-/** Airdropped to each funded player, so the claim flow can be tried at once. */
-const DEV_AIRDROP_LMS = '250';
-const lmsTransferAbi = parseAbi(['function transfer(address to, uint256 amount) returns (bool)']);
 const escrowAbi = parseAbi(['function createMatch(uint128 stake, uint16 maxSeats) returns (bytes32)']);
 const oracleAbi = parseAbi([
   'event RandomnessRequested(bytes32 indexed requestId, address indexed consumer, bytes32 context)',
@@ -393,51 +390,6 @@ async function seed(publicClient, escrow) {
 }
 
 /**
- * A dev airdrop for the funded players, so the claim flow works the moment the
- * page opens. A real one comes from `npm run airdrop`, which needs a history
- * of settled matches that a fresh fork does not have.
- */
-async function devAirdrop(publicClient, addresses, holders) {
-  const { buildAirdrop } = await import('@lms/protocol');
-  const airdrop = buildAirdrop(new Map(holders.map((holder) => [holder, parseEther(DEV_AIRDROP_LMS)])));
-  const operator = privateKeyToAccount(OPERATOR_KEY).address;
-
-  const env = {
-    ...process.env,
-    DEPLOYER_PK: OPERATOR_KEY,
-    LMS: addresses.LmsToken,
-    STAKED_LMS: addresses.StakedLms,
-    AIRDROP_ROOT: airdrop.root,
-    AIRDROP_TREASURY: operator,
-  };
-  delete env.AIRDROP_CLAIM_DAYS;
-  run('forge script', 'forge', ['script', 'script/Airdrop.s.sol:DeployAirdrop', '--rpc-url', RPC, '--broadcast'], {
-    cwd: CONTRACTS,
-    env,
-  });
-  const broadcast = JSON.parse(
-    readFileSync(new URL(`../contracts/broadcast/Airdrop.s.sol/${CHAIN_ID}/run-latest.json`, import.meta.url), 'utf8'),
-  );
-  const address = broadcast.transactions.find((tx) => tx.contractName === 'LmsAirdrop')?.contractAddress;
-  if (!address) fail('The airdrop script did not deploy an LmsAirdrop.');
-
-  const wallet = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
-  const hash = await wallet.writeContract({
-    chain: null,
-    address: addresses.LmsToken,
-    abi: lmsTransferAbi,
-    functionName: 'transfer',
-    args: [address, airdrop.total],
-  });
-  await publicClient.waitForTransactionReceipt({ hash });
-
-  // Inside `contracts/broadcast/`, which is gitignored like the rest of a run's output.
-  const file = fileURLToPath(new URL('../contracts/broadcast/dev-airdrop.json', import.meta.url));
-  writeFileSync(file, JSON.stringify(airdrop, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2));
-  return { address, file };
-}
-
-/**
  * Stakes part of the LMS supply: the operator's own stake, enough to propose,
  * and some for each funded player so they can vote and earn from the first
  * match. With no `SAFE` on a local node the operator *is* the Safe and holds
@@ -553,7 +505,6 @@ async function main() {
   log('fork', 'Funding players and opening lobbies…');
   const holders = await seed(publicClient, addresses.GameEscrow);
   await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms, holders);
-  const airdrop = await devAirdrop(publicClient, addresses, holders);
   await demoProposal(publicClient, addresses.LmsGovernor, addresses.FeeRouter);
 
   start('server', process.execPath, ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], {
@@ -573,8 +524,6 @@ async function main() {
       // threshold a dev lobby's fees would never reach.
       FEE_ROUTER: addresses.FeeRouter,
       STAKED_LMS: addresses.StakedLms,
-      AIRDROP_ADDRESS: airdrop.address,
-      AIRDROP_FILE: airdrop.file,
       GOVERNOR_ADDRESS: addresses.LmsGovernor,
       GOVERNOR_FROM_BLOCK: String(addresses.deployBlock),
       FEE_KEEPER_POLL_MS: '10000',

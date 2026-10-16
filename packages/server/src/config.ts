@@ -66,9 +66,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     },
     /** `StakedLms` on the hub chain. Blank hides the staking panel. */
     stakedLms: (env.STAKED_LMS ?? ZERO_ADDRESS) as `0x${string}`,
-    /** `LmsAirdrop` on the hub chain, and the `airdrop.json` its root came from. */
-    airdrop: (env.AIRDROP_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
-    airdropFile: env.AIRDROP_FILE ?? '',
     /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
     governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
     /** First block to look for proposals in: the governor's deployment block. */

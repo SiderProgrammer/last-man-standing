@@ -28,7 +28,6 @@ import {
   ProposalState,
   descriptionHash,
   gameEscrowAbi,
-  lmsAirdropAbi,
   lmsGovernorAbi,
   protocolConfigAbi,
   lmsTokenAbi,
@@ -476,32 +475,6 @@ export class Wallet {
       abi: stakedLmsAbi,
       functionName: 'claimRewards',
       args: [this.address],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
-
-  airdropClaimed(airdrop: Address): Promise<boolean> {
-    return this.rpc.readContract({ address: airdrop, abi: lmsAirdropAbi, functionName: 'claimed', args: [this.address] });
-  }
-
-  /** Claims this wallet's allocation, straight into the vault when `stake` is set. */
-  async claimAirdrop(airdrop: Address, amount: bigint, proof: Hex[], stake: boolean): Promise<Hex> {
-    if (stake) {
-      const { request } = await this.rpc.simulateContract({
-        account: this.address,
-        address: airdrop,
-        abi: lmsAirdropAbi,
-        functionName: 'claimAndStake',
-        args: [amount, proof],
-      });
-      return this.wallet.writeContract({ ...request, chain: null });
-    }
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: airdrop,
-      abi: lmsAirdropAbi,
-      functionName: 'claim',
-      args: [this.address, amount, proof],
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }

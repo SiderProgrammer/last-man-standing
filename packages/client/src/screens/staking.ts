@@ -1,27 +1,20 @@
-import { errorFirstLine, sharesForUnstake, type AirdropAllocation } from '@lms/protocol';
+import { errorFirstLine, sharesForUnstake } from '@lms/protocol';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { parseLms, stakingPanel, type AirdropState, type StakingPosition } from '../ui/staking.js';
+import { parseLms, stakingPanel, type StakingPosition } from '../ui/staking.js';
 
 /**
- * The staking panel: claim the airdrop, stake, unstake, withdraw, and claim
- * the ETH that staking earns.
+ * The staking panel: stake, unstake, withdraw, and claim the ETH that
+ * staking earns.
  *
- * Reads the chain through the player's own wallet and the airdrop proof from
- * the game server; neither is trusted for anything the contracts do not check
- * themselves. Every write simulates first, so a revert reads as its reason.
+ * Reads the chain through the player's own wallet. Every write simulates
+ * first, so a revert reads as its reason.
  */
 
-let serverOrigin = '';
 let position: StakingPosition | null = null;
-/** Allocation fetched for this address, so a re-render does not refetch it. */
-let allocation: { address: string; claim: AirdropAllocation | null } | null = null;
 let busy = false;
 
-export function wireStakingControls(origin: string): void {
-  serverOrigin = origin;
-  dom.airdropClaimStake.onclick = () => void act('Claimed and staked.', claimAirdrop(true));
-  dom.airdropClaim.onclick = () => void act('Claimed to your wallet.', claimAirdrop(false));
+export function wireStakingControls(): void {
   dom.stakingMax.onclick = () => {
     if (position) dom.stakingAmount.value = maxText(position);
   };
@@ -35,15 +28,10 @@ export async function renderStakingPanel(): Promise<void> {
   const wallet = app.wallet;
   const info = app.staking;
   let error: string | null = null;
-  let airdrop: AirdropState | null = null;
 
   if (wallet && info) {
     try {
       position = await wallet.stakingPosition(info.vault);
-      const claim = info.airdrop ? await fetchAllocation(wallet.address) : null;
-      if (info.airdrop && claim) {
-        airdrop = { amount: BigInt(claim.amount), claimed: await wallet.airdropClaimed(info.airdrop) };
-      }
     } catch (err) {
       position = null;
       // Almost always a wallet pointed at a chain the vault is not on.
@@ -57,7 +45,6 @@ export async function renderStakingPanel(): Promise<void> {
     info,
     connected: Boolean(wallet),
     position,
-    airdrop,
     nowSeconds: Math.floor(Date.now() / 1000),
     error,
   });
@@ -66,25 +53,13 @@ export async function renderStakingPanel(): Promise<void> {
   dom.claimRewards.classList.toggle('hidden', !view.claimRewardsVisible);
   dom.claimRewards.disabled = busy;
   dom.stakingSummary.textContent = view.summary;
-  dom.airdropRow.classList.toggle('hidden', !view.airdrop.visible);
-  dom.airdropText.textContent = view.airdrop.text;
   dom.stakeLms.disabled = busy || view.stakeDisabled;
   dom.unstakeLms.disabled = busy || view.unstakeDisabled;
   dom.stakingMax.disabled = busy || !position;
-  dom.airdropClaim.disabled = busy;
-  dom.airdropClaimStake.disabled = busy;
   dom.withdrawUnstaked.disabled = busy;
   dom.unstakeStatus.textContent = view.pending.text;
   dom.withdrawUnstaked.classList.toggle('hidden', !view.pending.withdrawVisible);
   dom.stakingStatus.textContent = view.status;
-}
-
-async function fetchAllocation(address: string): Promise<AirdropAllocation | null> {
-  if (allocation?.address === address) return allocation.claim;
-  const response = await fetch(`${serverOrigin}/airdrop/${address}`);
-  const claim = response.ok ? ((await response.json()) as AirdropAllocation) : null;
-  allocation = { address, claim };
-  return claim;
 }
 
 /** Runs one transaction, keeping the panel's buttons closed until it is mined. */
@@ -106,15 +81,6 @@ async function act(done: string, pending: Promise<`0x${string}` | null>): Promis
     busy = false;
     void renderStakingPanel();
   }
-}
-
-async function claimAirdrop(stakeIt: boolean): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const airdrop = app.staking?.airdrop;
-  if (!wallet || !airdrop) return null;
-  const claim = await fetchAllocation(wallet.address);
-  if (!claim) throw new Error('No airdrop allocation for this wallet.');
-  return wallet.claimAirdrop(airdrop, BigInt(claim.amount), claim.proof, stakeIt);
 }
 
 async function stake(): Promise<`0x${string}` | null> {

@@ -17,9 +17,7 @@ import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
-import { airdropResponse, loadAirdropFile, type AirdropBook } from './chain/airdropFile.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
-import { lmsAirdropAbi } from '@lms/protocol';
 
 const TICK_MS = 250;
 
@@ -83,9 +81,6 @@ async function main(): Promise<void> {
     ? zapInfo(config.zapJoin, config.v4Quoter, parseZapTokens(config.zapTokens))
     : null;
 
-  // Proofs for the client's one-click claim. Served only when the file's root is
-  // the one the deployed airdrop checks, so a stale file cannot be offered.
-  const airdrop = await loadAirdrop(rpc);
 
   // Proposals made to the governor, which cannot list its own.
   const proposals =
@@ -113,7 +108,6 @@ async function main(): Promise<void> {
       config.stakedLms !== ZERO_ADDRESS
         ? {
             vault: config.stakedLms,
-            airdrop: airdrop ? config.airdrop : null,
             governor: proposals ? config.governor : null,
             feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
           }
@@ -121,7 +115,7 @@ async function main(): Promise<void> {
   });
 
   const http = createServer((request, response) => {
-    const route = airdropResponse(airdrop, request.url ?? '') ?? proposalsResponse(proposals, request.url ?? '');
+    const route = proposalsResponse(proposals, request.url ?? '');
     if (route) {
       // Read by the client from its own origin, which is not this one.
       response.writeHead(route.status, {
@@ -218,22 +212,3 @@ void main().catch((error: unknown) => {
   console.error('[server] failed to start', error);
   process.exitCode = 1;
 });
-
-async function loadAirdrop(rpc: ReturnType<typeof createPublicClient> | null): Promise<AirdropBook | null> {
-  if (!config.airdropFile || config.airdrop === ZERO_ADDRESS) return null;
-  try {
-    const book = loadAirdropFile(config.airdropFile);
-    if (rpc) {
-      const root = await rpc.readContract({ address: config.airdrop, abi: lmsAirdropAbi, functionName: 'merkleRoot' });
-      if (root.toLowerCase() !== book.root.toLowerCase()) {
-        console.error(`[server] ${config.airdropFile} has root ${book.root}, but the airdrop checks ${root}; not serving it`);
-        return null;
-      }
-    }
-    console.log(`[server] serving ${book.size} airdrop claims for ${config.airdrop}`);
-    return book;
-  } catch (error) {
-    console.error('[server] could not load the airdrop file:', error);
-    return null;
-  }
-}

@@ -12,7 +12,7 @@ import {ZeroAddress} from "../Errors.sol";
 ///
 /// @dev Fixed supply, minted once to `recipient`, with no owner and no mint
 ///      function, so nobody can dilute stakers after launch. How the supply is
-///      distributed — airdrop to players, liquidity, treasury — is decided by
+///      distributed — liquidity, grants, the treasury — is decided by
 ///      whoever receives it, not by this contract.
 ///
 ///      `ERC20Permit` lets a holder approve the vault and stake in one

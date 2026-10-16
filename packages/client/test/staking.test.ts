@@ -12,7 +12,7 @@ import {
 
 const E18 = 10n ** 18n;
 const NOW = 1_700_000_000;
-const INFO: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, airdrop: `0x${'ad'.repeat(20)}`, governor: null, feeRouter: null };
+const INFO: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, governor: null, feeRouter: null };
 
 function position(overrides: Partial<StakingPosition> = {}): StakingPosition {
   return {
@@ -29,7 +29,7 @@ function position(overrides: Partial<StakingPosition> = {}): StakingPosition {
 }
 
 function input(overrides: Partial<StakingPanelInput> = {}): StakingPanelInput {
-  return { info: INFO, connected: true, position: position(), airdrop: null, nowSeconds: NOW, error: null, ...overrides };
+  return { info: INFO, connected: true, position: position(), nowSeconds: NOW, error: null, ...overrides };
 }
 
 describe('stakingPanel', () => {
@@ -75,13 +75,6 @@ describe('stakingPanel', () => {
     expect(empty.unstakeDisabled).toBe(true);
 
     expect(stakingPanel(input({ position: position({ lmsBalance: 0n }) })).stakeDisabled).toBe(true);
-  });
-
-  it('offers an unclaimed airdrop, and hides it once claimed', () => {
-    const offered = stakingPanel(input({ airdrop: { amount: 250n * E18, claimed: false } }));
-    expect(offered.airdrop).toEqual({ visible: true, text: 'You earned 250 LMS from the match fees you paid.' });
-
-    expect(stakingPanel(input({ airdrop: { amount: 250n * E18, claimed: true } })).airdrop.visible).toBe(false);
   });
 
   it('counts down a pending unstake, then offers the withdrawal', () => {

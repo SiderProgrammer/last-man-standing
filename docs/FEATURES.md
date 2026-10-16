@@ -480,8 +480,7 @@ but unusable state that only the deploy script currently prevents.
 
 ## Token governance and staking
 
-`contracts/src/governance/` · `packages/server/src/chain/feeKeeper.ts` ·
-`packages/protocol/src/chain/airdrop.ts` · `scripts/airdrop.mjs` · **Unit-tested**
+`contracts/src/governance/` · `packages/server/src/chain/feeKeeper.ts` · **Unit-tested**
 
 ### What it does
 
@@ -494,8 +493,6 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100
                          +--ETH--> StakedLms vault --claimRewards--> each staker, pro rata
                                         ^
 LMS --deposit--> sLMS (1:1, ERC20Votes) +--votes--> LmsGovernor
- ^
- +-- LmsAirdrop: past players, weighted by fees paid (claim, or claim-and-stake)
 ```
 
 | Contract | Role |
@@ -505,7 +502,6 @@ LMS --deposit--> sLMS (1:1, ERC20Votes) +--votes--> LmsGovernor
 | `LmsGovernor` | Stock OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock. |
 | `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
 | `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
-| `LmsAirdrop` | Merkle airdrop of LMS to past players. `claim` pays the account; `claimAndStake` stakes it in one step. Unclaimed LMS is swept to the treasury after the deadline. |
 
 Defaults, all overridable through the deploy environment:
 
@@ -547,27 +543,6 @@ Defaults, all overridable through the deploy environment:
 - **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
   only moves fees to where the router already sends them, so the worst a caller
   can do is pay the gas for everyone else.
-- **The airdrop is weighted by fees paid, not matches played.** Purpose: a
-  farmer playing against themselves pays the fee on every match, so farming
-  only pays if the airdrop is worth more than the fees. `scripts/airdrop.mjs`
-  computes `stake × feeBps` per seat over every settled match, splits the
-  total in proportion (rounding down, so the sum never exceeds it), and builds
-  an OpenZeppelin-compatible Merkle tree. The leaf and pair hashing are pinned
-  by one frozen vector in both the TypeScript and Foundry suites.
-- **Nobody is airdropped more than a quarter of what they paid.** Purpose:
-  make farming lose money, not just cost money. Someone filling a lobby with
-  their own wallets gets every stake back, so the fee is their whole cost. Each
-  allocation is capped at `AIRDROP_CAP_BPS` (default 25%) of the fees paid,
-  valued at `AIRDROP_LMS_PER_ETH`, the price you expect LMS to trade at. 25%
-  leaves room for LMS to trade 4× above that before farming breaks even. What
-  the cap cuts is **not** redistributed: that would push everyone else towards
-  their own caps and reward whoever farmed hardest. It stays with the Safe for
-  a later season.
-- **Only players who met several different opponents qualify.** Purpose: a
-  farmer's wallets only ever play each other. `AIRDROP_MIN_OPPONENTS` (default
-  3) distinct opponents means the stake was put against people who could win
-  it — a real cost on top of the fee.
-
 ### The fee keeper
 
 `FeeKeeper` runs in the game server when `FEE_ROUTER` and `KEEPER_PK` are set,
@@ -576,24 +551,16 @@ the escrow. Any funded key works: harvesting needs no role.
 
 ### Distributing the supply
 
-1. `npm run build`, then `RPC_URL=… ESCROW_ADDRESS=… AIRDROP_TOTAL=<LMS> npm run airdrop`
-   — reads every settled match, writes `airdrop.json` (every claim and its
-   proof) and prints the root and total. `EXCLUDE` leaves out team wallets or
-   house bots; `FROM_BLOCK`/`TO_BLOCK` bound the history.
-2. `forge script script/Airdrop.s.sol` with `AIRDROP_ROOT`, `LMS`,
-   `STAKED_LMS` and `AIRDROP_TREASURY` (the Safe).
-3. The Safe transfers the printed total to the airdrop, and `airdrop.json` is
-   published.
+The whole supply goes to the Safe at deployment. There is no built-in way of
+handing it out: anyone who holds LMS can stake it, and how the Safe distributes
+the rest — sales, liquidity, grants — is a governance decision, not a contract.
+Until LMS is spread out, the Safe's own stake decides every vote.
 
 ### The staking panel
 
 The lobby screen shows a **Stake LMS** panel whenever the server has
 `STAKED_LMS` set:
 
-- **Airdrop.** If the wallet has an unclaimed allocation, a callout offers
-  **Claim & stake** (one transaction, straight into sLMS) or **Claim to
-  wallet**. The proof comes from the server's `GET /airdrop/<address>`, which
-  serves `AIRDROP_FILE` only when its root matches the deployed contract.
 - **Rewards.** ETH earned from fees, in the header, and a **Claim ETH** button
   once there is any.
 - **Position.** Staked LMS, votes and wallet balance.
@@ -644,7 +611,7 @@ A **Governance** button in the top bar opens every proposal made to
 
 `npm run dev:fork` shortens voting to open in a minute and last thirty, lowers
 the proposal threshold to 1,000 sLMS, stakes 1,000 LMS for each dev player
-(enough to propose), airdrops them 250 LMS more, harvests after every match,
+(enough to propose), harvests after every match,
 and makes a demo proposal to raise the stakers' fee share to 60%.
 
 ### What is missing

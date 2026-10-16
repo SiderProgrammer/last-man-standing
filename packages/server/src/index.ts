@@ -60,12 +60,6 @@ export {
   type ViemFeeRouterOptions,
 } from './chain/feeKeeper.js';
 export {
-  airdropResponse,
-  loadAirdropFile,
-  parseAirdropFile,
-  type AirdropBook,
-} from './chain/airdropFile.js';
-export {
   ProposalIndex,
   proposalsResponse,
   viemProposalReader,

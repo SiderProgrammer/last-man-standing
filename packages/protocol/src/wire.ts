@@ -75,7 +75,7 @@ export type ServerMessage =
       /** True when the server will pay the gas to push payouts (`collect`). */
       collect: boolean;
       /**
-       * The staking vault and any running airdrop, or null when this server
+       * The staking vault and governor, or null when this server
        * has none configured. Both live on the hub, like the escrow whose fees
        * fund them.
        */

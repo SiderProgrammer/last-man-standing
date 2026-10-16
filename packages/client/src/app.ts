@@ -64,7 +64,7 @@ export function start(): void {
   wireMatchControls();
   wirePayoutControls();
   wireResultControls();
-  wireStakingControls(httpOrigin(SERVER_URL));
+  wireStakingControls();
   wireGovernanceControls(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
   // Keeps the unstake countdown and the share price current while the page is open.

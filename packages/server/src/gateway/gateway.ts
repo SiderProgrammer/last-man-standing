@@ -79,7 +79,7 @@ export interface GatewayOptions {
   sessionDelegate?: `0x${string}` | null;
   /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
   zap?: ZapInfo | null;
-  /** Staking vault and airdrop. Null or omitted hides the staking panel. */
+  /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;

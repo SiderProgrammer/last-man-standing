@@ -22,19 +22,10 @@ export const feeRouterAbi = parseAbi([
 export interface StakingInfo {
   /** `StakedLms` on the hub chain. The LMS token is its `asset()`. */
   vault: `0x${string}`;
-  /** `LmsAirdrop`, or null when there is no airdrop running. */
-  airdrop: `0x${string}` | null;
   /** `LmsGovernor`, or null when this server indexes no proposals. */
   governor: `0x${string}` | null;
   /** `FeeRouter`, so proposals that change it are labelled. Null when there is none. */
   feeRouter: `0x${string}` | null;
-}
-
-/** One address's airdrop allocation, as the server's `/airdrop/<address>` returns it. */
-export interface AirdropAllocation {
-  /** LMS in wei, as a decimal string so it survives JSON. */
-  amount: string;
-  proof: `0x${string}`[];
 }
 
 /** The `StakedLms` surface the client uses. Errors are included so a failed simulation reads as its cause. */

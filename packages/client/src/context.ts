@@ -38,7 +38,7 @@ export interface AppState {
   zap: ZapInfo | null;
   /** True when the server pays the gas to push payouts. */
   collect: boolean;
-  /** The staking vault and any airdrop, or null when the server offers neither. */
+  /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   match: PublicMatchState | null;
   /**

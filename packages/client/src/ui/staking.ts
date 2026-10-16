@@ -29,17 +29,10 @@ export interface StakingPosition {
   chainTime: number;
 }
 
-export interface AirdropState {
-  amount: bigint;
-  claimed: boolean;
-}
-
 export interface StakingPanelInput {
   info: StakingInfo | null;
   connected: boolean;
   position: StakingPosition | null;
-  /** The wallet's allocation, or null when it has none or there is no airdrop. */
-  airdrop: AirdropState | null;
   /** Used only when there is no position to take the chain's time from. */
   nowSeconds: number;
   /** A read that failed, usually a wallet on the wrong chain. */
@@ -52,7 +45,6 @@ export interface StakingPanel {
   rewards: string;
   claimRewardsVisible: boolean;
   summary: string;
-  airdrop: { visible: boolean; text: string };
   stakeDisabled: boolean;
   unstakeDisabled: boolean;
   pending: { text: string; withdrawVisible: boolean };
@@ -65,7 +57,6 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
     rewards: '—',
     claimRewardsVisible: false,
     summary: '',
-    airdrop: { visible: false, text: '' },
     stakeDisabled: true,
     unstakeDisabled: true,
     pending: { text: '', withdrawVisible: false },
@@ -74,7 +65,6 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
   const position = input.position;
   if (!input.info || !input.connected || !position || input.error) return hidden;
 
-  const unclaimed = input.airdrop && !input.airdrop.claimed && input.airdrop.amount > 0n ? input.airdrop : null;
   const now = position.chainTime;
   const unlocked = position.pending.assets > 0n && now >= position.pending.unlockAt;
 
@@ -86,9 +76,6 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
       position.shares > 0n
         ? `Staked ${formatLms(position.value)} LMS · ${formatLms(position.votes)} votes · ${formatLms(position.lmsBalance)} LMS in wallet`
         : `Nothing staked yet · ${formatLms(position.lmsBalance)} LMS in wallet`,
-    airdrop: unclaimed
-      ? { visible: true, text: `You earned ${formatLms(unclaimed.amount)} LMS from the match fees you paid.` }
-      : { visible: false, text: '' },
     stakeDisabled: position.lmsBalance === 0n,
     unstakeDisabled: position.shares === 0n,
     pending:
