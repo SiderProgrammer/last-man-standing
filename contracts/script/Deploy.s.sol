@@ -6,8 +6,6 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
 import {GameEscrow} from "../src/GameEscrow.sol";
-import {AttestorBonds} from "../src/AttestorBonds.sol";
-import {MatchVerifier} from "../src/MatchVerifier.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
@@ -20,14 +18,15 @@ import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
 
-/// @notice Hub deploy: token-governed config, randomness oracle, bonded attestors, hub escrow.
+/// @notice Hub deploy: token-governed config, randomness oracle, attestors, hub escrow.
 /// @dev Governance ends up as:
 ///
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
 ///                                                           ^  (anyone may execute     StakedLms
 ///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
 ///         |                                                     has passed)
-///         +- guardian: may pause GameEscrow at once, never unpause
+///         +- guardian: may pause GameEscrow at once, never unpause;
+///         |            may veto a proposed result, which refunds every stake
 ///         +- receives the LMS supply, to distribute
 ///         +- treasury: receives the non-staker share of fees
 ///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
@@ -60,10 +59,6 @@ contract Deploy is Script {
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
         TimelockController timelock;
-        /// @dev Behind the timelock, like the config: it can slash.
-        AttestorBonds bonds;
-        /// @dev Stateless; replaced by deploying another and pointing the config at it.
-        MatchVerifier verifier;
         LmsToken lms;
         StakedLms stakedLms;
         LmsGovernor governor;
@@ -99,7 +94,6 @@ contract Deploy is Script {
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
-        (deployment.bonds, deployment.verifier) = _settlement(deployment.config, deployment.escrow, deployer);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(
@@ -114,7 +108,6 @@ contract Deploy is Script {
         _governance(deployment, deployer);
 
         deployment.config.transferOwnership(address(deployment.timelock));
-        deployment.bonds.transferOwnership(address(deployment.timelock));
         _handOver(deployment, deployer);
 
         vm.stopBroadcast();
@@ -184,6 +177,8 @@ contract Deploy is Script {
 
         config.setRulesHash(HashLib.hashRules(_rules()));
         config.setGuardian(safe);
+        // How long the Safe has to replay a disputed match and veto it.
+        config.setChallengeWindow(uint64(vm.envOr("CHALLENGE_WINDOW", uint256(1 hours))));
     }
 
     /// @dev The quorum is a multisig over results: independent attestor keys,
@@ -194,41 +189,6 @@ contract Deploy is Script {
         attestors = vm.envOr("ATTESTORS", ",", fallbackAttestors);
         // A blank `ATTESTORS=` parses as an empty list rather than as unset.
         if (attestors.length == 0) attestors = fallbackAttestors;
-    }
-
-    /// @dev Bonds, the fraud-proof verifier and the challenge window. A lobby
-    ///      cannot open until all three are set.
-    ///
-    ///      On a local node the deployer funds every attestor's bond, so the dev
-    ///      stack settles out of the box. Anywhere else attestors bond
-    ///      themselves — a bond someone else put up restrains nobody — and no
-    ///      result settles until a quorum has.
-    function _settlement(ProtocolConfig config, GameEscrow escrow, address deployer)
-        private
-        returns (AttestorBonds bonds, MatchVerifier verifier)
-    {
-        uint256 requiredBond = vm.envOr("ATTESTOR_BOND", uint256(1 ether));
-        bonds = new AttestorBonds(
-            deployer,
-            config,
-            // Read before `_governance` points the config's treasury at
-            // `FeeRouter`, which could never collect a slashed share.
-            config.treasury(),
-            requiredBond,
-            uint64(vm.envOr("UNBOND_DELAY", uint256(7 days))),
-            uint16(vm.envOr("CHALLENGER_BPS", uint256(2_000)))
-        );
-        verifier = new MatchVerifier();
-        config.setAttestorBonds(address(bonds));
-        config.setMatchVerifier(address(verifier));
-        config.setChallengeWindow(uint64(vm.envOr("CHALLENGE_WINDOW", uint256(1 hours))));
-        bonds.setSlasher(address(escrow), true);
-
-        if (block.chainid != LOCAL_CHAIN_ID) return (bonds, verifier);
-        address[] memory attestors = _attestors(deployer);
-        for (uint256 i = 0; i < attestors.length; ++i) {
-            bonds.bond{value: requiredBond}(attestors[i]);
-        }
     }
 
     /// @dev Read from `config/rules.json` rather than typed in here, so the
@@ -306,11 +266,11 @@ contract Deploy is Script {
         return vm.envOr("TIMELOCK_DELAY", uint256(1 days));
     }
 
-    /// @dev `ProtocolConfig` and `AttestorBonds` are `Ownable2Step`, so
-    ///      `transferOwnership` only proposes: the timelock has to accept itself.
-    ///      While its delay is still zero that can be scheduled and executed at
-    ///      once, in the same batch that raises the delay to its real value, so
-    ///      the timelock never owns either with a zero delay outside that call.
+    /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
+    ///      proposes: the timelock has to call `acceptOwnership` itself. While
+    ///      its delay is still zero that can be scheduled and executed at once,
+    ///      in the same batch that raises the delay to its real value, so the
+    ///      timelock never owns the config with a zero delay outside that call.
     function _handOver(Deployment memory deployment, address deployer) private {
         TimelockController timelock = deployment.timelock;
         ProtocolConfig config = deployment.config;
@@ -321,15 +281,13 @@ contract Deploy is Script {
         uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
-        address[] memory targets = new address[](3);
+        address[] memory targets = new address[](2);
         targets[0] = address(config);
-        targets[1] = address(deployment.bonds);
-        targets[2] = address(timelock);
-        uint256[] memory values = new uint256[](3);
-        bytes[] memory payloads = new bytes[](3);
+        targets[1] = address(timelock);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory payloads = new bytes[](2);
         payloads[0] = abi.encodeCall(config.acceptOwnership, ());
-        payloads[1] = abi.encodeCall(deployment.bonds.acceptOwnership, ());
-        payloads[2] = abi.encodeCall(timelock.updateDelay, (delay));
+        payloads[1] = abi.encodeCall(timelock.updateDelay, (delay));
         // The timelock marks executed operations with timestamp 1, so at the
         // in-memory dry run's starting timestamp of 1 a zero-delay operation
         // reads as already done. No real chain is there, and a cheatcode is

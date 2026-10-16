@@ -8,11 +8,8 @@ import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
-import {AttestorBonds} from "../../src/AttestorBonds.sol";
-import {MatchVerifier} from "../../src/MatchVerifier.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
-import {HonestMatch} from "../helpers/HonestMatch.sol";
 
 /// @dev Actor that drives GameEscrow through random sequences of public calls.
 contract EscrowHandler is Test {
@@ -88,28 +85,14 @@ contract EscrowHandler is Test {
         escrow.cancelMatch(current);
     }
 
-    MatchVerifier public verifier;
-
-    /// @dev Set once by `setUp`, for the same reason as `setMessenger`.
-    function setVerifier(MatchVerifier verifier_) external {
-        if (address(verifier) == address(0)) verifier = verifier_;
-    }
-
-    /// @dev Proposes the honest result over a real round log: `settle` checks
-    ///      the log against the signed root, so a made-up root no longer settles.
-    function settle() public {
+    /// @dev Proposes the seat order as the result. The escrow never replays a
+    ///      match, so the round count and root are arbitrary.
+    function settle(bytes32 historyRoot, uint32 rounds) public {
         if (current == bytes32(0)) return;
         address[] memory seats = escrow.getSeats(current);
         if (seats.length == 0) return;
-
-        HonestMatch.Played memory played = HonestMatch.play(verifier, current, escrow.getMatch(current).seed, seats.length);
-        address[] memory ranking = new address[](seats.length);
-        for (uint256 i = 0; i < seats.length; ++i) {
-            ranking[i] = seats[played.ranking[i]];
-        }
-        bytes32 historyRoot = played.root;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint32 rounds = uint32(played.rounds.length);
+        address[] memory ranking = seats;
+        rounds = uint32(bound(rounds, 1, 64));
 
         bytes32 structHash = harness.hashMatchResult(current, rounds, historyRoot, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
@@ -119,7 +102,7 @@ contract EscrowHandler is Test {
         for (uint256 i = 0; i < n; ++i) {
             pks[i] = attestorPks[i];
         }
-        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest), HonestMatch.log(played));
+        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest));
         proposedRanking = ranking;
         ++settled;
     }
@@ -133,6 +116,17 @@ contract EscrowHandler is Test {
         vm.warp(block.timestamp + 2 hours);
         escrow.finalize(current, proposedRanking);
         ++finalized;
+    }
+
+    address public constant GUARDIAN = address(0x6A2D);
+    uint256 public vetoed;
+
+    /// @dev The guardian throws out a proposed result: every stake comes back.
+    function veto() public {
+        if (current == bytes32(0)) return;
+        vm.prank(GUARDIAN);
+        escrow.veto(current);
+        ++vetoed;
     }
 
     function withdraw(uint256 who) public {
@@ -173,18 +167,45 @@ contract EscrowHandler is Test {
 contract EscrowInvariantTest is StdInvariant, Test {
     GameEscrow internal escrow;
     EscrowHandler internal handler;
-    MatchVerifier internal verifier;
     address internal treasury;
+
+    uint256 internal constant PK_A = 0xA11CE;
+    uint256 internal constant PK_B = 0xB0B;
 
     function setUp() public {
         address owner = makeAddr("owner");
         treasury = makeAddr("treasury");
 
-        uint256 pkA = 0xA11CE;
-        uint256 pkB = 0xB0B;
-
         MockRandomnessOracle oracle = new MockRandomnessOracle();
+        SettlementHarness harness = new SettlementHarness();
+        ProtocolConfig config = _config(owner, address(oracle), harness.hashRulesDefault());
+        escrow = new GameEscrow(config);
 
+        address[] memory actors = new address[](6);
+        for (uint256 i = 0; i < actors.length; ++i) {
+            actors[i] = makeAddr(string.concat("p", vm.toString(i)));
+            vm.deal(actors[i], 1_000 ether);
+        }
+
+        uint256[] memory pks = new uint256[](2);
+        pks[0] = PK_A;
+        pks[1] = PK_B;
+
+        handler = new EscrowHandler(escrow, oracle, harness, actors, pks);
+        MockMessenger messenger = new MockMessenger();
+        handler.setMessenger(messenger);
+        address guardian = handler.GUARDIAN();
+        uint32 remoteChain = handler.REMOTE_CHAIN();
+        bytes32 remotePeer = handler.REMOTE_PEER();
+        vm.startPrank(owner);
+        config.setGuardian(guardian);
+        config.setRemoteChain(remoteChain, address(messenger), remotePeer);
+        vm.stopPrank();
+        targetContract(address(handler));
+    }
+
+    /// @dev Split out of `setUp` only to keep its stack within the legacy pipeline's limit.
+    function _config(address owner, address oracle, bytes32 rulesHash) private returns (ProtocolConfig config) {
         ProtocolConfig.Params memory params = ProtocolConfig.Params({
             feeBps: 500,
             minSeats: 4,
@@ -198,58 +219,15 @@ contract EscrowInvariantTest is StdInvariant, Test {
         uint16[] memory payout = new uint16[](1);
         payout[0] = 10_000;
 
-        vm.prank(owner);
-        ProtocolConfig config = new ProtocolConfig(owner, params, payout);
         vm.startPrank(owner);
-        config.setRandomnessOracle(address(oracle));
-        config.setAttestor(vm.addr(pkA), true);
-        config.setAttestor(vm.addr(pkB), true);
+        config = new ProtocolConfig(owner, params, payout);
+        config.setRandomnessOracle(oracle);
+        config.setAttestor(vm.addr(PK_A), true);
+        config.setAttestor(vm.addr(PK_B), true);
         config.setAttestorThreshold(2);
-        vm.stopPrank();
-
-        SettlementHarness harness = new SettlementHarness();
-        _wireSettlement(config, owner, harness.hashRulesDefault(), pkA, pkB);
-
-        address[] memory actors = new address[](6);
-        for (uint256 i = 0; i < actors.length; ++i) {
-            actors[i] = makeAddr(string.concat("p", vm.toString(i)));
-            vm.deal(actors[i], 1_000 ether);
-        }
-
-        uint256[] memory pks = new uint256[](2);
-        pks[0] = pkA;
-        pks[1] = pkB;
-
-        handler = new EscrowHandler(escrow, oracle, harness, actors, pks);
-        handler.setVerifier(verifier);
-        MockMessenger messenger = new MockMessenger();
-        handler.setMessenger(messenger);
-        uint32 remoteChain = handler.REMOTE_CHAIN();
-        bytes32 remotePeer = handler.REMOTE_PEER();
-        vm.prank(owner);
-        config.setRemoteChain(remoteChain, address(messenger), remotePeer);
-        targetContract(address(handler));
-    }
-
-    /// @dev Rules, bonded attestors, the verifier and the escrow itself. Split
-    ///      out of `setUp` only to keep its stack within the legacy pipeline's limit.
-    function _wireSettlement(ProtocolConfig config, address owner, bytes32 rulesHash, uint256 pkA, uint256 pkB)
-        private
-    {
-        AttestorBonds bonds = new AttestorBonds(owner, config, config.treasury(), 1 ether, 1 days, 2_000);
-        verifier = new MatchVerifier();
-        vm.startPrank(owner);
-        config.setRulesHash(rulesHash);
-        config.setAttestorBonds(address(bonds));
-        config.setMatchVerifier(address(verifier));
         config.setChallengeWindow(1 hours);
+        config.setRulesHash(rulesHash);
         vm.stopPrank();
-        escrow = new GameEscrow(config);
-        vm.prank(owner);
-        bonds.setSlasher(address(escrow), true);
-        vm.deal(address(this), 2 ether);
-        bonds.bond{value: 1 ether}(vm.addr(pkA));
-        bonds.bond{value: 1 ether}(vm.addr(pkB));
     }
 
     function invariant_solvency() public view {

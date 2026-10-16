@@ -44,8 +44,8 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
       'Settlement could not be submitted. The escrow refunds every stake after its deadline.';
     return;
   }
-  // A proposal, not a payout: the result stays open to a fraud proof for the
-  // challenge window, and the winnings unlock when it closes unchallenged.
+  // A proposal, not a payout: the guardian may still veto the result during
+  // the challenge window, and the winnings unlock when it closes.
   dom.resultSettle.textContent =
     `Proposed on-chain · ${short(message.tx)} · winnings unlock once the challenge window closes`;
 
@@ -59,7 +59,11 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
     dom.resultVerify.textContent = onChain ? 'verified against chain' : 'chain disagrees';
     dom.resultVerify.classList.toggle('ok', onChain);
     dom.resultVerify.classList.toggle('bad', !onChain);
-    if (!onChain) dom.resultDetail.textContent = `The escrow stored ${short(root)}, not the root this browser replayed.`;
+    if (!onChain) {
+      dom.resultDetail.textContent =
+        `The escrow stored ${short(root)}, not the root this browser replayed. ` +
+        'The guardian can veto the result, refunding every stake, until the challenge window closes.';
+    }
   } catch {
     // The local check already stands on its own; a failed read just leaves it at that.
   }

@@ -9,7 +9,7 @@ Items are ordered roughly by what blocks the next demo.
 
 > **Closed on `fix/protocol-review`** (see the status table in `FIX_PLAN.md`):
 > withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
-> entries (§2.2), the Redis decision — dropped (§2.3), the fraud proof (§3.1),
+> entries (§2.2), the Redis decision — dropped (§2.3),
 > unlimited practice rooms, a restart mid-match (now aborted and refunded rather
 > than resumed) and gateway rate limiting (§3.2),
 > the stored ranking (§3.3), and the hardwired deploy mocks (§3.4). The LayerZero
@@ -91,18 +91,23 @@ The client plays a full match, but these are missing:
 
 ## 3. Protocol and security gaps
 
-### 3.1 No fraud proof
+### 3.1 Disputes are guardian-decided, not on-chain
 
-This is the biggest conceptual gap. Attestors are trusted for ordering; the history root
-makes a fabricated result *provable* off-chain, but nothing on-chain acts on that proof.
-Needed for a real trust-minimised deployment:
+A proposed result waits out `challengeWindow` before it pays, and the guardian Safe can
+`veto` it in that time, refunding every stake. Detection is the off-chain replay every
+browser already runs. That is the intended trust level for testnet and a low-stake early
+mainnet. Still open:
 
-- Publish the move log and salts (IPFS or calldata) so anyone can replay.
-- A challenge window before payouts unlock.
-- An on-chain verifier that can re-derive at least one round hash and slash a quorum that
-  signed a root inconsistent with the published log.
-
-Until then, document honestly that settlement is quorum-trusted.
+- **The rounds are not public yet.** They are broadcast to the match's own players and
+  archived in the server's database, but nothing serves the archive, so the Safe can only
+  replay a disputed match from a player's copy. A read-only archive endpoint is the
+  minimum; pinning each match's log (IPFS or similar) removes the server from the path.
+- **Nobody watches yet.** A veto needs someone to notice. A small watcher that replays
+  every `ResultProposed` against the archive and alerts the Safe signers would close that.
+- **On-chain fraud proof, later.** A Solidity kernel, `MatchVerifier`, bonded and
+  slashable attestors and cross-language vectors were built and then removed (they are in
+  `fadf583`). Bring them back once the rules are frozen and stakes justify maintaining
+  two engines.
 
 ### 3.2 Server-side hardening
 

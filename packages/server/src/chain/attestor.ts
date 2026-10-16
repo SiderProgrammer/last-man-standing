@@ -4,11 +4,9 @@ import {
   MATCH_ABORT_TYPES,
   MATCH_RESULT_TYPES,
   addressKey,
-  encodeRoundLog,
   matchResultDomain,
   matchResultMessage,
   type MatchResult,
-  type RoundRecord,
 } from '@lms/protocol';
 import { gameEscrowAbi } from '@lms/protocol';
 import { config, type ServerConfig } from '../config.js';
@@ -17,9 +15,9 @@ import { signerClients } from './viem.js';
 /**
  * Signs a finished match under the escrow's EIP-712 domain.
  *
- * The signature commits to the history root, not just the ranking, and the
- * escrow takes the round log alongside it, so a fabricated result can be
- * disproved on-chain by replaying that log (`GameEscrow.challenge`).
+ * The signature commits to the history root, not just the ranking, so anyone
+ * holding the archived rounds can replay the match and see whether the result
+ * follows from them; the guardian vetoes one that does not (`GameEscrow.veto`).
  */
 export async function signResult(
   privateKey: Hex,
@@ -49,11 +47,11 @@ export function packSignatures(signed: ReadonlyArray<{ signer: Address; signatur
 
 export interface Relayer {
   /**
-   * Attests a result and proposes it on-chain with its round log. It pays out
-   * once the challenge window closes; `ChainBridge` finalises it then.
+   * Attests a result and proposes it on-chain. It pays out once the challenge
+   * window closes unvetoed; `ChainBridge` finalises it then.
    * No-op when unconfigured.
    */
-  settle(result: MatchResult, history: readonly RoundRecord[]): Promise<Hex | null>;
+  settle(result: MatchResult): Promise<Hex | null>;
   /**
    * Signs and submits an abort for a live match this server cannot finish,
    * refunding every seat at once. Null when unconfigured; the escrow then
@@ -104,7 +102,7 @@ export function createRelayer(options: {
       });
       return walletClient.writeContract(request);
     },
-    async settle(result, history) {
+    async settle(result) {
       const signature = await signResult(
         options.privateKey,
         result,
@@ -118,14 +116,7 @@ export function createRelayer(options: {
         address: options.escrow,
         abi: gameEscrowAbi,
         functionName: 'settle',
-        args: [
-          result.matchId,
-          result.rounds,
-          result.historyRoot,
-          result.ranking,
-          signatures,
-          encodeRoundLog(result.ranking.length, history),
-        ],
+        args: [result.matchId, result.rounds, result.historyRoot, result.ranking, signatures],
       });
       return walletClient.writeContract(request);
     },

@@ -56,40 +56,11 @@ const ROUND_ABI = parseAbiParameters(
 );
 
 /**
- * One round as the chain sees it: every field indexed by seat. This is the
- * preimage of the round hash, and exactly the `KernelLib.Round` struct a fraud
- * proof submits to `GameEscrow.challenge`.
- */
-export interface RoundPreimage {
-  actions: number[];
-  targets: number[];
-  salts: `0x${string}`[];
-  hpAfter: number[];
-  eliminated: number[];
-}
-
-export function roundPreimage(seats: number, record: Omit<RoundRecord, 'hash'>): RoundPreimage {
-  const actions: number[] = new Array<number>(seats).fill(Action.None);
-  const targets: number[] = new Array<number>(seats).fill(0);
-  for (const move of record.moves) {
-    actions[move.index] = move.action;
-    targets[move.index] = move.action === Action.Attack ? move.target : 0;
-  }
-  return {
-    actions,
-    targets,
-    salts: saltsBySeat(seats, record.moves),
-    hpAfter: record.hpAfter.map((hp) => (hp > 0 ? hp : 0)),
-    eliminated: [...record.eliminated],
-  };
-}
-
-/**
  * Canonical hash of one resolved round, ordered by seat index.
  *
  * The salts are part of it because they are part of the outcome: they decide
  * every roll in the round. A history root that left them out would let a
- * quorum publish different salts after the fact, and a fraud proof could no
+ * quorum publish different salts after the fact, and a replay could no
  * longer re-derive the rolls the root was signed over.
  */
 export function hashRound(
@@ -97,16 +68,16 @@ export function hashRound(
   seats: number,
   record: Omit<RoundRecord, 'hash'>,
 ): `0x${string}` {
-  const preimage = roundPreimage(seats, record);
+  const actions: number[] = new Array<number>(seats).fill(Action.None);
+  const targets: number[] = new Array<number>(seats).fill(0);
+  for (const move of record.moves) {
+    actions[move.index] = move.action;
+    targets[move.index] = move.action === Action.Attack ? move.target : 0;
+  }
+  const salts = saltsBySeat(seats, record.moves);
+  const hpAfter = record.hpAfter.map((hp) => (hp > 0 ? hp : 0));
   return keccak256(
-    encodeAbiParameters(ROUND_ABI, [
-      round,
-      preimage.actions,
-      preimage.targets,
-      preimage.salts,
-      preimage.hpAfter,
-      preimage.eliminated,
-    ]),
+    encodeAbiParameters(ROUND_ABI, [round, actions, targets, salts, hpAfter, [...record.eliminated]]),
   );
 }
 

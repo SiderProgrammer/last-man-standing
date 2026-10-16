@@ -51,10 +51,10 @@ contract AbortMatchTest is Fixtures {
         escrow.abortMatch(matchId, sigs);
     }
 
-    function test_anUnbondedSignerDoesNotCount() public {
+    function test_aRemovedAttestorDoesNotCount() public {
         bytes32 matchId = _liveMatch();
-        vm.prank(attestorB);
-        bonds.requestUnbond();
+        vm.prank(owner);
+        config.setAttestor(attestorB, false);
         bytes memory sigs = _abortSignatures(_twoAttestors(), matchId);
 
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, attestorB));

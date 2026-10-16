@@ -2,7 +2,6 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
-import {HonestMatch} from "../helpers/HonestMatch.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
@@ -147,13 +146,12 @@ contract GameEscrowTest is Fixtures {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x51)));
 
-        (HonestMatch.Played memory played, address[] memory ranking) = _honest(matchId);
-        bytes32 historyRoot = played.root;
-        _propose(matchId, played, ranking);
+        address[] memory ranking = _rankingOf(matchId);
+        _propose(matchId, ranking);
         GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
         assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Proposed));
         assertEq(info.challengeDeadline, block.timestamp + CHALLENGE_WINDOW);
-        // Nothing is paid while the result can still be challenged.
+        // Nothing is paid while the result can still be vetoed.
         assertEq(escrow.withdrawable(ranking[0]), 0);
 
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline));
@@ -163,7 +161,8 @@ contract GameEscrowTest is Fixtures {
 
         info = escrow.getMatch(matchId);
         assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Settled));
-        assertEq(info.historyRoot, historyRoot);
+        assertEq(info.historyRoot, HISTORY_ROOT);
+        assertEq(info.rounds, ROUNDS);
 
         uint256 pool = 4 * STAKE;
         uint256 fee = (pool * 500) / 10_000;
@@ -189,7 +188,7 @@ contract GameEscrowTest is Fixtures {
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
         vm.expectRevert();
-        escrow.settle(matchId, 3, historyRoot, ranking, bad, "");
+        escrow.settle(matchId, 3, historyRoot, ranking, bad);
 
         address[] memory shuffled = new address[](4);
         shuffled[0] = ranking[0];
@@ -198,7 +197,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
         vm.expectRevert();
-        escrow.settle(matchId, 3, historyRoot, shuffled, sigs, "");
+        escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
     }
 
     function test_settle_rejectsSingleAttestorWhenThresholdIsTwo() public {
@@ -209,7 +208,7 @@ contract GameEscrowTest is Fixtures {
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _signResult(one, matchId, 1, keccak256("r"), ranking);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.QuorumNotMet.selector, uint256(1), uint32(2)));
-        escrow.settle(matchId, 1, keccak256("r"), ranking, sigs, "");
+        escrow.settle(matchId, 1, keccak256("r"), ranking, sigs);
     }
 
     function test_withdraw_paysRecipient() public {

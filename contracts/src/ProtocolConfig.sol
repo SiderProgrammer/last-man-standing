@@ -55,21 +55,20 @@ contract ProtocolConfig is Ownable2Step {
     /// @notice Signatures required to settle a match.
     uint32 public attestorThreshold;
 
-    /// @notice May pause the escrow immediately, without the timelock delay.
-    /// @dev Pause only: resuming still goes through the owner. A compromised
-    ///      guardian can therefore halt new play, which refunds survive, but
-    ///      never lift a pause that was put in place to stop an exploit.
+    /// @notice May pause the escrow, and veto a proposed result, immediately,
+    ///         without the timelock delay.
+    /// @dev Both only ever stop money moving: resuming still goes through the
+    ///      owner, and a veto refunds every stake rather than redirecting it. A
+    ///      compromised guardian can therefore halt play and void results, but
+    ///      never take a stake or lift a pause put in place to stop an exploit.
     address public guardian;
 
-    /// @notice Where attestors post the bonds that make their signatures count.
-    address public attestorBonds;
-    /// @notice Replays a challenged match on-chain. See `MatchVerifier`.
-    address public matchVerifier;
-    /// @notice Seconds a proposed result stays open to a fraud proof before it pays out.
+    /// @notice Seconds a proposed result waits before it pays out, during
+    ///         which the guardian may veto it. See `GameEscrow.veto`.
     /// @dev Snapshotted into each lobby at creation, like the other terms.
     uint64 public challengeWindow;
 
-    /// @dev Longest a payout may be held for challenges.
+    /// @dev Longest a payout may be held for review.
     uint64 public constant MAX_CHALLENGE_WINDOW = 7 days;
 
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
@@ -85,8 +84,6 @@ contract ProtocolConfig is Ownable2Step {
     event AttestorThresholdUpdated(uint32 previous, uint32 current);
     event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
     event GuardianUpdated(address indexed previous, address indexed current);
-    event AttestorBondsUpdated(address indexed previous, address indexed current);
-    event MatchVerifierUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
 
     error FeeTooHigh(uint16 feeBps);
@@ -186,21 +183,9 @@ contract ProtocolConfig is Ownable2Step {
         guardian = newGuardian;
     }
 
-    function setAttestorBonds(address bonds) external onlyOwner {
-        if (bonds == address(0)) revert ZeroAddress();
-        emit AttestorBondsUpdated(attestorBonds, bonds);
-        attestorBonds = bonds;
-    }
-
-    function setMatchVerifier(address verifier) external onlyOwner {
-        if (verifier == address(0)) revert ZeroAddress();
-        emit MatchVerifierUpdated(matchVerifier, verifier);
-        matchVerifier = verifier;
-    }
-
-    /// @dev Long enough for someone to notice and submit a proof; short enough
-    ///      that winners are not kept waiting. Never zero: a zero window would
-    ///      pay out before anyone could object.
+    /// @dev Long enough for someone to replay a disputed match and the guardian
+    ///      to act on it; short enough that winners are not kept waiting. Never
+    ///      zero: a zero window would pay out before anyone could object.
     function setChallengeWindow(uint64 window) external onlyOwner {
         if (window == 0 || window > MAX_CHALLENGE_WINDOW) revert InvalidChallengeWindow(window);
         emit ChallengeWindowUpdated(challengeWindow, window);
@@ -209,8 +194,7 @@ contract ProtocolConfig is Ownable2Step {
 
     /// @notice True once everything a lobby needs from the config is set.
     function isComplete() external view returns (bool) {
-        return rulesHash != bytes32(0) && randomnessOracle != address(0) && attestorBonds != address(0)
-            && matchVerifier != address(0) && challengeWindow != 0;
+        return rulesHash != bytes32(0) && randomnessOracle != address(0) && challengeWindow != 0;
     }
 
     /// @notice Registers, or with zero arguments removes, a remote chain.

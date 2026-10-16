@@ -351,10 +351,10 @@ lockMatch()                       permissionless once full, or quorate and expir
   ↓  requestRandomness()
 fulfillRandomness()               seed = keccak(randomness, matchId) → status Live
   ↓  MatchStarted event           the server adopts the match and plays it
-settle(rounds, root, ranking, sigs, log)  bonded quorum, ranking = seat set, log hashes to root
+settle(rounds, root, ranking, sigs)  attestor quorum, ranking = seat set
   ↓                               → Proposed: nothing paid yet
-challenge(rules, log, signers)    any time before challengeDeadline: replays the log on-chain;
-  ↓                               on fraud, slash every signer and refund every stake
+veto()                            guardian or governance, before challengeDeadline:
+  ↓                               → Cancelled, every stake refunded
 finalize(ranking)                 after challengeDeadline, permissionless → Settled, payouts credited
 withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the account itself
 ```
@@ -375,6 +375,9 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
   and cancellation is permissionless once the relevant deadline passes.
 - *Pausing is fast, resuming is slow.* The guardian Safe can `pause()` without the
   timelock; only governance can `unpause()`, so lifting a pause waits out the delay.
+- *A veto can only refund.* `veto` voids a proposed result and credits every seat its
+  stake back; it cannot redirect a payout. It is not paused, so it is always available
+  inside the window.
 - *Both ends of a bridge are authenticated.* A trusted transport still relays messages
   from untrusted senders, so the messenger **and** the origin peer are checked.
 
@@ -459,20 +462,25 @@ not corrupt a match, but every relayed call would silently stop recovering the s
 
 ### Trust model
 
-A result is signed by a quorum of **bonded** attestors (`AttestorBonds`, ETH) and is
-*proposed*, not paid. The signed root commits to every round's actions, targets, salts,
-HP and eliminations, and `settle` refuses the result unless those rounds come with it and
-hash to the root — so the evidence is always on-chain, in the settlement's calldata.
+A result is signed by a quorum of allowlisted attestors and is *proposed*, not paid. The
+signed root commits to every round's actions, targets, salts, HP and eliminations, so
+anyone holding the published rounds can replay the match with the same pure kernel the
+server runs and see whether the result follows from them. Every player's browser does
+exactly that at the end of a match (`client/src/game/verify.ts`) and compares its root
+with the one the escrow stored.
 
-For `challengeWindow` after that, anyone can submit the log to `challenge`. The escrow
-replays it through `MatchVerifier`, a Solidity port of `resolveRound` held to the
-TypeScript kernel by cross-language vectors (`contracts/test/vectors/matches.json`). If any
-round is not what its inputs resolve to, the match ended at the wrong time, or the ranking
-is not the one the rounds produce, every signer's bond is slashed — the challenger takes a
-share — and every stake is refunded. An attestor stops counting the moment it asks to
-unbond, and its bond cannot leave until the challenge window has also passed.
+Detection is off-chain; the remedy is on-chain. For `challengeWindow` after `settle`, the
+guardian Safe (or governance) may `veto` the result, which refunds every stake. Once the
+window closes unvetoed, anyone may `finalize` it. So a dispute is decided by the Safe,
+backed by a replay anyone can run for free — not by the contract. A compromised guardian
+can void honest results, but every player keeps their stake; it can never redirect one.
 
-What stays trusted: the quorum could invent a player's *move*. The published salt must
+This is a deliberate trust level for a testnet and a low-stake early mainnet. An on-chain
+fraud proof — a Solidity port of the kernel that replays a challenged match and slashes
+bonded attestors — was built and removed: it doubled every rule change while the rules
+are still moving. It is in git history (`fadf583`) for when the rules are frozen.
+
+What stays trusted beyond that: the quorum could invent a player's *move*. The published salt must
 open the player's commitment, but commitments are exchanged off-chain, so a forged move
 replayed faithfully looks valid. Everything downstream of the moves is enforced. The
 seed is drawn after the lobby closes, and each round's rolls also depend on every

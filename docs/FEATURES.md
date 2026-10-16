@@ -169,7 +169,9 @@ than just the final ranking.
 The server plays the match, then signs an EIP-712 `MatchResult`
 (`matchId`, `rounds`, `historyRoot`, `ranking`) under the domain
 `LastManStanding` v1. A quorum of attestor signatures is submitted to `settle`,
-which verifies them and credits payouts.
+which verifies them and *proposes* the result. It pays out through `finalize`
+once the challenge window has closed; until then the guardian may `veto` it,
+refunding every stake.
 
 ### Why it is built this way
 
@@ -191,12 +193,14 @@ which verifies them and credits payouts.
 
 The quorum is trusted for the **ordering** of a result, not its **contents**.
 Because the signed digest commits to the history root, anyone holding the seed
-and the published move log can replay the match and *prove* a signed result was
-fabricated.
+and the published move log can replay the match and *show* a signed result was
+fabricated. Every player's browser runs that replay when the match ends.
 
-What does not yet exist is an on-chain challenge that turns that proof into
-slashing. Until it does, settlement is quorum-trusted. See
-`PROTOCOL_REVIEW.md` ideas 04 and 05.
+Acting on it is the guardian's job, not the contract's: during the challenge
+window the Safe can `veto` a result the replay does not support, and every
+stake is refunded. There is no on-chain replay and no slashing — a deliberate
+choice while the rules are still changing, since an on-chain verifier means
+keeping a second, Solidity copy of the kernel bit-for-bit identical.
 
 ---
 
@@ -408,7 +412,8 @@ Safe) keeps a veto:
 sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
                                                    ^ (anyone executes once     StakedLms
 Safe --cancels (veto)------------------------------+  the delay has passed)    FeeRouter
- +- guardian: may pause GameEscrow at once, never unpause
+ +- guardian: may pause GameEscrow at once, never unpause;
+ |            may veto a proposed result, refunding every stake
  +- treasury: receives the non-staker share of fees
  +- owns PlayerAvatars directly
 ```
@@ -425,7 +430,8 @@ How voting power is earned is described in
 | Randomness | `randomnessOracle` address |
 | Attestation | Attestor allowlist, `attestorCount`, `attestorThreshold` |
 | Cross-chain | Trusted `messengerFor` and `peerFor`, per remote chain |
-| Emergency | `guardian` — may pause the escrow without the delay |
+| Emergency | `guardian` — may pause the escrow, or veto a proposed result, without the delay |
+| Settlement | `challengeWindow` — how long a proposed result waits, open to a veto, before it pays |
 
 `GameEscrow` reads this contract and never writes to it.
 
@@ -439,7 +445,7 @@ How voting power is earned is described in
   oracle coming and leave. The deploy script refuses a delay shorter than
   `joinWindow + settleWindow`, because the oracle and attestor set are read live
   rather than snapshotted.
-- **A guardian that can only pause.** Purpose: an emergency stop cannot wait a
+- **A guardian that can only stop money moving.** Purpose: an emergency stop cannot wait a
   day. `GameEscrow.pause()` is open to the guardian (and the owner) and skips
   the timelock; `unpause()` is owner-only, so resuming waits out the
   delay. A compromised guardian can therefore halt new play — refunds survive
@@ -448,7 +454,9 @@ How voting power is earned is described in
   `settle`, so every match in play ends by cancellation and refund rather than
   by result; and to recover from a rogue guardian, governance queues
   `setGuardian(newSafe)` and `unpause()` as one timelock batch, so the pause is
-  lifted with the guardian already replaced.
+  lifted with the guardian already replaced. The guardian's other power, `veto`,
+  is bounded the same way: it refunds a proposed result's stakes and can never
+  pay them anywhere else.
 - **`Ownable2Step`.** Purpose: ownership transfer requires the new owner to
   accept, so governance cannot be accidentally handed to an address nobody
   controls.
@@ -819,10 +827,10 @@ whatsoever.
 
 ### Why purity matters here
 
-This is the most valuable property in the codebase: it is what makes a fraud
-proof *possible*. Because resolution is deterministic and integer-only, any
-third party holding the seed and the move log can reproduce the exact same
-ranking and prove a signed result was fabricated. Everything in the trust model
+This is the most valuable property in the codebase: it is what makes an
+independent check *possible*. Because resolution is deterministic and
+integer-only, any third party holding the seed and the move log can reproduce
+the exact same ranking and show a signed result was fabricated. Everything in the trust model
 rests on it.
 
 Two supporting decisions:

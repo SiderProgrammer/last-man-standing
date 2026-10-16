@@ -76,15 +76,13 @@ contract ProtocolConfigTest is Fixtures {
 
         vm.prank(owner);
         fresh.setRandomnessOracle(address(oracle));
-        // Nor is a seed: a result could still never be bonded, verified or finalised.
+        // Nor is a seed: with no challenge window a result would pay out
+        // before anyone could object to it.
         vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
         unusable.createMatch(STAKE, 4);
 
-        vm.startPrank(owner);
-        fresh.setAttestorBonds(address(bonds));
-        fresh.setMatchVerifier(address(verifier));
+        vm.prank(owner);
         fresh.setChallengeWindow(CHALLENGE_WINDOW);
-        vm.stopPrank();
         unusable.createMatch(STAKE, 4);
     }
 

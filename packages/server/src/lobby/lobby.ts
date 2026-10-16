@@ -232,7 +232,7 @@ export class Lobby {
   ): Promise<void> {
     let settledTx: string | null = null;
     try {
-      settledTx = await this.options.relayer.settle(result, history);
+      settledTx = await this.options.relayer.settle(result);
     } catch (error) {
       // A failed settlement is recoverable: the escrow stays `Live` until the
       // deadline, so the result can be resubmitted or the match cancelled.
