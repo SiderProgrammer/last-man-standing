@@ -1,6 +1,9 @@
 import type { Address, PublicClient } from 'viem';
 import { addressKey, errorMessage, playerAvatarsAbi, type AvatarEntry } from '@lms/protocol';
 import { readClient } from './viem.js';
+import { log } from '../observability/log.js';
+
+const logger = log.child({ component: 'avatars' });
 
 /** One `PlayerAvatars` deployment, and the RPC that can be used to read it. */
 export interface AvatarCollection {
@@ -139,7 +142,7 @@ export class AvatarRegistry {
         image: await this.imageFor(uri),
       };
     } catch (error) {
-      console.warn(`[avatars] read failed for ${player} on ${chainId}:`, errorMessage(error));
+      logger.warn('avatar read failed', { player, chainId, error: errorMessage(error) });
       return null;
     }
   }
@@ -168,7 +171,7 @@ export class AvatarRegistry {
       const image = (metadata as { image?: unknown }).image;
       return typeof image === 'string' && image.length > 0 ? this.toHttp(image) : null;
     } catch (error) {
-      console.warn('[avatars] metadata fetch failed:', errorMessage(error));
+      logger.warn('avatar metadata fetch failed', { error: errorMessage(error) });
       return null;
     }
   }
@@ -201,13 +204,13 @@ export function parseCollections(raw: string): AvatarCollection[] {
         typeof rpcUrl !== 'string' ||
         rpcUrl.length === 0
       ) {
-        console.warn('[avatars] ignoring malformed collection:', JSON.stringify(item));
+        logger.warn('ignoring malformed collection', { entry: JSON.stringify(item) });
         return [];
       }
       return [{ chainId, address: address as Address, rpcUrl }];
     });
   } catch (error) {
-    console.warn('[avatars] AVATAR_COLLECTIONS is not valid JSON:', errorMessage(error));
+    logger.warn('AVATAR_COLLECTIONS is not valid JSON', { error: errorMessage(error) });
     return [];
   }
 }

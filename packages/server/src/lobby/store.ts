@@ -1,4 +1,7 @@
 import { errorMessage, type MatchResult, type RoundRecord } from '@lms/protocol';
+import { log } from '../observability/log.js';
+
+const logger = log.child({ component: 'store' });
 
 export interface ArchivedMatch {
   result: MatchResult;
@@ -125,7 +128,7 @@ export async function createArchive(databaseUrl: string): Promise<MatchArchive> 
   try {
     return await PostgresArchive.connect(databaseUrl);
   } catch (error) {
-    console.warn('[store] falling back to in-memory archive:', errorMessage(error));
+    logger.warn('falling back to in-memory archive', { error: errorMessage(error) });
     return new MemoryArchive();
   }
 }

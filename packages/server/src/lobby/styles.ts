@@ -1,4 +1,7 @@
 import { addStyles, addressKey, emptyStyle, errorMessage, type PlayStyle } from '@lms/protocol';
+import { log } from '../observability/log.js';
+
+const logger = log.child({ component: 'styles' });
 
 /**
  * Play styles by wallet, accumulated from every settled staked match.
@@ -103,7 +106,7 @@ export async function createStyleBook(databaseUrl: string): Promise<StyleBook> {
   try {
     return await PostgresStyleBook.connect(databaseUrl);
   } catch (error) {
-    console.warn('[styles] falling back to in-memory style book:', errorMessage(error));
+    logger.warn('falling back to in-memory style book', { error: errorMessage(error) });
     return new MemoryStyleBook();
   }
 }

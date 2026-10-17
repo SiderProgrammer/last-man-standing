@@ -50,6 +50,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      */
     trustProxy: env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1',
     /**
+     * Prometheus `/metrics` listens here, apart from the public port so it is
+     * never reachable by players. Bound to loopback by default; set
+     * `METRICS_HOST=0.0.0.0` for a scraper on another host. Blank port disables it.
+     */
+    metricsPort: Number(env.METRICS_PORT ?? 9464),
+    metricsHost: env.METRICS_HOST ?? '127.0.0.1',
+    /**
+     * Spoke escrows to watch for joins in flight, as JSON:
+     * `[{"chainId":84532,"rpcUrl":"https://…","escrow":"0x…"}]`. See `chain/crossChain.ts`.
+     */
+    spokes: env.SPOKES ?? '',
+    /** A forwarded join the hub has not acted on after this long is reported stuck. */
+    crossChainStuckMs: Number(env.CROSSCHAIN_STUCK_MS ?? 600_000),
+    /**
      * `PlayerAvatars` deployments, as JSON:
      * `[{"chainId":11155111,"address":"0x…","rpcUrl":"https://…"}]`
      *

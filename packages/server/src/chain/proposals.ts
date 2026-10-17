@@ -1,6 +1,9 @@
 import type { Address } from 'viem';
 import { errorMessage, lmsGovernorAbi, type ProposalSummary } from '@lms/protocol';
 import { readClient } from './viem.js';
+import { log } from '../observability/log.js';
+
+const logger = log.child({ component: 'governance' });
 
 /** Everything the index needs from the chain, so the polling can be tested with a fake. */
 export interface ProposalReader {
@@ -66,7 +69,7 @@ export class ProposalIndex {
         this.cursor = to + 1n;
       }
     } catch (error) {
-      console.error('[governance] poll failed:', errorMessage(error));
+      logger.error('poll failed', { error: errorMessage(error) });
     } finally {
       this.polling = false;
     }

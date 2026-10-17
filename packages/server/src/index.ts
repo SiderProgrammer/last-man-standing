@@ -18,6 +18,7 @@ export {
 } from './gateway/limits.js';
 export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
+export { WS_SERVER_OPTIONS, attachTransport } from './gateway/transport.js';
 export {
   MemoryArchive,
   PostgresArchive,
@@ -75,3 +76,20 @@ export {
   type ProposalReader,
 } from './chain/proposals.js';
 export { config, loadConfig, type ServerConfig } from './config.js';
+export {
+  CrossChainMonitor,
+  JoinReconciler,
+  parseSpokes,
+  viemHubSource,
+  viemSpokeSource,
+  type CrossChainMonitorOptions,
+  type ForwardedJoin,
+  type HubLogs,
+  type HubSeat,
+  type LogSource,
+  type SpokeConfig,
+} from './chain/crossChain.js';
+export { createLogger, log, type Fields, type Level, type Logger, type LoggerOptions } from './observability/log.js';
+export * as metrics from './observability/metrics.js';
+export { startTracing, withSpan } from './observability/tracing.js';
+export { BalanceWatcher } from './observability/balances.js';

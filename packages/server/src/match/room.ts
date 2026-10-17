@@ -12,6 +12,7 @@ import {
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
+import { missedMoves, roundDuration, roundsResolved } from '../observability/metrics.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -64,6 +65,8 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  /** When the current round's commit window opened, for `lms_round_duration_seconds`. */
+  private roundOpenedAt: number;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
 
@@ -77,6 +80,7 @@ export class Room {
     }
 
     this.deadlineAt = now + options.commitMs;
+    this.roundOpenedAt = now;
     this.bots.commit(this.match);
   }
 
@@ -185,8 +189,29 @@ export class Room {
       return;
     }
     if (now < this.deadlineAt) return;
+    this.countMissed();
     if (this.match.phase === MatchPhase.Commit) this.openReveal(now);
     else if (this.match.phase === MatchPhase.Reveal) this.resolveRound(now);
+  }
+
+  /**
+   * Counts human seats that let the deadline pass. A spike means players are
+   * dropping or the clock is too tight — either way, something to look at
+   * before it shows up as complaints. Reads the public state, but only once a
+   * deadline actually expires, never on an ordinary tick.
+   */
+  private countMissed(): void {
+    const state = this.match.publicState();
+    const committed = new Set(state.committed);
+    const revealed = new Set(state.revealed);
+    let missed = 0;
+    for (const player of state.players) {
+      if (!player.alive || this.bots.has(player.index)) continue;
+      if (state.phase === MatchPhase.Commit ? !committed.has(player.index) : committed.has(player.index) && !revealed.has(player.index)) {
+        missed += 1;
+      }
+    }
+    if (missed > 0) missedMoves.inc({ phase: state.phase }, missed);
   }
 
   private requireSeat(address: `0x${string}`): number {
@@ -217,6 +242,8 @@ export class Room {
 
     const record = this.match.resolve();
     const replayMs = this.options.replayMs ?? 0;
+    roundsResolved.inc();
+    roundDuration.observe(Math.max(0, now - this.roundOpenedAt) / 1000);
 
     // One object for the whole table: the gateway serialises a shared message
     // once, however many sockets it goes to.
@@ -235,6 +262,7 @@ export class Room {
     // reject a commit stamped a moment earlier.
     this.replayUntil = replayMs > 0 ? now + replayMs : 0;
     this.deadlineAt = now + replayMs + this.options.commitMs;
+    this.roundOpenedAt = now + replayMs;
     this.bots.commit(this.match);
     this.broadcastState();
   }

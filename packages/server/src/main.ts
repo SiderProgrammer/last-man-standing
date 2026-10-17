@@ -4,13 +4,12 @@
  * top level, which is why it is not the one `@lms/server` resolves to.
  */
 import { createServer } from 'node:http';
-import { createPublicClient, http as httpTransport } from 'viem';
+import { createPublicClient, http as httpTransport, type Address } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { WebSocketServer } from 'ws';
-import { MAX_CLIENT_FRAME_BYTES } from '@lms/protocol';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
-import { Heartbeat } from './gateway/heartbeat.js';
-import { peerFrom } from './gateway/peer.js';
+import { WS_SERVER_OPTIONS, attachTransport } from './gateway/transport.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createStyleBook } from './lobby/styles.js';
@@ -21,6 +20,14 @@ import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
+import { CrossChainMonitor, parseSpokes, viemHubSource, viemSpokeSource } from './chain/crossChain.js';
+import { readClient } from './chain/viem.js';
+import { log } from './observability/log.js';
+import { collectProcessMetrics, heartbeatTerminated, registry } from './observability/metrics.js';
+import { startTracing } from './observability/tracing.js';
+import { BalanceWatcher } from './observability/balances.js';
+
+const logger = log.child({ component: 'server' });
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -29,6 +36,10 @@ const SWEEP_MS = 1_000;
 const HEARTBEAT_MS = 30_000;
 
 async function main(): Promise<void> {
+  // First, so every span created while wiring up is exported.
+  const stopTracing = await startTracing();
+  collectProcessMetrics();
+
   const archive = await createArchive(config.databaseUrl);
   const relayer = relayerFromEnv();
 
@@ -155,71 +166,74 @@ async function main(): Promise<void> {
     response.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({
-    server: http,
-    // `ws` defaults to 100 MiB. Refusing at the transport means an oversized
-    // frame is never buffered at all; the gateway's own check stays as the
-    // backstop for anything that reaches it some other way.
-    maxPayload: MAX_CLIENT_FRAME_BYTES,
-    // Compression costs memory per socket and opens decompression bombs, for
-    // frames that are a few hundred bytes of JSON.
-    perMessageDeflate: false,
-  });
-  const heartbeat = new Heartbeat();
-  // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
-  // the shapes are bridged here rather than by casting the socket into place.
-  wss.on('error', (error) => console.error('[server] websocket server error:', error.message));
-  wss.on('connection', (socket, request) => {
-    // First, before anything can fail: `ws` reports protocol violations — a
-    // frame over `maxPayload`, invalid UTF-8, a bad opcode — as an `error`
-    // event, and one with no listener is thrown, taking the whole process
-    // down on one malformed frame. With a listener, `ws` closes that socket.
-    socket.on('error', () => undefined);
-    const admitted = gateway.accept(
-      {
-        get readyState() {
-          return socket.readyState;
-        },
-        get bufferedAmount() {
-          return socket.bufferedAmount;
-        },
-        send: (data) => socket.send(data),
-        close: (code, reason) => socket.close(code, reason),
-        onMessage: (listener) => void socket.on('message', listener),
-        onClose: (listener) => void socket.on('close', listener),
-      },
-      peerFrom(request, config.trustProxy),
-    );
-    if (!admitted) return;
-    const pingable = {
-      ping: () => socket.ping(),
-      terminate: () => socket.terminate(),
-      onPong: (listener: () => void) => void socket.on('pong', listener),
-    };
-    heartbeat.track(pingable);
-    socket.on('close', () => heartbeat.untrack(pingable));
-  });
+  const wss = new WebSocketServer({ server: http, ...WS_SERVER_OPTIONS });
+  const heartbeat = attachTransport(wss, gateway, { trustProxy: config.trustProxy });
 
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
   const sweeper = setInterval(() => gateway.sweep(), SWEEP_MS);
   sweeper.unref();
-  const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
+  const beat = setInterval(() => heartbeatTerminated.inc(heartbeat.sweep()), HEARTBEAT_MS);
   beat.unref();
 
-  console.log(
-    config.onChain
-      ? `[server] watching escrow ${config.escrow} on chain ${config.chainId}`
-      : '[server] no escrow configured: practice lobbies only',
-  );
+  if (config.onChain) logger.info('watching escrow', { escrow: config.escrow, chainId: config.chainId });
+  else logger.info('no escrow configured: practice lobbies only');
 
   if (sessionRelayer.enabled) {
-    console.log(`[server] relaying session calls through ${config.sessionDelegate}`);
+    logger.info('relaying session calls', { delegate: config.sessionDelegate });
   }
 
   if (zap) {
-    console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
+    logger.info('token joins enabled', { zap: zap.address, tokens: zap.tokens.map((t) => t.symbol) });
   }
+
+  // Joins in flight from spokes to the hub. Needs the hub escrow and at least
+  // one spoke; without either there is nothing to reconcile.
+  const spokes = parseSpokes(config.spokes);
+  const crossChain =
+    config.onChain && spokes.length > 0
+      ? new CrossChainMonitor({
+          hubChainId: config.chainId,
+          hub: viemHubSource(config.chainId, config.rpcUrl, config.escrow),
+          spokes: spokes.map((spoke) => ({
+            chainId: spoke.chainId,
+            source: viemSpokeSource(spoke.chainId, spoke.rpcUrl, spoke.escrow),
+          })),
+          stuckAfterMs: config.crossChainStuckMs,
+        }).start()
+      : null;
+  if (crossChain) logger.info('watching cross-chain joins', { spokes: spokes.map((spoke) => spoke.chainId) });
+
+  // Every key the server spends gas from, so an alert fires before one runs dry.
+  const wallets: Array<{ role: string; address: Address }> = [];
+  if (config.attestorPk) wallets.push({ role: 'attestor', address: privateKeyToAccount(config.attestorPk).address });
+  if (config.keeperPk) wallets.push({ role: 'keeper', address: privateKeyToAccount(config.keeperPk).address });
+  const balances =
+    config.rpcUrl && wallets.length > 0
+      ? new BalanceWatcher((address) => readClient(config.chainId, config.rpcUrl).getBalance({ address }), wallets).start()
+      : null;
+
+  // Apart from the public port, so players can never reach it.
+  const metrics = config.metricsPort
+    ? createServer((request, response) => {
+        if (request.url !== '/metrics') {
+          response.writeHead(404).end();
+          return;
+        }
+        void registry.metrics().then(
+          (body) => {
+            response.writeHead(200, { 'content-type': registry.contentType });
+            response.end(body);
+          },
+          (error: unknown) => {
+            response.writeHead(500).end(String(error));
+          },
+        );
+      })
+    : null;
+  metrics?.listen(config.metricsPort, config.metricsHost, () => {
+    logger.info('metrics listening', { host: config.metricsHost, port: config.metricsPort });
+  });
 
   // Harvests fees on a timer so they reach stakers. Holds no authority:
   // `harvest` is open to anyone and pays only where the router already sends.
@@ -233,15 +247,15 @@ async function main(): Promise<void> {
     });
     feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
     feeKeeper.start(config.feeKeeperPollMs);
-    console.log(`[server] harvesting fees for router ${config.feeRouter}`);
+    logger.info('harvesting fees', { router: config.feeRouter });
   }
 
   if (!avatars.empty) {
-    console.log(`[server] avatar collections on chains ${avatars.chains.join(', ')}`);
+    logger.info('avatar collections', { chains: avatars.chains });
   }
 
   http.listen(config.port, () => {
-    console.log(`[server] listening on :${config.port}`);
+    logger.info('listening', { port: config.port });
   });
 
   const shutdown = () => {
@@ -251,14 +265,18 @@ async function main(): Promise<void> {
     clearInterval(ticker);
     clearInterval(sweeper);
     clearInterval(beat);
+    crossChain?.stop();
+    balances?.stop();
     wss.close();
     http.close();
+    metrics?.close();
+    void stopTracing();
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }
 
 void main().catch((error: unknown) => {
-  console.error('[server] failed to start', error);
+  logger.error('failed to start', { error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
   process.exitCode = 1;
 });
