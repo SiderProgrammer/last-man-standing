@@ -168,7 +168,13 @@ async function main(): Promise<void> {
   const heartbeat = new Heartbeat();
   // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
   // the shapes are bridged here rather than by casting the socket into place.
+  wss.on('error', (error) => console.error('[server] websocket server error:', error.message));
   wss.on('connection', (socket, request) => {
+    // First, before anything can fail: `ws` reports protocol violations — a
+    // frame over `maxPayload`, invalid UTF-8, a bad opcode — as an `error`
+    // event, and one with no listener is thrown, taking the whole process
+    // down on one malformed frame. With a listener, `ws` closes that socket.
+    socket.on('error', () => undefined);
     const admitted = gateway.accept(
       {
         get readyState() {
