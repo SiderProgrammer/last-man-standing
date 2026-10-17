@@ -3,8 +3,7 @@ import { verifyMessage } from 'viem';
 import {
   AUTH_PREFIX,
   MAX_CLIENT_FRAME_BYTES,
-  errorMessage,
-  isActionValue,
+  addressKey,
   type AvatarCollectionInfo,
   type ClientMessage,
   type LobbyInfo,
@@ -14,7 +13,8 @@ import {
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
 import type { SessionRelayer } from '../chain/relayer.js';
-import { errorFrame, parseClientMessage } from './frames.js';
+import { FrameError, errorFrame, parseClientMessage } from './frames.js';
+import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
 
 /**
@@ -46,26 +46,39 @@ export interface Socket {
   send(data: string): void;
   onMessage(listener: (data: unknown) => void): void;
   onClose(listener: () => void): void;
+  /** Closes the connection. Optional so a test fake can leave it out. */
+  close?(code: number, reason: string): void;
+  /** Bytes queued but not yet written. Optional for the same reason. */
+  readonly bufferedAmount?: number;
+}
+
+/** Who is on the other end, as far as the HTTP upgrade can tell. */
+export interface Peer {
+  /** Remote IP, or the forwarded client IP behind a trusted proxy. */
+  ip?: string;
+  /** The handshake's `Origin` header, if any. */
+  origin?: string;
 }
 
 const OPEN = 1;
 
-/**
- * Per-connection message budget: a token bucket refilled at `RATE_PER_SECOND`
- * up to `BURST`. Generous for a human — a round is a commit and a reveal — and
- * tight enough that one socket cannot make the server spin on its frames.
- */
-const RATE_PER_SECOND = 10;
-const BURST = 30;
 /** One `collect` per connection per window: each one can cost the relayer gas. */
 const COLLECT_COOLDOWN_MS = 30_000;
 
 interface Session extends Client {
   readonly nonce: string;
-  socket: Socket;
-  tokens: number;
-  refilledAt: number;
+  readonly socket: Socket;
+  readonly ip: string;
+  readonly connectedAt: number;
+  /** General messages. */
+  readonly messages: TokenBucket;
+  /** Commits and reveals, kept apart so other traffic cannot starve them. */
+  readonly moves: TokenBucket;
+  /** Misbehaviour; empty closes the socket. */
+  readonly strikes: TokenBucket;
+  loginFailures: number;
   lastCollectAt: number;
+  closed: boolean;
 }
 
 export interface GatewayOptions {
@@ -91,9 +104,14 @@ export interface GatewayOptions {
    * keys from 7702-delegated accounts.
    */
   verify?: SignatureVerifier;
+  /** Overrides for `DEFAULT_GATEWAY_LIMITS`. */
+  limits?: Partial<GatewayLimits>;
   /** Wall clock, injectable for tests. */
   now?: () => number;
 }
+
+/** Stands in for the IP of a socket the transport could not identify. */
+const UNKNOWN_IP = 'unknown';
 
 /**
  * Translates socket frames into room calls.
@@ -101,27 +119,69 @@ export interface GatewayOptions {
  * Login is a plain signed nonce rather than a session cookie: the wallet is
  * the identity, and the signature proves control of the address that staked
  * on-chain. Nothing here trusts a client-supplied address on its own.
+ *
+ * Every limit is enforced here rather than in `main.ts`, so the tests exercise
+ * the same code the server runs. The transport supplies only what it alone
+ * knows — the peer's IP and origin — and a `close` to call.
  */
 export class Gateway {
   private readonly sessions = new Map<Socket, Session>();
+  private readonly limits: GatewayLimits;
+  private readonly perIp = new Map<string, number>();
+  private readonly connectsByIp: KeyedLimiter;
+  private readonly loginsByIp: KeyedLimiter;
+  private readonly relaysByWallet: KeyedLimiter;
+  /**
+   * A room sends the same message object to every client at its table, so it
+   * is serialised once, not once per socket. Weak, so a message is forgotten
+   * as soon as the room is done with it.
+   */
+  private readonly encoded = new WeakMap<ServerMessage, string>();
 
-  constructor(private readonly options: GatewayOptions) {}
+  constructor(private readonly options: GatewayOptions) {
+    this.limits = { ...DEFAULT_GATEWAY_LIMITS, ...options.limits };
+    const l = this.limits;
+    this.connectsByIp = new KeyedLimiter(l.connectRatePerIp, l.connectBurstPerIp);
+    this.loginsByIp = new KeyedLimiter(l.loginRatePerIp, l.loginBurstPerIp);
+    this.relaysByWallet = new KeyedLimiter(l.relayRatePerWallet, l.relayBurstPerWallet);
+  }
 
   get connections(): number {
     return this.sessions.size;
   }
 
-  accept(socket: Socket): void {
+  /**
+   * Admits a new socket, or closes it at once.
+   *
+   * @returns Whether the socket was admitted.
+   */
+  accept(socket: Socket, peer: Peer = {}): boolean {
+    const now = this.now();
+    const ip = peer.ip ?? UNKNOWN_IP;
+    const refusal = this.admission(ip, peer.origin, now);
+    if (refusal) {
+      socket.close?.(refusal.code, refusal.reason);
+      return false;
+    }
+
+    const l = this.limits;
     const session: Session = {
       socket,
+      ip,
+      connectedAt: now,
       address: null,
       nonce: randomBytes(16).toString('hex'),
-      send: (message) => this.write(socket, message),
-      tokens: BURST,
-      refilledAt: this.options.now?.() ?? Date.now(),
+      send: (message) => this.write(session, message),
+      messages: new TokenBucket(l.messageRate, l.messageBurst, now),
+      moves: new TokenBucket(l.moveRate, l.moveBurst, now),
+      strikes: new TokenBucket(l.strikeRate, l.strikeBurst, now),
+      loginFailures: 0,
       lastCollectAt: Number.NEGATIVE_INFINITY,
+      closed: false,
     };
     this.sessions.set(socket, session);
+    this.perIp.set(ip, (this.perIp.get(ip) ?? 0) + 1);
+
     session.send({
       type: 'hello',
       nonce: session.nonce,
@@ -134,46 +194,88 @@ export class Gateway {
       staking: this.options.staking ?? null,
     });
 
-    socket.onMessage((data: unknown) => {
-      const raw = String(data);
-      if (raw.length > MAX_CLIENT_FRAME_BYTES) {
-        session.send(errorFrame(new Error('message too large')));
-        return;
-      }
-      if (!this.spend(session)) {
-        session.send(errorFrame(new Error('slow down: too many messages')));
-        return;
-      }
-      void this.dispatch(session, raw).catch((error: unknown) => {
-        session.send(errorFrame(error));
-      });
-    });
+    socket.onMessage((data: unknown) => this.receive(session, String(data)));
+    socket.onClose(() => this.forget(session));
+    return true;
+  }
 
-    socket.onClose(() => {
-      for (const room of this.options.lobby.list()) room.detach(session);
-      this.sessions.delete(socket);
+  /**
+   * Housekeeping, driven from the server's ticker: closes sockets that never
+   * logged in, and forgets rate-limit state that has refilled. Safe to call at
+   * any frequency.
+   */
+  sweep(now: number = this.now()): void {
+    for (const session of this.sessions.values()) {
+      if (session.address === null && now - session.connectedAt >= this.limits.loginTimeoutMs) {
+        this.drop(session, CloseCode.PolicyViolation, 'login timed out');
+      }
+    }
+    this.connectsByIp.sweep(now);
+    this.loginsByIp.sweep(now);
+    this.relaysByWallet.sweep(now);
+  }
+
+  /** Why a new socket is refused, or null to admit it. Checked cheapest first. */
+  private admission(ip: string, origin: string | undefined, now: number): { code: number; reason: string } | null {
+    const l = this.limits;
+    if (l.allowedOrigins.length > 0 && !(origin && l.allowedOrigins.includes(origin))) {
+      return { code: CloseCode.PolicyViolation, reason: 'origin not allowed' };
+    }
+    if (this.sessions.size >= l.maxConnections) {
+      return { code: CloseCode.TryAgainLater, reason: 'server is full' };
+    }
+    if ((this.perIp.get(ip) ?? 0) >= l.maxConnectionsPerIp) {
+      return { code: CloseCode.TryAgainLater, reason: 'too many connections from this address' };
+    }
+    if (!this.connectsByIp.take(ip, now)) {
+      return { code: CloseCode.TryAgainLater, reason: 'connecting too fast' };
+    }
+    return null;
+  }
+
+  private receive(session: Session, raw: string): void {
+    if (session.closed) return;
+    if (raw.length > MAX_CLIENT_FRAME_BYTES) {
+      this.reject(session, new FrameError('message too large'));
+      return;
+    }
+
+    let message: ClientMessage;
+    try {
+      message = parseClientMessage(raw);
+    } catch (error) {
+      this.reject(session, error);
+      return;
+    }
+
+    const now = this.now();
+    const bucket = message.type === 'commit' || message.type === 'reveal' ? session.moves : session.messages;
+    if (!bucket.take(now)) {
+      this.reject(session, new Error('slow down: too many messages'));
+      return;
+    }
+
+    void this.dispatch(session, message, now).catch((error: unknown) => {
+      session.send(errorFrame(error));
     });
   }
 
-  private async dispatch(session: Session, raw: string): Promise<void> {
-    const message = parseClientMessage(raw);
+  /** Answers a frame the gateway refused, and counts it against the socket. */
+  private reject(session: Session, error: unknown): void {
+    session.send(errorFrame(error));
+    if (!session.strikes.take(this.now())) {
+      this.drop(session, CloseCode.PolicyViolation, 'too many rejected messages');
+    }
+  }
 
+  private async dispatch(session: Session, message: ClientMessage, now: number): Promise<void> {
     if (message.type === 'auth') {
-      const verify = this.options.verify ?? offlineVerify;
-      const valid = await verify({
-        address: message.address,
-        message: `${AUTH_PREFIX}${session.nonce}`,
-        signature: message.signature,
-      });
-      if (!valid) throw new Error('login signature does not match the nonce');
-      session.address = message.address;
-      session.send({ type: 'authed', address: message.address });
+      await this.login(session, message);
       return;
     }
 
     const address = session.address;
     if (!address) throw new Error('authenticate before acting');
-    const now = this.options.now?.() ?? Date.now();
 
     switch (message.type) {
       case 'lobbies': {
@@ -193,6 +295,10 @@ export class Gateway {
       case 'relay': {
         const relayer = this.options.relayer;
         if (!relayer?.enabled) throw new Error('session relaying is not enabled on this server');
+        // Per wallet, not per socket: opening more sockets buys no more gas.
+        if (!this.relaysByWallet.take(addressKey(address), now)) {
+          throw new Error('too many relayed calls from this account; try again shortly');
+        }
 
         // Submitted for the authenticated address and no other: the signature
         // proves the session key spoke, but only this socket's login proves
@@ -222,13 +328,10 @@ export class Gateway {
         return;
       }
       case 'commit': {
-        const hold = message.hold;
-        if (hold && !isActionValue(hold.action)) throw new Error('unknown action');
-        this.requireRoom(address).submitCommit(address, message.commitment, now, hold);
+        this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold);
         return;
       }
       case 'reveal': {
-        if (!isActionValue(message.action)) throw new Error('unknown action');
         this.requireRoom(address).submitReveal(
           address,
           { action: message.action, target: message.target, salt: message.salt },
@@ -236,21 +339,29 @@ export class Gateway {
         );
         return;
       }
-      default: {
-        throw new Error('unsupported message');
-      }
     }
   }
 
-  /** Takes one message from the session's bucket. False when it is empty. */
-  private spend(session: Session): boolean {
-    const now = this.options.now?.() ?? Date.now();
-    const elapsed = Math.max(0, now - session.refilledAt);
-    session.tokens = Math.min(BURST, session.tokens + (elapsed * RATE_PER_SECOND) / 1000);
-    session.refilledAt = now;
-    if (session.tokens < 1) return false;
-    session.tokens -= 1;
-    return true;
+  private async login(session: Session, message: Extract<ClientMessage, { type: 'auth' }>): Promise<void> {
+    // Before the verifier, because a session-key login costs an RPC call.
+    if (!this.loginsByIp.take(session.ip, this.now())) {
+      throw new Error('too many login attempts; try again shortly');
+    }
+    const verify = this.options.verify ?? offlineVerify;
+    const valid = await verify({
+      address: message.address,
+      message: `${AUTH_PREFIX}${session.nonce}`,
+      signature: message.signature,
+    });
+    if (!valid) {
+      session.loginFailures += 1;
+      if (session.loginFailures >= this.limits.maxLoginFailures) {
+        this.drop(session, CloseCode.PolicyViolation, 'too many failed logins');
+      }
+      throw new Error('login signature does not match the nonce');
+    }
+    session.address = message.address;
+    session.send({ type: 'authed', address: message.address });
   }
 
   private requireRoom(address: `0x${string}`) {
@@ -259,8 +370,42 @@ export class Gateway {
     return room;
   }
 
-  private write(socket: Socket, message: ServerMessage): void {
-    if (socket.readyState === OPEN) socket.send(JSON.stringify(message));
+  private write(session: Session, message: ServerMessage): void {
+    const socket = session.socket;
+    if (session.closed || socket.readyState !== OPEN) return;
+    // A client that stops reading would otherwise have its backlog held in
+    // server memory indefinitely.
+    if ((socket.bufferedAmount ?? 0) > this.limits.maxBufferedBytes) {
+      this.drop(session, CloseCode.PolicyViolation, 'not reading fast enough');
+      return;
+    }
+    let data = this.encoded.get(message);
+    if (data === undefined) {
+      data = JSON.stringify(message);
+      this.encoded.set(message, data);
+    }
+    socket.send(data);
+  }
+
+  /** Closes a socket from this side. Cleans up even if the socket never reports the close. */
+  private drop(session: Session, code: number, reason: string): void {
+    if (session.closed) return;
+    session.socket.close?.(code, reason);
+    this.forget(session);
+  }
+
+  private forget(session: Session): void {
+    if (session.closed) return;
+    session.closed = true;
+    for (const room of this.options.lobby.list()) room.detach(session);
+    this.sessions.delete(session.socket);
+    const count = (this.perIp.get(session.ip) ?? 1) - 1;
+    if (count > 0) this.perIp.set(session.ip, count);
+    else this.perIp.delete(session.ip);
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
   }
 }
 

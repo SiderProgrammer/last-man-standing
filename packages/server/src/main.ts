@@ -6,8 +6,11 @@
 import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
+import { MAX_CLIENT_FRAME_BYTES } from '@lms/protocol';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
+import { Heartbeat } from './gateway/heartbeat.js';
+import { peerFrom } from './gateway/peer.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createStyleBook } from './lobby/styles.js';
@@ -20,6 +23,10 @@ import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js'
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 
 const TICK_MS = 250;
+/** How often unauthenticated sockets and stale rate-limit state are cleared. */
+const SWEEP_MS = 1_000;
+/** A socket that misses a ping for this long is terminated. */
+const HEARTBEAT_MS = 30_000;
 
 async function main(): Promise<void> {
   const archive = await createArchive(config.databaseUrl);
@@ -112,6 +119,12 @@ async function main(): Promise<void> {
             feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
           }
         : null,
+    limits: {
+      maxConnections: config.maxConnections,
+      maxConnectionsPerIp: config.maxConnectionsPerIp,
+      loginTimeoutMs: config.loginTimeoutMs,
+      allowedOrigins: config.allowedOrigins,
+    },
   });
 
   const http = createServer((request, response) => {
@@ -142,22 +155,51 @@ async function main(): Promise<void> {
     response.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({ server: http });
+  const wss = new WebSocketServer({
+    server: http,
+    // `ws` defaults to 100 MiB. Refusing at the transport means an oversized
+    // frame is never buffered at all; the gateway's own check stays as the
+    // backstop for anything that reaches it some other way.
+    maxPayload: MAX_CLIENT_FRAME_BYTES,
+    // Compression costs memory per socket and opens decompression bombs, for
+    // frames that are a few hundred bytes of JSON.
+    perMessageDeflate: false,
+  });
+  const heartbeat = new Heartbeat();
   // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
   // the shapes are bridged here rather than by casting the socket into place.
-  wss.on('connection', (socket) =>
-    gateway.accept({
-      get readyState() {
-        return socket.readyState;
+  wss.on('connection', (socket, request) => {
+    const admitted = gateway.accept(
+      {
+        get readyState() {
+          return socket.readyState;
+        },
+        get bufferedAmount() {
+          return socket.bufferedAmount;
+        },
+        send: (data) => socket.send(data),
+        close: (code, reason) => socket.close(code, reason),
+        onMessage: (listener) => void socket.on('message', listener),
+        onClose: (listener) => void socket.on('close', listener),
       },
-      send: (data) => socket.send(data),
-      onMessage: (listener) => void socket.on('message', listener),
-      onClose: (listener) => void socket.on('close', listener),
-    }),
-  );
+      peerFrom(request, config.trustProxy),
+    );
+    if (!admitted) return;
+    const pingable = {
+      ping: () => socket.ping(),
+      terminate: () => socket.terminate(),
+      onPong: (listener: () => void) => void socket.on('pong', listener),
+    };
+    heartbeat.track(pingable);
+    socket.on('close', () => heartbeat.untrack(pingable));
+  });
 
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
+  const sweeper = setInterval(() => gateway.sweep(), SWEEP_MS);
+  sweeper.unref();
+  const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
+  beat.unref();
 
   console.log(
     config.onChain
@@ -201,6 +243,8 @@ async function main(): Promise<void> {
     feeKeeper?.stop();
     proposals?.stop();
     clearInterval(ticker);
+    clearInterval(sweeper);
+    clearInterval(beat);
     wss.close();
     http.close();
   };

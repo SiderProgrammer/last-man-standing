@@ -111,13 +111,20 @@ mainnet. Still open:
 
 ### 3.2 Server-side hardening
 
-- No rate limiting, message size cap, or connection cap on the gateway.
+- ~~No rate limiting, message size cap, or connection cap on the gateway.~~ Done: see
+  `gateway/limits.ts`. Connection caps (global, per IP, connect rate), an origin
+  allowlist, `ws` `maxPayload`, per-socket buckets with a separate one for moves, a
+  per-IP login budget ahead of the ERC-1271 verifier, a per-wallet relay budget, a strike
+  bucket that disconnects persistent offenders, slow-consumer eviction, and a ping/pong
+  heartbeat. Limits are per process: a second instance would need shared state.
 - Commitments and reveals are held only in memory, deliberately. A match that was live
   when the server restarts is not resumed: `ChainBridge` has the attestor quorum call
   `GameEscrow.abortMatch`, which refunds every seat at once, and falls back to the
   permissionless `cancelMatch` at the settlement deadline when it cannot.
-- The practice-room path lets any authenticated wallet create unlimited rooms.
-- The login nonce is single-use per connection but never expires within it.
+- ~~The practice-room path lets any authenticated wallet create unlimited rooms.~~ One
+  per wallet and a global ceiling (`MAX_PRACTICE_ROOMS`).
+- ~~The login nonce is single-use per connection but never expires within it.~~ A socket
+  that has not logged in within `LOGIN_TIMEOUT_MS` is closed, which expires its nonce.
 - The keeper key doubles as the attestor key by default. Splitting them would mean a
   compromised keeper cannot also sign results.
 
@@ -163,10 +170,9 @@ any of this is a deliberate, visible change rather than a silent one.
 - **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
   `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
   Dormant, because nothing calls `load`. Pinned by `packages/server/test/store.test.ts`.
-- **Client frames are cast, not validated.** `parseClientMessage` checks that the payload
-  is JSON, is an object and has a `type`, then casts. `target`, `value` and
-  `nonce` reach the room and the relayer unvalidated; only `action` is guarded. A
-  `BigInt('abc')` surfaces to the player as a V8 `SyntaxError`.
+- ~~**Client frames are cast, not validated.**~~ Fixed: `parseClientMessage` checks every
+  field of every message (addresses, bytes32, hex, uint256 decimals, uint8 targets,
+  actions) and rebuilds the message from the checked fields only.
 - **The wire's `code` field is decorative.** `wire.ts` reserves a machine-readable code,
   `errorFrame` always sends `REJECTED`, and the client never reads it — while the
   engine's `MatchError` carries a real code that is discarded at the boundary. Either

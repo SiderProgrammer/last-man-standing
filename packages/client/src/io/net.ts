@@ -59,7 +59,10 @@ export class Net {
       this.socket = null;
       this.onStatus(false);
       if (this.closed) return;
-      setTimeout(() => this.connect(), this.backoff);
+      // Jittered, so a server restart is not met by every client at once on
+      // the same exponential schedule. Half fixed, half random: never sooner
+      // than half the backoff.
+      setTimeout(() => this.connect(), this.backoff * (0.5 + Math.random() / 2));
       this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
     };
 

@@ -48,6 +48,17 @@ describe('server configuration', () => {
     expect(config.onChain).toBe(true);
   });
 
+  it('reads the gateway limits, defaulting to permissive-but-bounded values', () => {
+    const defaults = loadConfig({});
+    expect(defaults.maxConnectionsPerIp).toBe(20);
+    expect(defaults.allowedOrigins).toEqual([]);
+    expect(defaults.trustProxy).toBe(false);
+
+    const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUST_PROXY: 'true' });
+    expect(tuned.allowedOrigins).toEqual(['https://a.example', 'https://b.example']);
+    expect(tuned.trustProxy).toBe(true);
+  });
+
   it('is on-chain only when both an RPC and a non-zero escrow are set', () => {
     expect(loadConfig({ RPC_URL: 'http://x' }).onChain).toBe(false);
     expect(loadConfig({ ESCROW_ADDRESS: `0x${'11'.repeat(20)}` }).onChain).toBe(false);

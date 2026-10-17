@@ -5,6 +5,7 @@ import {
   type AvatarEntry,
   type MatchResult,
   type PlayStyle,
+  type PublicMatchState,
   type RoundRecord,
   type SealedMove,
   type ServerMessage,
@@ -81,7 +82,8 @@ export class Room {
 
   /** Tells everyone watching how the match settled on-chain. */
   announceSettled(tx: `0x${string}` | null): void {
-    for (const client of this.clients) client.send({ type: 'settled', matchId: this.matchId, tx });
+    const message = { type: 'settled', matchId: this.matchId, tx } as const;
+    for (const client of this.clients) client.send(message);
   }
 
   get matchId(): `0x${string}` {
@@ -216,14 +218,10 @@ export class Room {
     const record = this.match.resolve();
     const replayMs = this.options.replayMs ?? 0;
 
-    for (const client of this.clients) {
-      client.send({
-        type: 'round',
-        record,
-        lines: describeRound(record),
-        replayMs,
-      });
-    }
+    // One object for the whole table: the gateway serialises a shared message
+    // once, however many sockets it goes to.
+    const message = { type: 'round', record, lines: describeRound(record), replayMs } as const;
+    for (const client of this.clients) client.send(message);
 
     // Settlement is never held for a cosmetic: the client defers showing the
     // result until its replay ends, the server does not defer producing it.
@@ -250,22 +248,25 @@ export class Room {
     // The final snapshot first: it carries the last round, which is what a
     // client needs to replay the whole match and check `result` for itself.
     this.broadcastState();
-    for (const client of this.clients) client.send({ type: 'finished', result, ranking });
+    const message = { type: 'finished', result, ranking } as const;
+    for (const client of this.clients) client.send(message);
     this.options.onFinished?.(result, this.match.history);
   }
 
   private broadcastState(): void {
-    for (const client of this.clients) this.pushState(client);
+    // Computed once: only `you` differs between the clients.
+    const state = this.match.publicState();
+    for (const client of this.clients) this.pushState(client, state);
   }
 
   private pushAvatars(client: Client): void {
     client.send({ type: 'avatars', matchId: this.matchId, entries: this.avatars });
   }
 
-  private pushState(client: Client): void {
+  private pushState(client: Client, state: PublicMatchState = this.match.publicState()): void {
     client.send({
       type: 'state',
-      state: this.match.publicState(),
+      state,
       you: client.address ? this.seatOf(client.address) : null,
       deadline: this.deadlineAt,
     });

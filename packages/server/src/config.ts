@@ -29,6 +29,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     databaseUrl: env.DATABASE_URL ?? '',
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */
     maxPracticeRooms: Number(env.MAX_PRACTICE_ROOMS ?? 200),
+    /** Sockets open at once, across the server and per client IP. See `gateway/limits.ts`. */
+    maxConnections: Number(env.MAX_CONNECTIONS ?? 10_000),
+    maxConnectionsPerIp: Number(env.MAX_CONNECTIONS_PER_IP ?? 20),
+    /** A socket that has not logged in by then is closed. */
+    loginTimeoutMs: Number(env.LOGIN_TIMEOUT_MS ?? 120_000),
+    /**
+     * Comma-separated `Origin`s the WebSocket handshake accepts, e.g.
+     * `https://play.example.com`. Blank accepts any origin, which is what
+     * local development wants and production should not.
+     */
+    allowedOrigins: (env.ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    /**
+     * Take the client IP from `X-Forwarded-For` instead of the socket. Only
+     * behind a proxy that sets it: otherwise any client can claim any IP and
+     * walk straight past the per-IP limits.
+     */
+    trustProxy: env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1',
     /**
      * `PlayerAvatars` deployments, as JSON:
      * `[{"chainId":11155111,"address":"0x…","rpcUrl":"https://…"}]`
