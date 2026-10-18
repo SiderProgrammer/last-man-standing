@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     gateway: config.ipfsGateway,
   });
 
+  const styles = await createStyleBook(config.databaseUrl);
   const lobby = new Lobby({
     archive,
     relayer,
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
     revealMs: config.revealMs,
     replayMs: config.replayMs,
     avatars,
-    styles: await createStyleBook(config.databaseUrl),
+    styles,
     maxPracticeRooms: config.maxPracticeRooms,
   });
 
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
         modelId: config.analyst.model,
         effort: config.analyst.effort,
         maxTokens: config.analyst.maxTokens,
+        styles,
       })
     : undefined;
 

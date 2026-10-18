@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
-import { Action, type RoundRecord } from '@lms/protocol';
 import { Analyst, AnalystError, MemoryArchive, SYSTEM_PROMPT, classify, playReferenceMatch } from '@lms/server';
-import { FakeModel, answer, type Turn } from './analystFakes.js';
+import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
 const match = playReferenceMatch({ label: 'analyst', strategies: ['reader', 'aggressor', 'turtle', 'hider'] });
 const human = (match.seats ?? [])[0]?.address as `0x${string}`;
@@ -95,15 +94,13 @@ describe('analyst', () => {
     expect(request?.thinking).toBeUndefined();
   });
 
-  it('renders every round of the match for the model', async () => {
+  it('opens with an overview line for every round', async () => {
     const { analyst, model } = await harness([answer(output())]);
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
     const user = String(model.requests[0]?.messages[0]?.content);
     for (const record of match.history) expect(user).toContain(`Round ${record.round}:`);
-    const first = match.history[0] as RoundRecord;
-    const turtle = first.moves.find((move) => move.index === 2);
-    expect(turtle?.action).toBe(Action.Defend);
-    expect(user).toContain('#2 defend');
+    expect(user).toContain('#0 '); // the table
+    expect(user).toContain('(you)');
   });
 
   it('drops a decisive round the match never reached', async () => {
@@ -172,5 +169,124 @@ describe('analyst', () => {
 
     const { analyst } = await harness([{ error: new Anthropic.RateLimitError(429, {}, 'slow down', headers) }]);
     expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('busy');
+  });
+});
+
+describe('analyst tool loop', () => {
+  it('runs the tools the model asks for and answers with every result in one message', async () => {
+    const { analyst, model } = await harness([
+      toolTurn([
+        { name: 'get_round', input: { round: 1 } },
+        { name: 'get_reads', input: { seat: 2 } },
+      ]),
+      answer(output()),
+    ]);
+    const steps: string[] = [];
+    const { analysis, usage } = await analyst.analyze({
+      matchId: match.result.matchId,
+      requester: human,
+      onStep: (step) => steps.push(step),
+    });
+
+    expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
+    expect(steps).toEqual(['Reading round 1', 'Studying seat #2']);
+    expect(usage).toMatchObject({ turns: 2, toolCalls: 2 });
+
+    const second = model.requests[1];
+    const [, assistant, results] = second?.messages ?? [];
+    // The assistant turn is echoed whole, thinking block first.
+    expect(assistant?.role).toBe('assistant');
+    expect((assistant?.content as Array<{ type: string }>)[0]?.type).toBe('thinking');
+    expect(results?.role).toBe('user');
+    const blocks = results?.content as Array<{ type: string; tool_use_id: string; content: string; is_error?: boolean }>;
+    expect(blocks.map((block) => block.tool_use_id)).toEqual(['toolu_0', 'toolu_1']);
+    expect(blocks[0]?.content).toContain('Round 1:');
+    expect(blocks[1]?.content).toContain('Seat #2');
+    expect(blocks.every((block) => block.is_error === undefined)).toBe(true);
+  });
+
+  it('keeps tools and system byte-identical across turns and matches, so they cache', async () => {
+    const other = playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'hider', 'turtle'] });
+    const archive = new MemoryArchive();
+    await archive.save(match);
+    await archive.save(other);
+    const model = new FakeModel([toolTurn([{ name: 'get_round', input: { round: 2 } }]), answer(output()), answer(output())]);
+    const analyst = new Analyst({ archive, model, modelId: 'claude-opus-5-5', effort: 'medium', maxTokens: 16_000 });
+    await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    await analyst.analyze({ matchId: other.result.matchId, requester: stranger });
+
+    const prefix = (request: (typeof model.requests)[number] | undefined) =>
+      JSON.stringify({ model: request?.model, tools: request?.tools, system: request?.system });
+    expect(model.requests).toHaveLength(3);
+    expect(prefix(model.requests[1])).toBe(prefix(model.requests[0]));
+    expect(prefix(model.requests[2])).toBe(prefix(model.requests[0]));
+    // Automatic caching for the growing conversation, on top of the explicit system breakpoint.
+    expect(model.requests[0]?.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('hands a bad tool call back to the model as an error instead of running it', async () => {
+    const { analyst, model } = await harness([
+      toolTurn([
+        { name: 'get_round', input: { round: 'one' } },
+        { name: 'get_wallet', input: { address: '0x0' } },
+      ]),
+      answer(output()),
+    ]);
+    await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    const results = model.requests[1]?.messages[2]?.content as Array<{ is_error?: boolean; content: string }>;
+    expect(results.map((block) => block.is_error)).toEqual([true, true]);
+    expect(results[0]?.content).toMatch(/invalid input/);
+    expect(results[1]?.content).toMatch(/no tool named/);
+  });
+
+  it('switches tools off on the last allowed turn', async () => {
+    const archive = new MemoryArchive();
+    await archive.save(match);
+    const model = new FakeModel([
+      toolTurn([{ name: 'get_round', input: { round: 1 } }]),
+      toolTurn([{ name: 'get_round', input: { round: 2 } }]),
+      answer(output()),
+    ]);
+    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000, maxTurns: 3 });
+    await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    expect(model.requests.map((request) => request.tool_choice)).toEqual([undefined, undefined, { type: 'none' }]);
+  });
+
+  it('never runs a tool call cut off at the token limit', async () => {
+    const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }], 'max_tokens')]);
+    const steps: string[] = [];
+    const error = await failure(
+      analyst.analyze({ matchId: match.result.matchId, requester: human, onStep: (step) => steps.push(step) }),
+    );
+    expect(error.code).toBe('failed');
+    expect(steps).toEqual([]);
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it('sums usage over every turn', async () => {
+    const turn = toolTurn([{ name: 'get_round', input: { round: 1 } }]);
+    if ('reply' in turn) turn.reply.usage = usage({ input_tokens: 100, cache_read_input_tokens: 3_000, output_tokens: 40 });
+    const final = answer(output());
+    if ('reply' in final) {
+      final.reply.usage = usage({ input_tokens: 50, cache_read_input_tokens: 3_200, cache_creation_input_tokens: 300 });
+    }
+    const { analyst } = await harness([turn, final]);
+    const result = await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    expect(result.usage).toMatchObject({
+      inputTokens: 150,
+      cacheReadTokens: 6_200,
+      cacheWriteTokens: 300,
+      outputTokens: 540,
+    });
+  });
+
+  it('refuses a match archived before seats were recorded', async () => {
+    const archive = new MemoryArchive();
+    const { seats: _seats, ...legacy } = match;
+    await archive.save(legacy);
+    const model = new FakeModel([]);
+    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000 });
+    expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('not_found');
+    expect(model.requests).toHaveLength(0);
   });
 });

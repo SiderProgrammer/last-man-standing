@@ -404,6 +404,7 @@ export class Gateway {
         requester: address,
         signal: controller.signal,
         onDelta: (text) => session.send({ type: 'analysis.delta', matchId, text }),
+        onStep: (step) => session.send({ type: 'analysis.step', matchId, step }),
       });
       session.send({ type: 'analysis.done', analysis, cached });
     } catch (error) {

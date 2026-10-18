@@ -153,6 +153,8 @@ export type ServerMessage =
    * `analysis.error` means everything streamed so far should be discarded.
    */
   | { type: 'analysis.delta'; matchId: `0x${string}`; text: string }
+  /** What the analyst is looking at before it starts writing, e.g. "Reading round 4". */
+  | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }

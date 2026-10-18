@@ -5,6 +5,7 @@ import {
   addressKey,
   type RoundRecord,
   type Rules,
+  type Seat,
 } from '@lms/protocol';
 import type { ArchivedMatch } from '../lobby/store.js';
 
@@ -30,6 +31,12 @@ How the game works:
 - Every move is published after each round, so the real skill is reading the table: who always attacks, who turtles, who is hunting whom.
 These are the default rules; the match data states the rules the match was actually played under, and those win if they differ.
 
+How to work:
+- The first message gives you the overview: the table, the final ranking, and one line per round with eliminations and HP.
+- Use get_round to see a round's moves and attacks in full. Open every round you intend to cite as a key moment before you cite it, and the rounds where the HP lines show something changed sharply.
+- Use get_reads to see a seat's tendencies over the whole match, and get_player_history for its record in earlier matches when that would change the advice.
+- Call several tools at once when you already know you need them. A handful of calls is usually enough; you do not need to open every round.
+
 What to write:
 - summary: two or three short paragraphs telling the story of the match: how the field thinned out, who was hunted, and why the winner won.
 - decisiveRound: the round that settled the outcome, or null if none did.
@@ -39,43 +46,44 @@ What to write:
 
 Every key moment is checked against the published round records before anyone sees it, and moments that do not match the records are thrown away. Only state what the records show; if you are unsure whether something happened, leave it out.`;
 
-/** The per-request message: who is asking, then the whole match. */
-export function renderRequest(match: ArchivedMatch, seat: number | null): string {
+/** An archived match that recorded who sat where, which every analysis needs. */
+export type SeatedMatch = ArchivedMatch & { seats: readonly Seat[] };
+
+/** The opening user message: whose perspective, then the overview. */
+export function renderRequest(match: SeatedMatch, seat: number | null): string {
   const perspective =
     seat === null
       ? 'Write the analysis for a spectator who did not play in this match.'
       : `Write the analysis for the player in seat #${seat}.`;
-  return `${perspective}\n\n${renderMatch(match, seat)}`;
+  return `${perspective}\n\n${renderOverview(match, seat)}`;
 }
 
 /**
- * A match as compact text: the rules, the table, then every round.
+ * Rules, table, ranking and one line per round: enough to see the shape of
+ * the match and decide which rounds to open with `get_round`.
  *
  * Plain lines rather than the raw JSON records, because the records carry
  * salts and hashes the analysis has no use for and that would triple the
- * token count. Nothing here is lossy for the claims the verifier checks.
+ * token count.
  */
-export function renderMatch(match: ArchivedMatch, you: number | null = null): string {
-  const rules = match.rules ?? DEFAULT_RULES;
-  const lines: string[] = [`Match ${match.result.matchId}, ${match.result.rounds} rounds.`];
-  lines.push(`Rules: ${renderRules(rules)}`);
-
-  const seatOf = new Map((match.seats ?? []).map((seat) => [addressKey(seat.address), seat.index]));
+export function renderOverview(match: SeatedMatch, you: number | null): string {
+  const seatOf = new Map(match.seats.map((seat) => [addressKey(seat.address), seat.index]));
   const name = (address: `0x${string}`) => {
     const seat = seatOf.get(addressKey(address));
     return seat === undefined ? short(address) : `#${seat}`;
   };
 
-  if (match.seats) {
-    lines.push(
-      `Seats: ${match.seats
-        .map((seat) => `#${seat.index} ${short(seat.address)}${seat.index === you ? ' (you)' : ''}`)
-        .join(', ')}`,
-    );
+  const lines = [
+    `Match ${match.result.matchId}, ${match.result.rounds} rounds.`,
+    `Rules: ${renderRules(match.rules ?? DEFAULT_RULES)}`,
+    `Seats: ${match.seats.map((seat) => `#${seat.index} ${short(seat.address)}${seat.index === you ? ' (you)' : ''}`).join(', ')}`,
+    `Final ranking, winner first: ${match.result.ranking.map(name).join(', ')}`,
+    '',
+  ];
+  for (const record of match.history) {
+    const out = record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'nobody';
+    lines.push(`Round ${record.round}: storm ${record.stormDamage}; out: ${out}; hp after: ${renderHp(record)}`);
   }
-  lines.push(`Final ranking, winner first: ${match.result.ranking.map(name).join(', ')}`);
-  lines.push('');
-  for (const record of match.history) lines.push(...renderRound(record));
   return lines.join('\n');
 }
 
@@ -104,15 +112,19 @@ export function renderRound(record: RoundRecord): string[] {
     const extra = attack.riposte > 0 ? `, riposte ${attack.riposte}` : '';
     return `#${attack.attacker}→#${attack.target} ${attack.outcome} (${attack.damage} dmg${extra})`;
   });
-  const hp = record.moves.map((move) => `#${move.index} ${Math.max(0, record.hpAfter[move.index] ?? 0)}`);
   return [
     `Round ${record.round}:`,
     `  moves: ${moves.join(' | ')}`,
     `  attacks: ${attacks.length > 0 ? attacks.join(' | ') : 'none'}`,
     `  storm: ${record.stormDamage}`,
     `  eliminated: ${record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'none'}`,
-    `  hp after: ${hp.join(', ')}`,
+    `  hp after: ${renderHp(record)}`,
   ];
+}
+
+/** HP after the round of every seat that started it, floored at zero. */
+function renderHp(record: RoundRecord): string {
+  return record.moves.map((move) => `#${move.index} ${Math.max(0, record.hpAfter[move.index] ?? 0)}`).join(', ');
 }
 
 /** First and last four hex digits: enough to tell wallets apart, a quarter of the tokens. */

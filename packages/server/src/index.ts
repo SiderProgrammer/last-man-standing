@@ -90,5 +90,12 @@ export { anthropicModel, type AnalystModel, type ModelReply, type ModelRequest }
 export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './analyst/schema.js';
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export { JsonFieldStream } from './analyst/stream.js';
-export { SYSTEM_PROMPT, renderMatch, renderRequest, renderRound } from './analyst/prompt.js';
+export {
+  SYSTEM_PROMPT,
+  renderOverview,
+  renderRequest,
+  renderRound,
+  type SeatedMatch,
+} from './analyst/prompt.js';
+export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
 export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

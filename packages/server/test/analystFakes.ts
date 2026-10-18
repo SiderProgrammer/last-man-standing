@@ -55,3 +55,16 @@ export function answer(document: unknown, size = 16): Turn {
     reply: { stop_reason: 'end_turn', content: [{ type: 'text', text, citations: null }] as ModelReply['content'] },
   };
 }
+
+/** A turn that asks for tools, with a thinking block ahead of the calls as the real model sends. */
+export function toolTurn(calls: Array<{ name: string; input: unknown }>, stop: 'tool_use' | 'max_tokens' = 'tool_use'): Turn {
+  return {
+    reply: {
+      stop_reason: stop,
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        ...calls.map((call, i) => ({ type: 'tool_use', id: `toolu_${i}`, name: call.name, input: call.input })),
+      ] as ModelReply['content'],
+    },
+  };
+}
