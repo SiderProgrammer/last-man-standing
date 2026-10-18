@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-types/
 coverage/
+# `npm run eval:analyst` output
+eval-results/
 *.tsbuildinfo
 
 # Foundry

@@ -16,6 +16,7 @@
     "sim": "tsc --build && node scripts/sim.mjs",
     "load": "tsc --build && node scripts/load-test.mjs",
     "load:server": "tsc --build && node scripts/load-server.mjs",
+    "eval:analyst": "tsc --build && node scripts/analyst-eval.mjs",
     "clean": "tsc --build --clean",
     "typecheck": "npm run typecheck:src && npm run typecheck:client && npm run typecheck:tests",
     "typecheck:src": "tsc --build --force",

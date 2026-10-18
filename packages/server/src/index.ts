@@ -105,3 +105,14 @@ export {
 } from './analyst/prompt.js';
 export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
 export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';
+export {
+  decisiveRounds,
+  markdownRow,
+  referenceSuite,
+  scoreAnalysis,
+  summarize,
+  winnerOf,
+  type EvalCase,
+  type EvalScore,
+  type EvalSummary,
+} from './analyst/evals.js';
