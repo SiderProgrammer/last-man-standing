@@ -18,7 +18,14 @@ import {
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import type { AnalystModel, ModelReply, ModelRequest } from './model.js';
-import { SYSTEM_PROMPT, renderRequest, type SeatedMatch } from './prompt.js';
+import {
+  SYSTEM_PROMPT,
+  renderConversation,
+  renderRequest,
+  sanitizeQuestion,
+  type Exchange,
+  type SeatedMatch,
+} from './prompt.js';
 import { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './schema.js';
 import { JsonFieldStream } from './stream.js';
 import { MatchTools, TOOLS } from './tools.js';
@@ -96,9 +103,29 @@ export interface AnalyzeResult {
   usage?: AnalysisUsage;
 }
 
+export interface AskRequest {
+  matchId: `0x${string}`;
+  /** The authenticated wallet asking; its conversation is kept apart from everyone else's. */
+  requester: `0x${string}`;
+  /** Untrusted text typed by the player. */
+  question: string;
+  onDelta?: (text: string) => void;
+  onStep?: (step: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface AskResult {
+  /** The question as it was put to the model, after sanitising. */
+  question: string;
+  answer: string;
+  model: string;
+  usage: AnalysisUsage;
+}
+
 /** What the gateway needs from an analyst. An interface so the gateway's tests can fake it. */
 export interface MatchAnalyst {
   analyze(request: AnalyzeRequest): Promise<AnalyzeResult>;
+  ask(request: AskRequest): Promise<AskResult>;
 }
 
 /** A failure with a code the client can act on. */
@@ -120,6 +147,13 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_DEADLINE_MS = 180_000;
+
+/** Questions one wallet may ask about one match. */
+const MAX_QUESTIONS = 20;
+/** Earlier exchanges replayed with each question; older ones fall out of the model's view. */
+const MAX_HISTORY = 6;
+/** Longest answer kept, in characters. The prompt asks for far less. */
+const MAX_ANSWER_CHARS = 2_000;
 
 /**
  * Writes post-match analyses with Claude.
@@ -151,6 +185,8 @@ export class Analyst implements MatchAnalyst {
   readonly version: string;
   /** Analyses being written, by match and seat, so a second asker waits instead of paying twice. */
   private readonly inflight = new Map<string, Promise<AnalyzeResult>>();
+  /** Follow-up conversations, by wallet and match. */
+  private readonly conversations = new Conversations();
 
   constructor(private readonly options: AnalystOptions) {
     this.metrics = options.metrics ?? new AnalystMetrics();
@@ -174,18 +210,7 @@ export class Analyst implements MatchAnalyst {
    * the one step the limits apply to.
    */
   private async serve(request: AnalyzeRequest): Promise<AnalyzeResult> {
-    const match = await this.options.archive.load(request.matchId);
-    if (!match) throw new AnalystError('not_found', 'no finished match with that id');
-    if (!match.seats) {
-      throw new AnalystError('not_found', 'this match was archived before seating was recorded, so it cannot be analysed');
-    }
-    const seated: SeatedMatch = { ...match, seats: match.seats };
-    const seat = seated.seats.find((entry) => addressKey(entry.address) === addressKey(request.requester))?.index ?? null;
-    // A staked match was public while it ran; a practice match is the
-    // practising player's own, and so is what an analysis of it would say.
-    if (seat === null && match.staked !== true) {
-      throw new AnalystError('forbidden', 'only the players who sat in this match can analyse it');
-    }
+    const { match, seat } = await this.authorize(request.matchId, request.requester);
 
     const cached = await this.cached(match, seat);
     if (cached) {
@@ -202,29 +227,63 @@ export class Analyst implements MatchAnalyst {
       return { analysis, cached: true };
     }
 
-    const ticket = this.options.limits?.admit(request.requester, this.now());
-    if (ticket && 'code' in ticket) throw new AnalystError(ticket.code, ticket.message);
-
-    const job = this.write(request, seated, seat);
+    const job = this.paid(request.requester, 'analysis', request.signal, () => this.write(request, match, seat));
     this.inflight.set(key, job);
-    let refund = false;
     try {
       const result = await job;
       if (result.usage) {
         this.metrics.fresh({ ...result.usage, kept: result.analysis.keyMoments.length, dropped: result.analysis.dropped });
-        this.options.limits?.spend(result.usage.costUsd ?? 0, this.now());
       }
       await this.options.archive.saveAnalysis({ analysis: result.analysis, version: this.version }).catch((error: unknown) => {
         console.warn('[analyst] could not cache the analysis:', errorMessage(error));
       });
       return result;
-    } catch (error) {
-      // The player keeps their allowance when the failure was not theirs:
-      // anything but a refusal, unless they cancelled it themselves.
-      refund = classify(error).code !== 'refused' && request.signal?.aborted !== true;
-      throw error;
     } finally {
       this.inflight.delete(key);
+    }
+  }
+
+  /**
+   * The match, if the requester may see an analysis of it, and the seat to
+   * write from. A staked match was public while it ran; a practice match is
+   * the practising player's own, and so is what an analysis of it would say.
+   */
+  private async authorize(matchId: `0x${string}`, requester: `0x${string}`): Promise<{ match: SeatedMatch; seat: number | null }> {
+    const match = await this.options.archive.load(matchId);
+    if (!match) throw new AnalystError('not_found', 'no finished match with that id');
+    if (!match.seats) {
+      throw new AnalystError('not_found', 'this match was archived before seating was recorded, so it cannot be analysed');
+    }
+    const seated: SeatedMatch = { ...match, seats: match.seats };
+    const seat = seated.seats.find((entry) => addressKey(entry.address) === addressKey(requester))?.index ?? null;
+    if (seat === null && match.staked !== true) {
+      throw new AnalystError('forbidden', 'only the players who sat in this match can analyse it');
+    }
+    return { match: seated, seat };
+  }
+
+  /**
+   * Runs a paid model job under the limits: claims a slot, records the spend,
+   * and hands the allowance back when the failure was not the player's —
+   * anything but a refusal, unless they cancelled it themselves.
+   */
+  private async paid<T extends { usage?: AnalysisUsage }>(
+    wallet: `0x${string}`,
+    kind: 'analysis' | 'question',
+    signal: AbortSignal | undefined,
+    job: () => Promise<T>,
+  ): Promise<T> {
+    const ticket = this.options.limits?.admit(wallet, this.now(), kind);
+    if (ticket && 'code' in ticket) throw new AnalystError(ticket.code, ticket.message);
+    let refund = false;
+    try {
+      const result = await job();
+      if (result.usage) this.options.limits?.spend(result.usage.costUsd ?? 0, this.now());
+      return result;
+    } catch (error) {
+      refund = classify(error).code !== 'refused' && signal?.aborted !== true;
+      throw error;
+    } finally {
       if (ticket && 'release' in ticket) ticket.release(refund, this.now());
     }
   }
@@ -239,66 +298,37 @@ export class Analyst implements MatchAnalyst {
     }
   }
 
-  /** One fresh analysis, inside its wall-clock deadline. */
-  private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
-    const started = this.now();
+  /** Runs `job` inside the wall-clock deadline, which reads as a timeout rather than a cancellation. */
+  private async withDeadline<T>(signal: AbortSignal | undefined, job: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const deadline = AbortSignal.timeout(this.options.deadlineMs ?? DEFAULT_DEADLINE_MS);
-    const signal = request.signal ? AbortSignal.any([request.signal, deadline]) : deadline;
     try {
-      return await this.loop(request, match, seat, started, signal);
+      return await job(signal ? AbortSignal.any([signal, deadline]) : deadline);
     } catch (error) {
-      if (deadline.aborted) throw new AnalystError('timeout', 'the analysis took too long and was stopped');
+      if (deadline.aborted) throw new AnalystError('timeout', 'the analyst took too long and was stopped');
       throw error;
     }
   }
 
-  private async loop(
-    request: AnalyzeRequest,
-    match: SeatedMatch,
-    seat: number | null,
-    started: number,
-    signal: AbortSignal,
-  ): Promise<AnalyzeResult> {
-    const tools = new MatchTools(match, seat, this.options.styles);
-    const messages: BetaMessageParam[] = [{ role: 'user', content: renderRequest(match, seat) }];
+  /** One fresh analysis. */
+  private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
+    const started = this.now();
     const usage = this.emptyUsage();
-
     // One stream for the whole loop: the narrative is only ever written in
     // the final answer, and a stream that has finished its field stays quiet.
     const narrative = new JsonFieldStream('summary');
-    const onText = (delta: string) => {
-      const text = narrative.push(delta);
-      if (text) request.onDelta?.(text);
-    };
-
-    const maxTurns = Math.max(1, this.options.maxTurns ?? DEFAULT_MAX_TURNS);
-    let reply: ModelReply;
-    for (;;) {
-      const final = usage.turns + 1 >= maxTurns;
-      reply = await this.call(this.request(messages, final), onText, signal);
-      addUsage(usage, reply);
-      if (reply.stop_reason !== 'tool_use') break;
-
-      const calls = reply.content.filter((block): block is BetaToolUseBlock => block.type === 'tool_use');
-      if (calls.length === 0) throw new AnalystError('failed', 'the model asked for a tool but named none');
-      usage.toolCalls += calls.length;
-      // Echoed back whole: thinking blocks included, which the next turn needs.
-      messages.push({ role: 'assistant', content: reply.content });
-      // Every result goes back in one message, in call order.
-      const results = await Promise.all(
-        calls.map(async (call): Promise<BetaToolResultBlockParam> => {
-          request.onStep?.(describeCall(call));
-          const output = await tools.run(call.name, call.input);
-          return {
-            type: 'tool_result',
-            tool_use_id: call.id,
-            content: output.content,
-            ...(output.isError ? { is_error: true } : {}),
-          };
-        }),
-      );
-      messages.push({ role: 'user', content: results });
-    }
+    const reply = await this.withDeadline(request.signal, (signal) =>
+      this.converse([{ role: 'user', content: renderRequest(match, seat) }], {
+        structured: true,
+        tools: new MatchTools(match, seat, this.options.styles),
+        usage,
+        signal,
+        onText: (delta) => {
+          const text = narrative.push(delta);
+          if (text) request.onDelta?.(text);
+        },
+        ...(request.onStep ? { onStep: request.onStep } : {}),
+      }),
+    );
 
     const output = parseAnalysisOutput(finalText(reply));
     const moments: KeyMoment[] = output.keyMoments.map((moment) => ({ ...moment }));
@@ -308,10 +338,7 @@ export class Analyst implements MatchAnalyst {
     }
     usage.latencyMs = this.now() - started;
     console.info(
-      `[analyst] ${request.matchId} for ${seat === null ? 'a spectator' : `seat ${seat}`}: ` +
-        `${usage.turns} turns, ${usage.toolCalls} tool calls, ${usage.latencyMs} ms; ` +
-        `input ${usage.inputTokens} + cache read ${usage.cacheReadTokens} + cache write ${usage.cacheWriteTokens}, ` +
-        `output ${usage.outputTokens}; ~$${usage.costUsd?.toFixed(4) ?? '?'}; ` +
+      `[analyst] ${request.matchId} for ${seat === null ? 'a spectator' : `seat ${seat}`}: ${describeUsage(usage)}; ` +
         `${kept.length} moments kept, ${dropped.length} dropped`,
     );
 
@@ -331,6 +358,109 @@ export class Analyst implements MatchAnalyst {
     };
   }
 
+  /** Every failure comes out as an `AnalystError`, as for `analyze`. */
+  async ask(request: AskRequest): Promise<AskResult> {
+    try {
+      return await this.answer(request);
+    } catch (error) {
+      const failure = classify(error);
+      this.metrics.fail(failure.code);
+      throw failure;
+    }
+  }
+
+  /**
+   * A follow-up question about a match the asker already has an analysis
+   * of. The conversation lives here, keyed by wallet and match, and only the
+   * question comes from the client — so a client cannot forge what the
+   * analyst said earlier, and the history it replays is the server's own.
+   */
+  private async answer(request: AskRequest): Promise<AskResult> {
+    const question = sanitizeQuestion(request.question);
+    if (question === null) throw new AnalystError('failed', 'the question is empty');
+    const { match, seat } = await this.authorize(request.matchId, request.requester);
+    const analysis = await this.cached(match, seat);
+    if (!analysis) throw new AnalystError('not_found', 'analyse the match before asking about it');
+
+    const key = `${addressKey(request.requester)}:${match.result.matchId.toLowerCase()}`;
+    const exchanges = this.conversations.get(key, this.now());
+    if (exchanges.length >= MAX_QUESTIONS) {
+      throw new AnalystError('quota', `this conversation has reached its ${MAX_QUESTIONS} questions`);
+    }
+
+    const result = await this.paid(request.requester, 'question', request.signal, async () => {
+      const started = this.now();
+      const usage = this.emptyUsage();
+      const history = exchanges.slice(-MAX_HISTORY);
+      const reply = await this.withDeadline(request.signal, (signal) =>
+        this.converse(renderConversation(match, seat, analysis, history, question), {
+          structured: false,
+          tools: new MatchTools(match, seat, this.options.styles),
+          usage,
+          signal,
+          onText: (delta) => request.onDelta?.(delta),
+          ...(request.onStep ? { onStep: request.onStep } : {}),
+        }),
+      );
+      usage.latencyMs = this.now() - started;
+      const answer = finalText(reply).trim().slice(0, MAX_ANSWER_CHARS);
+      if (!answer) throw new AnalystError('failed', 'the analyst gave an empty answer');
+      return { answer, model: reply.model, usage };
+    });
+
+    this.conversations.append(key, { question, answer: result.answer }, this.now());
+    this.metrics.reply(result.usage);
+    console.info(`[analyst] follow-up on ${request.matchId}: ${describeUsage(result.usage)}`);
+    return { question, ...result };
+  }
+
+  /**
+   * The tool loop: sends the conversation, runs the tools the model asks
+   * for, and repeats until it answers. Appends to `messages` and `usage`.
+   *
+   * @param structured Constrains the answer to the analysis schema. Off for
+   *        follow-up answers, which are prose.
+   */
+  private async converse(
+    messages: BetaMessageParam[],
+    turn: {
+      structured: boolean;
+      tools: MatchTools;
+      usage: AnalysisUsage;
+      signal: AbortSignal;
+      onText: (delta: string) => void;
+      onStep?: (step: string) => void;
+    },
+  ): Promise<ModelReply> {
+    const maxTurns = Math.max(1, this.options.maxTurns ?? DEFAULT_MAX_TURNS);
+    for (;;) {
+      const final = turn.usage.turns + 1 >= maxTurns;
+      const reply = await this.call(this.request(messages, final, turn.structured), turn.onText, turn.signal);
+      addUsage(turn.usage, reply);
+      if (reply.stop_reason !== 'tool_use') return reply;
+
+      const calls = reply.content.filter((block): block is BetaToolUseBlock => block.type === 'tool_use');
+      if (calls.length === 0) throw new AnalystError('failed', 'the model asked for a tool but named none');
+      turn.usage.toolCalls += calls.length;
+      // Echoed back whole: thinking blocks included, which the next turn needs.
+      messages.push({ role: 'assistant', content: reply.content });
+      // Every result goes back in one message, in call order.
+      const results = await Promise.all(
+        calls.map(async (call): Promise<BetaToolResultBlockParam> => {
+          turn.onStep?.(describeCall(call));
+          const output = await turn.tools.run(call.name, call.input);
+          return {
+            type: 'tool_result',
+            tool_use_id: call.id,
+            content: output.content,
+            ...(output.isError ? { is_error: true } : {}),
+          };
+        }),
+      );
+      messages.push({ role: 'user', content: results });
+    }
+  }
+
   /**
    * One turn's request. Everything above `messages` is the same bytes for
    * every analysis of every match, which is what lets them share a cache.
@@ -338,14 +468,16 @@ export class Analyst implements MatchAnalyst {
    * @param final Switches tools off, so the model has to answer now. Costs
    *        the messages cache for this one turn; tools and system stay cached.
    */
-  private request(messages: readonly BetaMessageParam[], final: boolean): ModelRequest {
+  private request(messages: readonly BetaMessageParam[], final: boolean, structured: boolean): ModelRequest {
     return {
       model: this.options.modelId,
       max_tokens: this.options.maxTokens,
       betas: [FALLBACK_BETA],
       fallbacks: 'default',
       cache_control: { type: 'ephemeral' },
-      output_config: { effort: this.options.effort, format: betaZodOutputFormat(AnalysisOutput) },
+      output_config: structured
+        ? { effort: this.options.effort, format: betaZodOutputFormat(AnalysisOutput) }
+        : { effort: this.options.effort },
       tools: TOOLS,
       ...(final ? { tool_choice: { type: 'none' as const } } : {}),
       system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
@@ -404,6 +536,48 @@ function addUsage(total: AnalysisUsage, reply: Pick<ModelReply, 'model' | 'usage
   // Priced by the model that served the turn, which a fallback can change.
   const cost = turnCost(reply.model, turn);
   total.costUsd = cost === null || total.costUsd === null ? null : total.costUsd + cost;
+}
+
+/** One line of usage for the log. */
+function describeUsage(usage: AnalysisUsage): string {
+  return (
+    `${usage.turns} turns, ${usage.toolCalls} tool calls, ${usage.latencyMs} ms; ` +
+    `input ${usage.inputTokens} + cache read ${usage.cacheReadTokens} + cache write ${usage.cacheWriteTokens}, ` +
+    `output ${usage.outputTokens}; ~$${usage.costUsd?.toFixed(4) ?? '?'}`
+  );
+}
+
+/**
+ * Follow-up conversations in memory, least recently used dropped first and
+ * anything idle for an hour forgotten. Losing one costs the player the
+ * context of earlier questions, nothing else; the analysis itself is cached
+ * in the archive.
+ */
+class Conversations {
+  private readonly entries = new Map<string, { exchanges: Exchange[]; touched: number }>();
+
+  constructor(
+    private readonly capacity = 1_000,
+    private readonly idleMs = 3_600_000,
+  ) {}
+
+  get(key: string, now: number): readonly Exchange[] {
+    const entry = this.entries.get(key);
+    if (!entry || now - entry.touched > this.idleMs) return [];
+    return entry.exchanges;
+  }
+
+  append(key: string, exchange: Exchange, now: number): void {
+    const exchanges = [...this.get(key, now), exchange];
+    // Delete first, so the key moves to the back of the insertion order.
+    this.entries.delete(key);
+    this.entries.set(key, { exchanges, touched: now });
+    while (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+  }
 }
 
 /** See `Analyst.version`. */

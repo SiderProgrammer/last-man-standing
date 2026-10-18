@@ -188,7 +188,9 @@ Claude reads the match through tools bound to that one archived match
 streams over the existing WebSocket, and every key moment's round, seat, kind
 and target is checked against the round records before anyone sees it —
 moments the history does not support are dropped and counted. Clicking a moment
-rewinds the arena and plays that round again. Design, trust boundaries and
+rewinds the arena and plays that round again, and the player can ask follow-up
+questions underneath — treated as untrusted input, with the conversation held
+by the server. Design, trust boundaries and
 operations: [docs/ANALYST.md](docs/ANALYST.md).
 
 ```bash

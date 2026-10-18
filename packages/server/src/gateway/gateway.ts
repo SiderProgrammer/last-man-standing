@@ -339,6 +339,10 @@ export class Gateway {
         await this.analyze(session, address, message.matchId);
         return;
       }
+      case 'analysis.ask': {
+        await this.ask(session, address, message.matchId, message.question);
+        return;
+      }
       case 'commit': {
         this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold, aimOf(message));
         return;
@@ -407,6 +411,40 @@ export class Gateway {
         onStep: (step) => session.send({ type: 'analysis.step', matchId, step }),
       });
       session.send({ type: 'analysis.done', analysis, cached });
+    } catch (error) {
+      if (!session.closed) fail(classify(error));
+    } finally {
+      session.analysis = null;
+    }
+  }
+
+  /** A follow-up question, answered in `analysis.reply.*` frames. Shares the one-at-a-time slot with `analyze`. */
+  private async ask(session: Session, address: `0x${string}`, matchId: `0x${string}`, question: string): Promise<void> {
+    const fail = (error: AnalystError) =>
+      session.send({ type: 'analysis.error', matchId, code: error.code, message: error.message, stage: 'ask' });
+
+    const analyst = this.options.analyst;
+    if (!analyst) {
+      fail(new AnalystError('unavailable', 'match analysis is not available on this server'));
+      return;
+    }
+    if (session.analysis) {
+      fail(new AnalystError('busy', 'the analyst is still answering you'));
+      return;
+    }
+
+    const controller = new AbortController();
+    session.analysis = controller;
+    try {
+      const reply = await analyst.ask({
+        matchId,
+        requester: address,
+        question,
+        signal: controller.signal,
+        onDelta: (text) => session.send({ type: 'analysis.reply.delta', matchId, text }),
+        onStep: (step) => session.send({ type: 'analysis.step', matchId, step }),
+      });
+      session.send({ type: 'analysis.reply', matchId, question: reply.question, answer: reply.answer, model: reply.model });
     } catch (error) {
       if (!session.closed) fail(classify(error));
     } finally {

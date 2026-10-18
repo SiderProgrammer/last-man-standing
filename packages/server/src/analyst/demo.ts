@@ -17,6 +17,15 @@ export function demoModel(archive: MatchArchive, options: { chunkDelayMs?: numbe
   const delay = options.chunkDelayMs ?? 25;
   return {
     async stream(request, onText, signal) {
+      // A follow-up question: no answer schema. The demo cannot discuss anything, and says so.
+      if (!request.output_config?.format) {
+        const text =
+          'The offline demo analyst cannot answer questions. With ANTHROPIC_API_KEY set on the server, ' +
+          'Claude answers here, using the same tools to look up the rounds you ask about.';
+        await play(text, onText, signal, delay);
+        return reply([{ type: 'text', text, citations: null }] as BetaContentBlock[], 'end_turn');
+      }
+
       const opening = request.messages[0]?.content;
       const matchId = typeof opening === 'string' ? /Match (0x[0-9a-fA-F]{64})/.exec(opening)?.[1] : undefined;
       const match = matchId ? await archive.load(matchId as `0x${string}`) : null;
@@ -34,14 +43,19 @@ export function demoModel(archive: MatchArchive, options: { chunkDelayMs?: numbe
       }
 
       const text = JSON.stringify(answer(match.history, decisive, seat === undefined ? null : Number(seat)));
-      for (let i = 0; i < text.length; i += 12) {
-        if (signal.aborted) throw new Error('aborted');
-        onText(text.slice(i, i + 12));
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      await play(text, onText, signal, delay);
       return reply([{ type: 'text', text, citations: null }] as BetaContentBlock[], 'end_turn');
     },
   };
+}
+
+/** Streams `text` in small pieces, as a model would. */
+async function play(text: string, onText: (delta: string) => void, signal: AbortSignal, delay: number): Promise<void> {
+  for (let i = 0; i < text.length; i += 12) {
+    if (signal.aborted) throw new Error('aborted');
+    onText(text.slice(i, i + 12));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
 }
 
 function answer(history: readonly RoundRecord[], decisive: number, you: number | null) {

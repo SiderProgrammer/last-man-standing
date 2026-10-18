@@ -85,6 +85,8 @@ export {
   type AnalystOptions,
   type AnalyzeRequest,
   type AnalyzeResult,
+  type AskRequest,
+  type AskResult,
   type Effort,
   type MatchAnalyst,
 } from './analyst/analyst.js';
@@ -97,7 +99,13 @@ export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './a
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export { JsonFieldStream } from './analyst/stream.js';
 export {
+  FOLLOW_UP_INSTRUCTION,
   SYSTEM_PROMPT,
+  renderAnalysis,
+  renderConversation,
+  sanitizeQuestion,
+  wrapQuestion,
+  type Exchange,
   renderOverview,
   renderRequest,
   renderRound,

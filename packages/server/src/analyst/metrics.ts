@@ -4,7 +4,7 @@ import type { AnalysisErrorCode } from '@lms/protocol';
 const LATENCY_BUCKETS = [1, 2, 5, 10, 20, 30, 60, 120, 300];
 
 /** How a request for an analysis ended. */
-export type AnalysisOutcome = 'fresh' | 'cached' | 'shared' | 'error';
+export type AnalysisOutcome = 'fresh' | 'cached' | 'shared' | 'reply' | 'error';
 
 export interface FreshAnalysis {
   inputTokens: number;
@@ -42,7 +42,7 @@ export class AnalystMetrics {
   private dropped = 0;
   private readonly latency = { buckets: LATENCY_BUCKETS.map(() => 0), sum: 0, count: 0 };
 
-  count(outcome: Exclude<AnalysisOutcome, 'fresh' | 'error'>): void {
+  count(outcome: 'cached' | 'shared'): void {
     this.bump(this.outcomes, outcome);
   }
 
@@ -72,6 +72,19 @@ export class AnalystMetrics {
     });
   }
 
+  /** A follow-up answer: its tokens and cost count, its latency and moments do not. */
+  reply(usage: Omit<FreshAnalysis, 'kept' | 'dropped'>): void {
+    this.bump(this.outcomes, 'reply');
+    this.tokens.input += usage.inputTokens;
+    this.tokens.output += usage.outputTokens;
+    this.tokens.cacheRead += usage.cacheReadTokens;
+    this.tokens.cacheWrite += usage.cacheWriteTokens;
+    this.turns += usage.turns;
+    this.toolCalls += usage.toolCalls;
+    if (usage.costUsd === null) this.unpriced += 1;
+    else this.costUsd += usage.costUsd;
+  }
+
   /** The ratios worth a glance, for `/health`. Null where nothing has happened yet. */
   snapshot() {
     const outcome = (key: AnalysisOutcome) => this.outcomes.get(key) ?? 0;
@@ -81,6 +94,7 @@ export class AnalystMetrics {
     return {
       requests: answered + outcome('error'),
       fresh: outcome('fresh'),
+      followUps: outcome('reply'),
       errors: outcome('error'),
       /** Answers served without a model call. */
       analysisCacheHitRate: ratio(outcome('cached') + outcome('shared'), answered),
@@ -104,8 +118,8 @@ export class AnalystMetrics {
     metric(
       'analyst_requests_total',
       'counter',
-      'Analysis requests by how they ended.',
-      (['fresh', 'cached', 'shared', 'error'] as const).map((key) => [`{outcome="${key}"}`, this.outcomes.get(key) ?? 0]),
+      'Analysis requests and follow-up questions by how they ended.',
+      (['fresh', 'cached', 'shared', 'reply', 'error'] as const).map((key) => [`{outcome="${key}"}`, this.outcomes.get(key) ?? 0]),
     );
     metric(
       'analyst_errors_total',

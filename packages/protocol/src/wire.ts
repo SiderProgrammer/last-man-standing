@@ -65,7 +65,13 @@ export type ClientMessage =
    * Asks for a written analysis of a finished match, streamed back as
    * `analysis.*` frames. Written from the asking wallet's seat if it had one.
    */
-  | { type: 'analyze'; matchId: `0x${string}` };
+  | { type: 'analyze'; matchId: `0x${string}` }
+  /**
+   * A follow-up question about a match this wallet already has an analysis
+   * of. Only the question travels: the conversation so far is held by the
+   * server, so a client cannot put words in the analyst's mouth.
+   */
+  | { type: 'analysis.ask'; matchId: `0x${string}`; question: string };
 
 export type ServerMessage =
   | {
@@ -157,7 +163,17 @@ export type ServerMessage =
   | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
-  | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
+  | {
+      type: 'analysis.error';
+      matchId: `0x${string}`;
+      code: AnalysisErrorCode;
+      message: string;
+      /** Set when a follow-up question failed rather than the analysis. Absent from older servers. */
+      stage?: 'ask';
+    }
+  /** A fragment of the answer to a follow-up question, in order; `analysis.reply` repeats it whole. */
+  | { type: 'analysis.reply.delta'; matchId: `0x${string}`; text: string }
+  | { type: 'analysis.reply'; matchId: `0x${string}`; question: string; answer: string; model: string }
   | { type: 'error'; code: string; message: string };
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */

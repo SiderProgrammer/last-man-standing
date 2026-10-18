@@ -101,6 +101,42 @@ metrics), and a decisive round the match never reached becomes null. The
 sentence attached to a moment is not checked; it is the one part left to the
 reader's trust, and the panel says so.
 
+## Follow-up questions
+
+Under a finished analysis the player can ask about the match
+(`analysis.ask` → `analysis.reply.delta`… → `analysis.reply`). The same model,
+system prompt and tools answer, in prose rather than the analysis schema.
+
+The question is the one piece of free text a player can put in front of the
+model, so it is handled as untrusted input at every layer:
+
+- **Only the question travels.** The conversation — the overview, the analysis
+  as the analyst's own earlier answer, and earlier exchanges — is held by the
+  server per wallet and match, so a client cannot forge what the analyst said
+  or plant turns of its own.
+- **Bounded.** The gateway refuses empty questions and anything over 500
+  characters; `sanitizeQuestion` strips control characters, collapses blank
+  runs and caps the length again before the text reaches a prompt.
+- **Fenced.** It is wrapped in `<player_question>` tags with angle brackets
+  escaped, so it cannot close its own tag. The frozen system prompt says what
+  those tags hold and that nothing inside them can change the rules, the tools
+  or the topic.
+- **Operator voice stays with the operator.** The switch to answer mode is a
+  mid-conversation `role: "system"` message after each question, not text the
+  player could imitate, and not an edit to the system prompt that would cost
+  every analysis its cached prefix.
+- **Scoped tools.** The tools are the same match-bound views; a question cannot
+  make them read another match or another wallet.
+- **Capped.** The last six exchanges are replayed with each question; twenty
+  questions per wallet per match; a separate hourly allowance per wallet; the
+  same concurrency cap and daily budget as analyses.
+
+Earlier turns are replayed as plain text, never with thinking blocks, so
+dropping the oldest exchanges when the cap is reached cannot invalidate a
+block the model has to read back. Within the cap the conversation only grows
+at the end, so each question's request extends the previous one's and the
+cache keeps hitting.
+
 ## Prompt caching
 
 Render order is tools → system → messages, and the layout follows it: the tool
@@ -139,12 +175,12 @@ the prompt-cache hit rate.
 ## Files
 
 ```
-packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, error codes
+packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, error codes, question length
 packages/protocol/src/game/reads.ts    the reads logic, shared by the client panel and get_reads
 packages/server/src/analyst/
-  analyst.ts    access, cache, limits, the tool loop, deadline, usage
+  analyst.ts    access, cache, limits, the tool loop, deadline, usage, follow-up conversations
   model.ts      the injected model interface and the SDK-backed implementation
-  prompt.ts     the frozen system prompt and the match rendering
+  prompt.ts     the frozen system prompt, match rendering, question fencing
   tools.ts      tool definitions and their execution against one match
   schema.ts     the output schema, re-validated on arrival
   stream.ts     JsonFieldStream: the narrative out of streaming JSON

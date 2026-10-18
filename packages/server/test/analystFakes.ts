@@ -63,6 +63,15 @@ export function answer(document: unknown, size = 16): Turn {
   };
 }
 
+/** A final turn answering in plain prose, as a follow-up answer does. */
+export function prose(text: string): Turn {
+  const half = Math.ceil(text.length / 2);
+  return {
+    chunks: [text.slice(0, half), text.slice(half)],
+    reply: { stop_reason: 'end_turn', content: [{ type: 'text', text, citations: null }] as ModelReply['content'] },
+  };
+}
+
 /** A turn that asks for tools, with a thinking block ahead of the calls as the real model sends. */
 export function toolTurn(calls: Array<{ name: string; input: unknown }>, stop: 'tool_use' | 'max_tokens' = 'tool_use'): Turn {
   return {

@@ -4,6 +4,8 @@ import { KeyedLimiter } from '../gateway/limits.js';
 export interface AnalystLimitOptions {
   /** Fresh analyses one wallet may request per hour; cached answers are free. */
   perWalletPerHour: number;
+  /** Follow-up questions one wallet may ask per hour. Defaults to five times the analyses. */
+  questionsPerWalletPerHour?: number;
   /** Analyses being written at once, across every wallet. */
   maxConcurrent: number;
   /**
@@ -35,6 +37,7 @@ const HOUR_MS = 3_600_000;
  */
 export class AnalystLimits {
   private readonly wallets: KeyedLimiter;
+  private readonly questions: KeyedLimiter;
   private running = 0;
   private day = '';
   private spentToday = 0;
@@ -42,13 +45,19 @@ export class AnalystLimits {
   constructor(private readonly options: AnalystLimitOptions) {
     const burst = Math.max(1, options.perWalletPerHour);
     this.wallets = new KeyedLimiter(options.perWalletPerHour / (HOUR_MS / 1000), burst);
+    const questions = options.questionsPerWalletPerHour ?? options.perWalletPerHour * 5;
+    this.questions = new KeyedLimiter(questions / (HOUR_MS / 1000), Math.max(1, questions));
   }
 
   /**
    * Claims a slot for a fresh analysis, or says why not. On success the
    * caller must call `release` exactly once, however the analysis ends.
    */
-  admit(wallet: `0x${string}`, now: number): Refusal | { release: (refund: boolean, now: number) => void } {
+  admit(
+    wallet: `0x${string}`,
+    now: number,
+    kind: 'analysis' | 'question' = 'analysis',
+  ): Refusal | { release: (refund: boolean, now: number) => void } {
     this.rollDay(now);
     if (this.spentToday >= this.options.dailyBudgetUsd) {
       return { code: 'quota', message: "the server's analysis budget for today is spent; try again tomorrow" };
@@ -57,8 +66,15 @@ export class AnalystLimits {
       return { code: 'busy', message: 'the analyst is busy with other matches; try again in a minute' };
     }
     const key = addressKey(wallet);
-    if (!this.wallets.take(key, now)) {
-      return { code: 'quota', message: `you can request ${this.options.perWalletPerHour} new analyses an hour; try again later` };
+    const allowance = kind === 'analysis' ? this.wallets : this.questions;
+    if (!allowance.take(key, now)) {
+      return {
+        code: 'quota',
+        message:
+          kind === 'analysis'
+            ? `you can request ${this.options.perWalletPerHour} new analyses an hour; try again later`
+            : 'you have asked a lot of questions this hour; try again later',
+      };
     }
 
     this.running += 1;
@@ -68,7 +84,7 @@ export class AnalystLimits {
         if (released) return;
         released = true;
         this.running -= 1;
-        if (refund) this.wallets.refund(key, at);
+        if (refund) allowance.refund(key, at);
       },
     };
   }
@@ -82,6 +98,7 @@ export class AnalystLimits {
   /** Drops wallets whose allowance has refilled. */
   sweep(now: number): void {
     this.wallets.sweep(now);
+    this.questions.sweep(now);
   }
 
   get spent(): number {

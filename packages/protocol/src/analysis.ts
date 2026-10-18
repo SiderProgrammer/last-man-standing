@@ -73,6 +73,9 @@ export interface MatchAnalysis {
   model: string;
 }
 
+/** Longest follow-up question the server accepts, in characters. */
+export const MAX_QUESTION_CHARS = 500;
+
 /**
  * Why an analysis request failed. Machine-readable so the client can choose
  * between "try again", "not for you" and "not on this server".

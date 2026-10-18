@@ -21,7 +21,14 @@ import {
   wireMatchControls,
 } from './screens/match.js';
 import { onSettled, wireResultControls } from './screens/result.js';
-import { onAnalysisDelta, onAnalysisDone, onAnalysisError, onAnalysisStep } from './screens/analysis.js';
+import {
+  onAnalysisDelta,
+  onAnalysisDone,
+  onAnalysisError,
+  onAnalysisReply,
+  onAnalysisReplyDelta,
+  onAnalysisStep,
+} from './screens/analysis.js';
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
@@ -162,6 +169,14 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'analysis.error':
       onAnalysisError(message);
+      break;
+
+    case 'analysis.reply.delta':
+      onAnalysisReplyDelta(message);
+      break;
+
+    case 'analysis.reply':
+      onAnalysisReply(message);
       break;
 
     case 'error':
