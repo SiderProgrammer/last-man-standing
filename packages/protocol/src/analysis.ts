@@ -65,6 +65,12 @@ export interface MatchAnalysis {
   advice: string[];
   /** Moments the model produced that the history did not support, and were dropped. */
   dropped: number;
+  /**
+   * The model that wrote the final answer, as the API reported it. Usually the
+   * one configured, but a refusal fallback can hand the answer to another.
+   * `demo` for the offline demo analyst.
+   */
+  model: string;
 }
 
 /**

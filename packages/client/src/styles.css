@@ -526,3 +526,59 @@ button.wide {
   font-size: 11px;
   padding-top: 0;
 }
+
+/* The analysis tab: streamed narrative, then clickable key moments. */
+.analysis {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.analysis h3 {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+}
+
+.analysis-summary p {
+  margin: 0 0 8px;
+}
+
+.moments,
+.advice {
+  margin: 0;
+  padding: 0;
+}
+
+.moments {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.advice {
+  padding-left: 18px;
+}
+
+.advice li {
+  margin-bottom: 4px;
+}
+
+button.moment {
+  display: grid;
+  gap: 2px;
+  padding: 7px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+button.moment.decisive {
+  border-color: var(--warn);
+}
+
+.moment-head {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

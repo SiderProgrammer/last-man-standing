@@ -40,6 +40,8 @@ export interface AppState {
   collect: boolean;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
+  /** True when the server can write match analyses. */
+  analyst: boolean;
   match: PublicMatchState | null;
   /**
    * Avatars for the current match, held here rather than pushed straight at the
@@ -82,6 +84,7 @@ export const app: AppState = {
   zap: null,
   collect: false,
   staking: null,
+  analyst: false,
   match: null,
   avatars: [],
   dossier: new Map(),

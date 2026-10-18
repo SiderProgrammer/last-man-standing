@@ -298,7 +298,16 @@ class ManualAnalyst implements MatchAnalyst {
 
   async finish(matchId: `0x${string}`): Promise<void> {
     this.pending.shift()?.resolve({
-      analysis: { matchId, seat: 0, summary: 'all of it', decisiveRound: 1, keyMoments: [], advice: [], dropped: 0 },
+      analysis: {
+        matchId,
+        seat: 0,
+        summary: 'all of it',
+        decisiveRound: 1,
+        keyMoments: [],
+        advice: [],
+        dropped: 0,
+        model: 'claude-opus-5-5',
+      },
       cached: false,
     });
     await new Promise((resolve) => setImmediate(resolve));

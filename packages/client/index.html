@@ -221,6 +221,7 @@
             <p id="result-settle" class="muted small"></p>
             <div class="row">
               <button id="result-collect" class="primary hidden">Collect winnings</button>
+              <button id="result-analyse" class="hidden">Analyse match</button>
               <button id="result-back" class="ghost">Back to lobby</button>
             </div>
           </div>
@@ -229,9 +230,22 @@
             <div class="tabs">
               <button id="tab-feed" class="tab active">History</button>
               <button id="tab-reads" class="tab">Reads</button>
+              <button id="tab-analysis" class="tab">Analysis</button>
             </div>
             <ol id="feed" class="feed"></ol>
             <div id="reads" class="reads hidden"></div>
+            <div id="analysis" class="analysis hidden" aria-live="polite">
+              <div class="row">
+                <button id="analyse" class="primary" disabled>Analyse match</button>
+                <span id="analysis-status" class="muted small">Available once the match is over.</span>
+              </div>
+              <div id="analysis-summary" class="analysis-summary"></div>
+              <h3 id="analysis-moments-head" class="hidden">Key moments · click to replay</h3>
+              <ol id="analysis-moments" class="moments"></ol>
+              <h3 id="analysis-advice-head" class="hidden">Advice</h3>
+              <ul id="analysis-advice" class="advice"></ul>
+              <p id="analysis-note" class="muted small"></p>
+            </div>
           </div>
         </aside>
       </section>

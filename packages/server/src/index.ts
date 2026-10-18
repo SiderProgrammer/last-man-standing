@@ -87,6 +87,7 @@ export {
   type MatchAnalyst,
 } from './analyst/analyst.js';
 export { anthropicModel, type AnalystModel, type ModelReply, type ModelRequest } from './analyst/model.js';
+export { demoModel } from './analyst/demo.js';
 export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './analyst/schema.js';
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export { JsonFieldStream } from './analyst/stream.js';

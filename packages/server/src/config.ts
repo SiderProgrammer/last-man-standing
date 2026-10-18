@@ -112,8 +112,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      */
     analyst: {
       enabled:
+        env.ANALYST_DEMO === 'true' ||
         env.ANALYST_ENABLED === 'true' ||
         (env.ANALYST_ENABLED !== 'false' && Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN)),
+      /**
+       * Answers with the offline demo model instead of Claude: no key, no
+       * network, no cost, formulaic prose. For UI work and demos. See `analyst/demo.ts`.
+       */
+      demo: env.ANALYST_DEMO === 'true',
       model: env.ANALYST_MODEL || 'claude-opus-5-5',
       /** `low` | `medium` | `high` | `xhigh` | `max`. Opus 5.5 defaults to medium; set it explicitly anyway. */
       effort: parseEffort(env.ANALYST_EFFORT),

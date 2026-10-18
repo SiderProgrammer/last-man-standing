@@ -59,6 +59,8 @@ describe('analyst', () => {
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
     expect(analysis.dropped).toBe(1);
     expect(analysis.advice).toEqual(output().advice);
+    // As the API reported it, which a refusal fallback could change.
+    expect(analysis.model).toBe('claude-opus-5-5');
   });
 
   it('writes for a spectator when the asker did not play', async () => {

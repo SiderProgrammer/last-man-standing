@@ -24,6 +24,7 @@ import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js'
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { Analyst } from './analyst/analyst.js';
 import { anthropicModel } from './analyst/model.js';
+import { demoModel } from './analyst/demo.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -112,8 +113,10 @@ async function main(): Promise<void> {
   const analyst = config.analyst.enabled
     ? new Analyst({
         archive,
-        model: anthropicModel({ timeoutMs: config.analyst.timeoutMs, maxRetries: config.analyst.maxRetries }),
-        modelId: config.analyst.model,
+        model: config.analyst.demo
+          ? demoModel(archive)
+          : anthropicModel({ timeoutMs: config.analyst.timeoutMs, maxRetries: config.analyst.maxRetries }),
+        modelId: config.analyst.demo ? 'demo' : config.analyst.model,
         effort: config.analyst.effort,
         maxTokens: config.analyst.maxTokens,
         styles,
@@ -260,7 +263,9 @@ async function main(): Promise<void> {
 
   console.log(
     analyst
-      ? `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort`
+      ? config.analyst.demo
+        ? '[server] match analyst in offline demo mode: canned answers, Claude is not called'
+        : `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort`
       : '[server] no model credentials: match analysis unavailable',
   );
 

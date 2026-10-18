@@ -209,6 +209,7 @@ export class Analyst implements MatchAnalyst {
         keyMoments: kept,
         advice: output.advice,
         dropped: dropped.length,
+        model: reply.model,
       },
       cached: false,
       usage,
