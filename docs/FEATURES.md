@@ -10,7 +10,6 @@ and none of the three repeats another:
 | --- | --- |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How the game plays and how the system is put together, as a narrative |
 | **`FEATURES.md`** (this file) | What each feature is for, one entry at a time |
-| [`PROTOCOL_REVIEW.md`](PROTOCOL_REVIEW.md) | Whether each feature earns its place — keep, fix, cut, defer |
 | [`TODO.md`](TODO.md) | What is unfinished and in what order it blocks a demo |
 
 **Status labels** used throughout:
@@ -1037,6 +1036,4 @@ Annotated template in [`.env.example`](../.env.example).
 ---
 
 *Reflects the working tree at 22 Sep 2026 · 104 TypeScript and 95 Foundry tests
-passing. Verdicts on whether each feature should survive live in
-[`PROTOCOL_REVIEW.md`](PROTOCOL_REVIEW.md); unfinished work is tracked in
-[`TODO.md`](TODO.md).*
+passing. Unfinished work is tracked in [`TODO.md`](TODO.md).*

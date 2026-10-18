@@ -4,5 +4,5 @@ remove setInterval from BE?
 avatars loading in preloader?
 database integration
 Keeper bot on server (running particular smart contract functions)
-assets
+game assets
 bots logic

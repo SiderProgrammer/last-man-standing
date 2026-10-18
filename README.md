@@ -2,8 +2,8 @@
 
 A cross-chain multiplayer arena. Four to eight players enter a lobby by staking
 on-chain, then play a hidden-information elimination game off-chain in real
-time. The result is signed by an attestor quorum and settled back on the hub
-chain, which pays out the escrowed stakes.
+time. A quorum of attestors signs the result, the hub-chain escrow holds it open
+to a veto for a challenge window, and then pays out the escrowed stakes.
 
 Each round every surviving player secretly picks one of three actions:
 
@@ -19,27 +19,65 @@ of the game: within a few rounds the history tells you who always swings, who
 turtles, and who keeps coming after you. The client derives those tells from the
 same public history everyone else can see.
 
-For the full design — trust model, hashing rules, Yul optimisations, cross-chain
-flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a feature-by-feature
-reference covering what each mechanism does and why it is there — cross-chain,
-governance, the randomness oracle, EIP-7702 session keys, the Yul libraries —
-see [docs/FEATURES.md](docs/FEATURES.md). Whether each of those features earns
-its place is argued in [docs/PROTOCOL_REVIEW.md](docs/PROTOCOL_REVIEW.md), and
-work still outstanding is tracked in [docs/TODO.md](docs/TODO.md).
+## How a staked match runs
+
+```
+join        players stake on the hub, or on a spoke chain that bridges the stake over
+lockMatch   the seat list is final; randomness is requested (permissionless)
+seeded      the oracle delivers the seed; the server opens the room
+play        commit → reveal → resolve, round by round, off-chain
+settle      a quorum of attestor signatures proposes the ranking and history root
+finalize    once the challenge window closes unvetoed, payouts are credited
+withdraw    winners pull their balance
+```
+
+The signed result commits to every round, so anyone holding the published
+history can replay the match with the same pure engine the server runs. Every
+player's browser does that when the match ends. Detection is off-chain; the
+remedy is on-chain: during the challenge window the guardian Safe may `veto` a
+result the replay does not support, refunding every stake. A match that blows
+its deadline, or is lost to a server restart, is cancelled and refunded rather
+than resumed. There is no on-chain fraud proof or attestor slashing — that is a
+deliberate trust level while the rules are still moving.
+
+Around that core:
+
+- **Cross-chain** — hub-and-spoke. All value and match state live on the hub;
+  `SpokeEscrow` on other chains only forwards stakes through a
+  transport-agnostic messenger (LayerZero adapter).
+- **Pay in any token** — `ZapJoin` swaps an ERC-20 for exactly the stake in ETH
+  through Uniswap v4.
+- **Governance** — every parameter lives in `ProtocolConfig`, owned by a
+  timelock that `LmsGovernor` proposes to. Votes come from staked LMS (sLMS),
+  which also earns the stakers' share of protocol fees in ETH via `FeeRouter`.
+  The Safe keeps a veto and can pause, but never unpause or trap funds.
+- **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
+  EIP-7702 so reconnecting does not prompt the wallet; the server checks the
+  session login with ERC-1271.
+- **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
+
+For the full design — game rules, trust model, hashing, Yul optimisations,
+cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
+feature-by-feature reference of what each mechanism does and why it is there,
+see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
+[docs/TODO.md](docs/TODO.md).
 
 ## Layout
 
 ```
-packages/protocol   types, hashing, EIP-712 schema, wire format, escrow/avatar/session ABIs
-packages/engine     deterministic match state machine and bot strategies
-packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge
-packages/client     PixiJS arena, wallet login, history and reads panels
-contracts/          Foundry project: escrow, oracles, messengers, avatars, 7702 delegate
+packages/protocol   types, rules, hashing, EIP-712 schema, wire format, contract ABIs
+packages/engine     deterministic resolution kernel, match state machine, replay, bots, balance sim
+packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge, fee keeper
+packages/client     PixiJS arena, wallet login, history and reads, staking and governance screens
+packages/harness    headless bot clients for load and chaos testing
+contracts/          Foundry: escrow, spoke, config, governance, oracles, messengers, zap, avatars, 7702 delegate
+scripts/            mainnet-fork dev environment, balance sim, load generator
 ```
 
-Dependencies only ever point left: the engine may use the protocol, the server
-may use both, and the client may use the protocol. Nothing depends on the
-server, which is what makes a match replayable by a third party.
+Dependencies only ever point one way: the engine uses the protocol; the server
+and the client use both (the client replays every finished match with the
+engine); the harness uses only the protocol. Nothing depends on the server,
+which is what makes a match replayable by a third party.
 
 ## Running it locally
 
@@ -78,37 +116,60 @@ one, add the network (`http://127.0.0.1:8545`, chain id 31337) and rerun with
 
 It runs beside a normal `npm run dev` (ports 8788 and 5174, not 8787 and 5173).
 To exercise everything that has no UI yet — cancellation, governance,
-cross-chain joins, withdrawals — see
-[docs/SIMULATE.md](docs/SIMULATE.md), which drives the same fork with `cast`.
+cross-chain joins, withdrawals — see [docs/SIMULATE.md](docs/SIMULATE.md), which drives the
+same fork with `cast`.
 
 `FORK_RPC_URL` swaps the public RPC for your own — worth doing for long
 sessions, since a pruned node eventually stops serving the fork block's state.
 
 ### With a chain
 
-Deploy the contracts, point the server at them, and staked lobbies appear in the
-client:
+Set `DEPLOYER_PK` in `.env`. On anything but a local node the script also
+requires `SAFE` (the governance multisig) and `ORACLE` (a `ChainlinkVrfAdapter`,
+whose owner must then register the escrow with `setConsumer`); the mocks it
+falls back to are for chain 31337 only. `MESSENGER` is optional — unset means a
+hub with no spokes yet. Then:
 
 ```bash
 forge script script/Deploy.s.sol --root contracts --rpc-url $RPC_URL --broadcast
 ```
 
-Then set `RPC_URL`, `ESCROW_ADDRESS` and `ATTESTOR_PK` in `.env` and restart the
-server. It will watch the escrow, lock lobbies once they fill, open a room when
-the randomness oracle seeds the match, and relay the signed result when the
-match ends.
+Point the server at the deployment with `RPC_URL`, `ESCROW_ADDRESS` and
+`ATTESTOR_PK`, and restart it. It watches the escrow, locks lobbies once they
+fill, opens a room when the randomness oracle seeds the match, submits the
+signed result, finalises it once the challenge window closes, and cancels a
+match that can no longer finish. The optional features — session keys, token
+payment, avatars, the fee keeper, staking and governance screens, a Postgres
+archive — each switch on with their own variables; `.env.example` documents
+every one.
+
+The server signs and relays with its single `ATTESTOR_PK`; it does not yet
+gather signatures from other attestors. The escrow enforces whatever quorum is
+configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
+until that collection exists.
+
+The LayerZero and Chainlink VRF adapters have so far only run against local
+mocks; see [docs/TODO.md](docs/TODO.md) for what a live two-chain run still
+needs.
 
 ## Tests
 
 ```bash
-npm test              # TypeScript: protocol, engine, server
-npm run typecheck     # whole monorepo, strict — including every test file
-npm run sol:test      # Foundry: unit, fuzz, invariant
-npm run sol:snapshot  # gas snapshot
+npm test                    # TypeScript: protocol, engine, server, client — includes chaos seeds
+npm run typecheck           # whole monorepo, strict — including every test file
+npm run sol:test            # Foundry: unit, fuzz, invariant
+npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
+npm run sim                 # bot matches under the current rules; fails if balance targets slip
 ```
 
 The TypeScript and Solidity hashing implementations are pinned against each
 other by frozen vectors in `packages/protocol/test/parity.test.ts` and
-`contracts/test/unit/HashLib.t.sol`. If a commit hash ever diverges between the
-two, players could not open commitments on-chain, so those tests are the ones to
-watch.
+`contracts/test/unit/HashLib.t.sol`, so commitments, the rules hash and the
+history root mean the same thing in both languages. Any on-chain verifier
+depends on that, so those tests are the ones to watch.
+
+The server is also tested under adversity: a seeded chaos suite plays real bot
+clients over a simulated network that drops, stalls and resets connections
+([docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md)), and a load generator opens
+a thousand or more real WebSocket players against a running server
+([docs/LOAD_TESTING.md](docs/LOAD_TESTING.md)).

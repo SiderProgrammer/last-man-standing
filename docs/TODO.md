@@ -7,7 +7,7 @@ trust-minimisation story, and operational work.
 
 Items are ordered roughly by what blocks the next demo.
 
-> **Closed on `fix/protocol-review`** (see the status table in `FIX_PLAN.md`):
+> **Closed on `fix/protocol-review`**:
 > withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
 > entries (§2.2), the Redis decision — dropped (§2.3),
 > unlimited practice rooms, a restart mid-match (now aborted and refunded rather
