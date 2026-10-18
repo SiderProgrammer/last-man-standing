@@ -11,6 +11,6 @@ Invariant Testing (/fizz)
 use AI skills (pashov skill, openzeppelin skill)
 game balance
 what are bad design choices in this design? Fix them
-test, run all the features on local fork mainnet
+test, run all the features on local fork mainnet (dont forget cross chain)
 deploy to testnet
 deploy to mainnet
