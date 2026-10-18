@@ -188,7 +188,7 @@ export class Lobby {
    *        and only those feed the style book.
    */
   private open(setup: MatchSetup, botSeats: readonly number[], now: number, staked: boolean): Room {
-    const room = new Room(setup, this.roomOptions(botSeats, staked), now);
+    const room = new Room(setup, this.roomOptions(setup, botSeats, staked), now);
     this.rooms.set(room.matchId.toLowerCase(), room);
     void this.decorate(room, setup);
     if (staked) void this.brief(room, setup);
@@ -215,14 +215,14 @@ export class Lobby {
     }
   }
 
-  private roomOptions(botSeats: readonly number[], staked: boolean): RoomOptions {
+  private roomOptions(setup: MatchSetup, botSeats: readonly number[], staked: boolean): RoomOptions {
     return {
       commitMs: this.options.commitMs,
       revealMs: this.options.revealMs,
       replayMs: this.options.replayMs ?? 0,
       botSeats,
       onFinished: (result, history) => {
-        void this.finalise(result, history, staked);
+        void this.finalise(setup, result, history, staked);
       },
     };
   }
@@ -277,12 +277,13 @@ export class Lobby {
   }
 
   private async finalise(
+    setup: MatchSetup,
     result: MatchResult,
     history: readonly RoundRecord[],
     staked: boolean,
   ): Promise<void> {
     const settledTx = staked ? await this.settle(result) : await this.options.relayer.settle(result).catch(() => null);
-    await this.options.archive.save({ result, history, settledTx });
+    await this.options.archive.save({ result, history, settledTx, seats: setup.seats, rules: setup.rules });
     if (staked && this.options.styles) {
       const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];
       try {

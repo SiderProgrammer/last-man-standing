@@ -103,6 +103,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
     /** First block to look for proposals in: the governor's deployment block. */
     governorFromBlock: optionalBigInt(env.GOVERNOR_FROM_BLOCK) ?? 0n,
+    /**
+     * Post-match analysis with Claude. On when the SDK has a credential to
+     * find in the environment (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`);
+     * `ANALYST_ENABLED=true` forces it on for credentials the SDK resolves
+     * elsewhere (an `ant auth login` profile), `false` forces it off. Off, the
+     * client shows the panel as unavailable and nothing is ever sent anywhere.
+     */
+    analyst: {
+      enabled:
+        env.ANALYST_ENABLED === 'true' ||
+        (env.ANALYST_ENABLED !== 'false' && Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN)),
+      model: env.ANALYST_MODEL || 'claude-opus-5-5',
+      /** `low` | `medium` | `high` | `xhigh` | `max`. Opus 5.5 defaults to medium; set it explicitly anyway. */
+      effort: parseEffort(env.ANALYST_EFFORT),
+      /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
+      maxTokens: Number(env.ANALYST_MAX_TOKENS ?? 16_000),
+      /** Per attempt; the SDK retries timeouts, 429s and 5xx up to `maxRetries` times. */
+      timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 120_000),
+      maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
+    },
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
@@ -118,6 +138,16 @@ function parseLimits(raw: string | undefined): Record<string, number> {
   return Object.fromEntries(
     Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
   );
+}
+
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** A valid effort level, or `medium` when unset. Throws on anything else rather than sending it. */
+function parseEffort(value: string | undefined): (typeof EFFORTS)[number] {
+  if (value === undefined || value === '') return 'medium';
+  const effort = EFFORTS.find((level) => level === value);
+  if (!effort) throw new Error(`ANALYST_EFFORT must be one of ${EFFORTS.join(', ')}`);
+  return effort;
 }
 
 /** Throws on a value that is not an integer, rather than carrying on with garbage. */

@@ -1,9 +1,16 @@
-import { errorMessage, type MatchResult, type RoundRecord } from '@lms/protocol';
+import { errorMessage, type MatchResult, type RoundRecord, type Rules, type Seat } from '@lms/protocol';
 
 export interface ArchivedMatch {
   result: MatchResult;
   history: readonly RoundRecord[];
   settledTx: string | null;
+  /**
+   * Who sat where. Optional because rows archived before it was recorded
+   * lack it; `result.ranking` names the wallets but not their seats.
+   */
+  seats?: readonly Seat[];
+  /** The rule set the match was played under. Optional for the same reason. */
+  rules?: Rules;
 }
 
 export interface MatchArchive {
@@ -73,13 +80,16 @@ export class PostgresArchive implements MatchArchive {
         created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Added after the table first shipped; nullable, so older rows stay valid.
+    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS seats JSONB');
+    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS rules JSONB');
     return new PostgresArchive(pool);
   }
 
   async save(entry: ArchivedMatch): Promise<void> {
     await this.pool.query(
-      `INSERT INTO matches (match_id, rounds, history_root, ranking, history, settled_tx)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO matches (match_id, rounds, history_root, ranking, history, settled_tx, seats, rules)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (match_id) DO UPDATE SET settled_tx = EXCLUDED.settled_tx`,
       [
         entry.result.matchId,
@@ -88,6 +98,8 @@ export class PostgresArchive implements MatchArchive {
         JSON.stringify(entry.result.ranking),
         JSON.stringify(entry.history),
         entry.settledTx,
+        entry.seats ? JSON.stringify(entry.seats) : null,
+        entry.rules ? JSON.stringify(entry.rules) : null,
       ],
     );
   }
@@ -108,7 +120,7 @@ export class PostgresArchive implements MatchArchive {
 }
 
 function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
-  return {
+  const entry: ArchivedMatch = {
     result: {
       matchId: row.match_id as `0x${string}`,
       rounds: Number(row.rounds),
@@ -118,6 +130,9 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
     history: row.history as RoundRecord[],
     settledTx: (row.settled_tx as string | null) ?? null,
   };
+  if (row.seats) entry.seats = row.seats as Seat[];
+  if (row.rules) entry.rules = row.rules as Rules;
+  return entry;
 }
 
 export async function createArchive(databaseUrl: string): Promise<MatchArchive> {

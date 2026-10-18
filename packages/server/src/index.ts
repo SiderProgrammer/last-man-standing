@@ -76,3 +76,19 @@ export {
   type ProposalReader,
 } from './chain/proposals.js';
 export { config, loadConfig, type ServerConfig } from './config.js';
+export {
+  Analyst,
+  AnalystError,
+  classify,
+  type AnalystOptions,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+  type Effort,
+  type MatchAnalyst,
+} from './analyst/analyst.js';
+export { anthropicModel, type AnalystModel, type ModelReply, type ModelRequest } from './analyst/model.js';
+export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './analyst/schema.js';
+export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
+export { JsonFieldStream } from './analyst/stream.js';
+export { SYSTEM_PROMPT, renderMatch, renderRequest, renderRound } from './analyst/prompt.js';
+export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

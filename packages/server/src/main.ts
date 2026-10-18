@@ -22,6 +22,8 @@ import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
+import { Analyst } from './analyst/analyst.js';
+import { anthropicModel } from './analyst/model.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -105,6 +107,17 @@ async function main(): Promise<void> {
 
   const verifyPool = new VerifyPool(config.verifyThreads);
 
+  // Reads finished matches from the archive and nothing else; see `analyst/analyst.ts`.
+  const analyst = config.analyst.enabled
+    ? new Analyst({
+        archive,
+        model: anthropicModel({ timeoutMs: config.analyst.timeoutMs, maxRetries: config.analyst.maxRetries }),
+        modelId: config.analyst.model,
+        effort: config.analyst.effort,
+        maxTokens: config.analyst.maxTokens,
+      })
+    : undefined;
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
@@ -115,6 +128,7 @@ async function main(): Promise<void> {
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
+    ...(analyst ? { analyst } : {}),
     zap,
     staking:
       config.stakedLms !== ZERO_ADDRESS
@@ -241,6 +255,12 @@ async function main(): Promise<void> {
     feeKeeper.start(config.feeKeeperPollMs);
     console.log(`[server] harvesting fees for router ${config.feeRouter}`);
   }
+
+  console.log(
+    analyst
+      ? `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort`
+      : '[server] no model credentials: match analysis unavailable',
+  );
 
   if (!avatars.empty) {
     console.log(`[server] avatar collections on chains ${avatars.chains.join(', ')}`);

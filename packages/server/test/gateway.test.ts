@@ -8,8 +8,8 @@ import {
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
-import { Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
-import type { SignatureVerifier, Socket } from '@lms/server';
+import { AnalystError, Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
+import type { AnalyzeRequest, AnalyzeResult, MatchAnalyst, SignatureVerifier, Socket } from '@lms/server';
 import { lastOfType } from './helpers.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -42,6 +42,11 @@ class FakeSocket implements Socket {
     this.listeners.close?.();
   }
 
+  /** Delivers a raw frame that does not type-check as a `ClientMessage`. */
+  deliverRaw(frame: unknown): void {
+    this.listeners.message?.(JSON.stringify(frame));
+  }
+
   last<T extends ServerMessage['type']>(type: T): Extract<ServerMessage, { type: T }> | undefined {
     return lastOfType(this.sent, type);
   }
@@ -69,6 +74,7 @@ interface Extras {
   sessionDelegate: `0x${string}` | null;
   zap: ZapInfo | null;
   staking: StakingInfo | null;
+  analyst: MatchAnalyst;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -88,6 +94,7 @@ function harness(extras: Partial<Extras> = {}) {
     sessionDelegate: extras.sessionDelegate ?? null,
     zap: extras.zap ?? null,
     staking: extras.staking ?? null,
+    ...(extras.analyst ? { analyst: extras.analyst } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -276,5 +283,113 @@ describe('gateway', () => {
 
     expect(socket.last('authed')).toBeUndefined();
     expect(socket.last('error')?.code).toBe('REJECTED');
+  });
+});
+
+/** An analyst the test drives by hand: each request waits until `finish` or `fail` is called. */
+class ManualAnalyst implements MatchAnalyst {
+  readonly requests: AnalyzeRequest[] = [];
+  private pending: Array<{ resolve: (result: AnalyzeResult) => void; reject: (error: unknown) => void }> = [];
+
+  analyze(request: AnalyzeRequest): Promise<AnalyzeResult> {
+    this.requests.push(request);
+    return new Promise((resolve, reject) => this.pending.push({ resolve, reject }));
+  }
+
+  async finish(matchId: `0x${string}`): Promise<void> {
+    this.pending.shift()?.resolve({
+      analysis: { matchId, seat: 0, summary: 'all of it', decisiveRound: 1, keyMoments: [], advice: [], dropped: 0 },
+      cached: false,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  async fail(error: unknown): Promise<void> {
+    this.pending.shift()?.reject(error);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+const MATCH = `0x${'ef'.repeat(32)}` as const;
+
+describe('gateway analysis frames', () => {
+  it('advertises whether analysis is available', () => {
+    expect(harness().socket.last('hello')?.analyst).toBe(false);
+    expect(harness({ analyst: new ManualAnalyst() }).socket.last('hello')?.analyst).toBe(true);
+  });
+
+  it('requires a login', async () => {
+    const { socket } = harness({ analyst: new ManualAnalyst() });
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    expect(socket.last('error')?.message).toMatch(/authenticate/);
+  });
+
+  it('refuses a malformed match id at the boundary', async () => {
+    const analyst = new ManualAnalyst();
+    const { socket } = harness({ analyst });
+    await login(socket);
+    socket.deliverRaw({ type: 'analyze', matchId: 'nope' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(socket.last('error')?.message).toMatch(/matchId/);
+    expect(analyst.requests).toHaveLength(0);
+  });
+
+  it('says so when this server has no analyst', async () => {
+    const { socket } = harness();
+    await login(socket);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    expect(socket.last('analysis.error')).toMatchObject({ matchId: MATCH, code: 'unavailable' });
+  });
+
+  it('streams deltas and then the finished analysis to the asker', async () => {
+    const analyst = new ManualAnalyst();
+    const { socket } = harness({ analyst });
+    await login(socket);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+
+    expect(analyst.requests[0]).toMatchObject({ matchId: MATCH, requester: account.address });
+    analyst.requests[0]?.onDelta?.('first ');
+    analyst.requests[0]?.onDelta?.('second');
+    await analyst.finish(MATCH);
+
+    const frames = socket.sent.filter((m) => m.type.startsWith('analysis.'));
+    expect(frames.map((m) => m.type)).toEqual(['analysis.delta', 'analysis.delta', 'analysis.done']);
+    expect(socket.last('analysis.done')?.analysis.summary).toBe('all of it');
+  });
+
+  it('forwards the failure code', async () => {
+    const analyst = new ManualAnalyst();
+    const { socket } = harness({ analyst });
+    await login(socket);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    await analyst.fail(new AnalystError('not_found', 'no finished match with that id'));
+    expect(socket.last('analysis.error')).toMatchObject({ code: 'not_found', message: 'no finished match with that id' });
+    // A failed analysis is not misbehaviour and is not answered as a generic error.
+    expect(socket.last('error')).toBeUndefined();
+  });
+
+  it('writes one analysis at a time per socket', async () => {
+    const analyst = new ManualAnalyst();
+    const { socket } = harness({ analyst });
+    await login(socket);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    expect(analyst.requests).toHaveLength(1);
+    expect(socket.last('analysis.error')?.code).toBe('busy');
+
+    await analyst.finish(MATCH);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    expect(analyst.requests).toHaveLength(2);
+  });
+
+  it('cancels the model call when the asker disconnects', async () => {
+    const analyst = new ManualAnalyst();
+    const { socket } = harness({ analyst });
+    await login(socket);
+    await socket.deliver({ type: 'analyze', matchId: MATCH });
+    const signal = analyst.requests[0]?.signal;
+    expect(signal?.aborted).toBe(false);
+    socket.close();
+    expect(signal?.aborted).toBe(true);
   });
 });

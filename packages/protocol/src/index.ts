@@ -16,6 +16,7 @@ export * from './chain/proposals.js';
 
 // Messages between the browser and the server.
 export * from './wire.js';
+export * from './analysis.js';
 
 export * from './util/address.js';
 export * from './util/errors.js';

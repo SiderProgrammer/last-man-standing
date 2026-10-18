@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MatchResult } from '@lms/protocol';
-import { MemoryArchive, type ArchivedMatch } from '@lms/server';
-import { bytes32 } from './helpers.js';
+import { Lobby, MemoryArchive, nullRelayer, type ArchivedMatch } from '@lms/server';
+import { bytes32, setupWithBots } from './helpers.js';
 
 function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
   const result: MatchResult = {
@@ -54,5 +54,24 @@ describe('memory archive', () => {
 
     const recent = await archive.recent(2);
     expect(recent.map((item) => item.result.matchId)).toEqual([bytes32('c'), bytes32('b')]);
+  });
+});
+
+describe('archiving a finished match', () => {
+  it('records who sat where and the rules, which the analyst needs', async () => {
+    const archive = new MemoryArchive();
+    const lobby = new Lobby({ archive, relayer: nullRelayer, commitMs: 10, revealMs: 10 });
+    const setup = setupWithBots(4, 'archive-seats');
+    lobby.adopt(setup, [0, 1, 2, 3], 0);
+
+    let saved: ArchivedMatch | null = null;
+    for (let now = 20; saved === null && now < 20 * 200; now += 20) {
+      lobby.tick(now);
+      await new Promise((resolve) => setImmediate(resolve));
+      saved = await archive.load(setup.matchId);
+    }
+
+    expect(saved?.seats).toEqual(setup.seats);
+    expect(saved?.rules).toEqual(setup.rules);
   });
 });

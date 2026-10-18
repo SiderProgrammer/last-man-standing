@@ -55,6 +55,8 @@ export function parseClientMessage(raw: string): ClientMessage {
     }
     case 'watch':
       return { type: 'watch', matchId: bytes32(frame, 'matchId') };
+    case 'analyze':
+      return { type: 'analyze', matchId: bytes32(frame, 'matchId') };
     case 'commit': {
       const commitment = bytes32(frame, 'commitment');
       if (frame.hold === undefined) return { type: 'commit', commitment, ...aim(frame) };

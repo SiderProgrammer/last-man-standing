@@ -3,6 +3,7 @@ import type { ZapInfo } from './chain/zap.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 import type { PlayStyle } from './game/style.js';
+import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
 /** Largest client frame the server will parse. Every legitimate message is far smaller. */
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
@@ -59,7 +60,12 @@ export type ClientMessage =
    * paying the gas. `GameEscrow.withdrawFor` only ever pays the account
    * itself, so this needs no signature beyond the login.
    */
-  | { type: 'collect' };
+  | { type: 'collect' }
+  /**
+   * Asks for a written analysis of a finished match, streamed back as
+   * `analysis.*` frames. Written from the asking wallet's seat if it had one.
+   */
+  | { type: 'analyze'; matchId: `0x${string}` };
 
 export type ServerMessage =
   | {
@@ -93,6 +99,12 @@ export type ServerMessage =
        * fund them.
        */
       staking: StakingInfo | null;
+      /**
+       * True when this server can write match analyses. Optional for older
+       * servers; absent means no. Lets the client say so up front rather than
+       * after the player has asked.
+       */
+      analyst?: boolean;
     }
   | { type: 'authed'; address: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
@@ -135,6 +147,15 @@ export type ServerMessage =
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
+  /**
+   * A fragment of an analysis's narrative, in order. Purely for showing
+   * progress: `analysis.done` carries the whole text again, and an
+   * `analysis.error` means everything streamed so far should be discarded.
+   */
+  | { type: 'analysis.delta'; matchId: `0x${string}`; text: string }
+  /** The finished analysis, its key moments already checked against the history. */
+  | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
+  | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
   | { type: 'error'; code: string; message: string };
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */
