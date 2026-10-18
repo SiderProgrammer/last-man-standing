@@ -3,6 +3,7 @@ import {
   isActionValue,
   type ActionValue,
   type ClientMessage,
+  type MoveAim,
   type ServerMessage,
 } from '@lms/protocol';
 
@@ -56,13 +57,14 @@ export function parseClientMessage(raw: string): ClientMessage {
       return { type: 'watch', matchId: bytes32(frame, 'matchId') };
     case 'commit': {
       const commitment = bytes32(frame, 'commitment');
-      if (frame.hold === undefined) return { type: 'commit', commitment };
+      if (frame.hold === undefined) return { type: 'commit', commitment, ...aim(frame) };
       if (typeof frame.hold !== 'object' || frame.hold === null) throw new FrameError('hold must be an object');
       const hold = frame.hold as Record<string, unknown>;
       return {
         type: 'commit',
         commitment,
         hold: { action: action(hold), target: integer(hold, 'target', 0, 255), salt: bytes32(hold, 'salt') },
+        ...aim(frame),
       };
     }
     case 'reveal':
@@ -71,6 +73,7 @@ export function parseClientMessage(raw: string): ClientMessage {
         action: action(frame),
         target: integer(frame, 'target', 0, 255),
         salt: bytes32(frame, 'salt'),
+        ...aim(frame),
       };
     case 'relay':
       return {
@@ -84,6 +87,14 @@ export function parseClientMessage(raw: string): ClientMessage {
     default:
       throw new FrameError('unsupported message');
   }
+}
+
+/** The optional match and round a move names; absent fields stay absent. */
+function aim(frame: Record<string, unknown>): MoveAim {
+  const out: MoveAim = {};
+  if (frame.matchId !== undefined) out.matchId = bytes32(frame, 'matchId');
+  if (frame.round !== undefined) out.round = integer(frame, 'round', 0, 0xffffffff);
+  return out;
 }
 
 function string(frame: Record<string, unknown>, field: string): string {

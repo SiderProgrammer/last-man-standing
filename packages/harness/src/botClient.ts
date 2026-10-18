@@ -49,6 +49,13 @@ export interface BotClientOptions {
   games?: number;
   /** False logs in and then sits idle, for connection-soak runs. */
   play?: boolean;
+  /**
+   * Signs the login message. Defaults to the private key's real signature;
+   * the deterministic simulation substitutes a stand-in its server accepts.
+   */
+  sign?: (message: string) => Promise<Hex>;
+  /** A staked table this bot is already seated at: it watches that match instead of opening a practice room. */
+  table?: `0x${string}`;
   /** Ask the server to hold the move and reveal it if this bot drops. */
   hold?: boolean;
   /** Milliseconds to wait before committing, like a human thinking. */
@@ -75,6 +82,11 @@ interface Pending {
 export class BotClient {
   readonly account: PrivateKeyAccount;
   private link: Link | null = null;
+  /** Whether the current link has logged in. Moves wait for it: the server refuses them before. */
+  private authed = false;
+  /** Matches already counted, so a `finished` frame and a finished `state` never count twice. */
+  private readonly counted = new Set<string>();
+  private readonly sign: ((message: string) => Promise<Hex>) | undefined;
   private stopped = false;
   private connectedAt = 0;
   private backoff: number;
@@ -84,7 +96,7 @@ export class BotClient {
   private pending: Pending | null = null;
   /** Round a commit is already scheduled for, so repeated `state` frames do not stack timers. */
   private thinkingFor: string | null = null;
-  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect'>> &
+  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'sign'>> &
     Pick<BotClientOptions, 'onEvent' | 'reconnect'>;
 
   constructor(options: BotClientOptions) {
@@ -101,6 +113,8 @@ export class BotClient {
       ...options,
     };
     this.account = privateKeyToAccount(options.privateKey);
+    this.matchId = options.table ?? null;
+    this.sign = options.sign;
     this.backoff = this.options.reconnect ? this.options.reconnect.baseMs : 0;
   }
 
@@ -130,6 +144,7 @@ export class BotClient {
   private open(): void {
     const link = this.options.connect();
     this.link = link;
+    this.authed = false;
     this.connectedAt = this.options.now();
     link.onOpen(() => this.emit({ type: 'connected' }));
     link.onMessage((data) => {
@@ -164,11 +179,13 @@ export class BotClient {
   private async handle(message: ServerMessage): Promise<void> {
     switch (message.type) {
       case 'hello': {
-        const signature = await this.account.signMessage({ message: `${AUTH_PREFIX}${message.nonce}` });
+        const text = `${AUTH_PREFIX}${message.nonce}`;
+        const signature = await (this.sign ? this.sign(text) : this.account.signMessage({ message: text }));
         this.send({ type: 'auth', address: this.address, signature });
         return;
       }
       case 'authed': {
+        this.authed = true;
         if (this.options.reconnect) this.backoff = this.options.reconnect.baseMs;
         this.emit({ type: 'authed', ms: this.options.now() - this.connectedAt });
         // Back into the match in progress, or into a new one.
@@ -189,15 +206,9 @@ export class BotClient {
         });
         return;
       }
-      case 'finished': {
-        this.gamesPlayed += 1;
-        this.matchId = null;
-        this.pending = null;
-        this.emit({ type: 'finished', won: message.result.ranking[0]?.toLowerCase() === this.address.toLowerCase() });
-        if (this.done) this.stop();
-        else this.nextGame();
+      case 'finished':
+        this.finish(message.result.matchId, message.result.ranking[0]);
         return;
-      }
       case 'error':
         this.emit({ type: 'error', message: message.message });
         // A match lost to a server restart can never be re-joined: move on.
@@ -217,9 +228,42 @@ export class BotClient {
     this.send({ type: 'practice', bots: this.options.opponents });
   }
 
+  /**
+   * Counts a finished match once and moves on. Reached from the `finished`
+   * frame, or — when the bot was offline as the match ended and re-attached
+   * afterwards — from the finished `state` it is sent on attach, since the
+   * `finished` frame itself went to a socket that no longer existed.
+   */
+  private finish(matchId: `0x${string}`, winner: `0x${string}` | undefined): void {
+    const key = matchId.toLowerCase();
+    if (this.counted.has(key)) return;
+    this.counted.add(key);
+    this.gamesPlayed += 1;
+    if (this.matchId?.toLowerCase() === key) {
+      this.matchId = null;
+      this.pending = null;
+    }
+    this.emit({ type: 'finished', won: winner?.toLowerCase() === this.address.toLowerCase() });
+    if (this.done) this.stop();
+    else this.nextGame();
+  }
+
   private onState(state: PublicMatchState, you: number | null): void {
-    if (you === null) return;
-    if (state.phase === MatchPhase.Finished || state.phase === MatchPhase.Aborted) return;
+    if (you === null) {
+      // Attached to the match it was playing, but not seated in it: that match
+      // is not the one it left. Give up on it rather than spectate forever.
+      if (this.matchId?.toLowerCase() === state.matchId.toLowerCase()) {
+        this.emit({ type: 'error', message: `not seated in ${state.matchId} after re-attaching` });
+        this.matchId = null;
+        this.pending = null;
+        this.nextGame();
+      }
+      return;
+    }
+    if (state.phase === MatchPhase.Finished || state.phase === MatchPhase.Aborted) {
+      if (this.matchId?.toLowerCase() === state.matchId.toLowerCase()) this.finish(state.matchId, undefined);
+      return;
+    }
     this.matchId = state.matchId;
     const me = state.players.find((player) => player.index === you);
     if (!me?.alive) return;
@@ -247,21 +291,37 @@ export class BotClient {
       this.thinkingFor = key;
       const target = pending;
       this.options.schedule(() => {
-        if (this.pending !== target || target.committed || !this.link) return;
+        // Not before this link has logged in: the server would refuse the commit
+        // and the move would be lost. The `state` that follows the re-attach
+        // schedules it again.
+        if (this.pending !== target || target.committed || !this.link || !this.authed) {
+          if (this.thinkingFor === key) this.thinkingFor = null;
+          return;
+        }
         const commitment = commitMove(target.matchId, target.round, target.seat, target.move);
         target.committed = true;
         target.actedAt = this.options.now();
+        const aim = { matchId: target.matchId, round: target.round };
         this.send(
-          this.options.hold ? { type: 'commit', commitment, hold: target.move } : { type: 'commit', commitment },
+          this.options.hold
+            ? { type: 'commit', commitment, hold: target.move, ...aim }
+            : { type: 'commit', commitment, ...aim },
         );
         this.emit({ type: 'committed', round: target.round });
       }, this.options.thinkMs());
     }
 
-    if (state.phase === MatchPhase.Reveal && pending.committed && !pending.revealed) {
+    if (state.phase === MatchPhase.Reveal && pending.committed && !pending.revealed && this.authed) {
       pending.revealed = true;
       pending.actedAt = this.options.now();
-      this.send({ type: 'reveal', action: pending.move.action, target: pending.move.target, salt: pending.move.salt });
+      this.send({
+        type: 'reveal',
+        action: pending.move.action,
+        target: pending.move.target,
+        salt: pending.move.salt,
+        matchId: pending.matchId,
+        round: pending.round,
+      });
       this.emit({ type: 'revealed', round: pending.round });
     }
   }

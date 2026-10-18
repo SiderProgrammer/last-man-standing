@@ -7,13 +7,26 @@ import type { PlayStyle } from './game/style.js';
 /** Largest client frame the server will parse. Every legitimate message is far smaller. */
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
 
+/**
+ * Which match and round a move was made for. Optional on the wire for older
+ * clients, but every current client sends it: without it the server can only
+ * assume a move is for the round in progress, so a commit computed for an
+ * earlier round — delayed in flight, or queued while offline and flushed on
+ * reconnect — was accepted as this round's and could then never be opened.
+ * With it, such a move is refused with an error naming the round.
+ */
+export interface MoveAim {
+  matchId?: `0x${string}`;
+  round?: number;
+}
+
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =
   | { type: 'auth'; address: `0x${string}`; signature: `0x${string}` }
   | { type: 'lobbies' }
   | { type: 'practice'; bots?: number }
   | { type: 'watch'; matchId: `0x${string}` }
-  | {
+  | ({
       type: 'commit';
       commitment: `0x${string}`;
       /**
@@ -23,8 +36,8 @@ export type ClientMessage =
        * the server learns the move a phase earlier than it otherwise would.
        */
       hold?: { action: ActionValue; target: number; salt: `0x${string}` };
-    }
-  | { type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` }
+    } & MoveAim)
+  | ({ type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` } & MoveAim)
   /**
    * A call the player's session key authorised, for the server to submit and
    * pay for. The signature is the whole authority — the server cannot alter

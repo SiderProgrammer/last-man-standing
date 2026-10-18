@@ -5,6 +5,7 @@ import {
   type AvatarEntry,
   type MatchResult,
   type PlayStyle,
+  type MoveAim,
   type PublicMatchState,
   type RoundRecord,
   type SealedMove,
@@ -151,8 +152,10 @@ export class Room {
     commitment: `0x${string}`,
     now: number = Date.now(),
     hold?: SealedMove,
+    aim: MoveAim = {},
   ): void {
     const seat = this.requireSeat(address);
+    this.requireAim(aim);
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
       if (opened.toLowerCase() !== commitment.toLowerCase()) {
@@ -167,8 +170,9 @@ export class Room {
     else this.broadcastState();
   }
 
-  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now()): void {
+  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim: MoveAim = {}): void {
     const seat = this.requireSeat(address);
+    this.requireAim(aim);
     this.match.submitReveal(seat, move);
     if (this.match.allRevealed()) this.resolveRound(now);
     else this.broadcastState();
@@ -212,6 +216,16 @@ export class Room {
       }
     }
     if (missed > 0) missedMoves.inc({ phase: state.phase }, missed);
+  }
+
+  /** Refuses a move made for another match or round: see `MoveAim`. */
+  private requireAim(aim: MoveAim): void {
+    if (aim.matchId !== undefined && aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
+      throw new Error('this move is for another match');
+    }
+    if (aim.round !== undefined && aim.round !== this.match.round) {
+      throw new Error(`this move is for round ${aim.round}; the match is on round ${this.match.round}`);
+    }
   }
 
   private requireSeat(address: `0x${string}`): number {

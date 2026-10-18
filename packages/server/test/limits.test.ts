@@ -174,6 +174,18 @@ describe('frame validation', () => {
     );
   });
 
+  it('validates the match and round a move names, and keeps them', () => {
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32 };
+    expect(parseClientMessage(JSON.stringify({ ...reveal, matchId: BYTES32, round: 3 }))).toEqual({
+      ...reveal,
+      matchId: BYTES32,
+      round: 3,
+    });
+    expect(parse({ ...reveal, round: -1 })).toThrow(/round/);
+    expect(parse({ ...reveal, matchId: '0x12' })).toThrow(/matchId/);
+    expect(parse({ type: 'commit', commitment: BYTES32, round: 1.5 })).toThrow(/round/);
+  });
+
   it('rejects an unknown message type', () => {
     expect(parse({ type: 'nope' })).toThrow(/unsupported/);
   });

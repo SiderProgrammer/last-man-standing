@@ -245,3 +245,32 @@ describe('spectators', () => {
     expect(spectator.last('state')?.you).toBeNull();
   });
 });
+
+describe('move aim', () => {
+  it('refuses a commit made for another round instead of taking it for this one', () => {
+    const instance = room();
+    const move = humanMove(instance, Action.Defend);
+    const stale = commitMove(instance.matchId, 0, 0, move);
+    expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { round: 0 })).toThrow(
+      /for round 0; the match is on round 1/,
+    );
+    expect(instance.match.publicState().committed).not.toContain(0);
+  });
+
+  it('refuses a move made for another match', () => {
+    const instance = room();
+    const move = humanMove(instance, Action.Defend);
+    const commitment = commitMove(instance.matchId, 1, 0, move);
+    expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere') })).toThrow(
+      /another match/,
+    );
+  });
+
+  it('accepts a move that names the match and round in progress', () => {
+    const instance = room();
+    const move = humanMove(instance, Action.Defend);
+    const commitment = commitMove(instance.matchId, instance.match.round, 0, move);
+    instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: instance.matchId, round: instance.match.round });
+    expect(instance.match.publicState().committed).toContain(0);
+  });
+});

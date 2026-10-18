@@ -7,6 +7,7 @@ import {
   type AvatarCollectionInfo,
   type ClientMessage,
   type LobbyInfo,
+  type MoveAim,
   type ServerMessage,
   type StakingInfo,
   type ZapInfo,
@@ -356,7 +357,7 @@ export class Gateway {
         return;
       }
       case 'commit': {
-        this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold);
+        this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold, aimOf(message));
         return;
       }
       case 'reveal': {
@@ -364,6 +365,7 @@ export class Gateway {
           address,
           { action: message.action, target: message.target, salt: message.salt },
           now,
+          aimOf(message),
         );
         return;
       }
@@ -442,6 +444,13 @@ export class Gateway {
   private now(): number {
     return this.options.now?.() ?? Date.now();
   }
+}
+
+function aimOf(message: MoveAim): MoveAim {
+  const aim: MoveAim = {};
+  if (message.matchId !== undefined) aim.matchId = message.matchId;
+  if (message.round !== undefined) aim.round = message.round;
+  return aim;
 }
 
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
