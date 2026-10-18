@@ -35,6 +35,8 @@ The pieces exist and typecheck, but they have only run against mocks:
   player who joins on-chain before the room exists gets no feedback beyond a toast.
 - Reconcile the two id spaces: practice matches use `deriveMatchId(0, 0x0, nonce)`, staked
   matches use the escrow's nonce. They cannot currently collide, but nothing enforces it.
+  Practice nonces now start at a random 64-bit offset per process, after the chaos tests
+  showed ids repeating across restarts.
 
 ### 1.2 Client gaps
 
@@ -111,13 +113,20 @@ mainnet. Still open:
 
 ### 3.2 Server-side hardening
 
-- No rate limiting, message size cap, or connection cap on the gateway.
+- ~~No rate limiting, message size cap, or connection cap on the gateway.~~ Done: see
+  `gateway/limits.ts`. Connection caps (global, per IP, connect rate), an origin
+  allowlist, `ws` `maxPayload`, per-socket buckets with a separate one for moves, a
+  per-IP login budget ahead of the ERC-1271 verifier, a per-wallet relay budget, a strike
+  bucket that disconnects persistent offenders, slow-consumer eviction, and a ping/pong
+  heartbeat. Limits are per process: a second instance would need shared state.
 - Commitments and reveals are held only in memory, deliberately. A match that was live
   when the server restarts is not resumed: `ChainBridge` has the attestor quorum call
   `GameEscrow.abortMatch`, which refunds every seat at once, and falls back to the
   permissionless `cancelMatch` at the settlement deadline when it cannot.
-- The practice-room path lets any authenticated wallet create unlimited rooms.
-- The login nonce is single-use per connection but never expires within it.
+- ~~The practice-room path lets any authenticated wallet create unlimited rooms.~~ One
+  per wallet and a global ceiling (`MAX_PRACTICE_ROOMS`).
+- ~~The login nonce is single-use per connection but never expires within it.~~ A socket
+  that has not logged in within `LOGIN_TIMEOUT_MS` is closed, which expires its nonce.
 - The keeper key doubles as the attestor key by default. Splitting them would mean a
   compromised keeper cannot also sign results.
 
@@ -163,10 +172,9 @@ any of this is a deliberate, visible change rather than a silent one.
 - **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
   `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
   Dormant, because nothing calls `load`. Pinned by `packages/server/test/store.test.ts`.
-- **Client frames are cast, not validated.** `parseClientMessage` checks that the payload
-  is JSON, is an object and has a `type`, then casts. `target`, `value` and
-  `nonce` reach the room and the relayer unvalidated; only `action` is guarded. A
-  `BigInt('abc')` surfaces to the player as a V8 `SyntaxError`.
+- ~~**Client frames are cast, not validated.**~~ Fixed: `parseClientMessage` checks every
+  field of every message (addresses, bytes32, hex, uint256 decimals, uint8 targets,
+  actions) and rebuilds the message from the checked fields only.
 - **The wire's `code` field is decorative.** `wire.ts` reserves a machine-readable code,
   `errorFrame` always sends `REJECTED`, and the client never reads it — while the
   engine's `MatchError` carries a real code that is discarded at the boundary. Either
@@ -261,6 +269,14 @@ any of this is a deliberate, visible change rather than a silent one.
   by `packages/client/test`. What is still untested is the DOM applier layer in
   `screens/` and `wallet/flows.ts`, and `arena/`'s rendering, all of which would need a
   browser rather than node.
+- **Chaos testing:** `packages/server/test/chaos.test.ts` (see `docs/CHAOS_TESTING.md`):
+  seeded, reproducible runs with drops, stalls, latency, refused connects, server restarts
+  and a failing relayer. Open: chain-side chaos (RPC faults, reorgs) and LayerZero delivery
+  faults.
+- **Load testing:** `npm run load` (see `docs/LOAD_TESTING.md`). One process tops out
+  around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
+  reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
+  and a run from separate generator hosts at 10k.
 - **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
 - **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
   Fine for a testnet demo, worth code-splitting before anything public.

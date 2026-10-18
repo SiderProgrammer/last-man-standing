@@ -1,33 +1,150 @@
-import { errorMessage, type ClientMessage, type ServerMessage } from '@lms/protocol';
+import {
+  errorMessage,
+  isActionValue,
+  type ActionValue,
+  type ClientMessage,
+  type MoveAim,
+  type ServerMessage,
+} from '@lms/protocol';
 
 /**
  * Socket frame decoding, and the error frame that goes back when it fails.
  *
- * Kept apart from the gateway so the one unchecked cast in the server has a
- * single home and an explanation attached to it.
+ * Every field of every message is checked here, at the boundary, so nothing
+ * past `parseClientMessage` ever sees a value of the wrong shape: a `BigInt`
+ * of a non-numeric string, a seat index of `1e9`, a hex string that is not
+ * hex. A frame that fails throws a `FrameError`, which the gateway counts
+ * against the socket.
  */
 
-/**
- * Decodes a client frame.
- *
- * Only the envelope is checked: that the payload is JSON, is an object, and
- * carries a `type`. The fields inside are **not** validated — `target`,
- * `value` and `nonce` all reach the room and the relayer as whatever
- * the client sent, and the cast below says so out loud. See `docs/TODO.md`
- * §3.4; tightening it changes what a malformed frame does, so it is not part
- * of a behaviour-preserving refactor.
- */
+/** A frame that is not a well-formed `ClientMessage`. */
+export class FrameError extends Error {}
+
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
+/** Any even-length hex. Session-key and ERC-1271 signatures are not always 65 bytes. */
+const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
+/** A uint256 in decimal: at most 78 digits, no sign, no exponent. */
+const UINT_DECIMAL = /^(?:0|[1-9][0-9]{0,77})$/;
+/** Generous for any signature scheme, still far below the frame cap. */
+const MAX_SIGNATURE_HEX = 2 + 2 * 1024;
+
 export function parseClientMessage(raw: string): ClientMessage {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('payload is not valid JSON');
+    throw new FrameError('payload is not valid JSON');
   }
   if (typeof parsed !== 'object' || parsed === null || !('type' in parsed)) {
-    throw new Error('payload has no message type');
+    throw new FrameError('payload has no message type');
   }
-  return parsed as ClientMessage;
+  const frame = parsed as Record<string, unknown>;
+
+  switch (frame.type) {
+    case 'auth':
+      return { type: 'auth', address: address(frame, 'address'), signature: signature(frame, 'signature') };
+    case 'lobbies':
+      return { type: 'lobbies' };
+    case 'collect':
+      return { type: 'collect' };
+    case 'practice': {
+      if (frame.bots === undefined) return { type: 'practice' };
+      // The lobby clamps to the rules' seat range; this only rules out garbage.
+      return { type: 'practice', bots: integer(frame, 'bots', 0, 16) };
+    }
+    case 'watch':
+      return { type: 'watch', matchId: bytes32(frame, 'matchId') };
+    case 'commit': {
+      const commitment = bytes32(frame, 'commitment');
+      if (frame.hold === undefined) return { type: 'commit', commitment, ...aim(frame) };
+      if (typeof frame.hold !== 'object' || frame.hold === null) throw new FrameError('hold must be an object');
+      const hold = frame.hold as Record<string, unknown>;
+      return {
+        type: 'commit',
+        commitment,
+        hold: { action: action(hold), target: integer(hold, 'target', 0, 255), salt: bytes32(hold, 'salt') },
+        ...aim(frame),
+      };
+    }
+    case 'reveal':
+      return {
+        type: 'reveal',
+        action: action(frame),
+        target: integer(frame, 'target', 0, 255),
+        salt: bytes32(frame, 'salt'),
+        ...aim(frame),
+      };
+    case 'relay':
+      return {
+        type: 'relay',
+        target: address(frame, 'target'),
+        value: decimal(frame, 'value'),
+        data: hex(frame, 'data'),
+        nonce: decimal(frame, 'nonce'),
+        signature: signature(frame, 'signature'),
+      };
+    default:
+      throw new FrameError('unsupported message');
+  }
+}
+
+/** The optional match and round a move names; absent fields stay absent. */
+function aim(frame: Record<string, unknown>): MoveAim {
+  const out: MoveAim = {};
+  if (frame.matchId !== undefined) out.matchId = bytes32(frame, 'matchId');
+  if (frame.round !== undefined) out.round = integer(frame, 'round', 0, 0xffffffff);
+  return out;
+}
+
+function string(frame: Record<string, unknown>, field: string): string {
+  const value = frame[field];
+  if (typeof value !== 'string') throw new FrameError(`${field} must be a string`);
+  return value;
+}
+
+function matching(frame: Record<string, unknown>, field: string, pattern: RegExp, what: string): `0x${string}` {
+  const value = string(frame, field);
+  if (!pattern.test(value)) throw new FrameError(`${field} must be ${what}`);
+  return value as `0x${string}`;
+}
+
+function address(frame: Record<string, unknown>, field: string): `0x${string}` {
+  return matching(frame, field, ADDRESS, 'an address');
+}
+
+function bytes32(frame: Record<string, unknown>, field: string): `0x${string}` {
+  return matching(frame, field, BYTES32, '32 bytes of hex');
+}
+
+function hex(frame: Record<string, unknown>, field: string): `0x${string}` {
+  return matching(frame, field, HEX, 'hex');
+}
+
+function signature(frame: Record<string, unknown>, field: string): `0x${string}` {
+  const value = hex(frame, field);
+  if (value.length < 4 || value.length > MAX_SIGNATURE_HEX) throw new FrameError(`${field} has an implausible length`);
+  return value;
+}
+
+function decimal(frame: Record<string, unknown>, field: string): string {
+  const value = string(frame, field);
+  if (!UINT_DECIMAL.test(value)) throw new FrameError(`${field} must be a non-negative decimal integer`);
+  return value;
+}
+
+function integer(frame: Record<string, unknown>, field: string, min: number, max: number): number {
+  const value = frame[field];
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    throw new FrameError(`${field} must be an integer from ${min} to ${max}`);
+  }
+  return value;
+}
+
+function action(frame: Record<string, unknown>): ActionValue {
+  const value = frame.action;
+  if (!isActionValue(value)) throw new FrameError('unknown action');
+  return value;
 }
 
 /**

@@ -169,7 +169,15 @@ function lockIn(): void {
   rememberMove(state.matchId, state.round, sealed);
 
   const commitment = commitMove(state.matchId, state.round, app.you, sealed);
-  net.send({ type: 'commit', commitment, ...(dom.holdMoves.checked ? { hold: sealed } : {}) });
+  net.send({
+    type: 'commit',
+    commitment,
+    // Names the round, so a commit flushed late from the offline queue is
+    // refused instead of being taken for a later round's.
+    matchId: state.matchId,
+    round: state.round,
+    ...(dom.holdMoves.checked ? { hold: sealed } : {}),
+  });
   app.committedRound = state.round;
   dom.lockIn.disabled = true;
   setActionsEnabled(false);
@@ -187,6 +195,8 @@ function revealNow(state: PublicMatchState): void {
     action: stored.action,
     target: stored.target,
     salt: stored.salt,
+    matchId: state.matchId,
+    round: state.round,
   });
   app.revealedRound = state.round;
   dom.moveStatus.textContent = 'Revealed. Resolving…';

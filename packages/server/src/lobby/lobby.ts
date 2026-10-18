@@ -33,7 +33,20 @@ export interface LobbyOptions {
   maxPracticeRooms?: number;
   /** Play styles by wallet, for the reads panel. Omitted, nobody has a record. */
   styles?: StyleBook;
+  /**
+   * Waits before each settlement retry, in order; one attempt more than there
+   * are entries. Defaults to 2 s then 10 s. Empty never retries.
+   */
+  settleBackoffMs?: readonly number[];
+  /** Injectable for tests running on virtual time. */
+  sleep?: (ms: number) => Promise<void>;
+  /** First practice nonce. Defaults to a random 64-bit offset; see `practiceNonce`. Tests pin it to replay a run. */
+  practiceNonceStart?: bigint;
+  /** Seeds for practice matches. Defaults to 32 random bytes each; tests pin it to replay a run. */
+  practiceSeed?: () => `0x${string}`;
 }
+
+const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000];
 
 const DEFAULT_MAX_PRACTICE_ROOMS = 200;
 
@@ -55,9 +68,18 @@ export class Lobby {
   private readonly abandoned = new Set<string>();
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
-  private practiceNonce = 0n;
+  /**
+   * Starts at a random 64-bit offset rather than zero. From zero, every
+   * process handed out the same practice match ids, so after a restart a
+   * player re-attaching to its old match id landed — as a spectator — in a
+   * stranger's new match that happened to reuse it. Two server instances
+   * would collide the same way.
+   */
+  private practiceNonce: bigint;
 
-  constructor(private readonly options: LobbyOptions) {}
+  constructor(private readonly options: LobbyOptions) {
+    this.practiceNonce = options.practiceNonceStart ?? BigInt(`0x${randomBytes(8).toString('hex')}`) << 64n;
+  }
 
   get size(): number {
     return this.rooms.size;
@@ -111,7 +133,7 @@ export class Lobby {
     const setup: MatchSetup = {
       matchId,
       seats,
-      seed: keccak256(toHex(randomBytes(32))),
+      seed: this.options.practiceSeed?.() ?? keccak256(toHex(randomBytes(32))),
       rules,
     };
 
@@ -225,19 +247,41 @@ export class Lobby {
     }
   }
 
+  /**
+   * Submits the result, retrying with backoff. A failure is usually transient
+   * — an RPC timeout, a nonce race, a gas spike — and the escrow stays `Live`
+   * until its deadline, so a resubmission a few seconds later normally lands.
+   * Retrying an attempt that did land in fact is harmless: the escrow is no
+   * longer `Live`, so the relayer's simulation reverts before spending gas.
+   * After the last attempt the match refunds at its deadline as before.
+   */
+  private async settle(result: MatchResult): Promise<`0x${string}` | null> {
+    const backoff = this.options.settleBackoffMs ?? DEFAULT_SETTLE_BACKOFF_MS;
+    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.options.relayer.settle(result);
+      } catch (error) {
+        const wait = backoff[attempt];
+        if (wait === undefined) {
+          console.error(
+            `[lobby] settlement of ${result.matchId} failed after ${attempt + 1} attempts; the escrow refunds at its deadline:`,
+            errorMessage(error),
+          );
+          return null;
+        }
+        console.warn(`[lobby] settlement of ${result.matchId} failed; retrying in ${wait} ms:`, errorMessage(error));
+        await sleep(wait);
+      }
+    }
+  }
+
   private async finalise(
     result: MatchResult,
     history: readonly RoundRecord[],
     staked: boolean,
   ): Promise<void> {
-    let settledTx: string | null = null;
-    try {
-      settledTx = await this.options.relayer.settle(result);
-    } catch (error) {
-      // A failed settlement is recoverable: the escrow stays `Live` until the
-      // deadline, so the result can be resubmitted or the match cancelled.
-      console.error('[lobby] settlement failed', errorMessage(error));
-    }
+    const settledTx = staked ? await this.settle(result) : await this.options.relayer.settle(result).catch(() => null);
     await this.options.archive.save({ result, history, settledTx });
     if (staked && this.options.styles) {
       const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];

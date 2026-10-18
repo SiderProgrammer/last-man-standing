@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import { ZERO_ADDRESS } from '@lms/protocol';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
@@ -29,6 +30,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     databaseUrl: env.DATABASE_URL ?? '',
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */
     maxPracticeRooms: Number(env.MAX_PRACTICE_ROOMS ?? 200),
+    /** Sockets open at once, across the server and per client IP. See `gateway/limits.ts`. */
+    maxConnections: Number(env.MAX_CONNECTIONS ?? 10_000),
+    maxConnectionsPerIp: Number(env.MAX_CONNECTIONS_PER_IP ?? 20),
+    /** A socket that has not logged in by then is closed. */
+    loginTimeoutMs: Number(env.LOGIN_TIMEOUT_MS ?? 120_000),
+    /**
+     * Comma-separated `Origin`s the WebSocket handshake accepts, e.g.
+     * `https://play.example.com`. Blank accepts any origin, which is what
+     * local development wants and production should not.
+     */
+    allowedOrigins: (env.ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    /**
+     * Take the client IP from `X-Forwarded-For` instead of the socket. Only
+     * behind a proxy that sets it: otherwise any client can claim any IP and
+     * walk straight past the per-IP limits.
+     */
+    trustProxy: env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1',
+    /**
+     * Overrides for any field of `DEFAULT_GATEWAY_LIMITS`, as JSON, e.g.
+     * `{"connectRatePerIp":1000,"connectBurstPerIp":10000}` for a load test
+     * whose clients all come from one IP. Unknown or non-numeric fields are
+     * ignored.
+     */
+    gatewayLimits: parseLimits(env.GATEWAY_LIMITS),
+    /**
+     * Worker threads that recover login signatures off the event loop. Zero
+     * recovers inline. The default leaves one core for the event loop.
+     */
+    verifyThreads: Number(env.VERIFY_THREADS ?? Math.max(1, Math.min(4, availableParallelism() - 1))),
     /**
      * `PlayerAvatars` deployments, as JSON:
      * `[{"chainId":11155111,"address":"0x…","rpcUrl":"https://…"}]`
@@ -75,6 +108,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
     },
   };
+}
+
+/** Numeric fields of a JSON object; anything else is dropped. Throws on invalid JSON. */
+function parseLimits(raw: string | undefined): Record<string, number> {
+  if (!raw) return {};
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+  );
 }
 
 /** Throws on a value that is not an integer, rather than carrying on with garbage. */
