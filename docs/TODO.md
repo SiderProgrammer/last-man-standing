@@ -35,6 +35,8 @@ The pieces exist and typecheck, but they have only run against mocks:
   player who joins on-chain before the room exists gets no feedback beyond a toast.
 - Reconcile the two id spaces: practice matches use `deriveMatchId(0, 0x0, nonce)`, staked
   matches use the escrow's nonce. They cannot currently collide, but nothing enforces it.
+  Practice nonces now start at a random 64-bit offset per process, after the chaos tests
+  showed ids repeating across restarts.
 
 ### 1.2 Client gaps
 
@@ -270,6 +272,10 @@ any of this is a deliberate, visible change rather than a silent one.
   by `packages/client/test`. What is still untested is the DOM applier layer in
   `screens/` and `wallet/flows.ts`, and `arena/`'s rendering, all of which would need a
   browser rather than node.
+- **Chaos testing:** `packages/server/test/chaos.test.ts` (see `docs/CHAOS_TESTING.md`):
+  seeded, reproducible runs with drops, stalls, latency, refused connects, server restarts
+  and a failing relayer. Open: chain-side chaos (RPC faults, reorgs) and LayerZero delivery
+  faults.
 - **Load testing:** `npm run load` (see `docs/LOAD_TESTING.md`). One process tops out
   around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
   reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,

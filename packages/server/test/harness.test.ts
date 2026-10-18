@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BotClient, keyFor, type BotEvent } from '@lms/harness';
-import { world } from './sim.js';
+import { privateKeyToAccount } from 'viem/accounts';
+import { simSigner, world } from './sim.js';
 
 describe('bot client', () => {
   it('logs in, plays practice games to the end, and stops', async () => {
@@ -8,6 +9,7 @@ describe('bot client', () => {
     const events: BotEvent[] = [];
     const bot = new BotClient({
       privateKey: keyFor(0),
+      sign: simSigner(privateKeyToAccount(keyFor(0)).address),
       connect: () => net.connect(),
       games: 2,
       thinkMs: () => 200,
@@ -30,6 +32,7 @@ describe('bot client', () => {
     const events: BotEvent[] = [];
     const bot = new BotClient({
       privateKey: keyFor(1),
+      sign: simSigner(privateKeyToAccount(keyFor(1)).address),
       connect: () => net.connect(),
       thinkMs: () => 100,
       schedule: clock.schedule,
