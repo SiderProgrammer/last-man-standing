@@ -44,7 +44,7 @@ For every seed:
 - **Liveness.** Every bot finishes its games within a bound. A failure lists
   each stuck bot with its last events.
 - **Integrity.** Every archived staked result replays to itself through
-  `verifyResult`, and `lms_replay_mismatch_total` does not move.
+  `verifyResult`.
 - **Hygiene.** Once everyone has left: no open sessions and no rooms.
 - **No unexpected errors.** Only the errors a drop legitimately causes (a
   stale move refused by its aim, a move after its window, a match that no

@@ -17,8 +17,6 @@
     "load": "tsc --build && node scripts/load-test.mjs",
     "load:server": "tsc --build && node scripts/load-server.mjs",
     "clean": "tsc --build --clean",
-    "obs:up": "docker compose -f ops/observability/docker-compose.yml up -d",
-    "obs:down": "docker compose -f ops/observability/docker-compose.yml down",
     "typecheck": "npm run typecheck:src && npm run typecheck:client && npm run typecheck:tests",
     "typecheck:src": "tsc --build --force",
     "typecheck:client": "tsc -p packages/client/tsconfig.json",

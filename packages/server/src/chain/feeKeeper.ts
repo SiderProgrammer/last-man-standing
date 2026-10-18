@@ -1,10 +1,6 @@
 import type { Address, Hex } from 'viem';
 import { errorMessage, feeRouterAbi, gameEscrowAbi } from '@lms/protocol';
 import { signerClients } from './viem.js';
-import { log } from '../observability/log.js';
-import { observeTx } from '../observability/metrics.js';
-
-const logger = log.child({ component: 'fees' });
 
 /**
  * Everything the keeper needs from the chain, as an interface, for the same
@@ -75,7 +71,7 @@ export class FeeKeeper {
     try {
       const credited = await this.port.credited();
       if (credited === 0n || credited < this.policy.minHarvest) return null;
-      await observeTx('harvest', { 'lms.wei': credited.toString() }, () => this.port.harvest());
+      await this.port.harvest();
       return credited;
     } finally {
       this.running = false;
@@ -85,9 +81,9 @@ export class FeeKeeper {
   private async tickLogged(): Promise<void> {
     try {
       const harvested = await this.tick();
-      if (harvested) logger.info('harvested', { wei: harvested });
+      if (harvested) console.log(`[fees] harvested ${harvested} wei`);
     } catch (error) {
-      logger.error('harvest failed', { error: errorMessage(error) });
+      console.error('[fees] harvest failed:', errorMessage(error));
     }
   }
 }

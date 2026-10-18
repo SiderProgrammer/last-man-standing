@@ -18,12 +18,6 @@
   "dependencies": {
     "@lms/engine": "0.1.0",
     "@lms/protocol": "0.1.0",
-    "@opentelemetry/api": "1.9.1",
-    "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
-    "@opentelemetry/resources": "2.11.0",
-    "@opentelemetry/sdk-trace-base": "2.11.0",
-    "@opentelemetry/sdk-trace-node": "2.11.0",
-    "prom-client": "15.1.3",
     "viem": "^2.21.55",
     "ws": "^8.18.0"
   },

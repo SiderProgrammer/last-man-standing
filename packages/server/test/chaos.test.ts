@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BotClient, keyFor, type BotEvent } from '@lms/harness';
 import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
 import { moveLogFromHistory, verifyResult, type MatchSetup } from '@lms/engine';
-import { MemoryArchive, metrics, type Relayer } from '@lms/server';
+import { MemoryArchive, type Relayer } from '@lms/server';
 import { privateKeyToAccount } from 'viem/accounts';
 import { simSigner, world, type Faults } from './sim.js';
 
@@ -19,7 +19,7 @@ import { simSigner, world, type Faults } from './sim.js';
  *
  * What must hold whatever the faults:
  * - liveness: every bot finishes its games within a bound;
- * - integrity: every archived result replays to itself;
+ * - integrity: every archived staked result replays to itself;
  * - hygiene: once everyone has left, no connection, room or session leaks;
  * - no protocol errors beyond the ones a reconnect legitimately causes.
  */
@@ -102,14 +102,6 @@ function unexpectedErrors(run: Run): string[] {
   return out;
 }
 
-async function counter(name: string, labels: Record<string, string> = {}): Promise<number> {
-  const metric = metrics.registry.getSingleMetric(name);
-  const values = (await metric?.get())?.values ?? [];
-  return values
-    .filter((entry) => Object.entries(labels).every(([key, value]) => String(entry.labels[key]) === value))
-    .reduce((total, entry) => total + entry.value, 0);
-}
-
 describe('chaos: reproducibility', () => {
   /** Every bot event with its virtual timestamp, hashed: two runs agree only if they took the same path. */
   async function fingerprint(seed: number): Promise<string> {
@@ -131,13 +123,11 @@ describe('chaos: practice rooms over a hostile network', () => {
   it.each(seeds([1, 2, 3]))('seed %i: every bot finishes, nothing leaks', async (seed) => {
     const w = world(seed);
     w.net.faults = HARSH;
-    const mismatches = await counter('lms_replay_mismatch_total');
     const run = players(w, 12);
 
     await runUntilDone(run, 30 * 60_000);
     expect(stuck(run), `seed ${seed}`).toEqual([]);
     expect(unexpectedErrors(run), `seed ${seed}`).toEqual([]);
-    expect(await counter('lms_replay_mismatch_total')).toBe(mismatches);
 
     // Everyone has left: give the server time to close stalls and drop rooms.
     await w.clock.advance(120_000);

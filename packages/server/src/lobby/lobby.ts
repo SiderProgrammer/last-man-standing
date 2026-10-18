@@ -12,23 +12,12 @@ import {
   type Rules,
   type Seat,
 } from '@lms/protocol';
-import { moveLogFromHistory, verifyResult, type MatchSetup } from '@lms/engine';
+import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
 import type { MatchArchive } from './store.js';
 import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
-import {
-  matchesFinished,
-  matchesStarted,
-  observeTx,
-  replayMismatches,
-  roomsActive,
-  tickDuration,
-} from '../observability/metrics.js';
-import { log } from '../observability/log.js';
-
-const logger = log.child({ component: 'lobby' });
 
 export interface LobbyOptions {
   archive: MatchArchive;
@@ -79,8 +68,6 @@ export class Lobby {
   private readonly abandoned = new Set<string>();
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
-  /** Rooms holding escrowed stakes, by key; everything else is practice. */
-  private readonly stakedRooms = new Set<string>();
   /**
    * Starts at a random 64-bit offset rather than zero. From zero, every
    * process handed out the same practice match ids, so after a restart a
@@ -126,7 +113,7 @@ export class Lobby {
     const owner = human.toLowerCase();
     const previous = this.practiceOf.get(owner);
     if (previous) {
-      this.drop(previous);
+      this.rooms.delete(previous);
       this.practiceOf.delete(owner);
     }
     const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
@@ -173,26 +160,17 @@ export class Lobby {
   }
 
   tick(now: number = Date.now()): void {
-    const end = tickDuration.startTimer();
     for (const [key, room] of this.rooms) {
       room.tick(now);
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
       if (room.finished && now > room.deadline + 60_000) {
-        this.drop(key);
+        this.rooms.delete(key);
         for (const [owner, matchKey] of this.practiceOf) {
           if (matchKey === key) this.practiceOf.delete(owner);
         }
       }
     }
-    end();
-  }
-
-  /** Removes a room, keeping the per-kind gauge in step. */
-  private drop(key: string): void {
-    if (!this.rooms.delete(key)) return;
-    const staked = this.stakedRooms.delete(key);
-    roomsActive.dec({ kind: staked ? 'staked' : 'practice' });
   }
 
   attach(matchId: `0x${string}`, client: Client): Room {
@@ -211,12 +189,7 @@ export class Lobby {
    */
   private open(setup: MatchSetup, botSeats: readonly number[], now: number, staked: boolean): Room {
     const room = new Room(setup, this.roomOptions(botSeats, staked), now);
-    const key = room.matchId.toLowerCase();
-    this.rooms.set(key, room);
-    if (staked) this.stakedRooms.add(key);
-    const kind = staked ? 'staked' : 'practice';
-    roomsActive.inc({ kind });
-    matchesStarted.inc({ kind });
+    this.rooms.set(room.matchId.toLowerCase(), room);
     void this.decorate(room, setup);
     if (staked) void this.brief(room, setup);
     return room;
@@ -238,7 +211,7 @@ export class Lobby {
         }),
       );
     } catch (error) {
-      logger.warn('style lookup failed', { matchId: setup.matchId, error: errorMessage(error) });
+      console.warn('[lobby] style lookup failed:', errorMessage(error));
     }
   }
 
@@ -270,38 +243,7 @@ export class Lobby {
       room.setAvatars(await registry.resolve(setup.seats));
     } catch (error) {
       // Cosmetic: a failure here must never surface to the players.
-      logger.warn('avatar resolution failed', { matchId: setup.matchId, error: errorMessage(error) });
-    }
-  }
-
-  /**
-   * Replays a finished match through the engine's independent audit path and
-   * compares it with the result about to be signed.
-   *
-   * Alerting only: a mismatch means the live engine and the replay disagree,
-   * which is a bug in one of them, and the result would be one no third party
-   * could reproduce. It is surfaced as `lms_replay_mismatch_total` and an
-   * error line rather than blocking settlement, so that a defect in the replay
-   * path cannot strand stakes on its own.
-   */
-  private audit(result: MatchResult, history: readonly RoundRecord[]): void {
-    const match = this.get(result.matchId)?.match;
-    if (!match) return;
-    const setup: MatchSetup = { matchId: match.matchId, seats: [...match.seats], seed: match.seed, rules: match.rules };
-    let agrees: boolean;
-    try {
-      agrees = verifyResult(setup, moveLogFromHistory(history), result);
-    } catch (error) {
-      logger.error('replay audit threw', { matchId: result.matchId, error: errorMessage(error) });
-      agrees = false;
-    }
-    if (!agrees) {
-      replayMismatches.inc();
-      logger.error('replay disagrees with the result about to be signed', {
-        matchId: result.matchId,
-        rounds: result.rounds,
-        historyRoot: result.historyRoot,
-      });
+      console.warn('[lobby] avatar resolution failed:', errorMessage(error));
     }
   }
 
@@ -318,20 +260,17 @@ export class Lobby {
     const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await observeTx('settle', { 'lms.match_id': result.matchId, 'lms.attempt': attempt }, () =>
-          this.options.relayer.settle(result),
-        );
+        return await this.options.relayer.settle(result);
       } catch (error) {
         const wait = backoff[attempt];
         if (wait === undefined) {
-          logger.error('settlement failed; the escrow refunds at its deadline', {
-            matchId: result.matchId,
-            attempts: attempt + 1,
-            error: errorMessage(error),
-          });
+          console.error(
+            `[lobby] settlement of ${result.matchId} failed after ${attempt + 1} attempts; the escrow refunds at its deadline:`,
+            errorMessage(error),
+          );
           return null;
         }
-        logger.warn('settlement failed; retrying', { matchId: result.matchId, attempt, retryInMs: wait, error: errorMessage(error) });
+        console.warn(`[lobby] settlement of ${result.matchId} failed; retrying in ${wait} ms:`, errorMessage(error));
         await sleep(wait);
       }
     }
@@ -342,8 +281,6 @@ export class Lobby {
     history: readonly RoundRecord[],
     staked: boolean,
   ): Promise<void> {
-    matchesFinished.inc({ kind: staked ? 'staked' : 'practice' });
-    this.audit(result, history);
     const settledTx = staked ? await this.settle(result) : await this.options.relayer.settle(result).catch(() => null);
     await this.options.archive.save({ result, history, settledTx });
     if (staked && this.options.styles) {
@@ -351,7 +288,7 @@ export class Lobby {
       try {
         await this.options.styles.record(tallyStyles(result, history, seats));
       } catch (error) {
-        logger.warn('style record failed', { matchId: result.matchId, error: errorMessage(error) });
+        console.warn('[lobby] style record failed:', errorMessage(error));
       }
     }
     if (staked) this.get(result.matchId)?.announceSettled(settledTx as `0x${string}` | null);

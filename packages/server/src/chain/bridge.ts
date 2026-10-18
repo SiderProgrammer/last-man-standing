@@ -12,11 +12,6 @@ import {
 import type { MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
 import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
-import { log } from '../observability/log.js';
-import { bridgeHead, bridgeLastPoll, bridgePollDuration, bridgePolls, observeTx } from '../observability/metrics.js';
-import { withSpan } from '../observability/tracing.js';
-
-const logger = log.child({ component: 'chain' });
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
@@ -136,20 +131,13 @@ export class ChainBridge {
     // Overlapping polls would double-submit keeper transactions.
     if (this.polling) return;
     this.polling = true;
-    const end = bridgePollDuration.startTimer();
     try {
-      await withSpan('bridge.poll', {}, async () => {
-        await this.discover();
-        await this.refresh();
-      });
+      await this.discover();
+      await this.refresh();
       this.booted = true;
-      bridgePolls.inc({ outcome: 'ok' });
-      bridgeLastPoll.set(this.now() / 1000);
     } catch (error) {
-      bridgePolls.inc({ outcome: 'error' });
-      logger.error('poll failed', { error: errorMessage(error) });
+      console.error('[chain] poll failed:', errorMessage(error));
     } finally {
-      end();
       this.polling = false;
     }
   }
@@ -178,7 +166,6 @@ export class ChainBridge {
     }
 
     this.cursor = latest + 1n;
-    bridgeHead.set(Number(latest));
   }
 
   private async refresh(): Promise<void> {
@@ -243,20 +230,19 @@ export class ChainBridge {
   private async abandon(entry: TrackedMatch, matchId: `0x${string}`): Promise<void> {
     entry.abandoned = true;
     this.deps.lobby.markAbandoned(matchId);
-    logger.warn('match was live before this restart; cancelling and refunding', { matchId });
+    console.warn(`[chain] ${matchId} was live before this restart; cancelling and refunding`);
     try {
-      const abort = this.deps.abort;
-      const tx = abort ? await observeTx('abort', { 'lms.match_id': matchId }, () => abort(matchId)) : null;
-      if (tx) logger.info('aborted', { matchId, txHash: tx });
+      const tx = await this.deps.abort?.(matchId);
+      if (tx) console.log(`[chain] aborted ${matchId}: ${tx}`);
     } catch (error) {
-      logger.error('abort failed', { matchId, error: errorMessage(error) });
+      console.error(`[chain] abort of ${matchId} failed:`, errorMessage(error));
     }
   }
 
   /** The fallback for an abandoned match: the permissionless refund at its deadline. */
   private async maybeCancel(matchId: `0x${string}`, settleDeadline: bigint): Promise<void> {
     if (BigInt(Math.floor(this.now() / 1000)) < settleDeadline) return;
-    if (await this.reader.cancelMatch(matchId)) logger.info('cancelled', { matchId });
+    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelled ${matchId}`);
   }
 
   /**
@@ -269,7 +255,7 @@ export class ChainBridge {
     if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
     const ranking = await this.reader.proposedRanking(matchId);
     if (!ranking) return;
-    if (await this.reader.finalize(matchId, ranking)) logger.info('finalised', { matchId });
+    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalised ${matchId}`);
   }
 
   /**
@@ -283,7 +269,7 @@ export class ChainBridge {
     if (info.seatCount < info.minSeats) return;
 
     if (await this.reader.lockMatch(info.matchId)) {
-      logger.info('locked', { matchId: info.matchId });
+      console.log(`[chain] locked ${info.matchId}`);
     }
   }
 
@@ -317,7 +303,7 @@ export class ChainBridge {
 
     const setup: MatchSetup = { matchId, seats, seed, rules: DEFAULT_RULES };
     this.deps.lobby.adopt(setup);
-    logger.info('opened room', { matchId, seats: seats.length });
+    console.log(`[chain] opened room for ${matchId} with ${seats.length} seats`);
   }
 }
 

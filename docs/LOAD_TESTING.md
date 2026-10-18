@@ -10,8 +10,8 @@ signing does not serialise on one core.
 ## Running it
 
 ```bash
-npm run load:server          # built server on :8789, metrics :9465, per-IP limits opened up
-npm run load -- --url ws://localhost:8789 --metrics http://localhost:9465/metrics --clients 1000
+npm run load:server          # built server on :8789, per-IP limits opened up
+npm run load -- --url ws://localhost:8789 --clients 1000
 ```
 
 | Option | Default | |
@@ -33,8 +33,7 @@ run production with that profile.
 
 The report gives login latency (socket open to `authed`), reveal→round
 latency (this player's last action to the round broadcast, which is the
-server's critical path), error counts by message, close codes, and the
-server's peak event-loop lag and memory, scraped from `/metrics` during the run.
+server's critical path), error counts by message, and close codes.
 
 ### Generator limits
 
@@ -52,6 +51,9 @@ One machine can only generate so much. For runs past a few thousand players:
 One 16-thread Windows desktop running both the server (`npm run load:server`)
 and the generator (4–6 workers), practice mode, 3 house bots per player,
 `REPLAY_MS=2500`, 0.5–3 s think time. Clean server per run.
+
+The loop-lag and RSS columns came from the server's Prometheus endpoint, which
+has since been removed; rerunning these today reports only the client-side columns.
 
 | Players | Mode | Connected | Login p99 | Reveal→round p50 / p99 | Peak loop lag | Peak RSS |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -103,5 +105,5 @@ consensus-critical and cannot change. Ways to scale, cheapest first:
 time out, clients reconnect, and every reconnect costs another signature, so
 the 5,000-player run spent its CPU on 51k reconnects. Before going to
 production, add load shedding: refuse new practice rooms (or new connections)
-once `lms_lobby_tick_seconds` or event-loop lag crosses a threshold, so that
+once the lobby tick or event-loop lag crosses a threshold, so that
 players already in a match keep their latency.

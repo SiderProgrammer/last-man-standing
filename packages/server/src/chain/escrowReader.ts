@@ -1,10 +1,6 @@
 import type { Address } from 'viem';
 import { errorMessage, gameEscrowAbi } from '@lms/protocol';
 import { readClient, signerClients } from './viem.js';
-import { log } from '../observability/log.js';
-import { observeTx } from '../observability/metrics.js';
-
-const logger = log.child({ component: 'chain' });
 
 /** A match's on-chain state, as `ChainBridge` needs it. */
 export interface EscrowMatch {
@@ -147,19 +143,17 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
     async cancelMatch(matchId) {
       if (!signer) return false;
       try {
-        await observeTx('cancelMatch', { 'lms.match_id': matchId }, async () => {
-          const { request } = await client.simulateContract({
-            account: signer.account,
-            address: escrow,
-            abi: gameEscrowAbi,
-            functionName: 'cancelMatch',
-            args: [matchId],
-          });
-          return signer.walletClient.writeContract(request);
+        const { request } = await client.simulateContract({
+          account: signer.account,
+          address: escrow,
+          abi: gameEscrowAbi,
+          functionName: 'cancelMatch',
+          args: [matchId],
         });
+        await signer.walletClient.writeContract(request);
         return true;
       } catch (error) {
-        logger.warn('cancel skipped', { matchId, error: errorMessage(error) });
+        console.warn('[chain] cancel skipped:', errorMessage(error));
         return false;
       }
     },
@@ -167,19 +161,17 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
     async finalize(matchId, ranking) {
       if (!signer) return false;
       try {
-        await observeTx('finalize', { 'lms.match_id': matchId }, async () => {
-          const { request } = await client.simulateContract({
-            account: signer.account,
-            address: escrow,
-            abi: gameEscrowAbi,
-            functionName: 'finalize',
-            args: [matchId, [...ranking]],
-          });
-          return signer.walletClient.writeContract(request);
+        const { request } = await client.simulateContract({
+          account: signer.account,
+          address: escrow,
+          abi: gameEscrowAbi,
+          functionName: 'finalize',
+          args: [matchId, [...ranking]],
         });
+        await signer.walletClient.writeContract(request);
         return true;
       } catch (error) {
-        logger.warn('finalize skipped', { matchId, error: errorMessage(error) });
+        console.warn('[chain] finalize skipped:', errorMessage(error));
         return false;
       }
     },
@@ -187,20 +179,18 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
     async lockMatch(matchId) {
       if (!signer) return false;
       try {
-        await observeTx('lockMatch', { 'lms.match_id': matchId }, async () => {
-          const { request } = await client.simulateContract({
-            account: signer.account,
-            address: escrow,
-            abi: gameEscrowAbi,
-            functionName: 'lockMatch',
-            args: [matchId],
-          });
-          return signer.walletClient.writeContract(request);
+        const { request } = await client.simulateContract({
+          account: signer.account,
+          address: escrow,
+          abi: gameEscrowAbi,
+          functionName: 'lockMatch',
+          args: [matchId],
         });
+        await signer.walletClient.writeContract(request);
         return true;
       } catch (error) {
         // Another caller may have locked it first; the next poll reads the truth.
-        logger.warn('lock skipped', { matchId, error: errorMessage(error) });
+        console.warn('[chain] lock skipped:', errorMessage(error));
         return false;
       }
     },

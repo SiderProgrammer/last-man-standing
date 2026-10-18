@@ -45,7 +45,6 @@ function parseArgs(argv) {
     thinkMin: 500,
     thinkMax: 3000,
     hold: false,
-    metrics: 'http://localhost:9464/metrics',
     json: null,
     sloConnectPct: 99,
     sloAuthP99: 1000,
@@ -100,14 +99,7 @@ async function main() {
     );
   }
 
-  // Sampled while the players are connected; a scrape after they leave would
-  // report an idle server.
-  const peak = { eventLoopLagP99Ms: 0, residentMb: 0, heapUsedMb: 0, connections: 0 };
   const ticker = setInterval(() => {
-    void scrape(options.metrics).then((sample) => {
-      if (!sample) return;
-      for (const key of Object.keys(peak)) peak[key] = Math.max(peak[key], sample[key] ?? 0);
-    });
     const s = Math.round((Date.now() - started) / 1000);
     console.log(
       `  t=${s}s connected=${totals.open} authed=${totals.authed} rounds=${totals.rounds} ` +
@@ -119,7 +111,7 @@ async function main() {
   await Promise.all(workers);
   clearInterval(ticker);
 
-  const report = summarise(options, totals, peak.connections > 0 ? { peak } : null, Date.now() - started);
+  const report = summarise(options, totals, Date.now() - started);
   print(report);
   if (options.json) writeFileSync(options.json, JSON.stringify(report, null, 2));
   process.exitCode = report.slo.every((check) => check.ok) ? 0 : 1;
@@ -172,26 +164,7 @@ function percentile(samples, p) {
   return Math.round(sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]);
 }
 
-async function scrape(url) {
-  if (!url) return null;
-  try {
-    const text = await (await fetch(url)).text();
-    const read = (name) => {
-      const line = text.split('\n').find((row) => row.startsWith(`${name} `));
-      return line ? Number(line.split(' ')[1]) : null;
-    };
-    return {
-      eventLoopLagP99Ms: Math.round((read('lms_nodejs_eventloop_lag_p99_seconds') ?? 0) * 1000),
-      heapUsedMb: Math.round((read('lms_nodejs_heap_size_used_bytes') ?? 0) / 2 ** 20),
-      residentMb: Math.round((read('lms_process_resident_memory_bytes') ?? 0) / 2 ** 20),
-      connections: read('lms_ws_connections'),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function summarise(options, totals, server, elapsedMs) {
+function summarise(options, totals, elapsedMs) {
   const connectPct = (100 * totals.connectedEver) / Math.max(1, options.clients);
   const actions = totals.rounds + totals.authed;
   const errorPct = (100 * sum(totals.errors)) / Math.max(1, actions);
@@ -221,7 +194,6 @@ function summarise(options, totals, server, elapsedMs) {
     revealToRoundMs: { p50: percentile(totals.round, 50), p95: percentile(totals.round, 95), p99: roundP99 },
     errors: totals.errors,
     closeCodes: totals.closes,
-    server,
     slo,
   };
 }
@@ -236,7 +208,6 @@ function print(report) {
   );
   if (Object.keys(report.errors).length) console.log('errors', report.errors);
   if (Object.keys(report.closeCodes).length) console.log('close codes', report.closeCodes);
-  if (report.server) console.log('server', report.server);
   for (const check of report.slo) console.log(`${check.ok ? 'PASS' : 'FAIL'}  ${check.name}  (${check.value})`);
 }
 

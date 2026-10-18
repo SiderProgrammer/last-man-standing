@@ -17,18 +17,6 @@ import type { SessionRelayer } from '../chain/relayer.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
-import {
-  logins,
-  observeTx,
-  wsAuthenticated,
-  wsClosed,
-  wsConnections,
-  wsFrames,
-  wsHandled,
-  wsRefused,
-  wsRejected,
-} from '../observability/metrics.js';
-import { withSpan } from '../observability/tracing.js';
 
 /**
  * Checks a login signature against an address.
@@ -173,7 +161,6 @@ export class Gateway {
     const ip = peer.ip ?? UNKNOWN_IP;
     const refusal = this.admission(ip, peer.origin, now);
     if (refusal) {
-      wsRefused.inc({ reason: refusal.slug });
       socket.close?.(refusal.code, refusal.reason);
       return false;
     }
@@ -195,7 +182,6 @@ export class Gateway {
     };
     this.sessions.set(socket, session);
     this.perIp.set(ip, (this.perIp.get(ip) ?? 0) + 1);
-    wsConnections.inc();
 
     session.send({
       type: 'hello',
@@ -222,7 +208,7 @@ export class Gateway {
   sweep(now: number = this.now()): void {
     for (const session of this.sessions.values()) {
       if (session.address === null && now - session.connectedAt >= this.limits.loginTimeoutMs) {
-        this.drop(session, CloseCode.PolicyViolation, 'login timed out', 'login_timeout');
+        this.drop(session, CloseCode.PolicyViolation, 'login timed out');
       }
     }
     this.connectsByIp.sweep(now);
@@ -231,23 +217,19 @@ export class Gateway {
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */
-  private admission(
-    ip: string,
-    origin: string | undefined,
-    now: number,
-  ): { code: number; reason: string; slug: string } | null {
+  private admission(ip: string, origin: string | undefined, now: number): { code: number; reason: string } | null {
     const l = this.limits;
     if (l.allowedOrigins.length > 0 && !(origin && l.allowedOrigins.includes(origin))) {
-      return { code: CloseCode.PolicyViolation, reason: 'origin not allowed', slug: 'origin' };
+      return { code: CloseCode.PolicyViolation, reason: 'origin not allowed' };
     }
     if (this.sessions.size >= l.maxConnections) {
-      return { code: CloseCode.TryAgainLater, reason: 'server is full', slug: 'full' };
+      return { code: CloseCode.TryAgainLater, reason: 'server is full' };
     }
     if ((this.perIp.get(ip) ?? 0) >= l.maxConnectionsPerIp) {
-      return { code: CloseCode.TryAgainLater, reason: 'too many connections from this address', slug: 'per_ip' };
+      return { code: CloseCode.TryAgainLater, reason: 'too many connections from this address' };
     }
     if (!this.connectsByIp.take(ip, now)) {
-      return { code: CloseCode.TryAgainLater, reason: 'connecting too fast', slug: 'connect_rate' };
+      return { code: CloseCode.TryAgainLater, reason: 'connecting too fast' };
     }
     return null;
   }
@@ -255,7 +237,7 @@ export class Gateway {
   private receive(session: Session, raw: string): void {
     if (session.closed) return;
     if (raw.length > MAX_CLIENT_FRAME_BYTES) {
-      this.reject(session, new FrameError('message too large'), 'too_large');
+      this.reject(session, new FrameError('message too large'));
       return;
     }
 
@@ -263,35 +245,27 @@ export class Gateway {
     try {
       message = parseClientMessage(raw);
     } catch (error) {
-      this.reject(session, error, 'invalid');
+      this.reject(session, error);
       return;
     }
 
     const now = this.now();
     const bucket = message.type === 'commit' || message.type === 'reveal' ? session.moves : session.messages;
     if (!bucket.take(now)) {
-      this.reject(session, new Error('slow down: too many messages'), 'rate_limited');
+      this.reject(session, new Error('slow down: too many messages'));
       return;
     }
 
-    wsFrames.inc({ type: message.type });
-    const end = wsHandled.startTimer({ type: message.type });
-    const attributes = { 'lms.message_type': message.type, 'lms.address': session.address ?? '' };
-    void withSpan(`ws.${message.type}`, attributes, () => this.dispatch(session, message, now)).then(
-      () => end({ outcome: 'ok' }),
-      (error: unknown) => {
-        end({ outcome: 'error' });
-        session.send(errorFrame(error));
-      },
-    );
+    void this.dispatch(session, message, now).catch((error: unknown) => {
+      session.send(errorFrame(error));
+    });
   }
 
   /** Answers a frame the gateway refused, and counts it against the socket. */
-  private reject(session: Session, error: unknown, reason: string): void {
-    wsRejected.inc({ reason });
+  private reject(session: Session, error: unknown): void {
     session.send(errorFrame(error));
     if (!session.strikes.take(this.now())) {
-      this.drop(session, CloseCode.PolicyViolation, 'too many rejected messages', 'strikes');
+      this.drop(session, CloseCode.PolicyViolation, 'too many rejected messages');
     }
   }
 
@@ -330,16 +304,14 @@ export class Gateway {
         // Submitted for the authenticated address and no other: the signature
         // proves the session key spoke, but only this socket's login proves
         // which account is asking, and the two must be the same account.
-        const hash = await observeTx('relay', { 'lms.address': address, 'lms.target': message.target }, () =>
-          relayer.submit({
-            account: address,
-            target: message.target,
-            value: BigInt(message.value),
-            data: message.data,
-            nonce: BigInt(message.nonce),
-            signature: message.signature,
-          }),
-        );
+        const hash = await relayer.submit({
+          account: address,
+          target: message.target,
+          value: BigInt(message.value),
+          data: message.data,
+          nonce: BigInt(message.nonce),
+          signature: message.signature,
+        });
         session.send({ type: 'relayed', hash });
         return;
       }
@@ -352,7 +324,7 @@ export class Gateway {
         session.lastCollectAt = now;
         // Always the authenticated account: `withdrawFor` pays the account
         // itself, so there is nothing else a client could ask for here.
-        const hash = await observeTx('collect', { 'lms.address': address }, () => relayer.collect(address));
+        const hash = await relayer.collect(address);
         session.send({ type: 'relayed', hash });
         return;
       }
@@ -375,7 +347,6 @@ export class Gateway {
   private async login(session: Session, message: Extract<ClientMessage, { type: 'auth' }>): Promise<void> {
     // Before the verifier, because a session-key login costs an RPC call.
     if (!this.loginsByIp.take(session.ip, this.now())) {
-      logins.inc({ outcome: 'rate_limited' });
       throw new Error('too many login attempts; try again shortly');
     }
     const verify = this.options.verify ?? offlineVerify;
@@ -385,15 +356,12 @@ export class Gateway {
       signature: message.signature,
     });
     if (!valid) {
-      logins.inc({ outcome: 'invalid' });
       session.loginFailures += 1;
       if (session.loginFailures >= this.limits.maxLoginFailures) {
-        this.drop(session, CloseCode.PolicyViolation, 'too many failed logins', 'login_failures');
+        this.drop(session, CloseCode.PolicyViolation, 'too many failed logins');
       }
       throw new Error('login signature does not match the nonce');
     }
-    logins.inc({ outcome: 'ok' });
-    if (session.address === null && !session.closed) wsAuthenticated.inc();
     session.address = message.address;
     session.send({ type: 'authed', address: message.address });
   }
@@ -410,7 +378,7 @@ export class Gateway {
     // A client that stops reading would otherwise have its backlog held in
     // server memory indefinitely.
     if ((socket.bufferedAmount ?? 0) > this.limits.maxBufferedBytes) {
-      this.drop(session, CloseCode.PolicyViolation, 'not reading fast enough', 'slow_consumer');
+      this.drop(session, CloseCode.PolicyViolation, 'not reading fast enough');
       return;
     }
     let data = this.encoded.get(message);
@@ -422,9 +390,8 @@ export class Gateway {
   }
 
   /** Closes a socket from this side. Cleans up even if the socket never reports the close. */
-  private drop(session: Session, code: number, reason: string, slug: string): void {
+  private drop(session: Session, code: number, reason: string): void {
     if (session.closed) return;
-    wsClosed.inc({ reason: slug });
     session.socket.close?.(code, reason);
     this.forget(session);
   }
@@ -432,8 +399,6 @@ export class Gateway {
   private forget(session: Session): void {
     if (session.closed) return;
     session.closed = true;
-    wsConnections.dec();
-    if (session.address !== null) wsAuthenticated.dec();
     for (const room of this.options.lobby.list()) room.detach(session);
     this.sessions.delete(session.socket);
     const count = (this.perIp.get(session.ip) ?? 1) - 1;

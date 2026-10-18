@@ -71,10 +71,7 @@ The client plays a full match, but these are missing:
   anywhere. Add a quote-and-verify path so a join cannot be sent with insufficient drop.
 - Wire peer configuration on both ends and test hub↔spoke against two live testnets.
 - Handle delivery failure: a stake that leaves the spoke but never seats on the hub is
-  currently unrecoverable. It is now *detected*: `chain/crossChain.ts` pairs every
-  `JoinForwarded` with the hub's `PlayerJoined`/`JoinRefunded` and pages on one that
-  stays unanswered (`lms_crosschain_stuck`, see `docs/OBSERVABILITY.md`). Recovery
-  still needs an on-chain path.
+  currently unrecoverable.
 
 ### 2.2 Chainlink VRF
 
@@ -280,10 +277,6 @@ any of this is a deliberate, visible change rather than a silent one.
   around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
   reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
   and a run from separate generator hosts at 10k.
-- **Observability:** structured logs, Prometheus metrics on `METRICS_PORT`, optional
-  OTLP tracing, alert rules and a Grafana dashboard under `ops/observability/`. See
-  `docs/OBSERVABILITY.md`. Logs are not yet shipped anywhere; pick a collector per
-  deployment.
 - **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
 - **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
   Fine for a testnet demo, worth code-splitting before anything public.

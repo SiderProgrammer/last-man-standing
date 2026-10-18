@@ -46,7 +46,7 @@
       "runtimeArgs": [
         "--input-type=module",
         "-e",
-        "process.env.VERIFY_THREADS='0'; process.env.WS_PORT='8790'; process.env.METRICS_PORT='9466'; await import('./scripts/load-server.mjs');"
+        "process.env.VERIFY_THREADS='0'; process.env.WS_PORT='8790'; await import('./scripts/load-server.mjs');"
       ],
       "port": 8790
     }

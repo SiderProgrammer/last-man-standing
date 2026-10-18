@@ -1,7 +1,0 @@
-apiVersion: 1
-providers:
-  - name: lms
-    folder: Last Man Standing
-    type: file
-    options:
-      path: /var/lib/grafana/dashboards

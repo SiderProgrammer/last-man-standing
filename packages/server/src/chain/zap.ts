@@ -6,9 +6,6 @@ import {
   type ZapPathKey,
   type ZapToken,
 } from '@lms/protocol';
-import { log } from '../observability/log.js';
-
-const logger = log.child({ component: 'zap' });
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const HEX = /^0x([0-9a-fA-F]{2})*$/;
@@ -35,11 +32,11 @@ export function parseZapTokens(raw: string): ZapToken[] {
 
     return parsed.flatMap((item): ZapToken[] => {
       const token = toToken(item);
-      if (!token) logger.warn('ignoring malformed token', { entry: JSON.stringify(item) });
+      if (!token) console.warn('[zap] ignoring malformed token:', JSON.stringify(item));
       return token ? [token] : [];
     });
   } catch (error) {
-    logger.warn('ZAP_TOKENS is not valid JSON', { error: errorMessage(error) });
+    console.warn('[zap] ZAP_TOKENS is not valid JSON:', errorMessage(error));
     return [];
   }
 }
