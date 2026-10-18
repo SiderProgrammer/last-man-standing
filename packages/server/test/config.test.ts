@@ -57,6 +57,9 @@ describe('server configuration', () => {
     const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUST_PROXY: 'true' });
     expect(tuned.allowedOrigins).toEqual(['https://a.example', 'https://b.example']);
     expect(tuned.trustProxy).toBe(true);
+
+    expect(loadConfig({ GATEWAY_LIMITS: '{"messageRate":50,"bogus":"x"}' }).gatewayLimits).toEqual({ messageRate: 50 });
+    expect(loadConfig({ VERIFY_THREADS: '0' }).verifyThreads).toBe(0);
   });
 
   it('is on-chain only when both an RPC and a non-zero escrow are set', () => {

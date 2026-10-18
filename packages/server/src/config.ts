@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import { ZERO_ADDRESS } from '@lms/protocol';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
@@ -49,6 +50,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * walk straight past the per-IP limits.
      */
     trustProxy: env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1',
+    /**
+     * Overrides for any field of `DEFAULT_GATEWAY_LIMITS`, as JSON, e.g.
+     * `{"connectRatePerIp":1000,"connectBurstPerIp":10000}` for a load test
+     * whose clients all come from one IP. Unknown or non-numeric fields are
+     * ignored.
+     */
+    gatewayLimits: parseLimits(env.GATEWAY_LIMITS),
+    /**
+     * Worker threads that recover login signatures off the event loop. Zero
+     * recovers inline. The default leaves one core for the event loop.
+     */
+    verifyThreads: Number(env.VERIFY_THREADS ?? Math.max(1, Math.min(4, availableParallelism() - 1))),
     /**
      * Prometheus `/metrics` listens here, apart from the public port so it is
      * never reachable by players. Bound to loopback by default; set
@@ -109,6 +122,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
     },
   };
+}
+
+/** Numeric fields of a JSON object; anything else is dropped. Throws on invalid JSON. */
+function parseLimits(raw: string | undefined): Record<string, number> {
+  if (!raw) return {};
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+  );
 }
 
 /** Throws on a value that is not an integer, rather than carrying on with garbage. */

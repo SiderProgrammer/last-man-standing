@@ -19,6 +19,7 @@ export {
 export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { WS_SERVER_OPTIONS, attachTransport } from './gateway/transport.js';
+export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 export {
   MemoryArchive,
   PostgresArchive,

@@ -47,6 +47,8 @@ export interface BotClientOptions {
   opponents?: number;
   /** Games to play before stopping. Infinity plays until `stop`. */
   games?: number;
+  /** False logs in and then sits idle, for connection-soak runs. */
+  play?: boolean;
   /** Ask the server to hold the move and reveal it if this bot drops. */
   hold?: boolean;
   /** Milliseconds to wait before committing, like a human thinking. */
@@ -89,6 +91,7 @@ export class BotClient {
     this.options = {
       opponents: 3,
       games: 1,
+      play: true,
       hold: false,
       thinkMs: () => 0,
       schedule: (fn, ms) => void setTimeout(fn, ms),
@@ -210,7 +213,7 @@ export class BotClient {
   }
 
   private nextGame(): void {
-    if (this.done) return;
+    if (this.done || !this.options.play) return;
     this.send({ type: 'practice', bots: this.options.opponents });
   }
 

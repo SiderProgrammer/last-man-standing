@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { WS_SERVER_OPTIONS, attachTransport } from './gateway/transport.js';
+import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createStyleBook } from './lobby/styles.js';
@@ -77,6 +78,8 @@ async function main(): Promise<void> {
   // With an RPC the gateway can verify ERC-1271 logins, which is what lets a
   // 7702-delegated account log in with a session key instead of prompting the
   // player's wallet on every reconnect. Without one, EOA signatures still work.
+  // Either way an EOA login is settled by local recovery on the verify pool,
+  // and only a signature that does not recover is put to the RPC.
   const rpc = config.rpcUrl
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
@@ -111,13 +114,15 @@ async function main(): Promise<void> {
         })
       : null;
 
+  const verifyPool = new VerifyPool(config.verifyThreads);
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
     directory: () => bridge?.directory() ?? { open: [], live: [] },
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
-    ...(rpc ? { verify: (args) => rpc.verifyMessage(args) } : {}),
+    verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
@@ -131,6 +136,7 @@ async function main(): Promise<void> {
           }
         : null,
     limits: {
+      ...config.gatewayLimits,
       maxConnections: config.maxConnections,
       maxConnectionsPerIp: config.maxConnectionsPerIp,
       loginTimeoutMs: config.loginTimeoutMs,
@@ -270,6 +276,7 @@ async function main(): Promise<void> {
     wss.close();
     http.close();
     metrics?.close();
+    void verifyPool.close();
     void stopTracing();
   };
   process.once('SIGINT', shutdown);

@@ -270,6 +270,10 @@ any of this is a deliberate, visible change rather than a silent one.
   by `packages/client/test`. What is still untested is the DOM applier layer in
   `screens/` and `wallet/flows.ts`, and `arena/`'s rendering, all of which would need a
   browser rather than node.
+- **Load testing:** `npm run load` (see `docs/LOAD_TESTING.md`). One process tops out
+  around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
+  reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
+  and a run from separate generator hosts at 10k.
 - **Observability:** structured logs, Prometheus metrics on `METRICS_PORT`, optional
   OTLP tracing, alert rules and a Grafana dashboard under `ops/observability/`. See
   `docs/OBSERVABILITY.md`. Logs are not yet shipped anywhere; pick a collector per

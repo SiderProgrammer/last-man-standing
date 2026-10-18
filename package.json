@@ -14,6 +14,8 @@
     "build": "tsc --build",
     "dev:fork": "node scripts/dev-fork.mjs",
     "sim": "tsc --build && node scripts/sim.mjs",
+    "load": "tsc --build && node scripts/load-test.mjs",
+    "load:server": "tsc --build && node scripts/load-server.mjs",
     "clean": "tsc --build --clean",
     "obs:up": "docker compose -f ops/observability/docker-compose.yml up -d",
     "obs:down": "docker compose -f ops/observability/docker-compose.yml down",
