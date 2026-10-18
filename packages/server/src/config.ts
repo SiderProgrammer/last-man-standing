@@ -128,7 +128,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       /** Per attempt; the SDK retries timeouts, 429s and 5xx up to `maxRetries` times. */
       timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 120_000),
       maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
+      /** Ceiling on one whole analysis, every turn and retry included. */
+      deadlineMs: Number(env.ANALYST_DEADLINE_MS ?? 180_000),
+      /** Fresh analyses per wallet per hour. Cached answers do not count. */
+      quotaPerHour: Number(env.ANALYST_QUOTA_PER_HOUR ?? 6),
+      /** Analyses being written at once, server-wide. */
+      maxConcurrent: Number(env.ANALYST_MAX_CONCURRENT ?? 4),
+      /**
+       * Estimated spend per UTC day, in US dollars, after which fresh
+       * analyses stop until midnight. `none` lifts the ceiling.
+       */
+      dailyBudgetUsd: env.ANALYST_DAILY_BUDGET_USD === 'none' ? Infinity : Number(env.ANALYST_DAILY_BUDGET_USD ?? 10),
     },
+    /**
+     * Bearer token `/metrics` requires, if set. The page shows spend and
+     * traffic, which a public server should not hand to anyone who asks.
+     */
+    metricsToken: env.METRICS_TOKEN ?? '',
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;

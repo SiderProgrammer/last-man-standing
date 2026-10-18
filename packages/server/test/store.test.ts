@@ -58,7 +58,7 @@ describe('memory archive', () => {
 });
 
 describe('archiving a finished match', () => {
-  it('records who sat where and the rules, which the analyst needs', async () => {
+  it('records who sat where, the rules and whether it was staked, which the analyst needs', async () => {
     const archive = new MemoryArchive();
     const lobby = new Lobby({ archive, relayer: nullRelayer, commitMs: 10, revealMs: 10 });
     const setup = setupWithBots(4, 'archive-seats');
@@ -73,5 +73,7 @@ describe('archiving a finished match', () => {
 
     expect(saved?.seats).toEqual(setup.seats);
     expect(saved?.rules).toEqual(setup.rules);
+    // Adopted from the chain, so staked: public to spectators' analyses.
+    expect(saved?.staked).toBe(true);
   });
 });

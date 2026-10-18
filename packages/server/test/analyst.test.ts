@@ -3,7 +3,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Analyst, AnalystError, MemoryArchive, SYSTEM_PROMPT, classify, playReferenceMatch } from '@lms/server';
 import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
-const match = playReferenceMatch({ label: 'analyst', strategies: ['reader', 'aggressor', 'turtle', 'hider'] });
+// Staked, so a wallet that did not play may still ask for the spectator's view.
+const match = { ...playReferenceMatch({ label: 'analyst', strategies: ['reader', 'aggressor', 'turtle', 'hider'] }), staked: true };
 const human = (match.seats ?? [])[0]?.address as `0x${string}`;
 const stranger = `0x${'99'.repeat(20)}` as const;
 
@@ -208,7 +209,10 @@ describe('analyst tool loop', () => {
   });
 
   it('keeps tools and system byte-identical across turns and matches, so they cache', async () => {
-    const other = playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'hider', 'turtle'] });
+    const other = {
+      ...playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'hider', 'turtle'] }),
+      staked: true,
+    };
     const archive = new MemoryArchive();
     await archive.save(match);
     await archive.save(other);

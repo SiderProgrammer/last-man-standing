@@ -23,6 +23,7 @@ export {
   MemoryArchive,
   PostgresArchive,
   createArchive,
+  type ArchivedAnalysis,
   type ArchivedMatch,
   type MatchArchive,
 } from './lobby/store.js';
@@ -80,6 +81,7 @@ export {
   Analyst,
   AnalystError,
   classify,
+  type AnalysisUsage,
   type AnalystOptions,
   type AnalyzeRequest,
   type AnalyzeResult,
@@ -88,6 +90,9 @@ export {
 } from './analyst/analyst.js';
 export { anthropicModel, type AnalystModel, type ModelReply, type ModelRequest } from './analyst/model.js';
 export { demoModel } from './analyst/demo.js';
+export { AnalystLimits, type AnalystLimitOptions, type Refusal } from './analyst/limits.js';
+export { AnalystMetrics, type AnalysisOutcome, type FreshAnalysis } from './analyst/metrics.js';
+export { turnCost } from './analyst/pricing.js';
 export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './analyst/schema.js';
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export { JsonFieldStream } from './analyst/stream.js';

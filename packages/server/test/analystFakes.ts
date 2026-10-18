@@ -1,9 +1,12 @@
+import Anthropic from '@anthropic-ai/sdk';
 import type { AnalystModel, ModelReply, ModelRequest } from '@lms/server';
 
 /** One scripted model turn: text to stream, then the message to return — or an error to throw. */
 export type Turn =
   | { chunks?: string[]; reply: Partial<ModelReply> & Pick<ModelReply, 'content' | 'stop_reason'> }
-  | { error: unknown };
+  | { error: unknown }
+  /** Never answers: waits for the abort signal, then fails as the SDK does. */
+  | { hang: true };
 
 /**
  * A model that plays back a script, one entry per call, and records every
@@ -20,6 +23,10 @@ export class FakeModel implements AnalystModel {
     const turn = this.script.shift();
     if (!turn) throw new Error('the fake model ran out of script');
     if ('error' in turn) throw turn.error;
+    if ('hang' in turn) {
+      if (!signal.aborted) await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      throw new Anthropic.APIUserAbortError();
+    }
     for (const chunk of turn.chunks ?? []) {
       if (signal.aborted) throw new Error('aborted');
       onText(chunk);

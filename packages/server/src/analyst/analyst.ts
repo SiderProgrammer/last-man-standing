@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import * as z from 'zod/v4';
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type {
@@ -13,13 +15,16 @@ import {
   type KeyMoment,
   type MatchAnalysis,
 } from '@lms/protocol';
-import type { MatchArchive } from '../lobby/store.js';
+import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import type { AnalystModel, ModelReply, ModelRequest } from './model.js';
 import { SYSTEM_PROMPT, renderRequest, type SeatedMatch } from './prompt.js';
 import { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './schema.js';
 import { JsonFieldStream } from './stream.js';
 import { MatchTools, TOOLS } from './tools.js';
+import type { AnalystLimits } from './limits.js';
+import { AnalystMetrics } from './metrics.js';
+import { turnCost } from './pricing.js';
 import { checkDecisiveRound, verifyMoments } from './verify.js';
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -40,6 +45,16 @@ export interface AnalystOptions {
    * Defaults to 6.
    */
   maxTurns?: number;
+  /**
+   * Wall-clock ceiling on one analysis, every turn and retry included, in
+   * milliseconds. The SDK's own timeout is per attempt; this bounds the
+   * whole thing. Defaults to three minutes.
+   */
+  deadlineMs?: number;
+  /** Quotas, concurrency and the daily budget. Omitted, nothing is limited. */
+  limits?: AnalystLimits;
+  /** Where counters go. Omitted, the analyst keeps its own. */
+  metrics?: AnalystMetrics;
   /** Wall clock in milliseconds, injectable for tests. */
   now?: () => number;
 }
@@ -68,6 +83,8 @@ export interface AnalysisUsage {
   cacheReadTokens: number;
   /** Input tokens written to the prompt cache, at a premium over the full rate. */
   cacheWriteTokens: number;
+  /** Estimate at list prices; null if a turn ran on a model with no listed price. */
+  costUsd: number | null;
   latencyMs: number;
 }
 
@@ -102,6 +119,7 @@ export class AnalystError extends Error {
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 const DEFAULT_MAX_TURNS = 6;
+const DEFAULT_DEADLINE_MS = 180_000;
 
 /**
  * Writes post-match analyses with Claude.
@@ -124,19 +142,38 @@ const DEFAULT_MAX_TURNS = 6;
  * by turn as the tool loop grows them.
  */
 export class Analyst implements MatchAnalyst {
-  constructor(private readonly options: AnalystOptions) {}
+  readonly metrics: AnalystMetrics;
+  /**
+   * Digest of everything that shapes an answer. Cached analyses are keyed by
+   * it, so a new prompt, tool, schema, model or effort level never serves an
+   * answer written under the old one.
+   */
+  readonly version: string;
+  /** Analyses being written, by match and seat, so a second asker waits instead of paying twice. */
+  private readonly inflight = new Map<string, Promise<AnalyzeResult>>();
+
+  constructor(private readonly options: AnalystOptions) {
+    this.metrics = options.metrics ?? new AnalystMetrics();
+    this.version = analysisVersion(options);
+  }
 
   /** Every failure comes out as an `AnalystError`, so callers have one thing to catch. */
   async analyze(request: AnalyzeRequest): Promise<AnalyzeResult> {
     try {
-      return await this.write(request);
+      return await this.serve(request);
     } catch (error) {
-      throw classify(error);
+      const failure = classify(error);
+      this.metrics.fail(failure.code);
+      throw failure;
     }
   }
 
-  private async write(request: AnalyzeRequest): Promise<AnalyzeResult> {
-    const started = this.now();
+  /**
+   * Who may ask, then the cheapest way to answer: the archive, then an
+   * analysis already being written, and only then a model call — which is
+   * the one step the limits apply to.
+   */
+  private async serve(request: AnalyzeRequest): Promise<AnalyzeResult> {
     const match = await this.options.archive.load(request.matchId);
     if (!match) throw new AnalystError('not_found', 'no finished match with that id');
     if (!match.seats) {
@@ -144,9 +181,86 @@ export class Analyst implements MatchAnalyst {
     }
     const seated: SeatedMatch = { ...match, seats: match.seats };
     const seat = seated.seats.find((entry) => addressKey(entry.address) === addressKey(request.requester))?.index ?? null;
+    // A staked match was public while it ran; a practice match is the
+    // practising player's own, and so is what an analysis of it would say.
+    if (seat === null && match.staked !== true) {
+      throw new AnalystError('forbidden', 'only the players who sat in this match can analyse it');
+    }
 
-    const tools = new MatchTools(seated, seat, this.options.styles);
-    const messages: BetaMessageParam[] = [{ role: 'user', content: renderRequest(seated, seat) }];
+    const cached = await this.cached(match, seat);
+    if (cached) {
+      this.metrics.count('cached');
+      return { analysis: cached, cached: true };
+    }
+
+    const key = `${match.result.matchId.toLowerCase()}:${seat ?? 'spectator'}`;
+    const running = this.inflight.get(key);
+    if (running) {
+      request.onStep?.('Another request is already writing this analysis');
+      const { analysis } = await running;
+      this.metrics.count('shared');
+      return { analysis, cached: true };
+    }
+
+    const ticket = this.options.limits?.admit(request.requester, this.now());
+    if (ticket && 'code' in ticket) throw new AnalystError(ticket.code, ticket.message);
+
+    const job = this.write(request, seated, seat);
+    this.inflight.set(key, job);
+    let refund = false;
+    try {
+      const result = await job;
+      if (result.usage) {
+        this.metrics.fresh({ ...result.usage, kept: result.analysis.keyMoments.length, dropped: result.analysis.dropped });
+        this.options.limits?.spend(result.usage.costUsd ?? 0, this.now());
+      }
+      await this.options.archive.saveAnalysis({ analysis: result.analysis, version: this.version }).catch((error: unknown) => {
+        console.warn('[analyst] could not cache the analysis:', errorMessage(error));
+      });
+      return result;
+    } catch (error) {
+      // The player keeps their allowance when the failure was not theirs:
+      // anything but a refusal, unless they cancelled it themselves.
+      refund = classify(error).code !== 'refused' && request.signal?.aborted !== true;
+      throw error;
+    } finally {
+      this.inflight.delete(key);
+      if (ticket && 'release' in ticket) ticket.release(refund, this.now());
+    }
+  }
+
+  /** A stored analysis for this match, seat and version. A broken cache is a miss, not a failure. */
+  private async cached(match: ArchivedMatch, seat: number | null): Promise<MatchAnalysis | null> {
+    try {
+      return await this.options.archive.loadAnalysis(match.result.matchId, seat, this.version);
+    } catch (error) {
+      console.warn('[analyst] could not read the analysis cache:', errorMessage(error));
+      return null;
+    }
+  }
+
+  /** One fresh analysis, inside its wall-clock deadline. */
+  private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
+    const started = this.now();
+    const deadline = AbortSignal.timeout(this.options.deadlineMs ?? DEFAULT_DEADLINE_MS);
+    const signal = request.signal ? AbortSignal.any([request.signal, deadline]) : deadline;
+    try {
+      return await this.loop(request, match, seat, started, signal);
+    } catch (error) {
+      if (deadline.aborted) throw new AnalystError('timeout', 'the analysis took too long and was stopped');
+      throw error;
+    }
+  }
+
+  private async loop(
+    request: AnalyzeRequest,
+    match: SeatedMatch,
+    seat: number | null,
+    started: number,
+    signal: AbortSignal,
+  ): Promise<AnalyzeResult> {
+    const tools = new MatchTools(match, seat, this.options.styles);
+    const messages: BetaMessageParam[] = [{ role: 'user', content: renderRequest(match, seat) }];
     const usage = this.emptyUsage();
 
     // One stream for the whole loop: the narrative is only ever written in
@@ -161,8 +275,8 @@ export class Analyst implements MatchAnalyst {
     let reply: ModelReply;
     for (;;) {
       const final = usage.turns + 1 >= maxTurns;
-      reply = await this.call(this.request(messages, final), onText, request.signal);
-      addUsage(usage, reply.usage);
+      reply = await this.call(this.request(messages, final), onText, signal);
+      addUsage(usage, reply);
       if (reply.stop_reason !== 'tool_use') break;
 
       const calls = reply.content.filter((block): block is BetaToolUseBlock => block.type === 'tool_use');
@@ -197,7 +311,8 @@ export class Analyst implements MatchAnalyst {
       `[analyst] ${request.matchId} for ${seat === null ? 'a spectator' : `seat ${seat}`}: ` +
         `${usage.turns} turns, ${usage.toolCalls} tool calls, ${usage.latencyMs} ms; ` +
         `input ${usage.inputTokens} + cache read ${usage.cacheReadTokens} + cache write ${usage.cacheWriteTokens}, ` +
-        `output ${usage.outputTokens}; ${kept.length} moments kept, ${dropped.length} dropped`,
+        `output ${usage.outputTokens}; ~$${usage.costUsd?.toFixed(4) ?? '?'}; ` +
+        `${kept.length} moments kept, ${dropped.length} dropped`,
     );
 
     return {
@@ -243,8 +358,8 @@ export class Analyst implements MatchAnalyst {
    * One model turn. A finished answer or a request for tools continues;
    * anything else ends the analysis.
    */
-  private async call(request: ModelRequest, onText: (delta: string) => void, signal?: AbortSignal): Promise<ModelReply> {
-    const reply = await this.options.model.stream(request, onText, signal ?? new AbortController().signal);
+  private async call(request: ModelRequest, onText: (delta: string) => void, signal: AbortSignal): Promise<ModelReply> {
+    const reply = await this.options.model.stream(request, onText, signal);
     switch (reply.stop_reason) {
       case 'end_turn':
       case 'tool_use':
@@ -269,6 +384,7 @@ export class Analyst implements MatchAnalyst {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
+      costUsd: 0,
       latencyMs: 0,
     };
   }
@@ -278,12 +394,29 @@ export class Analyst implements MatchAnalyst {
   }
 }
 
-function addUsage(total: AnalysisUsage, turn: BetaUsage): void {
+function addUsage(total: AnalysisUsage, reply: Pick<ModelReply, 'model' | 'usage'>): void {
+  const turn: BetaUsage = reply.usage;
   total.turns += 1;
   total.inputTokens += turn.input_tokens;
   total.outputTokens += turn.output_tokens;
   total.cacheReadTokens += turn.cache_read_input_tokens ?? 0;
   total.cacheWriteTokens += turn.cache_creation_input_tokens ?? 0;
+  // Priced by the model that served the turn, which a fallback can change.
+  const cost = turnCost(reply.model, turn);
+  total.costUsd = cost === null || total.costUsd === null ? null : total.costUsd + cost;
+}
+
+/** See `Analyst.version`. */
+function analysisVersion(options: AnalystOptions): string {
+  const inputs = JSON.stringify({
+    model: options.modelId,
+    effort: options.effort,
+    maxTurns: options.maxTurns ?? DEFAULT_MAX_TURNS,
+    system: SYSTEM_PROMPT,
+    tools: TOOLS,
+    schema: z.toJSONSchema(AnalysisOutput),
+  });
+  return createHash('sha256').update(inputs).digest('hex').slice(0, 16);
 }
 
 /** A tool call as a progress line for the player. The input is model output, so only numbers are echoed. */
