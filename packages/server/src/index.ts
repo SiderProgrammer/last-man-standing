@@ -8,7 +8,17 @@
 export { Room, type Client, type MatchFinished, type RoomOptions } from './match/room.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
 export { MemoryStyleBook, PostgresStyleBook, createStyleBook, type StyleBook } from './lobby/styles.js';
-export { Gateway, type GatewayOptions, type Socket, type SignatureVerifier } from './gateway/gateway.js';
+export { Gateway, type GatewayOptions, type Peer, type Socket, type SignatureVerifier } from './gateway/gateway.js';
+export {
+  CloseCode,
+  DEFAULT_GATEWAY_LIMITS,
+  KeyedLimiter,
+  TokenBucket,
+  type GatewayLimits,
+} from './gateway/limits.js';
+export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
+export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
+export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 export {
   MemoryArchive,
   PostgresArchive,
@@ -25,7 +35,7 @@ export {
   type Relayer,
 } from './chain/attestor.js';
 export { BotDriver } from './bots/bots.js';
-export { errorFrame, parseClientMessage } from './gateway/frames.js';
+export { FrameError, errorFrame, parseClientMessage } from './gateway/frames.js';
 export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
 export {
   viemEscrowReader,

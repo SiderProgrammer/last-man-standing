@@ -186,3 +186,43 @@ describe('collect', () => {
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/does not push payouts/);
   });
 });
+
+describe('settlement retry', () => {
+  async function settleWith(outcomes: boolean[]) {
+    const attempts: boolean[] = [];
+    const archive = new MemoryArchive();
+    const lobby = new Lobby({
+      archive,
+      relayer: {
+        settle: async () => {
+          const ok = outcomes[attempts.length] ?? false;
+          attempts.push(ok);
+          if (!ok) throw new Error('rpc timeout');
+          return `0x${'7a'.repeat(32)}`;
+        },
+        abort: async () => null,
+      },
+      commitMs: COMMIT_MS,
+      revealMs: REVEAL_MS,
+      settleBackoffMs: [1, 1],
+      sleep: () => new Promise((resolve) => setImmediate(resolve)),
+    });
+    const setup = setupWithBots(4, `retry-${outcomes.join()}`);
+    const room = lobby.adopt(setup, botSeats(4), 0);
+    for (let now = 0; !room.finished && now < 10_000_000; now += 5_000) lobby.tick(now);
+    for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    return { attempts, archived: await archive.load(setup.matchId) };
+  }
+
+  it('resubmits a failed settlement until one lands', async () => {
+    const { attempts, archived } = await settleWith([false, false, true]);
+    expect(attempts).toEqual([false, false, true]);
+    expect(archived?.settledTx).toBe(`0x${'7a'.repeat(32)}`);
+  });
+
+  it('gives up after the last attempt and leaves the refund to the escrow', async () => {
+    const { attempts, archived } = await settleWith([false, false, false, true]);
+    expect(attempts).toEqual([false, false, false]);
+    expect(archived?.settledTx).toBeNull();
+  });
+});

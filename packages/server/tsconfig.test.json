@@ -10,7 +10,8 @@
     "paths": {
       "@lms/protocol": ["../protocol/src/index.ts"],
       "@lms/engine": ["../engine/src/index.ts"],
-      "@lms/server": ["../server/src/index.ts"]
+      "@lms/server": ["../server/src/index.ts"],
+      "@lms/harness": ["../harness/src/index.ts"]
     }
   },
   "include": ["test/**/*.ts"]

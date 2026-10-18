@@ -10,6 +10,7 @@ export default defineConfig({
       '@lms/protocol': pkg('protocol'),
       '@lms/engine': pkg('engine'),
       '@lms/server': pkg('server'),
+      '@lms/harness': pkg('harness'),
     },
   },
   test: {

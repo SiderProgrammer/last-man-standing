@@ -6,8 +6,12 @@
 import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
+import { MAX_CLIENT_FRAME_BYTES } from '@lms/protocol';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
+import { Heartbeat } from './gateway/heartbeat.js';
+import { peerFrom } from './gateway/peer.js';
+import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createStyleBook } from './lobby/styles.js';
@@ -20,6 +24,10 @@ import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js'
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 
 const TICK_MS = 250;
+/** How often unauthenticated sockets and stale rate-limit state are cleared. */
+const SWEEP_MS = 1_000;
+/** A socket that misses a ping for this long is terminated. */
+const HEARTBEAT_MS = 30_000;
 
 async function main(): Promise<void> {
   const archive = await createArchive(config.databaseUrl);
@@ -59,6 +67,8 @@ async function main(): Promise<void> {
   // With an RPC the gateway can verify ERC-1271 logins, which is what lets a
   // 7702-delegated account log in with a session key instead of prompting the
   // player's wallet on every reconnect. Without one, EOA signatures still work.
+  // Either way an EOA login is settled by local recovery on the verify pool,
+  // and only a signature that does not recover is put to the RPC.
   const rpc = config.rpcUrl
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
@@ -93,13 +103,15 @@ async function main(): Promise<void> {
         })
       : null;
 
+  const verifyPool = new VerifyPool(config.verifyThreads);
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
     directory: () => bridge?.directory() ?? { open: [], live: [] },
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
-    ...(rpc ? { verify: (args) => rpc.verifyMessage(args) } : {}),
+    verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
@@ -112,6 +124,13 @@ async function main(): Promise<void> {
             feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
           }
         : null,
+    limits: {
+      ...config.gatewayLimits,
+      maxConnections: config.maxConnections,
+      maxConnectionsPerIp: config.maxConnectionsPerIp,
+      loginTimeoutMs: config.loginTimeoutMs,
+      allowedOrigins: config.allowedOrigins,
+    },
   });
 
   const http = createServer((request, response) => {
@@ -142,22 +161,57 @@ async function main(): Promise<void> {
     response.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({ server: http });
+  const wss = new WebSocketServer({
+    server: http,
+    // `ws` defaults to 100 MiB. Refusing at the transport means an oversized
+    // frame is never buffered at all; the gateway's own check stays as the
+    // backstop for anything that reaches it some other way.
+    maxPayload: MAX_CLIENT_FRAME_BYTES,
+    // Compression costs memory per socket and opens decompression bombs, for
+    // frames that are a few hundred bytes of JSON.
+    perMessageDeflate: false,
+  });
+  const heartbeat = new Heartbeat();
   // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
   // the shapes are bridged here rather than by casting the socket into place.
-  wss.on('connection', (socket) =>
-    gateway.accept({
-      get readyState() {
-        return socket.readyState;
+  wss.on('error', (error) => console.error('[server] websocket server error:', error.message));
+  wss.on('connection', (socket, request) => {
+    // First, before anything can fail: `ws` reports protocol violations — a
+    // frame over `maxPayload`, invalid UTF-8, a bad opcode — as an `error`
+    // event, and one with no listener is thrown, taking the whole process
+    // down on one malformed frame. With a listener, `ws` closes that socket.
+    socket.on('error', () => undefined);
+    const admitted = gateway.accept(
+      {
+        get readyState() {
+          return socket.readyState;
+        },
+        get bufferedAmount() {
+          return socket.bufferedAmount;
+        },
+        send: (data) => socket.send(data),
+        close: (code, reason) => socket.close(code, reason),
+        onMessage: (listener) => void socket.on('message', listener),
+        onClose: (listener) => void socket.on('close', listener),
       },
-      send: (data) => socket.send(data),
-      onMessage: (listener) => void socket.on('message', listener),
-      onClose: (listener) => void socket.on('close', listener),
-    }),
-  );
+      peerFrom(request, config.trustProxy),
+    );
+    if (!admitted) return;
+    const pingable = {
+      ping: () => socket.ping(),
+      terminate: () => socket.terminate(),
+      onPong: (listener: () => void) => void socket.on('pong', listener),
+    };
+    heartbeat.track(pingable);
+    socket.on('close', () => heartbeat.untrack(pingable));
+  });
 
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
+  const sweeper = setInterval(() => gateway.sweep(), SWEEP_MS);
+  sweeper.unref();
+  const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
+  beat.unref();
 
   console.log(
     config.onChain
@@ -201,8 +255,11 @@ async function main(): Promise<void> {
     feeKeeper?.stop();
     proposals?.stop();
     clearInterval(ticker);
+    clearInterval(sweeper);
+    clearInterval(beat);
     wss.close();
     http.close();
+    void verifyPool.close();
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

@@ -20,6 +20,13 @@ export class Net {
   private readonly outbox: ClientMessage[] = [];
   private backoff = BASE_BACKOFF_MS;
   private closed = false;
+  /**
+   * Whether this socket has logged in. Until it has, everything but the login
+   * itself is queued: the server refuses any other message from an
+   * unauthenticated socket, so a commit sent in the gap between a reconnect
+   * and the re-login would simply be lost.
+   */
+  private ready = false;
 
   constructor(
     private readonly url: string,
@@ -36,6 +43,7 @@ export class Net {
     this.closed = false;
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.ready = false;
 
     socket.onopen = () => {
       this.backoff = BASE_BACKOFF_MS;
@@ -59,7 +67,10 @@ export class Net {
       this.socket = null;
       this.onStatus(false);
       if (this.closed) return;
-      setTimeout(() => this.connect(), this.backoff);
+      // Jittered, so a server restart is not met by every client at once on
+      // the same exponential schedule. Half fixed, half random: never sooner
+      // than half the backoff.
+      setTimeout(() => this.connect(), this.backoff * (0.5 + Math.random() / 2));
       this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
     };
 
@@ -67,7 +78,7 @@ export class Net {
   }
 
   send(message: ClientMessage): void {
-    if (this.socket?.readyState === WebSocket.OPEN) {
+    if (this.socket?.readyState === WebSocket.OPEN && (this.ready || message.type === 'auth')) {
       this.socket.send(JSON.stringify(message));
       return;
     }
@@ -77,6 +88,7 @@ export class Net {
   /** Called once the session is authenticated: anything buffered is now safe to send. */
   flush(): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.ready = true;
     while (this.outbox.length > 0) {
       const message = this.outbox.shift();
       if (message) this.socket.send(JSON.stringify(message));
