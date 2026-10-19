@@ -82,6 +82,37 @@ export const LABEL: TextStyleOptions = {
   letterSpacing: 0.4,
 };
 export const SUBLABEL: TextStyleOptions = { fill: COLORS.muted, fontFamily: FONT, fontSize: 11 };
+/** The HP number on a seat's nameplate. */
+export const HP_LABEL: TextStyleOptions = {
+  fill: COLORS.hp,
+  fontFamily: FONT,
+  fontSize: 12,
+  fontWeight: '700',
+};
+/** The big round title that sweeps across the floor as a replay starts. */
+export const TITLE: TextStyleOptions = {
+  fill: COLORS.text,
+  fontFamily: FONT,
+  fontSize: 44,
+  fontWeight: '800',
+  letterSpacing: 8,
+  stroke: { color: FX_STROKE, width: 6 },
+};
+/** The arena's corner readout: round number and the storm's next bite. */
+export const HUD: TextStyleOptions = {
+  fill: COLORS.muted,
+  fontFamily: FONT,
+  fontSize: 11,
+  fontWeight: '700',
+  letterSpacing: 2,
+};
+export const HUD_VALUE: TextStyleOptions = {
+  fill: COLORS.text,
+  fontFamily: FONT,
+  fontSize: 22,
+  fontWeight: '800',
+  letterSpacing: 1,
+};
 export const BADGE: TextStyleOptions = {
   fill: COLORS.text,
   fontFamily: FONT,
