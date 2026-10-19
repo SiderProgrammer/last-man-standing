@@ -24,8 +24,11 @@ const MARGIN_WITH_AVATARS = 92;
 const STORM_INSET = 20;
 /** Rounds over which the storm ring tightens to its maximum. */
 const STORM_RAMP_ROUNDS = 12;
-/** How far the ring closes in at full intensity. */
-const STORM_TRAVEL = 30;
+/**
+ * How far the ring closes in at full intensity: far enough that, late in a
+ * match, the wall is visibly cutting across the seats it is biting.
+ */
+const STORM_TRAVEL = 64;
 
 export interface Point {
   x: number;

@@ -1,5 +1,6 @@
 import {
   Action,
+  MatchPhase,
   commitMove,
   type ActionValue,
   type PublicMatchState,
@@ -14,6 +15,7 @@ import { readRaw, writeRaw } from '../io/storage.js';
 import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
+import { gsap } from '../motion.js';
 import { readsTable, targetOptions } from '../ui/views.js';
 import { hideResult, showResult } from './result.js';
 
@@ -26,6 +28,13 @@ let arena: Arena | null = null;
 /** Ends the current replay hold. Owned here, not by the renderer, so the
  *  controls still unlock if the canvas never managed to mount. */
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
+/** Whether the move buttons are open right now, as the phase plan last said. */
+let controlsOpen = false;
+/** Phase label last drawn, so the heading is only rebuilt when it changes. */
+let phaseShown = '';
+/** What the timer bar is draining from: rebased whenever the deadline moves. */
+let timerKey = '';
+let timerTotal = 1;
 
 // ---------------------------------------------------------------- server feed
 
@@ -33,7 +42,7 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
   appendRound(message.lines, message.record.round, message.record.eliminated);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
-  arena?.showRound(message.record);
+  arena?.showRound(message.record, message.replayMs);
   startReplay(message.replayMs);
 }
 
@@ -148,10 +157,11 @@ function syncPhase(state: PublicMatchState): void {
     replaying: app.replaying,
   });
 
-  dom.phaseLabel.textContent = plan.label;
+  renderPhaseLabel(plan.label);
   setActionsEnabled(plan.actionsEnabled);
   dom.lockIn.disabled = plan.lockInDisabled;
   if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
+  renderMove();
   // The send stays exactly where it was in the sequence; it is simply no longer
   // buried inside the predicate that decides it.
   if (plan.shouldReveal) revealNow(state);
@@ -182,6 +192,12 @@ function lockIn(): void {
   dom.lockIn.disabled = true;
   setActionsEnabled(false);
   dom.moveStatus.textContent = `Sealed: ${describeDraft(draft)}`;
+  renderMove();
+  // A stamp: the button punches down and springs back as the move seals.
+  gsap.fromTo(dom.lockIn, { scale: 0.94 }, { scale: 1, duration: 0.45, ease: 'elastic.out(1, 0.45)' });
+  dom.movePanel.classList.remove('sealing');
+  void dom.movePanel.offsetWidth;
+  dom.movePanel.classList.add('sealing');
 }
 
 function revealNow(state: PublicMatchState): void {
@@ -207,7 +223,9 @@ function revealNow(state: PublicMatchState): void {
 async function renderArena(state: PublicMatchState, you: number | null): Promise<void> {
   const mounting = arena === null;
   arena ??= await Arena.mount(dom.arena);
+  arena.onPick ??= pickTarget;
   arena.render(state, you);
+  renderMove();
   // Avatars for this match may have landed while the canvas was still being
   // created, in which case nothing has handed them to the arena yet.
   if (mounting && app.avatars.length > 0) arena.setAvatars(app.avatars);
@@ -215,6 +233,85 @@ async function renderArena(state: PublicMatchState, you: number | null): Promise
 
 function renderTargets(state: PublicMatchState, you: number | null): void {
   fillSelect(dom.target, targetOptions(state, you));
+  // A target that has since been eliminated falls back to whoever the picker
+  // now shows, so the move on screen is always the move that would be sealed.
+  if (app.draft?.action === Action.Attack && dom.target.value !== String(app.draft.target)) {
+    app.draft.target = Number(dom.target.value || 0);
+  }
+}
+
+/**
+ * Everything that follows from the draft: the target chips, the lock-in
+ * button's label, the sealed state, and the aim drawn in the arena.
+ */
+function renderMove(): void {
+  const state = app.match;
+  const draft = app.draft;
+  const sealed = state !== null && app.committedRound === state.round;
+  const attacking = draft?.action === Action.Attack;
+
+  const finished = state?.phase === MatchPhase.Finished;
+  dom.movePanel.classList.toggle('sealed', sealed && !finished);
+  dom.targetRow.classList.toggle('hidden', !attacking || finished);
+  for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.action) === draft?.action));
+  }
+
+  dom.lockIn.textContent = lockInLabel(finished, sealed, draft);
+
+  const hp = new Map(state?.players.map((player) => [player.index, player.hp]) ?? []);
+  const options = [...dom.target.options].map((option) => Number(option.value));
+  dom.targetChips.replaceChildren(
+    ...options.map((seat) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.disabled = !controlsOpen;
+      chip.classList.toggle('active', attacking && draft?.target === seat);
+      const name = document.createElement('b');
+      name.textContent = `#${seat}`;
+      const life = document.createElement('span');
+      // Not mid-replay: the snapshot already holds the HP the replay is
+      // still on its way to.
+      life.textContent = app.replaying ? '' : `${hp.get(seat) ?? '?'} hp`;
+      chip.append(name, life);
+      chip.onclick = () => pickTarget(seat);
+      return chip;
+    }),
+  );
+
+  arena?.setAim(app.you !== null ? draft : null, sealed, controlsOpen ? options : []);
+}
+
+function lockInLabel(finished: boolean, sealed: boolean, draft: typeof app.draft): string {
+  if (finished) return 'Match over';
+  if (sealed) return '✓ Move sealed';
+  if (!controlsOpen) return 'Lock in move';
+  return draft ? `Lock in · ${describeDraft(draft)}` : 'Pick a move';
+}
+
+/** Targets a seat, from a chip or a click in the arena: an attack on it. */
+function pickTarget(seat: number): void {
+  if (!controlsOpen) return;
+  if (![...dom.target.options].some((option) => option.value === String(seat))) return;
+  dom.target.value = String(seat);
+  const attack = dom.actionBar.querySelector<HTMLButtonElement>(`[data-action="${Action.Attack}"]`);
+  if (attack) selectAction(Action.Attack, attack);
+}
+
+/** "Round 3 — commit" as the round, plus a coloured chip for the phase. */
+function renderPhaseLabel(label: string): void {
+  if (label === phaseShown) return;
+  phaseShown = label;
+  const [round, phase] = label.split(' — ');
+  if (!phase) {
+    dom.phaseLabel.textContent = label;
+    return;
+  }
+  const chip = document.createElement('span');
+  chip.className = `phase-chip ${phase}`;
+  chip.textContent = phase;
+  dom.phaseLabel.replaceChildren(round ?? '', chip);
 }
 
 function renderReads(state: PublicMatchState, you: number | null): void {
@@ -240,12 +337,48 @@ function appendRound(lines: string[], round: number, eliminated: number[]): void
 function appendLine(text: string, className = ''): void {
   const li = document.createElement('li');
   li.textContent = text;
-  if (className) li.className = className;
+  li.className = className || lineKind(text);
+  if (app.you !== null && text.startsWith(`#${app.you} `)) li.classList.add('mine');
   dom.feed.append(li);
 }
 
+/** Colours a history line by what it describes. */
+function lineKind(text: string): string {
+  if (text.includes('attacked')) return 'act-attack';
+  if (text.includes('defended')) return 'act-defend';
+  if (text.endsWith('hid')) return 'act-hide';
+  if (text.includes('eliminated')) return 'kill';
+  if (text.includes('did not reveal')) return 'act-none';
+  return '';
+}
+
+/**
+ * The countdown, and the bar under it that drains with it. The bar rebases on
+ * every new deadline, so it always runs from full to empty over the window it
+ * shows, and sits full while a replay holds the clock.
+ */
 export function updateTimer(): void {
-  dom.timer.textContent = formatCountdown(app.match?.phase ?? null, app.deadline, Date.now());
+  const now = Date.now();
+  const state = app.match;
+  const phase = state?.phase ?? null;
+  dom.timer.textContent = formatCountdown(phase, app.deadline, now);
+
+  const key = `${app.deadline}|${app.replaying}`;
+  if (key !== timerKey) {
+    timerKey = key;
+    timerTotal = Math.max(1, app.deadline - now);
+  }
+  const left = Math.max(0, app.deadline - now);
+  const running = phase === MatchPhase.Commit || phase === MatchPhase.Reveal;
+  const fraction = !running ? 0 : app.replaying ? 1 : left / timerTotal;
+  dom.timerBar.style.transform = `scaleX(${fraction.toFixed(4)})`;
+  dom.timerBar.classList.toggle('held', app.replaying);
+  dom.timerBar.classList.toggle('reveal', phase === MatchPhase.Reveal);
+
+  const sealed = state !== null && app.committedRound === state.round;
+  const urgent =
+    phase === MatchPhase.Commit && !app.replaying && !sealed && app.you !== null && left < 5_000;
+  dom.movePanel.classList.toggle('urgent', urgent);
 }
 
 // ------------------------------------------------------------------- controls
@@ -288,7 +421,8 @@ function selectAction(action: ActionValue, button: HTMLButtonElement): void {
   const target = needsTarget ? Number(dom.target.value || 0) : 0;
   app.draft = { action, target };
   dom.lockIn.disabled = app.committedRound === app.match?.round;
-  dom.moveStatus.textContent = `Ready: ${describeDraft(app.draft)}`;
+  dom.moveStatus.textContent = `Ready: ${describeDraft(app.draft)} — Enter to lock in`;
+  renderMove();
 }
 
 function clickAction(action: ActionValue): void {
@@ -304,6 +438,7 @@ function switchTab(feed: boolean): void {
 }
 
 function setActionsEnabled(enabled: boolean): void {
+  controlsOpen = enabled;
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
     button.disabled = !enabled;
   }
@@ -313,4 +448,5 @@ function lockControls(reason: string): void {
   setActionsEnabled(false);
   dom.lockIn.disabled = true;
   dom.moveStatus.textContent = reason;
+  renderMove();
 }

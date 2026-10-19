@@ -1,6 +1,6 @@
 import type { TextStyleOptions } from 'pixi.js';
 
-const FONT = 'Segoe UI, sans-serif';
+const FONT = 'Segoe UI, system-ui, sans-serif';
 
 /**
  * The arena's palette and type, as Pixi wants them.
@@ -24,7 +24,19 @@ export const COLORS = {
   parried: 0x6fa8f5,
   missed: 0x5a6579,
   storm: 0x3a2d4a,
+  /** The arena floor: lit in the middle, falling off to the walls. */
+  floorCentre: 0x131b2a,
+  floorEdge: 0x05070b,
+  /** Faint lines etched into the floor. */
+  floorLine: 0x1d2737,
+  /** The fog the storm drags in from the walls. */
+  stormFog: 0x6b4fc8,
+  stormEdge: 0x9d84ff,
+  /** The commit-phase aim: your reticle and the line to it. */
+  aim: 0xff6b6e,
 } as const;
+
+const FX_STROKE = 0x05070c;
 
 /**
  * Tints for the round replay. The textures are white with the shape in alpha,
@@ -42,27 +54,33 @@ export const FX = {
   noShow: COLORS.muted,
   winner: 0xf5d06f,
   /** Dark outline behind floating numbers, so they read over any avatar. */
-  textStroke: 0x05070c,
+  textStroke: FX_STROKE,
 } as const;
 
 export const FLOAT: TextStyleOptions = {
   fill: COLORS.text,
   fontFamily: FONT,
-  fontSize: 16,
-  fontWeight: '700',
-  stroke: { color: FX.textStroke, width: 4 },
+  fontSize: 18,
+  fontWeight: '800',
+  stroke: { color: FX.textStroke, width: 5 },
 };
 
 export const BANNER: TextStyleOptions = {
   fill: FX.winner,
   fontFamily: FONT,
-  fontSize: 13,
-  fontWeight: '700',
-  letterSpacing: 1.5,
-  stroke: { color: FX.textStroke, width: 4 },
+  fontSize: 15,
+  fontWeight: '800',
+  letterSpacing: 2.5,
+  stroke: { color: FX.textStroke, width: 5 },
 };
 
-export const LABEL: TextStyleOptions = { fill: COLORS.text, fontFamily: FONT, fontSize: 14 };
+export const LABEL: TextStyleOptions = {
+  fill: COLORS.text,
+  fontFamily: FONT,
+  fontSize: 13,
+  fontWeight: '700',
+  letterSpacing: 0.4,
+};
 export const SUBLABEL: TextStyleOptions = { fill: COLORS.muted, fontFamily: FONT, fontSize: 11 };
 export const BADGE: TextStyleOptions = {
   fill: COLORS.text,
