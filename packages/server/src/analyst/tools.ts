@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
-import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { addressKey, describeStyle, readOpponents, type ReadTable } from '@lms/protocol';
 import type { StyleBook } from '../lobby/styles.js';
+import type { ToolDefinition } from './model.js';
 import { renderOverview, renderRound, type SeatedMatch } from './prompt.js';
 
 /**
@@ -13,12 +13,11 @@ import { renderOverview, renderRound, type SeatedMatch } from './prompt.js';
  * look up a stranger's wallet. `get_player_history` takes a seat for exactly
  * that reason: it can only ever name a wallet that sat at this table.
  *
- * The definitions are constants in name order. Tools render first in a
- * request, ahead of the system prompt, so they are part of the cached prefix:
- * building them per request, or in a varying order, would cost a cache write
- * on every call.
+ * The definitions are constants in name order. They sit in the request's
+ * fixed prefix with the system prompt, so building them per request, or in a
+ * varying order, would cost the provider's prefix cache on every call.
  */
-export const TOOLS: BetaTool[] = [
+export const TOOLS: ToolDefinition[] = [
   tool(
     'get_match',
     'The match overview: rules, who sat where, the final ranking, and one line per round with eliminations and HP. Already in the first message; call it again only if it is no longer in view.',
@@ -41,25 +40,18 @@ export const TOOLS: BetaTool[] = [
   ),
 ];
 
-/**
- * A strict tool: every property required, nothing extra allowed, so the API
- * constrains the call to the schema. Inputs stream eagerly, which means they
- * arrive unvalidated — see `INPUTS`.
- */
-function tool(name: string, description: string, properties: Record<string, { type: string; description: string }>): BetaTool {
+/** Every property required, nothing extra allowed. The input is still checked on arrival — see `INPUTS`. */
+function tool(name: string, description: string, properties: Record<string, { type: string; description: string }>): ToolDefinition {
   return {
     name,
     description,
     input_schema: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false },
-    strict: true,
-    eager_input_streaming: true,
   };
 }
 
 /**
- * Inputs, checked again on arrival. With eager input streaming the API no
- * longer validates tool input before handing it over, and the SDK's tolerant
- * parser can return a silently truncated object instead of failing.
+ * Inputs, checked again on arrival: a function call's arguments are model
+ * output, and a provider's schema enforcement is not a guarantee.
  */
 const INPUTS = {
   get_match: z.object({}).strict(),

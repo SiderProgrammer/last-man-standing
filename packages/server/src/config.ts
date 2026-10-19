@@ -104,28 +104,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     /** First block to look for proposals in: the governor's deployment block. */
     governorFromBlock: optionalBigInt(env.GOVERNOR_FROM_BLOCK) ?? 0n,
     /**
-     * Post-match analysis with Claude. On when the SDK has a credential to
-     * find in the environment (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`);
-     * `ANALYST_ENABLED=true` forces it on for credentials the SDK resolves
-     * elsewhere (an `ant auth login` profile), `false` forces it off. Off, the
-     * client shows the panel as unavailable and nothing is ever sent anywhere.
+     * Post-match analysis with Gemini. On when `GEMINI_API_KEY` is set;
+     * `ANALYST_ENABLED=false` forces it off. Off, the client shows the panel
+     * as unavailable and nothing is ever sent anywhere.
      */
     analyst: {
-      enabled:
-        env.ANALYST_DEMO === 'true' ||
-        env.ANALYST_ENABLED === 'true' ||
-        (env.ANALYST_ENABLED !== 'false' && Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN)),
+      enabled: env.ANALYST_DEMO === 'true' || (env.ANALYST_ENABLED !== 'false' && Boolean(env.GEMINI_API_KEY)),
       /**
-       * Answers with the offline demo model instead of Claude: no key, no
+       * Answers with the offline demo model instead of a real one: no key, no
        * network, no cost, formulaic prose. For UI work and demos. See `analyst/demo.ts`.
        */
       demo: env.ANALYST_DEMO === 'true',
-      model: env.ANALYST_MODEL || 'claude-opus-5-5',
-      /** `low` | `medium` | `high` | `xhigh` | `max`. Opus 5.5 defaults to medium; set it explicitly anyway. */
+      /** A Gemini 3 model or later: the first to combine structured output with function calling. */
+      model: env.ANALYST_MODEL || 'gemini-3.8-flash',
+      geminiApiKey: env.GEMINI_API_KEY ?? '',
+      /** Blank uses the public Gemini API. */
+      geminiBaseUrl: env.GEMINI_BASE_URL ?? '',
+      /** `low` | `medium` | `high` | `xhigh` | `max`, as Gemini's thinking level; the top three all mean `high`. */
       effort: parseEffort(env.ANALYST_EFFORT),
       /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
       maxTokens: Number(env.ANALYST_MAX_TOKENS ?? 16_000),
-      /** Per attempt; the SDK retries timeouts, 429s and 5xx up to `maxRetries` times. */
+      /** Per attempt; timeouts, 429s and 5xx are retried up to `maxRetries` times. */
       timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 120_000),
       maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
       /** Ceiling on one whole analysis, every turn and retry included. */

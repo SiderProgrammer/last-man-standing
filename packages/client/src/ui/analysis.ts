@@ -36,7 +36,9 @@ export function paragraphs(summary: string): string[] {
 /** The small print under an analysis: provenance, and what the verifier removed. */
 export function analysisNote(analysis: MatchAnalysis, cached: boolean): string {
   const author =
-    analysis.model === 'demo' ? 'Written by the offline demo analyst, not Claude.' : `Written by Claude (${analysis.model}).`;
+    analysis.model === 'demo'
+      ? 'Written by the offline demo analyst, not a real model.'
+      : `Written by Gemini (${analysis.model}).`;
   const parts = [`${author} Key moments are checked against the published rounds.`];
   if (analysis.dropped > 0) {
     parts.push(

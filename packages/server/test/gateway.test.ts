@@ -314,15 +314,14 @@ class ManualAnalyst implements MatchAnalyst {
     return {
       question: request.question.trim(),
       answer: 'Round 3, mostly.',
-      model: 'claude-opus-5-5',
+      model: 'gemini-3.8-flash',
       usage: {
-        model: 'claude-opus-5-5',
+        model: 'gemini-3.8-flash',
         turns: 1,
         toolCalls: 0,
         inputTokens: 1,
         outputTokens: 1,
         cacheReadTokens: 0,
-        cacheWriteTokens: 0,
         costUsd: 0,
         latencyMs: 1,
       },
@@ -339,7 +338,7 @@ class ManualAnalyst implements MatchAnalyst {
         keyMoments: [],
         advice: [],
         dropped: 0,
-        model: 'claude-opus-5-5',
+        model: 'gemini-3.8-flash',
       },
       cached: false,
     });

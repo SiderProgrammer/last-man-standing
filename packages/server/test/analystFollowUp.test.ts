@@ -33,7 +33,7 @@ async function harness(script: Turn[], limits?: AnalystLimits) {
   const analyst = new Analyst({
     archive,
     model,
-    modelId: 'claude-opus-5-5',
+    modelId: 'gemini-3.8-flash',
     effort: 'medium',
     maxTokens: 16_000,
     ...(limits ? { limits } : {}),
@@ -74,7 +74,8 @@ describe('follow-up questions', () => {
     expect(request?.messages[2]?.content).toBe(wrapQuestion('Why round 2?'));
     expect(request?.messages[3]?.content).toBe(FOLLOW_UP_INSTRUCTION);
     // Prose, not the analysis schema; same effort.
-    expect(request?.output_config).toEqual({ effort: 'medium' });
+    expect(request?.output_schema).toBeUndefined();
+    expect(request?.effort).toBe('medium');
   });
 
   it('shares the cached prefix with the analysis: same tools, same system prompt', async () => {
@@ -130,7 +131,7 @@ describe('follow-up questions', () => {
     const archive = new MemoryArchive();
     await archive.save(match);
     const model = new FakeModel([]);
-    const analyst = new Analyst({ archive, model, modelId: 'claude-opus-5-5', effort: 'medium', maxTokens: 1_000 });
+    const analyst = new Analyst({ archive, model, modelId: 'gemini-3.8-flash', effort: 'medium', maxTokens: 1_000 });
     const error = await failure(analyst.ask({ matchId, requester: player, question: 'Hello?' }));
     expect(error.code).toBe('not_found');
     expect(model.requests).toHaveLength(0);

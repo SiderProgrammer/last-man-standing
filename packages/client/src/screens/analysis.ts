@@ -58,7 +58,7 @@ export function offerAnalysis(matchId: `0x${string}`): void {
   }
   dom.analyse.disabled = false;
   dom.resultAnalyse.classList.remove('hidden');
-  setStatus('Ask Claude to walk through the match and point out what decided it.');
+  setStatus('Ask the analyst to walk through the match and point out what decided it.');
 }
 
 function askQuestion(): void {

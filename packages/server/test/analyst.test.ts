@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import Anthropic from '@anthropic-ai/sdk';
-import { Analyst, AnalystError, MemoryArchive, SYSTEM_PROMPT, classify, playReferenceMatch } from '@lms/server';
+import {
+  Analyst,
+  AnalystError,
+  MemoryArchive,
+  ProviderError,
+  SYSTEM_PROMPT,
+  classify,
+  outputSchema,
+  playReferenceMatch,
+} from '@lms/server';
 import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
 // Staked, so a wallet that did not play may still ask for the spectator's view.
@@ -27,7 +35,7 @@ async function harness(script: Turn[]) {
   const archive = new MemoryArchive();
   await archive.save(match);
   const model = new FakeModel(script);
-  const analyst = new Analyst({ archive, model, modelId: 'claude-opus-5-5', effort: 'medium', maxTokens: 16_000 });
+  const analyst = new Analyst({ archive, model, modelId: 'gemini-3.8-flash', effort: 'medium', maxTokens: 16_000 });
   return { analyst, model };
 }
 
@@ -60,8 +68,7 @@ describe('analyst', () => {
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
     expect(analysis.dropped).toBe(1);
     expect(analysis.advice).toEqual(output().advice);
-    // As the API reported it, which a refusal fallback could change.
-    expect(analysis.model).toBe('claude-opus-5-5');
+    expect(analysis.model).toBe('gemini-3.8-flash');
   });
 
   it('writes for a spectator when the asker did not play', async () => {
@@ -71,30 +78,34 @@ describe('analyst', () => {
     expect(JSON.stringify(model.requests[0]?.messages)).toMatch(/spectator/);
   });
 
-  it('sends a frozen, cacheable system prompt and keeps the match after it', async () => {
+  it('sends a frozen system prompt and keeps the match after it', async () => {
     const { analyst, model } = await harness([answer(output())]);
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
     const request = model.requests[0];
 
-    expect(request?.system).toEqual([{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }]);
+    expect(request?.system).toBe(SYSTEM_PROMPT);
     expect(SYSTEM_PROMPT).not.toContain(match.result.matchId);
     const user = JSON.stringify(request?.messages);
     expect(user).toContain(match.result.matchId);
     expect(user).toContain('seat #0');
   });
 
-  it('pins effort, structured output and the refusal fallback', async () => {
+  it('pins effort and structured output', async () => {
     const { analyst, model } = await harness([answer(output())]);
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
     const request = model.requests[0];
 
-    expect(request?.model).toBe('claude-opus-5-5');
-    expect(request?.output_config?.effort).toBe('medium');
-    expect(request?.output_config?.format?.type).toBe('json_schema');
-    expect(request?.betas).toContain('server-side-fallback-2026-07-01');
-    expect(request?.fallbacks).toBe('default');
-    // Thinking is always on for this model; sending `disabled` would be a 400.
-    expect(request?.thinking).toBeUndefined();
+    expect(request?.model).toBe('gemini-3.8-flash');
+    expect(request?.effort).toBe('medium');
+    expect(request?.output_schema).toEqual(outputSchema());
+  });
+
+  it('constrains the answer with a schema a provider accepts', () => {
+    const schema = JSON.stringify(outputSchema());
+    expect(schema).not.toContain('$schema');
+    expect(schema).not.toContain('minLength');
+    expect(schema).not.toContain(String(Number.MAX_SAFE_INTEGER));
+    expect(schema).toContain('keyMoments');
   });
 
   it('opens with an overview line for every round', async () => {
@@ -125,14 +136,6 @@ describe('analyst', () => {
         reply: {
           stop_reason: 'refusal',
           content: [],
-          stop_details: {
-            type: 'refusal',
-            category: null,
-            explanation: null,
-            fallback_credit_token: null,
-            fallback_has_prefill_claim: false,
-            recommended_model: null,
-          },
         },
       },
     ]);
@@ -146,7 +149,7 @@ describe('analyst', () => {
 
   it('rejects an answer that is not JSON, or not the schema', async () => {
     const prose: Turn = {
-      reply: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is my analysis!', citations: null }] },
+      reply: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is my analysis!' }] },
     };
     const { analyst } = await harness([prose, answer({ summary: 'no moments, no advice' })]);
     const notJson = await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }));
@@ -156,21 +159,21 @@ describe('analyst', () => {
     expect(wrongShape.message).toMatch(/schema/);
   });
 
-  it('maps provider errors by class', async () => {
-    const headers = new Headers();
+  it('maps provider errors by kind', async () => {
     const cases: Array<[unknown, string]> = [
-      [new Anthropic.AuthenticationError(401, {}, 'bad key', headers), 'unavailable'],
-      [new Anthropic.PermissionDeniedError(403, {}, 'no', headers), 'unavailable'],
-      [new Anthropic.RateLimitError(429, {}, 'slow down', headers), 'busy'],
-      [new Anthropic.InternalServerError(529, {}, 'overloaded', headers), 'busy'],
-      [new Anthropic.APIConnectionTimeoutError(), 'timeout'],
-      [new Anthropic.APIConnectionError({ message: 'reset' }), 'busy'],
-      [new Anthropic.BadRequestError(400, {}, 'bad', headers), 'failed'],
+      [new ProviderError('auth', 'bad key', 401), 'unavailable'],
+      [new ProviderError('auth', 'no', 403), 'unavailable'],
+      [new ProviderError('busy', 'slow down', 429), 'busy'],
+      [new ProviderError('busy', 'overloaded', 503), 'busy'],
+      [new ProviderError('timeout', 'slow'), 'timeout'],
+      [new ProviderError('unreachable', 'reset'), 'busy'],
+      [new ProviderError('failed', 'bad', 400), 'failed'],
+      [new ProviderError('aborted', 'cancelled'), 'failed'],
       [new Error('something else'), 'failed'],
     ];
     for (const [error, code] of cases) expect(classify(error).code, String(error)).toBe(code);
 
-    const { analyst } = await harness([{ error: new Anthropic.RateLimitError(429, {}, 'slow down', headers) }]);
+    const { analyst } = await harness([{ error: new ProviderError('busy', 'slow down', 429) }]);
     expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('busy');
   });
 });
@@ -197,18 +200,18 @@ describe('analyst tool loop', () => {
 
     const second = model.requests[1];
     const [, assistant, results] = second?.messages ?? [];
-    // The assistant turn is echoed whole, thinking block first.
+    // The assistant turn is echoed whole, signature first.
     expect(assistant?.role).toBe('assistant');
-    expect((assistant?.content as Array<{ type: string }>)[0]?.type).toBe('thinking');
+    expect((assistant?.content as Array<{ type: string }>)[0]?.type).toBe('signature');
     expect(results?.role).toBe('user');
     const blocks = results?.content as Array<{ type: string; tool_use_id: string; content: string; is_error?: boolean }>;
-    expect(blocks.map((block) => block.tool_use_id)).toEqual(['toolu_0', 'toolu_1']);
+    expect(blocks.map((block) => block.tool_use_id)).toEqual(['call_0', 'call_1']);
     expect(blocks[0]?.content).toContain('Round 1:');
     expect(blocks[1]?.content).toContain('Seat #2');
     expect(blocks.every((block) => block.is_error === undefined)).toBe(true);
   });
 
-  it('keeps tools and system byte-identical across turns and matches, so they cache', async () => {
+  it('keeps tools and system byte-identical across turns and matches, so the prefix caches', async () => {
     const other = {
       ...playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'hider', 'turtle'] }),
       staked: true,
@@ -217,7 +220,7 @@ describe('analyst tool loop', () => {
     await archive.save(match);
     await archive.save(other);
     const model = new FakeModel([toolTurn([{ name: 'get_round', input: { round: 2 } }]), answer(output()), answer(output())]);
-    const analyst = new Analyst({ archive, model, modelId: 'claude-opus-5-5', effort: 'medium', maxTokens: 16_000 });
+    const analyst = new Analyst({ archive, model, modelId: 'gemini-3.8-flash', effort: 'medium', maxTokens: 16_000 });
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
     await analyst.analyze({ matchId: other.result.matchId, requester: stranger });
 
@@ -226,8 +229,6 @@ describe('analyst tool loop', () => {
     expect(model.requests).toHaveLength(3);
     expect(prefix(model.requests[1])).toBe(prefix(model.requests[0]));
     expect(prefix(model.requests[2])).toBe(prefix(model.requests[0]));
-    // Automatic caching for the growing conversation, on top of the explicit system breakpoint.
-    expect(model.requests[0]?.cache_control).toEqual({ type: 'ephemeral' });
   });
 
   it('hands a bad tool call back to the model as an error instead of running it', async () => {
@@ -255,7 +256,7 @@ describe('analyst tool loop', () => {
     ]);
     const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000, maxTurns: 3 });
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    expect(model.requests.map((request) => request.tool_choice)).toEqual([undefined, undefined, { type: 'none' }]);
+    expect(model.requests.map((request) => request.tool_choice)).toEqual([undefined, undefined, 'none']);
   });
 
   it('never runs a tool call cut off at the token limit', async () => {
@@ -274,14 +275,13 @@ describe('analyst tool loop', () => {
     if ('reply' in turn) turn.reply.usage = usage({ input_tokens: 100, cache_read_input_tokens: 3_000, output_tokens: 40 });
     const final = answer(output());
     if ('reply' in final) {
-      final.reply.usage = usage({ input_tokens: 50, cache_read_input_tokens: 3_200, cache_creation_input_tokens: 300 });
+      final.reply.usage = usage({ input_tokens: 50, cache_read_input_tokens: 3_200 });
     }
     const { analyst } = await harness([turn, final]);
     const result = await analyst.analyze({ matchId: match.result.matchId, requester: human });
     expect(result.usage).toMatchObject({
       inputTokens: 150,
       cacheReadTokens: 6_200,
-      cacheWriteTokens: 300,
       outputTokens: 540,
     });
   });

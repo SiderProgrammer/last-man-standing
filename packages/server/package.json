@@ -16,7 +16,6 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
     "@lms/engine": "0.1.0",
     "@lms/protocol": "0.1.0",
     "viem": "^2.21.55",

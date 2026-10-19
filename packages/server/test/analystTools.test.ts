@@ -5,11 +5,9 @@ import { MatchTools, MemoryStyleBook, TOOLS, playReferenceMatch, type SeatedMatc
 const match = playReferenceMatch({ label: 'tools', strategies: ['reader', 'aggressor', 'turtle', 'hider'] }) as SeatedMatch;
 
 describe('analyst tools', () => {
-  it('are strict, eagerly streamed, closed schemas in a fixed order', () => {
+  it('are closed schemas in a fixed order', () => {
     expect(TOOLS.map((tool) => tool.name)).toEqual(['get_match', 'get_player_history', 'get_reads', 'get_round']);
     for (const tool of TOOLS) {
-      expect(tool.strict).toBe(true);
-      expect(tool.eager_input_streaming).toBe(true);
       expect(tool.input_schema.additionalProperties).toBe(false);
       expect(tool.input_schema.required).toEqual(Object.keys(tool.input_schema.properties ?? {}));
     }

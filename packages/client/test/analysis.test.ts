@@ -49,7 +49,7 @@ describe('analysis presentation', () => {
     keyMoments: [],
     advice: [],
     dropped: 0,
-    model: 'claude-opus-5-5',
+    model: 'gemini-3.8-flash',
   };
 
   it('heads a moment with its checked facts', () => {
@@ -66,8 +66,8 @@ describe('analysis presentation', () => {
   });
 
   it('names the model that wrote it', () => {
-    expect(analysisNote(analysis, false)).toMatch(/^Written by Claude \(claude-opus-5-5\)\./);
-    expect(analysisNote({ ...analysis, model: 'demo' }, false)).toMatch(/offline demo analyst, not Claude/);
+    expect(analysisNote(analysis, false)).toMatch(/^Written by Gemini \(gemini-3\.8-flash\)\./);
+    expect(analysisNote({ ...analysis, model: 'demo' }, false)).toMatch(/offline demo analyst, not a real model/);
   });
 
   it('says what the verifier removed', () => {

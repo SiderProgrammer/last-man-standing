@@ -90,12 +90,22 @@ export {
   type Effort,
   type MatchAnalyst,
 } from './analyst/analyst.js';
-export { anthropicModel, type AnalystModel, type ModelReply, type ModelRequest } from './analyst/model.js';
+export {
+  ProviderError,
+  type AnalystModel,
+  type ContentBlock,
+  type Message,
+  type ModelReply,
+  type ModelRequest,
+  type ToolDefinition,
+  type Usage,
+} from './analyst/model.js';
+export { geminiModel, toGeminiRequest, type GeminiModelOptions } from './analyst/gemini.js';
 export { demoModel } from './analyst/demo.js';
 export { AnalystLimits, type AnalystLimitOptions, type Refusal } from './analyst/limits.js';
 export { AnalystMetrics, type AnalysisOutcome, type FreshAnalysis } from './analyst/metrics.js';
 export { turnCost } from './analyst/pricing.js';
-export { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './analyst/schema.js';
+export { AnalysisOutput, MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './analyst/schema.js';
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export { JsonFieldStream } from './analyst/stream.js';
 export {

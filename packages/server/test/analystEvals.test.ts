@@ -13,7 +13,7 @@ function analysis(fields: Partial<MatchAnalysis> = {}): MatchAnalysis {
     keyMoments: [],
     advice: [],
     dropped: 0,
-    model: 'claude-opus-5-5',
+    model: 'gemini-3.8-flash',
     ...fields,
   };
 }
@@ -75,13 +75,12 @@ describe('analyst eval scoring', () => {
 
   it('pools grounding across cases rather than averaging rates', () => {
     const usage: AnalysisUsage = {
-      model: 'claude-opus-5-5',
+      model: 'gemini-3.8-flash',
       turns: 2,
       toolCalls: 1,
       inputTokens: 100,
       outputTokens: 50,
       cacheReadTokens: 300,
-      cacheWriteTokens: 100,
       costUsd: 0.01,
       latencyMs: 2_000,
     };
@@ -93,7 +92,7 @@ describe('analyst eval scoring', () => {
     expect(summary.failures).toBe(1);
     expect(summary.groundingRate).toBeCloseTo(2 / 5);
     expect(summary.totalCostUsd).toBeCloseTo(0.02);
-    expect(summary.meanPromptCacheHitRate).toBeCloseTo(0.6);
-    expect(markdownRow('opus · medium', summary)).toBe('| opus · medium | 3 | 40.0% | 0.0% | 0.0% | 60.0% | $0.020 | 2.0 s |');
+    expect(summary.meanPromptCacheHitRate).toBeCloseTo(0.75);
+    expect(markdownRow('flash · medium', summary)).toBe('| flash · medium | 3 | 40.0% | 0.0% | 0.0% | 75.0% | $0.020 | 2.0 s |');
   });
 });

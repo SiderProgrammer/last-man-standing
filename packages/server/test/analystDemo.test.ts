@@ -25,7 +25,7 @@ describe('offline demo analyst', () => {
 
     expect(steps).toHaveLength(2);
     expect(streamed).toBe(analysis.summary);
-    expect(analysis.summary).toMatch(/not Claude/);
+    expect(analysis.summary).toMatch(/not a real model/);
     expect(analysis.dropped).toBe(1);
     expect(analysis.keyMoments.length).toBeGreaterThanOrEqual(2);
     expect(analysis.decisiveRound).not.toBeNull();

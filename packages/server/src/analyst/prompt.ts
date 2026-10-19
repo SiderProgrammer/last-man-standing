@@ -1,4 +1,4 @@
-import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { Message } from './model.js';
 import {
   Action,
   DEFAULT_RULES,
@@ -17,9 +17,8 @@ import type { ArchivedMatch } from '../lobby/store.js';
  *
  * Frozen: built once from constants and never interpolated with anything
  * about a particular match, player or time. It is the front of every request,
- * so one changed byte here would turn every prompt-cache read behind it into
- * a fresh write. Everything that varies goes in the messages, after the
- * cache breakpoint.
+ * so one changed byte here would miss the provider's prefix cache on every
+ * call behind it. Everything that varies goes in the messages.
  */
 export const SYSTEM_PROMPT = `You are the post-match analyst for Last Man Standing, a hidden-information elimination game. After a match ends you explain to a player what happened and how they could play better. You write for a player who has just finished, so be concrete and brief, and refer to players by seat, like #3.
 
@@ -56,9 +55,9 @@ After the analysis the player may ask follow-up questions. Each arrives inside <
  * Switches a conversation from writing the analysis to answering a question.
  *
  * Sent as a mid-conversation system message after each question rather than
- * by editing the system prompt, which would invalidate the cached prefix every
- * analysis shares; and as an operator message, it carries authority the
- * player's text never can.
+ * by editing `SYSTEM_PROMPT`, which every analysis shares; and as an operator
+ * message, it carries authority the player's text never can. A provider with
+ * no such role carries it in its system instruction (see `gemini.ts`).
  */
 export const FOLLOW_UP_INSTRUCTION =
   'Answer the question in the last player message in plain prose, in at most 120 words, without JSON or headings. ' +
@@ -109,15 +108,15 @@ export function renderConversation(
   analysis: MatchAnalysis,
   history: readonly Exchange[],
   question: string,
-): BetaMessageParam[] {
-  const turn = (asked: string): BetaMessageParam[] => [
+): Message[] {
+  const turn = (asked: string): Message[] => [
     { role: 'user', content: wrapQuestion(asked) },
     { role: 'system', content: FOLLOW_UP_INSTRUCTION },
   ];
   return [
     { role: 'user', content: renderRequest(match, seat) },
     { role: 'assistant', content: renderAnalysis(analysis) },
-    ...history.flatMap((exchange): BetaMessageParam[] => [
+    ...history.flatMap((exchange): Message[] => [
       ...turn(exchange.question),
       { role: 'assistant', content: exchange.answer },
     ]),

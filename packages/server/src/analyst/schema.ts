@@ -62,3 +62,24 @@ export function parseAnalysisOutput(text: string): AnalysisOutput {
   }
   return parsed.data;
 }
+
+/**
+ * `AnalysisOutput` as JSON Schema, in the subset a provider's structured
+ * output accepts: no `$schema`, no string lengths and no unbounded integer
+ * ranges. The bounds are not lost — `parseAnalysisOutput` enforces them all.
+ */
+export function outputSchema(): Record<string, unknown> {
+  return strip(z.toJSONSchema(AnalysisOutput)) as Record<string, unknown>;
+}
+
+function strip(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(strip);
+  if (typeof node !== 'object' || node === null) return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === '$schema' || key === 'minLength' || key === 'maxLength') continue;
+    if ((key === 'minimum' || key === 'maximum') && Math.abs(Number(value)) === Number.MAX_SAFE_INTEGER) continue;
+    out[key] = strip(value);
+  }
+  return out;
+}

@@ -1,11 +1,10 @@
 import { AttackOutcome, type KeyMoment, type RoundRecord } from '@lms/protocol';
-import type { BetaContentBlock, BetaUsage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { MatchArchive } from '../lobby/store.js';
-import type { AnalystModel, ModelReply } from './model.js';
+import type { AnalystModel, ContentBlock, ModelReply } from './model.js';
 
 /**
  * A stand-in model that needs no API key and costs nothing: it answers from
- * the archived match with a few fixed rules instead of calling Claude.
+ * the archived match with a few fixed rules instead of calling a model.
  *
  * For UI work and demos only (`ANALYST_DEMO=true`). It goes through the real
  * pipeline — one tool turn so `analysis.step` frames show, a streamed JSON
@@ -18,12 +17,12 @@ export function demoModel(archive: MatchArchive, options: { chunkDelayMs?: numbe
   return {
     async stream(request, onText, signal) {
       // A follow-up question: no answer schema. The demo cannot discuss anything, and says so.
-      if (!request.output_config?.format) {
+      if (!request.output_schema) {
         const text =
-          'The offline demo analyst cannot answer questions. With ANTHROPIC_API_KEY set on the server, ' +
-          'Claude answers here, using the same tools to look up the rounds you ask about.';
+          'The offline demo analyst cannot answer questions. With GEMINI_API_KEY set on the server, ' +
+          'Gemini answers here, using the same tools to look up the rounds you ask about.';
         await play(text, onText, signal, delay);
-        return reply([{ type: 'text', text, citations: null }] as BetaContentBlock[], 'end_turn');
+        return reply([{ type: 'text', text }], 'end_turn');
       }
 
       const opening = request.messages[0]?.content;
@@ -38,13 +37,13 @@ export function demoModel(archive: MatchArchive, options: { chunkDelayMs?: numbe
         const content = [
           { type: 'tool_use', id: 'demo_round', name: 'get_round', input: { round: decisive } },
           { type: 'tool_use', id: 'demo_reads', name: 'get_reads', input: { seat: winnerSeat(match.history) } },
-        ] as BetaContentBlock[];
+        ] satisfies ContentBlock[];
         return reply(content, 'tool_use');
       }
 
       const text = JSON.stringify(answer(match.history, decisive, seat === undefined ? null : Number(seat)));
       await play(text, onText, signal, delay);
-      return reply([{ type: 'text', text, citations: null }] as BetaContentBlock[], 'end_turn');
+      return reply([{ type: 'text', text }], 'end_turn');
     },
   };
 }
@@ -89,7 +88,7 @@ function answer(history: readonly RoundRecord[], decisive: number, you: number |
 
   return {
     summary:
-      `This is the offline demo analyst, not Claude: it describes the match from fixed rules.\n\n` +
+      `This is the offline demo analyst, not a real model: it describes the match from fixed rules.\n\n` +
       `The match ran ${history.length} rounds. ${eliminations.length} seats were eliminated, ` +
       `and #${winner} was the last one standing. Round ${decisive} was where the field thinned the most.`,
     decisiveRound: decisive,
@@ -98,7 +97,7 @@ function answer(history: readonly RoundRecord[], decisive: number, you: number |
       you === null
         ? 'Watch which seat the table piles onto; defending against focus fire only parries one attacker.'
         : `As #${you}, open the Reads tab after round three: the tells are there before the storm gets serious.`,
-      'Set ANTHROPIC_API_KEY on the server to get a real analysis.',
+      'Set GEMINI_API_KEY on the server to get a real analysis.',
     ],
   };
 }
@@ -124,13 +123,12 @@ function winnerSeat(history: readonly RoundRecord[]): number {
   return last.moves.map((move) => move.index).find((seat) => !out.has(seat)) ?? 0;
 }
 
-function reply(content: BetaContentBlock[], stop: 'tool_use' | 'end_turn'): ModelReply {
+function reply(content: ContentBlock[], stop: 'tool_use' | 'end_turn'): ModelReply {
   return {
     id: `demo_${Date.now()}`,
     model: 'demo',
     content,
     stop_reason: stop,
-    stop_details: null,
-    usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } as BetaUsage,
+    usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
   };
 }

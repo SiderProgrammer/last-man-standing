@@ -4,8 +4,8 @@
  * suite: real bot matches with known facts (see packages/server/src/analyst/evals.ts).
  *
  *   npm run eval:analyst -- --demo                 free: the offline demo model, to check the harness
- *   npm run eval:analyst -- --yes                  calls Claude and SPENDS MONEY (needs ANTHROPIC_API_KEY)
- *   npm run eval:analyst -- --yes --cases=6 --effort=low --model=claude-opus-5-5 --concurrency=3
+ *   npm run eval:analyst -- --yes                  calls Gemini and SPENDS MONEY (needs GEMINI_API_KEY)
+ *   npm run eval:analyst -- --yes --cases=6 --effort=low --model=gemini-3.8-flash --concurrency=3
  *
  * Without `--yes` or `--demo` it prints what a run would do and exits, so it
  * can never spend by accident. It is not part of `npm test`.
@@ -20,8 +20,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import {
   Analyst,
   MemoryArchive,
-  anthropicModel,
   demoModel,
+  geminiModel,
   markdownRow,
   referenceSuite,
   scoreAnalysis,
@@ -34,24 +34,24 @@ const option = (name, fallback) => args.find((arg) => arg.startsWith(`--${name}=
 
 const demo = flag('demo');
 const confirmed = flag('yes');
-const modelId = demo ? 'demo' : option('model', process.env.ANALYST_MODEL || 'claude-opus-5-5');
+const modelId = demo ? 'demo' : option('model', process.env.ANALYST_MODEL || 'gemini-3.8-flash');
 const effort = option('effort', process.env.ANALYST_EFFORT || 'medium');
 const concurrency = Math.max(1, Number(option('concurrency', '3')));
 const cases = referenceSuite().slice(0, Number(option('cases', '24')));
 
-/** Rough, for the warning only: ~3 turns over a cached ~5k-token prefix, ~2k output tokens with thinking. */
-const ROUGH_USD_PER_CASE = 0.1;
+/** Rough, for the warning only: ~3 turns over a ~5k-token prefix, ~2k output tokens with thinking, on Flash. */
+const ROUGH_USD_PER_CASE = 0.02;
 
 if (!demo && !confirmed) {
   console.log(
-    `This would run ${cases.length} analyses on ${modelId} at ${effort} effort, calling the Anthropic API.\n` +
+    `This would run ${cases.length} analyses on ${modelId} at ${effort} effort, calling the Gemini API.\n` +
       `Very roughly $${(cases.length * ROUGH_USD_PER_CASE).toFixed(2)} at list prices; the real figure is printed at the end.\n\n` +
       'Re-run with --yes to spend it, or with --demo to exercise the harness for free.',
   );
   process.exit(1);
 }
-if (!demo && !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-  console.error('Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to run against Claude.');
+if (!demo && !process.env.GEMINI_API_KEY) {
+  console.error('Set GEMINI_API_KEY to run against Gemini.');
   process.exit(1);
 }
 
@@ -59,7 +59,9 @@ const archive = new MemoryArchive();
 for (const test of cases) await archive.save(test.match);
 const analyst = new Analyst({
   archive,
-  model: demo ? demoModel(archive, { chunkDelayMs: 0 }) : anthropicModel({ timeoutMs: 120_000, maxRetries: 2 }),
+  model: demo
+    ? demoModel(archive, { chunkDelayMs: 0 })
+    : geminiModel({ apiKey: process.env.GEMINI_API_KEY, timeoutMs: 120_000, maxRetries: 2 }),
   modelId,
   effort,
   maxTokens: 16_000,

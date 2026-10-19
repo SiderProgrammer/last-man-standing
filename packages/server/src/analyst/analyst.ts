@@ -1,13 +1,4 @@
 import { createHash } from 'node:crypto';
-import * as z from 'zod/v4';
-import Anthropic from '@anthropic-ai/sdk';
-import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
-import type {
-  BetaMessageParam,
-  BetaToolResultBlockParam,
-  BetaToolUseBlock,
-  BetaUsage,
-} from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import {
   addressKey,
   errorMessage,
@@ -17,7 +8,16 @@ import {
 } from '@lms/protocol';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
-import type { AnalystModel, ModelReply, ModelRequest } from './model.js';
+import {
+  ProviderError,
+  type AnalystModel,
+  type Effort,
+  type Message,
+  type ModelReply,
+  type ModelRequest,
+  type ToolResultBlock,
+  type ToolUseBlock,
+} from './model.js';
 import {
   SYSTEM_PROMPT,
   renderConversation,
@@ -26,7 +26,7 @@ import {
   type Exchange,
   type SeatedMatch,
 } from './prompt.js';
-import { AnalysisOutput, MalformedAnalysisError, parseAnalysisOutput } from './schema.js';
+import { MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './schema.js';
 import { JsonFieldStream } from './stream.js';
 import { MatchTools, TOOLS } from './tools.js';
 import type { AnalystLimits } from './limits.js';
@@ -34,12 +34,12 @@ import { AnalystMetrics } from './metrics.js';
 import { turnCost } from './pricing.js';
 import { checkDecisiveRound, verifyMoments } from './verify.js';
 
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type { Effort };
 
 export interface AnalystOptions {
   archive: MatchArchive;
   model: AnalystModel;
-  /** Model id, e.g. `claude-opus-5-5`. */
+  /** Model id, e.g. `gemini-3.8-flash`. */
   modelId: string;
   effort: Effort;
   /** Output ceiling per model turn, thinking included. */
@@ -54,7 +54,7 @@ export interface AnalystOptions {
   maxTurns?: number;
   /**
    * Wall-clock ceiling on one analysis, every turn and retry included, in
-   * milliseconds. The SDK's own timeout is per attempt; this bounds the
+   * milliseconds. The model's own timeout is per attempt; this bounds the
    * whole thing. Defaults to three minutes.
    */
   deadlineMs?: number;
@@ -88,8 +88,6 @@ export interface AnalysisUsage {
   outputTokens: number;
   /** Input tokens served from the prompt cache, at a small fraction of the rate. */
   cacheReadTokens: number;
-  /** Input tokens written to the prompt cache, at a premium over the full rate. */
-  cacheWriteTokens: number;
   /** Estimate at list prices; null if a turn ran on a model with no listed price. */
   costUsd: number | null;
   latencyMs: number;
@@ -139,12 +137,6 @@ export class AnalystError extends Error {
   }
 }
 
-/**
- * Server-side refusal fallback: if the model declines, the API retries on the
- * model Anthropic recommends for that refusal category, inside the same call.
- */
-const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
-
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_DEADLINE_MS = 180_000;
 
@@ -156,7 +148,7 @@ const MAX_HISTORY = 6;
 const MAX_ANSWER_CHARS = 2_000;
 
 /**
- * Writes post-match analyses with Claude.
+ * Writes post-match analyses with a language model.
  *
  * Strictly a reader. It sees a match only once the archive has it, which is
  * after the result was computed, signed and submitted; nothing it produces
@@ -164,16 +156,15 @@ const MAX_ANSWER_CHARS = 2_000;
  * worst a wrong analysis can do is be wrong, and the claim verifier keeps
  * even that to the prose.
  *
- * The tool loop is written out by hand rather than handed to the SDK's tool
- * runner. The runner drives the network itself, and the analyst's model is
- * injected precisely so that it does not; owning the loop also puts the
+ * The tool loop is written out by hand, and the model is injected, so the
+ * network is never the analyst's concern; owning the loop also puts the
  * per-turn stop-reason checks, the turn cap and the usage accounting in one
  * readable place.
  *
- * Prompt layout, for the cache: tools, then the frozen system prompt with an
- * explicit breakpoint — identical bytes on every request from every player —
- * then the per-match messages, which top-level automatic caching covers turn
- * by turn as the tool loop grows them.
+ * Prompt layout, for the provider's implicit prefix cache: the frozen system
+ * prompt and the tools — identical bytes on every request from every player —
+ * then the per-match messages, which only ever grow at the end as the tool
+ * loop runs.
  */
 export class Analyst implements MatchAnalyst {
   readonly metrics: AnalystMetrics;
@@ -422,7 +413,7 @@ export class Analyst implements MatchAnalyst {
    *        follow-up answers, which are prose.
    */
   private async converse(
-    messages: BetaMessageParam[],
+    messages: Message[],
     turn: {
       structured: boolean;
       tools: MatchTools;
@@ -439,14 +430,14 @@ export class Analyst implements MatchAnalyst {
       addUsage(turn.usage, reply);
       if (reply.stop_reason !== 'tool_use') return reply;
 
-      const calls = reply.content.filter((block): block is BetaToolUseBlock => block.type === 'tool_use');
+      const calls = reply.content.filter((block): block is ToolUseBlock => block.type === 'tool_use');
       if (calls.length === 0) throw new AnalystError('failed', 'the model asked for a tool but named none');
       turn.usage.toolCalls += calls.length;
       // Echoed back whole: thinking blocks included, which the next turn needs.
       messages.push({ role: 'assistant', content: reply.content });
       // Every result goes back in one message, in call order.
       const results = await Promise.all(
-        calls.map(async (call): Promise<BetaToolResultBlockParam> => {
+        calls.map(async (call): Promise<ToolResultBlock> => {
           turn.onStep?.(describeCall(call));
           const output = await turn.tools.run(call.name, call.input);
           return {
@@ -465,22 +456,17 @@ export class Analyst implements MatchAnalyst {
    * One turn's request. Everything above `messages` is the same bytes for
    * every analysis of every match, which is what lets them share a cache.
    *
-   * @param final Switches tools off, so the model has to answer now. Costs
-   *        the messages cache for this one turn; tools and system stay cached.
+   * @param final Switches tools off, so the model has to answer now.
    */
-  private request(messages: readonly BetaMessageParam[], final: boolean, structured: boolean): ModelRequest {
+  private request(messages: readonly Message[], final: boolean, structured: boolean): ModelRequest {
     return {
       model: this.options.modelId,
       max_tokens: this.options.maxTokens,
-      betas: [FALLBACK_BETA],
-      fallbacks: 'default',
-      cache_control: { type: 'ephemeral' },
-      output_config: structured
-        ? { effort: this.options.effort, format: betaZodOutputFormat(AnalysisOutput) }
-        : { effort: this.options.effort },
+      effort: this.options.effort,
+      system: SYSTEM_PROMPT,
       tools: TOOLS,
-      ...(final ? { tool_choice: { type: 'none' as const } } : {}),
-      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      ...(final ? { tool_choice: 'none' as const } : {}),
+      ...(structured ? { output_schema: outputSchema() } : {}),
       // A copy: the loop keeps appending to its own array.
       messages: [...messages],
     };
@@ -515,7 +501,6 @@ export class Analyst implements MatchAnalyst {
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
-      cacheWriteTokens: 0,
       costUsd: 0,
       latencyMs: 0,
     };
@@ -527,13 +512,12 @@ export class Analyst implements MatchAnalyst {
 }
 
 function addUsage(total: AnalysisUsage, reply: Pick<ModelReply, 'model' | 'usage'>): void {
-  const turn: BetaUsage = reply.usage;
+  const turn = reply.usage;
   total.turns += 1;
   total.inputTokens += turn.input_tokens;
   total.outputTokens += turn.output_tokens;
   total.cacheReadTokens += turn.cache_read_input_tokens ?? 0;
-  total.cacheWriteTokens += turn.cache_creation_input_tokens ?? 0;
-  // Priced by the model that served the turn, which a fallback can change.
+  // Priced by the model that served the turn.
   const cost = turnCost(reply.model, turn);
   total.costUsd = cost === null || total.costUsd === null ? null : total.costUsd + cost;
 }
@@ -542,7 +526,7 @@ function addUsage(total: AnalysisUsage, reply: Pick<ModelReply, 'model' | 'usage
 function describeUsage(usage: AnalysisUsage): string {
   return (
     `${usage.turns} turns, ${usage.toolCalls} tool calls, ${usage.latencyMs} ms; ` +
-    `input ${usage.inputTokens} + cache read ${usage.cacheReadTokens} + cache write ${usage.cacheWriteTokens}, ` +
+    `input ${usage.inputTokens} + cache read ${usage.cacheReadTokens}, ` +
     `output ${usage.outputTokens}; ~$${usage.costUsd?.toFixed(4) ?? '?'}`
   );
 }
@@ -588,13 +572,13 @@ function analysisVersion(options: AnalystOptions): string {
     maxTurns: options.maxTurns ?? DEFAULT_MAX_TURNS,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
-    schema: z.toJSONSchema(AnalysisOutput),
+    schema: outputSchema(),
   });
   return createHash('sha256').update(inputs).digest('hex').slice(0, 16);
 }
 
 /** A tool call as a progress line for the player. The input is model output, so only numbers are echoed. */
-export function describeCall(call: Pick<BetaToolUseBlock, 'name' | 'input'>): string {
+export function describeCall(call: Pick<ToolUseBlock, 'name' | 'input'>): string {
   const input = (call.input ?? {}) as Record<string, unknown>;
   const number = (key: string) => (typeof input[key] === 'number' ? String(input[key]) : '?');
   switch (call.name) {
@@ -617,31 +601,33 @@ function finalText(reply: ModelReply): string {
 }
 
 /**
- * Maps a thrown error onto a code, most specific class first. Typed SDK
- * classes only: a provider's error wording is not an interface.
+ * Maps a thrown error onto a code. Typed errors only: a provider's error
+ * wording is not an interface.
  */
 export function classify(error: unknown): AnalystError {
   if (error instanceof AnalystError) return error;
   if (error instanceof MalformedAnalysisError) return new AnalystError('failed', error.message);
-  if (error instanceof Anthropic.APIUserAbortError) return new AnalystError('failed', 'the analysis was cancelled');
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return new AnalystError('timeout', 'the model took too long to answer');
-  }
-  if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
-    // The operator's problem, not the player's: say "unavailable", log the detail.
-    console.error('[analyst] the model provider rejected our credentials:', error.message);
-    return new AnalystError('unavailable', 'match analysis is not available on this server');
-  }
-  if (error instanceof Anthropic.RateLimitError || error instanceof Anthropic.InternalServerError) {
-    return new AnalystError('busy', 'the analyst is busy; try again in a minute');
-  }
-  if (error instanceof Anthropic.APIConnectionError) {
-    return new AnalystError('busy', 'could not reach the model provider; try again in a minute');
-  }
-  if (error instanceof Anthropic.APIError) {
-    console.error('[analyst] model request failed:', error.status, error.message);
-    return new AnalystError('failed', 'the analysis could not be written');
-  }
+  if (error instanceof ProviderError) return classifyProvider(error);
   console.error('[analyst] unexpected failure:', errorMessage(error));
   return new AnalystError('failed', 'the analysis could not be written');
+}
+
+/** A provider failure, by kind. A credentials problem is the operator's, not the player's. */
+function classifyProvider(error: ProviderError): AnalystError {
+  switch (error.kind) {
+    case 'aborted':
+      return new AnalystError('failed', 'the analysis was cancelled');
+    case 'timeout':
+      return new AnalystError('timeout', 'the model took too long to answer');
+    case 'auth':
+      console.error('[analyst] the model provider rejected our credentials:', error.message);
+      return new AnalystError('unavailable', 'match analysis is not available on this server');
+    case 'busy':
+      return new AnalystError('busy', 'the analyst is busy; try again in a minute');
+    case 'unreachable':
+      return new AnalystError('busy', 'could not reach the model provider; try again in a minute');
+    default:
+      console.error('[analyst] model request failed:', error.status, error.message);
+      return new AnalystError('failed', 'the analysis could not be written');
+  }
 }

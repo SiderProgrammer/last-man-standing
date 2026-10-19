@@ -88,7 +88,7 @@ export interface EvalScore {
 export function scoreAnalysis(test: EvalCase, analysis: MatchAnalysis, usage?: AnalysisUsage): EvalScore {
   const verified = analysis.keyMoments.length;
   const claims = verified + analysis.dropped;
-  const prompt = usage ? usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens : 0;
+  const prompt = usage ? usage.inputTokens + usage.cacheReadTokens : 0;
   return {
     name: test.name,
     claims,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import Anthropic from '@anthropic-ai/sdk';
 import {
   Analyst,
   AnalystError,
+  ProviderError,
   AnalystLimits,
   AnalystMetrics,
   KeyedLimiter,
@@ -30,11 +30,11 @@ function output() {
   };
 }
 
-/** A priced final turn: 1,000 input, 500 output, 4,000 read from cache, 200 written. */
+/** A priced final turn: 1,000 input, 500 output, 4,000 read from cache. */
 function pricedAnswer(): Turn {
   const turn = answer(output());
   if ('reply' in turn) {
-    turn.reply.usage = usage({ input_tokens: 1_000, output_tokens: 500, cache_read_input_tokens: 4_000, cache_creation_input_tokens: 200 });
+    turn.reply.usage = usage({ input_tokens: 1_000, output_tokens: 500, cache_read_input_tokens: 4_000 });
   }
   return turn;
 }
@@ -49,7 +49,7 @@ async function harness(script: Turn[], extra: Partial<ConstructorParameters<type
   const analyst = new Analyst({
     archive,
     model,
-    modelId: 'claude-opus-5-5',
+    modelId: 'gemini-3.8-flash',
     effort: 'medium',
     maxTokens: 16_000,
     metrics,
@@ -115,7 +115,7 @@ describe('analysis cache', () => {
   it('stops serving answers written under another prompt, model or effort', async () => {
     const archive = new MemoryArchive();
     await archive.save(practice);
-    const base = { archive, modelId: 'claude-opus-5-5', effort: 'medium' as const, maxTokens: 1_000 };
+    const base = { archive, modelId: 'gemini-3.8-flash', effort: 'medium' as const, maxTokens: 1_000 };
     const before = new Analyst({ ...base, model: new FakeModel([answer(output())]) });
     const after = new Analyst({ ...base, effort: 'high', model: new FakeModel([answer(output())]) });
     expect(after.version).not.toBe(before.version);
@@ -173,7 +173,7 @@ describe('analysis cache', () => {
       keyMoments: [],
       advice: [],
       dropped: 0,
-      model: 'claude-opus-5-5',
+      model: 'gemini-3.8-flash',
     };
     await archive.saveAnalysis({ analysis, version: 'v1' });
 
@@ -204,7 +204,7 @@ describe('analysis limits', () => {
 
   it("refunds the allowance when the provider, not the player, failed", async () => {
     const limits = new AnalystLimits({ perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
-    const overloaded = new Anthropic.InternalServerError(529, {}, 'overloaded', new Headers());
+    const overloaded = new ProviderError('busy', 'overloaded', 503);
     const { analyst } = await harness([{ error: overloaded }, answer(output())], { limits });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
     expect((await failure(analyst.analyze(request))).code).toBe('busy');
@@ -230,10 +230,10 @@ describe('analysis limits', () => {
   });
 
   it('stops fresh analyses once the day budget is spent, until the next UTC day', async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 10, maxConcurrent: 4, dailyBudgetUsd: 0.01 });
+    const limits = new AnalystLimits({ perWalletPerHour: 10, maxConcurrent: 4, dailyBudgetUsd: 0.002 });
     const { analyst, advance } = await harness([pricedAnswer(), answer(output())], { limits });
     await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
-    expect(limits.spent).toBeGreaterThan(0.01);
+    expect(limits.spent).toBeGreaterThan(0.002);
 
     const blocked = await failure(analyst.analyze({ matchId: staked.result.matchId, requester: player(staked) }));
     expect(blocked.code).toBe('quota');
@@ -280,12 +280,11 @@ describe('analysis deadline', () => {
 });
 
 describe('analysis metrics', () => {
-  it('prices a turn at list rates, cache reads and writes included', () => {
-    const cost = turnCost('claude-opus-5-5', usage({ input_tokens: 1_000_000, output_tokens: 0 }));
-    expect(cost).toBeCloseTo(4);
-    expect(turnCost('claude-opus-5-5', usage({ input_tokens: 0, output_tokens: 1_000_000 }))).toBeCloseTo(20);
-    expect(turnCost('claude-opus-5-5', usage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }))).toBeCloseTo(0.2);
-    expect(turnCost('claude-opus-5-5', usage({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1_000_000 }))).toBeCloseTo(5);
+  it('prices a turn at list rates, cache reads included', () => {
+    const cost = turnCost('gemini-3.8-flash', usage({ input_tokens: 1_000_000, output_tokens: 0 }));
+    expect(cost).toBeCloseTo(0.75);
+    expect(turnCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 1_000_000 }))).toBeCloseTo(3.75);
+    expect(turnCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }))).toBeCloseTo(0.075);
     expect(turnCost('some-future-model', usage())).toBeNull();
   });
 
@@ -296,14 +295,14 @@ describe('analysis metrics', () => {
         ...output(),
         keyMoments: [...output().keyMoments, { round: 99, seat: 0, kind: 'defend', target: null, claim: 'never happened' }],
       });
-      turn.reply.content = [{ type: 'text', text, citations: null }] as ModelReply['content'];
+      turn.reply.content = [{ type: 'text', text }];
     }
     const { analyst, metrics } = await harness([turn]);
     const { usage: spent } = await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
 
-    expect(spent?.costUsd).toBeCloseTo((1_000 * 4 + 500 * 20 + 4_000 * 0.2 + 200 * 5) / 1_000_000);
+    expect(spent?.costUsd).toBeCloseTo((1_000 * 0.75 + 500 * 3.75 + 4_000 * 0.075) / 1_000_000);
     const snapshot = metrics.snapshot();
-    expect(snapshot.promptCacheHitRate).toBeCloseTo(4_000 / 5_200);
+    expect(snapshot.promptCacheHitRate).toBeCloseTo(4_000 / 5_000);
     expect(snapshot.verifierDropRate).toBe(0.5);
 
     const text = metrics.prometheus();

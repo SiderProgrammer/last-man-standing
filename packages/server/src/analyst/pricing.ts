@@ -1,4 +1,4 @@
-import type { BetaUsage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { Usage } from './model.js';
 
 /** US dollars per million tokens. */
 interface Price {
@@ -8,36 +8,31 @@ interface Price {
 }
 
 /**
- * First-party API list prices, for an estimate on the metrics page and the
- * daily budget — not for billing. The provider's invoice is the truth; check
- * the pricing page when adding a model. Cache writes on the default
- * five-minute TTL cost 1.25x the input price.
+ * Gemini API list prices, paid tier, prompts up to 200k tokens; output
+ * includes thinking. For an estimate on the metrics page and the daily
+ * budget — not for billing. The provider's invoice is the truth; check the
+ * pricing page when adding a model. The 3.6+ Flash and 4 Argon rates are
+ * introductory and rise after 2026.
  */
 const PRICES: Record<string, Price> = {
-  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2 },
-  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2 },
-  'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.01 },
-  'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25 },
-  'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5 },
-  'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5 },
+  'gemini-4-argon': { input: 2, output: 10, cacheRead: 0.1 },
+  'gemini-3.8-flash': { input: 0.75, output: 3.75, cacheRead: 0.075 },
+  'gemini-3.6-flash': { input: 0.75, output: 3.75, cacheRead: 0.075 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5, cacheRead: 0.03 },
+  'gemini-3.1-pro-preview': { input: 2, output: 12, cacheRead: 0.2 },
+  'gemini-2.5-pro': { input: 1.25, output: 10, cacheRead: 0.125 },
+  'gemini-2.5-flash': { input: 0.3, output: 2.5, cacheRead: 0.03 },
   demo: { input: 0, output: 0, cacheRead: 0 },
 };
 
-const CACHE_WRITE_MULTIPLIER = 1.25;
-
-/**
- * Estimated cost of one model turn, or null for a model with no listed price.
- * Takes the model the API says served the turn, which a refusal fallback can
- * make different from the one requested.
- */
-export function turnCost(model: string, usage: BetaUsage): number | null {
+/** Estimated cost of one model turn, or null for a model with no listed price. */
+export function turnCost(model: string, usage: Usage): number | null {
   const price = PRICES[model];
   if (!price) return null;
   const perToken = (perMillion: number) => perMillion / 1_000_000;
   return (
     usage.input_tokens * perToken(price.input) +
     usage.output_tokens * perToken(price.output) +
-    (usage.cache_read_input_tokens ?? 0) * perToken(price.cacheRead) +
-    (usage.cache_creation_input_tokens ?? 0) * perToken(price.input * CACHE_WRITE_MULTIPLIER)
+    usage.cache_read_input_tokens * perToken(price.cacheRead)
   );
 }

@@ -10,7 +10,6 @@ export interface FreshAnalysis {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  cacheWriteTokens: number;
   turns: number;
   toolCalls: number;
   /** Null when the model has no listed price. */
@@ -33,7 +32,7 @@ export interface FreshAnalysis {
 export class AnalystMetrics {
   private readonly outcomes = new Map<AnalysisOutcome, number>();
   private readonly errors = new Map<AnalysisErrorCode, number>();
-  private readonly tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  private readonly tokens = { input: 0, output: 0, cacheRead: 0 };
   private turns = 0;
   private toolCalls = 0;
   private costUsd = 0;
@@ -56,7 +55,6 @@ export class AnalystMetrics {
     this.tokens.input += analysis.inputTokens;
     this.tokens.output += analysis.outputTokens;
     this.tokens.cacheRead += analysis.cacheReadTokens;
-    this.tokens.cacheWrite += analysis.cacheWriteTokens;
     this.turns += analysis.turns;
     this.toolCalls += analysis.toolCalls;
     if (analysis.costUsd === null) this.unpriced += 1;
@@ -78,7 +76,6 @@ export class AnalystMetrics {
     this.tokens.input += usage.inputTokens;
     this.tokens.output += usage.outputTokens;
     this.tokens.cacheRead += usage.cacheReadTokens;
-    this.tokens.cacheWrite += usage.cacheWriteTokens;
     this.turns += usage.turns;
     this.toolCalls += usage.toolCalls;
     if (usage.costUsd === null) this.unpriced += 1;
@@ -89,7 +86,7 @@ export class AnalystMetrics {
   snapshot() {
     const outcome = (key: AnalysisOutcome) => this.outcomes.get(key) ?? 0;
     const answered = outcome('fresh') + outcome('cached') + outcome('shared');
-    const prompt = this.tokens.input + this.tokens.cacheRead + this.tokens.cacheWrite;
+    const prompt = this.tokens.input + this.tokens.cacheRead;
     const moments = this.kept + this.dropped;
     return {
       requests: answered + outcome('error'),
@@ -131,7 +128,6 @@ export class AnalystMetrics {
       ['{kind="input"}', this.tokens.input],
       ['{kind="output"}', this.tokens.output],
       ['{kind="cache_read"}', this.tokens.cacheRead],
-      ['{kind="cache_write"}', this.tokens.cacheWrite],
     ]);
     metric('analyst_turns_total', 'counter', 'Model turns, tool turns included.', [['', this.turns]]);
     metric('analyst_tool_calls_total', 'counter', 'Tool calls the model made.', [['', this.toolCalls]]);

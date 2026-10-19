@@ -55,7 +55,7 @@ Around that core:
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
-- **Match analyst** — after a match, Claude writes a post-match analysis that
+- **Match analyst** — after a match, Gemini writes a post-match analysis that
   streams into the sidebar, with key moments checked against the published
   rounds and clickable to replay. Commentary only: it reads the archive after
   the result is signed and can never touch a match. See
@@ -183,7 +183,7 @@ a thousand or more real WebSocket players against a running server
 
 After a match ends, **Analyse match** asks the server for a written analysis:
 a short narrative, three to six key moments, and advice for the player's seat.
-Claude reads the match through tools bound to that one archived match
+Gemini reads the match through tools bound to that one archived match
 (`get_match`, `get_round`, `get_reads`, `get_player_history`), the narrative
 streams over the existing WebSocket, and every key moment's round, seat, kind
 and target is checked against the round records before anyone sees it —
@@ -194,8 +194,8 @@ by the server. Design, trust boundaries and
 operations: [docs/ANALYST.md](docs/ANALYST.md).
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-… npm run dev --workspace @lms/server   # real analyses
-ANALYST_DEMO=true npm run dev --workspace @lms/server            # offline demo model: no key, no cost
+GEMINI_API_KEY=… npm run dev --workspace @lms/server     # real analyses
+ANALYST_DEMO=true npm run dev --workspace @lms/server    # offline demo model: no key, no cost
 ```
 
 Without either the server runs as before and the panel says analysis is not
@@ -216,7 +216,7 @@ to 8 seats and half the cases asked by a spectator. Scoring is mechanical:
 
 ```bash
 npm run eval:analyst -- --demo         # free: checks the harness with the offline demo model
-npm run eval:analyst -- --yes          # calls Claude — spends money (roughly $2–3 for the full suite)
+npm run eval:analyst -- --yes          # calls Gemini — spends money (roughly $0.50 for the full suite)
 npm run eval:analyst -- --yes --cases=6 --effort=low
 ```
 
@@ -226,4 +226,4 @@ line printed is a row for this table:
 
 | run | cases | grounding | decisive round | names winner | prompt cache | cost | mean latency |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| _not run yet — `claude-opus-5-5 · medium`_ | | | | | | | |
+| _not run yet — `gemini-3.8-flash · medium`_ | | | | | | | |

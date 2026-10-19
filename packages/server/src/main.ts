@@ -23,8 +23,8 @@ import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { Analyst } from './analyst/analyst.js';
-import { anthropicModel } from './analyst/model.js';
 import { demoModel } from './analyst/demo.js';
+import { geminiModel } from './analyst/gemini.js';
 import { AnalystLimits } from './analyst/limits.js';
 
 const TICK_MS = 250;
@@ -121,7 +121,12 @@ async function main(): Promise<void> {
         archive,
         model: config.analyst.demo
           ? demoModel(archive)
-          : anthropicModel({ timeoutMs: config.analyst.timeoutMs, maxRetries: config.analyst.maxRetries }),
+          : geminiModel({
+              apiKey: config.analyst.geminiApiKey,
+              baseUrl: config.analyst.geminiBaseUrl,
+              timeoutMs: config.analyst.timeoutMs,
+              maxRetries: config.analyst.maxRetries,
+            }),
         modelId: config.analyst.demo ? 'demo' : config.analyst.model,
         effort: config.analyst.effort,
         maxTokens: config.analyst.maxTokens,
@@ -292,9 +297,9 @@ async function main(): Promise<void> {
   console.log(
     analyst
       ? config.analyst.demo
-        ? '[server] match analyst in offline demo mode: canned answers, Claude is not called'
+        ? '[server] match analyst in offline demo mode: canned answers, no model is called'
         : `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort`
-      : '[server] no model credentials: match analysis unavailable',
+      : '[server] no GEMINI_API_KEY: match analysis unavailable',
   );
 
   if (!avatars.empty) {

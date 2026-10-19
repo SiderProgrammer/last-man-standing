@@ -56,7 +56,7 @@
       "runtimeArgs": [
         "--input-type=module",
         "-e",
-        "delete process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_AUTH_TOKEN; process.env.ANALYST_ENABLED='false'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
+        "delete process.env.GEMINI_API_KEY; process.env.ANALYST_ENABLED='false'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
       ],
       "port": 8797
     },
@@ -66,7 +66,7 @@
       "runtimeArgs": [
         "--input-type=module",
         "-e",
-        "delete process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_AUTH_TOKEN; process.env.ANALYST_DEMO='true'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
+        "delete process.env.GEMINI_API_KEY; process.env.ANALYST_DEMO='true'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
       ],
       "port": 8797
     },

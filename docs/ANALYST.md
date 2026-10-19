@@ -1,6 +1,6 @@
 # Match analyst
 
-A post-match analysis written by Claude: a short narrative, the key moments that
+A post-match analysis written by Gemini: a short narrative, the key moments that
 shaped the match, and advice for the player who asks. It streams into the match
 sidebar over the game's own WebSocket, and each key moment replays its round in
 the arena when clicked.
@@ -28,12 +28,12 @@ The worst a wrong analysis can do is be wrong, which is the next section's job.
 ## How an answer is produced
 
 ```
-client                 gateway                analyst                         Claude
+client                 gateway                analyst                         Gemini
   │ analyze{matchId} ──▶ │ ── analyze() ──────▶ │ archive → access → cache hit? │
   │                      │                      │ limits.admit()                │
   │                      │                      │ ── stream(tools, system) ───▶ │
-  │ ◀── analysis.step ── │ ◀── onStep ───────── │ ◀── tool_use get_round(4) ─── │
-  │                      │                      │ ── tool_result ─────────────▶ │
+  │ ◀── analysis.step ── │ ◀── onStep ───────── │ ◀── functionCall get_round(4) │
+  │                      │                      │ ── functionResponse ────────▶ │
   │ ◀── analysis.delta ─ │ ◀── onDelta ──────── │ ◀── JSON text, streamed ───── │
   │                      │                      │ schema parse → verify claims  │
   │ ◀── analysis.done ── │ ◀── result ───────── │ cache, metrics, budget        │
@@ -52,26 +52,28 @@ client                 gateway                analyst                         Cl
    server-wide concurrency cap, and an estimated daily budget in dollars that
    stops fresh analyses until the next UTC day — the one number that bounds the
    bill however the others are tuned. All in memory: a restart forgives them.
-4. **The model call.** `claude-opus-5-5` by default, effort pinned explicitly
-   (`medium`), thinking left on (it cannot be disabled on this model), the
-   server-side refusal fallback enabled (`fallbacks: "default"`), and the answer
-   constrained to a JSON schema with structured outputs.
+4. **The model call.** `gemini-3.8-flash` by default — any Gemini 3 model or
+   later, the first to combine structured output with function calling —
+   with effort pinned explicitly (`medium`, sent as the thinking level) and the
+   answer constrained to a JSON schema with structured output. `gemini.ts`
+   speaks the REST API directly: no SDK, one `fetch` per turn.
 5. **Tools.** `get_match`, `get_round(n)`, `get_reads(seat)` and
    `get_player_history(seat)` are bound by the server to the one match being
    analysed. None takes a match id or a wallet address, so neither the model nor
    anything a player types can reach another match or look up a stranger:
-   `get_player_history` takes a *seat* for exactly that reason. Tools are
-   `strict`, stream eagerly, and their inputs are re-validated with zod on
-   arrival — eager streaming hands over input the API has not checked, and a
-   bad call goes back to the model as an `is_error` result.
-6. **The loop** is written by hand rather than handed to the SDK's tool runner,
-   because the model is injected (`AnalystModel`) precisely so the network is
-   not the analyst's concern: tests drive the whole loop with a scripted fake.
-   Every tool result goes back in one message; assistant turns are echoed whole,
-   thinking blocks included; `max_tokens` and `refusal` end the analysis and a
-   tool call cut off by either is never run; the last allowed turn switches
-   tools off so the model has to answer. A wall-clock deadline covers the whole
-   loop on top of the SDK's per-attempt timeout and retries.
+   `get_player_history` takes a *seat* for exactly that reason. Tool schemas
+   are closed, and every call's arguments are re-validated with zod on arrival
+   — they are model output — so a bad call goes back to the model as an error
+   result instead of running.
+6. **The loop** is written by hand, and the model is injected (`AnalystModel`,
+   over the analyst's own provider-neutral message format in `model.ts`), so
+   the network is not the analyst's concern: tests drive the whole loop with a
+   scripted fake. Every tool result goes back in one message; assistant turns
+   are echoed whole, thought signatures included; `max_tokens` and `refusal`
+   end the analysis and a tool call cut off by either is never run; the last
+   allowed turn switches tools off so the model has to answer. A wall-clock
+   deadline covers the whole loop on top of the per-attempt timeout and
+   retries.
 7. **Streaming.** The answer is JSON, which is what makes it checkable, so the
    server pulls the `summary` field out of the JSON as it arrives
    (`JsonFieldStream`, linear-time, escape-aware) and forwards only the prose.
@@ -123,49 +125,57 @@ model, so it is handled as untrusted input at every layer:
   or the topic.
 - **Operator voice stays with the operator.** The switch to answer mode is a
   mid-conversation `role: "system"` message after each question, not text the
-  player could imitate, and not an edit to the system prompt that would cost
-  every analysis its cached prefix.
+  player could imitate. Gemini has no such role, so `gemini.ts` carries it in
+  the system instruction — still the operator's channel, never the player's.
 - **Scoped tools.** The tools are the same match-bound views; a question cannot
   make them read another match or another wallet.
 - **Capped.** The last six exchanges are replayed with each question; twenty
   questions per wallet per match; a separate hourly allowance per wallet; the
   same concurrency cap and daily budget as analyses.
 
-Earlier turns are replayed as plain text, never with thinking blocks, so
+Earlier turns are replayed as plain text, never with thought signatures, so
 dropping the oldest exchanges when the cap is reached cannot invalidate a
-block the model has to read back. Within the cap the conversation only grows
-at the end, so each question's request extends the previous one's and the
-cache keeps hitting.
+signature the model has to read back. Within the cap the conversation only
+grows at the end, so each question's request extends the previous one's and
+the cache keeps hitting.
 
 ## Prompt caching
 
-Render order is tools → system → messages, and the layout follows it: the tool
-definitions are constants in name order and the system prompt is frozen — built
-once from constants, never interpolated with a match, a player or a time — so
-both are byte-identical on every request from every player, with an explicit
-breakpoint on the system block. Everything per-match goes in the messages,
-which top-level automatic caching covers turn by turn as the tool loop grows
-them. A test pins the prefix byte-for-byte across turns and across matches.
-`usage.cache_read_input_tokens` is summed per analysis, logged, and exported as
-the prompt-cache hit rate.
+Gemini caches implicitly: a request whose prefix matches a recent one is
+billed at the cached rate for that prefix. The layout is built for it: the
+tool definitions are constants in name order and the system prompt is frozen —
+built once from constants, never interpolated with a match, a player or a
+time — so both are byte-identical on every request from every player, and
+everything per-match goes in the messages, which only grow at the end as the
+tool loop runs. A test pins the prefix byte-for-byte across turns and across
+matches. Gemini's `cachedContentTokenCount` is summed per analysis as cache
+reads, logged, and exported as the prompt-cache hit rate.
 
 ## Operations
 
-- **Unavailable by default.** No `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`,
-  or `ANALYST_ENABLED=true` for profile credentials), no analyst: the `hello`
+- **Unavailable by default.** No `GEMINI_API_KEY`, no analyst: the `hello`
   frame says so and the panel explains it before anyone clicks.
+  `ANALYST_ENABLED=false` turns it off even with a key.
 - **Demo mode.** `ANALYST_DEMO=true` runs the real pipeline — a tool turn, a
   streamed JSON answer, the schema check, the verifier — over a rule-based
   stand-in that needs no key and costs nothing. It plants one false claim so the
-  verifier visibly drops it, and its prose says plainly that it is not Claude.
+  verifier visibly drops it, and its prose says plainly that it is not a real
+  model.
+- **Translation.** `gemini.ts` is the only file that knows Gemini's wire
+  format: effort becomes `thinkingLevel` (`xhigh` and `max` become `high`),
+  the output schema becomes `responseJsonSchema` (in the subset Gemini
+  accepts — `outputSchema()` drops string lengths, which the parser enforces
+  anyway), and thought signatures ride back on the part that carried them.
+  Busy, timed-out and dropped calls are retried with backoff, but only while
+  nothing has streamed to the player.
 - **Errors** reach the client as `analysis.error` with a code it can act on:
   `unavailable`, `not_found`, `forbidden`, `quota`, `busy`, `timeout`,
-  `refused`, `failed`. Provider errors are classified by the SDK's typed error
-  classes, never by message text; a credentials problem is logged for the
-  operator and shown to the player only as "unavailable".
+  `refused`, `failed`. Provider errors are classified by `ProviderError` kind,
+  set from the HTTP status, never by message text; a credentials problem is
+  logged for the operator and shown to the player only as "unavailable".
 - **Metrics.** `/metrics` serves Prometheus text — requests by outcome, errors
   by code, tokens by kind, turns, tool calls, estimated cost at list prices
-  (priced by the model that served each turn, which a fallback can change),
+  (priced by the model that served each turn),
   verifier verdicts, a latency histogram. Set `METRICS_TOKEN` on anything
   public. `/health` adds the ratios: analysis-cache hit rate, prompt-cache hit
   rate, verifier drop rate, today's estimated spend.
@@ -179,7 +189,8 @@ packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, err
 packages/protocol/src/game/reads.ts    the reads logic, shared by the client panel and get_reads
 packages/server/src/analyst/
   analyst.ts    access, cache, limits, the tool loop, deadline, usage, follow-up conversations
-  model.ts      the injected model interface and the SDK-backed implementation
+  model.ts      the injected model interface and the analyst's message format
+  gemini.ts     the Gemini model: request and reply translation over REST
   prompt.ts     the frozen system prompt, match rendering, question fencing
   tools.ts      tool definitions and their execution against one match
   schema.ts     the output schema, re-validated on arrival
