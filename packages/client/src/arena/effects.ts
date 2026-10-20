@@ -5,9 +5,10 @@ import type { FxTextures } from '../assets/loader.js';
 import { FX_TEXTURES, type FxTexture } from '../assets/manifest.js';
 import { gsap } from '../motion.js';
 import type { Beat, Timeline, Window } from './choreography.js';
-import type { Point as PointLike } from './layout.js';
+import type { Point as PointLike, StormRing } from './layout.js';
+import { RECIPES, type Puff, type Recipe, type Spray } from './recipes.js';
 import type { Replay, SeatDisplay } from './replay.js';
-import { BANNER, FLOAT, FX } from './theme.js';
+import { FLOAT, FX, TITLE } from './theme.js';
 
 /**
  * The round replay's visual effects, all of them GSAP tweens.
@@ -17,30 +18,12 @@ import { BANNER, FLOAT, FX } from './theme.js';
  * placed on the replay's own timeline, so they cannot drift from the HP drain
  * the arena shows. Effects that merely decorate a moment — sparks, debris,
  * smoke, floating numbers — are spawned when that moment is reached and left
- * to run; they live in one `gsap.context`, so `clear()` stops all of them at
- * once.
+ * to run; what each moment spawns is data, in `recipes.ts`. They live in one
+ * `gsap.context`, so `clear()` stops all of them at once.
  *
  * Textures come from the asset loader. Any that failed to load is replaced by
  * a generated glow, exactly as a seat without an avatar keeps its plain circle.
  */
-
-interface ParticleOptions {
-  tint: number;
-  life: number;
-  sizeFrom: number;
-  sizeTo: number;
-  alphaFrom?: number;
-  alphaTo?: number;
-  /** Launch speed in pixels per second, for `Physics2DPlugin`. */
-  velocity?: number;
-  /** Launch direction in degrees: 0 is right, 90 is down. */
-  angle?: number;
-  gravity?: number;
-  /** Radians turned over the particle's life. */
-  spin?: number;
-  rotation?: number;
-  additive?: boolean;
-}
 
 /**
  * A moment reached this long after it was due is skipped, not played. Only
@@ -53,7 +36,7 @@ const FLOAT_ORIGIN = -26;
 const FLOAT_RISE = 26;
 const FLOAT_LIFE = 0.8;
 /** Vertical spacing between numbers that land on one seat at once. */
-const FLOAT_STACK = 16;
+const FLOAT_STACK = 22;
 /** How far an attacker leans toward its target while declaring. */
 const LUNGE = 10;
 /** How far a hider steps aside when a blow misses. */
@@ -61,15 +44,33 @@ const SIDESTEP = 12;
 /** Projectiles bow sideways, so two seats trading blows do not overlap. */
 const ARC = 18;
 const SHIELD_SIZE = 92;
-const SHIELD_ALPHA = 0.55;
 const SHIELD_FADE = 0.15;
-/** Half a breath of the shield's pulse, and of a hider's shimmer. */
-const SHIELD_PULSE = 0.52;
+/** Half a breath of a hider's shimmer. */
 const SHIMMER = 0.175;
-const SHAKE = 6;
+/** How far the camera pushes in on a kill. */
+const ZOOM_PUNCH = 1.045;
+/** Longest hit-stop, in real seconds, and the margin it always leaves the hold. */
+const MAX_HIT_STOP = 0.1;
+const HOLD_MARGIN = 0.15;
+/** Timeline speed during a hit-stop: nearly frozen, not quite. */
+const HIT_STOP_SCALE = 0.05;
+
+export interface EffectsOptions {
+  app: Application;
+  textures: FxTextures;
+  positionOf: (seat: number) => PointLike | null;
+  /** Shaken as a whole when a blow lands. */
+  world: Container;
+  /** Zoomed about the arena's centre on a kill. */
+  camera: Container;
+  /** Where the storm wall is now, for strikes that leap off it. */
+  storm: () => StormRing | null;
+}
 
 export class Effects {
   readonly layer = new Container();
+  /** Full-screen flashes, above everything and outside the shake. */
+  readonly overlay = new Graphics();
 
   private readonly textures: Record<FxTexture, Texture>;
   private readonly pool: Sprite[] = [];
@@ -79,17 +80,15 @@ export class Effects {
   private readonly reduced = prefersReducedMotion();
   /** Owns every fire-and-forget tween. */
   private context = gsap.context(() => {});
+  /** Real seconds of hit-stop the current replay may still spend. */
+  private stopBudget = 0;
 
-  constructor(
-    app: Application,
-    loaded: FxTextures,
-    private readonly positionOf: (seat: number) => PointLike | null,
-    /** Shaken as a whole when a seat is eliminated. */
-    private readonly world: Container,
-  ) {
-    const fallback = app.renderer.generateTexture(softGlow());
+  constructor(private readonly options: EffectsOptions) {
+    this.overlay.alpha = 0;
+    this.overlay.eventMode = 'none';
+    const fallback = options.app.renderer.generateTexture(softGlow());
     this.textures = Object.fromEntries(
-      FX_TEXTURES.map((name) => [name, loaded[name] ?? fallback]),
+      FX_TEXTURES.map((name) => [name, options.textures[name] ?? fallback]),
     ) as Record<FxTexture, Texture>;
   }
 
@@ -97,10 +96,22 @@ export class Effects {
    * Adds the round's effects to its replay timeline.
    *
    * Called before the timeline plays, so every effect is scheduled against the
-   * same clock as the HP drain it illustrates.
+   * same clock as the HP drain it illustrates. `holdSeconds` is the server's
+   * hold before the next round: the only time a hit-stop may borrow, and only
+   * what the choreography leaves of it.
    */
-  decorate(replay: Replay, choreo: Timeline): void {
+  decorate(replay: Replay, choreo: Timeline, holdSeconds = 0): void {
     const { timeline, seats } = replay;
+    const spare = (holdSeconds - choreo.duration - HOLD_MARGIN) / (1 - HIT_STOP_SCALE);
+    this.stopBudget = this.reduced ? 0 : gsap.utils.clamp(0, MAX_HIT_STOP, spare);
+    this.when(timeline, 0, () => this.title(`ROUND ${replay.round}`, 0xdbe3f0));
+    if (choreo.storm) {
+      this.when(timeline, choreo.storm.start, () => {
+        this.screenFlash(FX.storm, 0.16);
+        this.title('STORM', FX.storm, 0.6);
+      });
+    }
+
     // Shields and shimmers hold until every blow of the round has landed.
     const combat = new Set<Beat['kind']>(['declare', 'travel', 'impact', 'riposte']);
     const combatEnd = Math.max(
@@ -111,11 +122,12 @@ export class Effects {
     for (const beat of choreo.beats) {
       switch (beat.kind) {
         case 'noShow':
-          this.when(timeline, beat.start, () => this.noShow(beat.seat));
+          this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.noShow, 'no show', FX.noShow));
           break;
         case 'declare':
           if (beat.action === Action.Attack) {
             this.sway(timeline, seats.get(beat.seat), this.direction(beat.seat, beat.target), LUNGE, beat);
+            this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.charge));
           } else if (beat.action === Action.Defend) {
             this.shield(timeline, beat.seat, beat.start, combatEnd);
           } else if (beat.action === Action.Hide) {
@@ -135,13 +147,22 @@ export class Effects {
           break;
         case 'riposte':
           this.projectile(timeline, beat.from, beat.to, beat, FX.parry);
-          this.when(timeline, beat.end, () => this.riposteLands(beat.to, beat.damage));
+          this.when(timeline, beat.end, () =>
+            this.moment(beat.to, RECIPES.riposte, `RIPOSTE -${beat.damage}`, FX.parry),
+          );
           break;
         case 'storm':
-          this.when(timeline, beat.start, () => this.storm(beat.seat, beat.damage));
+          this.when(timeline, beat.start, () => {
+            this.lightning(beat.seat);
+            this.moment(beat.seat, RECIPES.storm, `-${beat.damage}`, FX.storm);
+          });
           break;
         case 'eliminate':
-          this.when(timeline, beat.start, () => this.eliminate(beat.seat));
+          this.when(timeline, beat.start, () => {
+            this.hitStop(timeline);
+            this.zoomPunch();
+            this.moment(beat.seat, RECIPES.eliminate, 'ELIMINATED', FX.kill, 1.2);
+          });
           break;
       }
     }
@@ -155,52 +176,48 @@ export class Effects {
     // What is left is labels and emptied projectile containers; none is pooled.
     for (const child of this.layer.removeChildren()) child.destroy();
     this.floats.clear();
-    this.world.position.set(0, 0);
+    this.options.world.position.set(0, 0);
+    this.options.camera.scale.set(1);
+    this.overlay.alpha = 0;
   }
 
   /** Crowns the last seat standing. Persists until the next match. */
   showWinner(seat: number): void {
-    const at = this.positionOf(seat);
+    const at = this.options.positionOf(seat);
     if (!at) return;
 
     this.context.add(() => {
-      if (!this.reduced) {
-        this.burst(at, 16, { tint: FX.winner, life: 0.9, size: 12, speed: [70, 180] });
-        this.particle('ring', at, {
-          tint: FX.winner,
-          life: 0.8,
-          sizeFrom: 50,
-          sizeTo: 170,
-          alphaFrom: 0.9,
-          additive: true,
-        });
-      }
+      this.play(RECIPES.winner, at);
 
       const flare = this.acquire('flare', FX.winner, true);
       flare.position.set(at.x, at.y);
       flare.alpha = 0;
-      const size = this.scaleFor(flare, 130);
-      flare.scale.set(size);
+      flare.scale.set(this.scaleFor(flare, 130));
       gsap.to(flare, { alpha: 0.85, duration: 0.3 });
+      if (!this.reduced) gsap.to(flare, { rotation: Math.PI * 2, duration: 16, repeat: -1, ease: 'none' });
 
-      const banner = new Text({ text: 'LAST ONE STANDING', style: BANNER });
+      // Across the middle of the floor rather than over the seat, where a
+      // winner on the top of the ring would push it off the canvas.
+      const centre = this.options.storm()?.centre ?? at;
+      const banner = new Text({
+        text: `LAST ONE STANDING\nSEAT #${seat}`,
+        style: { ...TITLE, fill: FX.winner, align: 'center' },
+      });
       banner.anchor.set(0.5);
-      banner.position.set(at.x, at.y - 78);
+      banner.position.set(centre.x, centre.y);
       banner.alpha = 0;
       this.layer.addChild(banner);
       gsap.to(banner, { alpha: 1, duration: 0.4 });
-
-      if (!this.reduced) {
-        gsap.to(flare, { rotation: Math.PI * 2, duration: 16, repeat: -1, ease: 'none' });
-        gsap.to(flare.scale, {
-          x: size * 1.08,
-          y: size * 1.08,
-          duration: 1,
-          yoyo: true,
-          repeat: -1,
-          ease: 'sine.inOut',
-        });
-      }
+      gsap.fromTo(
+        banner.scale,
+        { x: this.reduced ? 0.62 : 1, y: this.reduced ? 0.62 : 1 },
+        {
+          x: 0.62,
+          y: 0.62,
+          duration: 0.5,
+          ease: 'back.out(2)',
+        },
+      );
     });
   }
 
@@ -239,70 +256,73 @@ export class Effects {
     );
   }
 
-  /** A defender's shield, raised on declaring and dropped once the blows are in. */
+  /** A defender's bubble, raised on declaring and dropped once the blows are in; its twirl turns. */
   private shield(timeline: gsap.core.Timeline, seat: number, from: number, until: number): void {
-    if (this.reduced) return;
-    const at = this.positionOf(seat);
-    if (!at) return;
+    const at = this.options.positionOf(seat);
+    if (!at || this.reduced) return;
 
-    const ring = this.acquire('ring', FX.parry, true);
-    ring.position.set(at.x, at.y);
-    ring.alpha = 0;
-    const size = this.scaleFor(ring, SHIELD_SIZE);
-    ring.scale.set(size);
-
-    timeline
-      .to(ring, { alpha: SHIELD_ALPHA, duration: SHIELD_FADE }, from)
-      .to(
-        ring.scale,
-        {
-          x: size * 1.02,
-          y: size * 1.02,
-          duration: SHIELD_PULSE,
-          ease: 'sine.inOut',
-          yoyo: true,
-          repeat: breaths(until - from, SHIELD_PULSE),
-        },
-        from,
-      )
-      .to(ring, { alpha: 0, duration: SHIELD_FADE }, until)
-      .call(() => this.release(ring), undefined, until + SHIELD_FADE);
+    for (const [texture, alpha, turn] of [
+      ['ring', 0.55, 0],
+      ['shield', 0.35, Math.PI * 1.5],
+    ] as const) {
+      const sprite = this.acquire(texture, FX.parry, true);
+      sprite.position.set(at.x, at.y);
+      sprite.alpha = 0;
+      sprite.scale.set(this.scaleFor(sprite, SHIELD_SIZE));
+      timeline
+        .to(sprite, { alpha, duration: SHIELD_FADE }, from)
+        .to(sprite, { rotation: turn, duration: until - from + SHIELD_FADE, ease: 'none' }, from)
+        .to(sprite, { alpha: 0, duration: SHIELD_FADE }, until)
+        .call(() => this.release(sprite), undefined, until + SHIELD_FADE);
+    }
   }
 
   /** A hider flickering until the blows are in. */
-  private shimmer(timeline: gsap.core.Timeline, seat: SeatDisplay | undefined, from: number, until: number): void {
+  private shimmer(
+    timeline: gsap.core.Timeline,
+    seat: SeatDisplay | undefined,
+    from: number,
+    until: number,
+  ): void {
     if (!seat || this.reduced) return;
+    // Whole breaths only, so the flicker finishes on or before the blows land.
+    const repeat = Math.max(0, Math.floor((until - from) / SHIMMER) - 1);
     timeline
       .fromTo(
         seat,
         { veil: 0.67 },
-        {
-          veil: 0.43,
-          duration: SHIMMER,
-          ease: 'sine.inOut',
-          yoyo: true,
-          repeat: breaths(until - from, SHIMMER),
-          immediateRender: false,
-        },
+        { veil: 0.43, duration: SHIMMER, ease: 'sine.inOut', yoyo: true, repeat, immediateRender: false },
         from,
       )
       .set(seat, { veil: 1 }, until);
   }
 
   /** A projectile curving from one seat to another, landing exactly on its impact. */
-  private projectile(timeline: gsap.core.Timeline, from: number, to: number, window: Window, tint: number): void {
-    if (this.reduced) return;
-    const a = this.positionOf(from);
-    const b = this.positionOf(to);
-    if (!a || !b) return;
+  private projectile(
+    timeline: gsap.core.Timeline,
+    from: number,
+    to: number,
+    window: Window,
+    tint: number,
+  ): void {
+    const a = this.options.positionOf(from);
+    const b = this.options.positionOf(to);
+    if (!a || !b || this.reduced) return;
 
+    // A coloured head with a white-hot core, trailing a streak.
     const bolt = new Container();
     bolt.visible = false;
-    const head = this.acquire('glow', tint, true, bolt);
-    const trail = this.acquire('streak', tint, true, bolt);
-    head.scale.set(this.scaleFor(head, 26));
-    trail.scale.set(this.scaleFor(trail, 70));
-    trail.alpha = 0.75;
+    const parts = (
+      [
+        ['glow', tint, 34],
+        ['glow', 0xffffff, 12],
+        ['streak', tint, 84],
+      ] as const
+    ).map(([texture, colour, size]) => {
+      const sprite = this.acquire(texture, colour, true, bolt);
+      sprite.scale.set(this.scaleFor(sprite, size));
+      return sprite;
+    });
     this.layer.addChild(bolt);
 
     const start = new Point(a.x, a.y);
@@ -325,14 +345,13 @@ export class Effects {
             useRadians: true,
           },
           duration: span(window),
-          ease: 'none',
+          ease: 'power1.in',
         },
         window.start,
       )
       .call(
         () => {
-          this.release(head);
-          this.release(trail);
+          for (const sprite of parts) this.release(sprite);
           bolt.destroy();
         },
         undefined,
@@ -342,227 +361,178 @@ export class Effects {
 
   // --------------------------------------------------------------- moments
 
-  private noShow(seat: number): void {
-    const at = this.positionOf(seat);
-    if (!at) return;
-    if (!this.reduced) {
-      this.particle('puff', at, {
-        tint: FX.noShow,
-        life: 0.7,
-        sizeFrom: 40,
-        sizeTo: 80,
-        alphaFrom: 0.6,
-        velocity: 18,
-        angle: -90,
-      });
-    }
-    this.floatText(seat, 'no show', FX.noShow);
-  }
-
   private impact(beat: Extract<Beat, { kind: 'impact' }>): void {
-    const at = this.positionOf(beat.seat);
-    if (!at) return;
-
-    if (beat.outcome === AttackOutcome.Hit) {
-      if (!this.reduced) {
-        this.particle('flash', at, { tint: FX.hit, life: 0.25, sizeFrom: 30, sizeTo: 90, additive: true });
-        this.particle('burst', at, { tint: FX.hit, life: 0.35, sizeFrom: 40, sizeTo: 75, additive: true });
-        this.particle('claw', at, {
-          tint: 0xffffff,
-          life: 0.45,
-          sizeFrom: 58,
-          sizeTo: 62,
-          rotation: gsap.utils.random(0, Math.PI * 2),
-          additive: true,
-        });
-        this.burst(at, 6, { tint: FX.hit, life: 0.35, size: 10, speed: [90, 170] });
-      }
-      this.floatText(beat.seat, `-${beat.damage}`, FX.hit);
-      return;
-    }
-
-    if (beat.outcome === AttackOutcome.Parried) {
-      if (!this.reduced) {
-        this.particle('ring', at, {
-          tint: FX.parry,
-          life: 0.35,
-          sizeFrom: 60,
-          sizeTo: 110,
-          alphaFrom: 1,
-          additive: true,
-        });
-        this.particle('flash', at, { tint: FX.parry, life: 0.2, sizeFrom: 20, sizeTo: 55, additive: true });
-      }
-      this.floatText(beat.seat, 'parry', FX.parry);
-      return;
-    }
-
-    if (beat.outcome === AttackOutcome.Missed) {
-      if (!this.reduced) {
-        this.particle('puff', at, {
-          tint: FX.miss,
-          life: 0.55,
-          sizeFrom: 30,
-          sizeTo: 64,
-          alphaFrom: 0.7,
-          velocity: 14,
-          angle: -90,
-        });
-      }
-      this.floatText(beat.seat, 'miss', FX.miss);
-    }
+    if (beat.outcome === AttackOutcome.Hit)
+      this.moment(beat.seat, RECIPES.hit, `-${beat.damage}`, FX.hit, 1.25);
+    else if (beat.outcome === AttackOutcome.Parried) this.moment(beat.seat, RECIPES.parry, 'PARRY', FX.parry);
+    else if (beat.outcome === AttackOutcome.Missed) this.moment(beat.seat, RECIPES.evade, 'EVADE', FX.miss);
   }
 
-  private riposteLands(seat: number, damage: number): void {
-    const at = this.positionOf(seat);
+  /** A moment on one seat: its recipe, and the word or number that rises off it. */
+  private moment(seat: number, recipe: Recipe, text?: string, tint: number = FX.miss, size = 1): void {
+    const at = this.options.positionOf(seat);
     if (!at) return;
-    if (!this.reduced) {
-      this.particle('flash', at, { tint: FX.parry, life: 0.22, sizeFrom: 22, sizeTo: 60, additive: true });
-      this.burst(at, 4, { tint: FX.parry, life: 0.3, size: 8, speed: [70, 130] });
-    }
-    this.floatText(seat, `-${damage}`, FX.parry);
+    this.play(recipe, at);
+    if (text) this.floatText(seat, at, text, tint, size);
   }
 
-  private storm(seat: number, damage: number): void {
-    const at = this.positionOf(seat);
-    if (!at) return;
-    if (!this.reduced) {
-      this.particle('bolt', { x: at.x, y: at.y - 34 }, {
-        tint: FX.storm,
-        life: 0.35,
-        sizeFrom: 80,
-        sizeTo: 80,
-        alphaFrom: 1,
-        additive: true,
-      });
-      this.particle('glow', at, { tint: FX.storm, life: 0.3, sizeFrom: 40, sizeTo: 70, additive: true });
-    }
-    this.floatText(seat, `-${damage}`, FX.storm);
+  /** Spawns a recipe's sprites, shake and flash. Pure decoration, so none of it under reduced motion. */
+  private play(recipe: Recipe, at: PointLike): void {
+    if (this.reduced) return;
+    for (const puff of recipe.puffs ?? []) this.puff(puff, at);
+    for (const spray of recipe.sprays ?? []) this.spray(spray, at);
+    if (recipe.shake) this.shake(...recipe.shake);
+    if (recipe.flash) this.screenFlash(...recipe.flash);
   }
 
-  /** The kill. The one moment in the replay that is allowed to be loud. */
-  private eliminate(seat: number): void {
-    const at = this.positionOf(seat);
-    if (!at) return;
+  private puff(puff: Puff, at: PointLike): void {
+    const sprite = this.acquire(puff.texture, puff.tint, puff.additive ?? false);
+    sprite.position.set(at.x, at.y);
+    sprite.rotation = puff.randomTurn ? gsap.utils.random(0, Math.PI * 2) : 0;
+    this.fade(sprite, puff.life, puff.size, puff.alpha ?? 1, {
+      ...(puff.rise ? { physics2D: { velocity: puff.rise, angle: -90 } } : {}),
+      ...(puff.spin ? { rotation: `+=${puff.spin}` } : {}),
+    });
+  }
 
-    if (!this.reduced) {
-      this.particle('blast', at, { tint: FX.kill, life: 0.45, sizeFrom: 40, sizeTo: 130, additive: true });
-      this.particle('shockwave', at, {
-        tint: FX.kill,
-        life: 0.5,
-        sizeFrom: 40,
-        sizeTo: 180,
-        alphaFrom: 0.9,
-        additive: true,
-      });
-      for (let index = 0; index < 10; index += 1) {
-        this.particle('debris', at, {
-          tint: 0x9a8f82,
-          life: gsap.utils.random(0.6, 0.9),
-          sizeFrom: gsap.utils.random(18, 28),
-          sizeTo: 6,
-          alphaFrom: 1,
-          velocity: gsap.utils.random(90, 190),
-          angle: index * 36 + gsap.utils.random(0, 28),
-          gravity: 260,
-          spin: gsap.utils.random(-6, 6),
-          rotation: gsap.utils.random(0, Math.PI * 2),
-        });
-      }
-      this.particle('smoke', at, {
-        tint: 0x6b7280,
-        life: 0.9,
-        sizeFrom: 50,
-        sizeTo: 115,
-        alphaFrom: 0.5,
-        velocity: 16,
-        angle: -90,
-      });
-      // Five quick jolts to random offsets, then back to rest.
-      gsap.fromTo(
-        this.world,
-        { x: 0, y: 0 },
-        {
-          x: `random(${-SHAKE}, ${SHAKE})`,
-          y: `random(${-SHAKE}, ${SHAKE})`,
-          duration: 0.03,
-          repeat: 5,
-          yoyo: true,
-          repeatRefresh: true,
-          ease: 'none',
-          overwrite: true,
-          onComplete: () => this.world.position.set(0, 0),
+  private spray(spray: Spray, at: PointLike): void {
+    const [low, high] = spray.angles ?? [0, 360];
+    for (let piece = 0; piece < spray.count; piece += 1) {
+      const tint = Array.isArray(spray.tint) ? gsap.utils.random(spray.tint) : spray.tint;
+      const sprite = this.acquire(spray.texture, tint, spray.additive ?? false);
+      sprite.position.set(at.x, at.y);
+      sprite.rotation = gsap.utils.random(0, Math.PI * 2);
+      this.fade(sprite, gsap.utils.random(...spray.life), spray.size, 1, {
+        physics2D: {
+          velocity: gsap.utils.random(...spray.speed),
+          angle: gsap.utils.random(low, high),
+          gravity: spray.gravity ?? 0,
         },
-      );
+        ...(spray.spin ? { rotation: `+=${gsap.utils.random(-spray.spin, spray.spin)}` } : {}),
+      });
     }
-    this.floatText(seat, 'OUT', FX.kill);
+  }
+
+  /** Sizes a sprite from one width to another while it fades out, with any extra motion alongside. */
+  private fade(
+    sprite: Sprite,
+    life: number,
+    [from, to]: readonly [number, number],
+    alpha: number,
+    motion: gsap.TweenVars,
+  ): void {
+    gsap
+      .timeline({ onComplete: () => this.release(sprite) })
+      .fromTo(
+        sprite.scale,
+        { x: this.scaleFor(sprite, from), y: this.scaleFor(sprite, from) },
+        {
+          x: this.scaleFor(sprite, to),
+          y: this.scaleFor(sprite, to),
+          duration: life,
+          ease: 'power2.out',
+        },
+        0,
+      )
+      .fromTo(sprite, { alpha }, { alpha: 0, duration: life, ease: 'none', ...motion }, 0);
+  }
+
+  /**
+   * Freezes the replay for a beat on the round's first kill. Borrows only the
+   * hold the choreography left unused, so the replay still ends in time.
+   */
+  private hitStop(timeline: gsap.core.Timeline): void {
+    const stop = this.stopBudget;
+    if (stop <= 0) return;
+    this.stopBudget = 0;
+    timeline.timeScale(HIT_STOP_SCALE);
+    gsap.delayedCall(stop, () => timeline.timeScale(1));
+  }
+
+  private zoomPunch(): void {
+    if (this.reduced) return;
+    gsap.fromTo(
+      this.options.camera.scale,
+      { x: ZOOM_PUNCH, y: ZOOM_PUNCH },
+      { x: 1, y: 1, duration: 0.45, ease: 'power3.out', overwrite: true },
+    );
+  }
+
+  /** Quick jolts of the whole world to random offsets, then back to rest. */
+  private shake(amount: number, jolts: number): void {
+    const { world } = this.options;
+    gsap.fromTo(
+      world,
+      { x: 0, y: 0 },
+      {
+        x: `random(${-amount}, ${amount})`,
+        y: `random(${-amount}, ${amount})`,
+        duration: 0.03,
+        repeat: jolts - 1,
+        yoyo: true,
+        repeatRefresh: true,
+        ease: 'none',
+        overwrite: true,
+        onComplete: () => world.position.set(0, 0),
+      },
+    );
+  }
+
+  /** A wash of colour over the whole arena, gone in a blink. */
+  private screenFlash(tint: number, strength: number): void {
+    if (this.reduced) return;
+    const { width, height } = this.options.app.screen;
+    this.overlay.clear().rect(0, 0, width, height).fill(tint);
+    gsap.fromTo(
+      this.overlay,
+      { alpha: strength },
+      { alpha: 0, duration: 0.35, ease: 'power2.out', overwrite: true },
+    );
+  }
+
+  /** A big word across the middle of the floor: the round number, the storm. */
+  private title(text: string, tint: number, size = 1): void {
+    const centre = this.options.storm()?.centre;
+    if (!centre) return;
+    const label = new Text({ text, style: { ...TITLE, fill: tint } });
+    label.anchor.set(0.5);
+    label.position.set(centre.x, centre.y);
+    label.alpha = 0;
+    this.layer.addChildAt(label, 0);
+
+    const grow = this.reduced ? size : size * 1.35;
+    gsap
+      .timeline({ onComplete: () => label.destroy() })
+      .fromTo(label.scale, { x: grow, y: grow }, { x: size, y: size, duration: 0.25, ease: 'power3.out' }, 0)
+      .to(label, { alpha: 0.9, duration: 0.15 }, 0)
+      .to(label, { alpha: 0, duration: 0.35, ease: 'power1.in' }, 0.65);
+  }
+
+  /** A strike from the storm wall down onto a seat: the streak texture, stretched between them. */
+  private lightning(seat: number): void {
+    const storm = this.options.storm();
+    const at = this.options.positionOf(seat);
+    if (!storm || !at || this.reduced) return;
+    const angle = Math.atan2(at.y - storm.centre.y, at.x - storm.centre.x);
+    const length = storm.radius - Math.hypot(at.x - storm.centre.x, at.y - storm.centre.y);
+    const strike = this.acquire('streak', FX.storm, true);
+    // The streak runs vertically in its texture, so it is turned a quarter past the angle.
+    strike.rotation = angle + Math.PI / 2;
+    strike.position.set(at.x + (Math.cos(angle) * length) / 2, at.y + (Math.sin(angle) * length) / 2);
+    strike.scale.set(this.scaleFor(strike, 40), Math.abs(length) / strike.texture.height);
+    gsap
+      .timeline({ onComplete: () => this.release(strike) })
+      .to(strike, { alpha: 0.3, duration: 0.05, yoyo: true, repeat: 2, ease: 'none' })
+      .to(strike, { alpha: 0, duration: 0.2 });
   }
 
   // ------------------------------------------------------------- building blocks
-
-  private particle(name: FxTexture, at: PointLike, options: ParticleOptions): void {
-    const sprite = this.acquire(name, options.tint, options.additive ?? false);
-    sprite.position.set(at.x, at.y);
-    sprite.rotation = options.rotation ?? 0;
-    const from = this.scaleFor(sprite, options.sizeFrom);
-    const to = this.scaleFor(sprite, options.sizeTo);
-
-    const life = gsap.timeline({ onComplete: () => this.release(sprite) });
-    life
-      .fromTo(sprite.scale, { x: from, y: from }, { x: to, y: to, duration: options.life, ease: 'power2.out' }, 0)
-      .fromTo(
-        sprite,
-        { alpha: options.alphaFrom ?? 1 },
-        { alpha: options.alphaTo ?? 0, duration: options.life, ease: 'none' },
-        0,
-      );
-    if (options.velocity) {
-      life.to(
-        sprite,
-        {
-          physics2D: {
-            velocity: options.velocity,
-            angle: options.angle ?? 0,
-            gravity: options.gravity ?? 0,
-          },
-          duration: options.life,
-        },
-        0,
-      );
-    }
-    if (options.spin) {
-      life.to(sprite, { rotation: `+=${options.spin}`, duration: options.life, ease: 'none' }, 0);
-    }
-  }
-
-  /** A radial spray of small glowing sparks, spread evenly with a little jitter. */
-  private burst(
-    at: PointLike,
-    count: number,
-    options: { tint: number; life: number; size: number; speed: [number, number] },
-  ): void {
-    const step = 360 / count;
-    for (let index = 0; index < count; index += 1) {
-      this.particle('glow', at, {
-        tint: options.tint,
-        life: options.life,
-        sizeFrom: options.size,
-        sizeTo: 2,
-        velocity: gsap.utils.random(...options.speed),
-        angle: index * step + gsap.utils.random(0, 34),
-        additive: true,
-      });
-    }
-  }
 
   /**
    * A number or word rising off a seat. Several landing on one seat at once —
    * a hit and a riposte, say — stack upward instead of printing over each other.
    */
-  private floatText(seat: number, text: string, tint: number): void {
-    const at = this.positionOf(seat);
-    if (!at) return;
-
+  private floatText(seat: number, at: PointLike, text: string, tint: number, size: number): void {
     const slot = this.floats.get(seat) ?? 0;
     this.floats.set(seat, slot + 1);
 
@@ -571,6 +541,7 @@ export class Effects {
     label.position.set(at.x, at.y + FLOAT_ORIGIN - slot * FLOAT_STACK);
     this.layer.addChild(label);
 
+    const pop = this.reduced ? size : size * 1.7;
     gsap
       .timeline({
         onComplete: () => {
@@ -581,15 +552,21 @@ export class Effects {
         },
       })
       .to(label, { y: `-=${FLOAT_RISE}`, duration: FLOAT_LIFE, ease: 'power2.out' }, 0)
-      .fromTo(label.scale, { x: 0.7, y: 0.7 }, { x: 1, y: 1, duration: FLOAT_LIFE * 0.15 }, 0)
+      // Pops in oversized and settles, so a number lands like a blow.
+      .fromTo(
+        label.scale,
+        { x: pop, y: pop },
+        { x: size, y: size, duration: FLOAT_LIFE * 0.3, ease: 'back.out(2.5)' },
+        0,
+      )
       // Holds for the first half of its life, then fades.
       .to(label, { alpha: 0, duration: FLOAT_LIFE * 0.45, ease: 'none' }, FLOAT_LIFE * 0.55);
   }
 
   /** Unit vector from one seat toward another. */
   private direction(from: number, to: number): Point {
-    const a = this.positionOf(from);
-    const b = this.positionOf(to);
+    const a = this.options.positionOf(from);
+    const b = this.options.positionOf(to);
     if (!a || !b || (a.x === b.x && a.y === b.y)) return new Point(0, 0);
     return new Point(b.x, b.y).subtract(new Point(a.x, a.y)).normalize();
   }
@@ -627,16 +604,8 @@ function span(window: Window): number {
   return window.end - window.start;
 }
 
-/**
- * How many times a yoyo of half-period `half` repeats inside `length` seconds,
- * so it finishes on or before the moment its effect is meant to end.
- */
-function breaths(length: number, half: number): number {
-  return Math.max(0, Math.floor(length / half) - 1);
-}
-
 /** The procedural stand-in for any texture that fails to load. */
-function softGlow(): Graphics {
+export function softGlow(): Graphics {
   const glow = new Graphics();
   for (let ring = 16; ring >= 1; ring -= 1) {
     glow.circle(0, 0, ring * 4).fill({ color: 0xffffff, alpha: 0.06 });
@@ -644,7 +613,7 @@ function softGlow(): Graphics {
   return glow;
 }
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   try {
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch {

@@ -8,6 +8,12 @@
   --accent: #52d1a4;
   --danger: #e0575b;
   --warn: #e6b455;
+  /* One colour per action, shared with the arena's effects. */
+  --attack: #ff6b6e;
+  --defend: #6fa8f5;
+  --hide: #e6b455;
+  --storm: #9d84ff;
+  --gold: #f5d06f;
   color-scheme: dark;
 }
 
@@ -17,7 +23,11 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(107, 79, 200, 0.14), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(82, 209, 164, 0.08), transparent 55%),
+    var(--bg);
   color: var(--text);
   font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
 }
@@ -28,14 +38,46 @@ body {
   justify-content: space-between;
   padding: 12px 20px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  background: linear-gradient(180deg, rgba(20, 26, 36, 0.96), rgba(20, 26, 36, 0.82));
+  backdrop-filter: blur(6px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .topbar h1 {
   font-size: 18px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   margin: 0;
   text-transform: uppercase;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+}
+
+.brand span {
+  background: linear-gradient(90deg, #f1f5fb, #b8a6ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  color: var(--storm);
+  filter: drop-shadow(0 0 6px rgba(157, 132, 255, 0.6));
+  animation: spin 18s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .topbar-right {
@@ -173,9 +215,12 @@ main {
   height: calc(100vh - 120px);
   min-height: 520px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
   background: #070a10;
+  box-shadow:
+    0 0 0 1px rgba(157, 132, 255, 0.06),
+    0 20px 60px -20px rgba(0, 0, 0, 0.8);
 }
 
 /* Pixi sizes the canvas inline to match its container, so this only guards
@@ -209,10 +254,34 @@ main {
 }
 
 .panel {
-  background: var(--panel);
+  background: linear-gradient(180deg, rgba(27, 35, 49, 0.55), rgba(20, 26, 36, 0.9)), var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px;
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.9);
+}
+
+.panel.hero {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(157, 132, 255, 0.35);
+  background:
+    radial-gradient(500px 220px at 100% 0%, rgba(157, 132, 255, 0.22), transparent 70%),
+    radial-gradient(400px 200px at 0% 100%, rgba(82, 209, 164, 0.12), transparent 70%),
+    var(--panel);
+  padding: 20px;
+}
+
+.hero-title {
+  margin: 4px 0 6px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.hero #practice {
+  padding: 9px 18px;
+  box-shadow: 0 0 24px -4px rgba(82, 209, 164, 0.6);
 }
 
 .panel.grow {
@@ -264,10 +333,20 @@ textarea {
 
 button {
   cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.1s,
+    filter 0.15s;
 }
 
 button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 button:disabled {
@@ -276,10 +355,15 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, #6be0b6, var(--accent));
   border-color: var(--accent);
   color: #06120d;
-  font-weight: 600;
+  font-weight: 700;
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow: 0 0 18px -4px rgba(82, 209, 164, 0.7);
 }
 
 button.ghost {
@@ -299,9 +383,248 @@ button.wide {
   gap: 8px;
 }
 
+/* An action is a card: icon, name, what it does, and its key. Each carries its
+   own colour, which the selected state and the arena's aim both use. */
+.action {
+  --tone: var(--accent);
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 10px 6px 9px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent), var(--panel-2);
+}
+
+.action.attack {
+  --tone: var(--attack);
+}
+
+.action.defend {
+  --tone: var(--defend);
+}
+
+.action.hide {
+  --tone: var(--hide);
+}
+
+.action-icon {
+  font-size: 22px;
+  line-height: 1.1;
+  transition: transform 0.2s;
+}
+
+.action-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.action-desc {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.action kbd {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  font: 600 10px/1 'Segoe UI', system-ui, sans-serif;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--tone);
+}
+
+.action:hover:not(:disabled) .action-icon {
+  transform: scale(1.15) rotate(-6deg);
+}
+
 .action.selected {
-  border-color: var(--accent);
-  background: #17352a;
+  border-color: var(--tone);
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--tone) 28%, transparent), transparent 75%),
+    var(--panel-2);
+  box-shadow:
+    0 0 0 1px var(--tone),
+    0 0 22px -6px var(--tone);
+}
+
+.action.selected .action-name,
+.action.selected kbd {
+  color: var(--tone);
+  border-color: color-mix(in srgb, var(--tone) 60%, transparent);
+}
+
+.move-panel {
+  transition:
+    border-color 0.3s,
+    box-shadow 0.3s;
+}
+
+.phase-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text) !important;
+}
+
+.phase-chip {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.phase-chip.commit {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.phase-chip.reveal {
+  color: var(--defend);
+  border-color: color-mix(in srgb, var(--defend) 55%, transparent);
+  background: color-mix(in srgb, var(--defend) 12%, transparent);
+}
+
+.phase-chip.replay {
+  color: var(--storm);
+  border-color: color-mix(in srgb, var(--storm) 55%, transparent);
+  background: color-mix(in srgb, var(--storm) 12%, transparent);
+}
+
+/* The countdown as a bar that drains; it turns urgent in the last seconds. */
+.timer-track {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  margin: 2px 0 12px;
+}
+
+.timer-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), #8ff0cc);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.2s linear;
+}
+
+.timer-bar.reveal {
+  background: linear-gradient(90deg, var(--defend), #a9cbff);
+}
+
+.timer-bar.held {
+  background: linear-gradient(90deg, var(--storm), #c9bbff);
+  opacity: 0.55;
+}
+
+.move-panel.urgent {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+  animation: urgent 0.8s ease-in-out infinite alternate;
+}
+
+.move-panel.urgent .timer {
+  color: var(--danger);
+}
+
+.move-panel.urgent .timer-bar {
+  background: linear-gradient(90deg, var(--danger), #ff9a8f);
+}
+
+@keyframes urgent {
+  from {
+    box-shadow: 0 0 0 0 rgba(224, 87, 91, 0);
+  }
+  to {
+    box-shadow: 0 0 22px -2px rgba(224, 87, 91, 0.45);
+  }
+}
+
+.move-panel.sealed {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.move-panel.sealing {
+  animation: seal 0.6s ease-out;
+}
+
+@keyframes seal {
+  from {
+    box-shadow: 0 0 0 0 rgba(82, 209, 164, 0.7);
+  }
+  to {
+    box-shadow: 0 0 0 14px rgba(82, 209, 164, 0);
+  }
+}
+
+.target-row {
+  margin: 10px 0 2px;
+}
+
+.target-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.chip span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--attack);
+}
+
+.chip.active {
+  border-color: var(--attack);
+  background: color-mix(in srgb, var(--attack) 16%, var(--panel-2));
+  box-shadow: 0 0 14px -4px var(--attack);
+}
+
+.chip.active b,
+.chip.active span {
+  color: var(--attack);
+}
+
+button.lock-in {
+  padding: 10px 12px;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.move-panel.sealed button.lock-in {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  color: var(--accent);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .pill {
@@ -342,7 +665,8 @@ button.wide {
 .timer {
   color: var(--warn);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 15px;
 }
 
 .muted {
@@ -387,6 +711,7 @@ button.wide {
 .tab.active {
   border-color: var(--accent);
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
 }
 
 .feed,
@@ -414,6 +739,31 @@ button.wide {
 
 .feed li.kill {
   color: var(--danger);
+  font-weight: 600;
+}
+
+.feed li.act-attack {
+  border-left: 2px solid var(--attack);
+  padding-left: 8px;
+}
+
+.feed li.act-defend {
+  border-left: 2px solid var(--defend);
+  padding-left: 8px;
+}
+
+.feed li.act-hide {
+  border-left: 2px solid var(--hide);
+  padding-left: 8px;
+}
+
+.feed li.act-none {
+  color: var(--muted);
+  padding-left: 10px;
+}
+
+.feed li.mine {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .reads table {
@@ -459,7 +809,9 @@ button.wide {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: var(--bg);
+  background:
+    radial-gradient(600px 400px at 50% 45%, rgba(107, 79, 200, 0.18), transparent 70%),
+    var(--bg);
 }
 
 .loader-card {
@@ -472,8 +824,17 @@ button.wide {
 .loader-card h2 {
   margin: 0;
   font-size: 14px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
+}
+
+.loader-mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 6px;
+  color: var(--storm);
+  filter: drop-shadow(0 0 12px rgba(157, 132, 255, 0.7));
+  animation: spin 3s linear infinite;
 }
 
 .loader-track {
@@ -485,7 +846,8 @@ button.wide {
 
 .loader-bar {
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--storm), var(--accent));
+  box-shadow: 0 0 12px rgba(82, 209, 164, 0.6);
   transform: scaleX(0);
   transform-origin: left center;
 }
@@ -500,18 +862,77 @@ button.wide {
   color: #e57368;
 }
 
+.result-headline {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.result-headline strong {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.result-headline span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.result-headline.won {
+  border-color: color-mix(in srgb, var(--gold) 60%, transparent);
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(245, 208, 111, 0.22), transparent 60%),
+    var(--panel-2);
+  animation: glow-gold 1.6s ease-in-out infinite alternate;
+}
+
+.result-headline.won strong {
+  color: var(--gold);
+}
+
+@keyframes glow-gold {
+  to {
+    box-shadow: 0 0 26px -6px rgba(245, 208, 111, 0.55);
+  }
+}
+
 .result-ranking {
+  list-style: none;
   margin: 8px 0;
-  padding-left: 22px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
 }
 
 .result-ranking li {
-  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.result-ranking .medal {
+  width: 22px;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .result-ranking li.winner {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--gold);
+  font-weight: 700;
+  background: rgba(245, 208, 111, 0.08);
+}
+
+.result-ranking li.you {
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .check {
@@ -615,4 +1036,22 @@ button.moment.decisive {
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+/* Motion that only decorates goes quiet for anyone who asked for less. */
+@media (prefers-reduced-motion: reduce) {
+  .brand-mark,
+  .loader-mark,
+  .move-panel.urgent,
+  .move-panel.sealing,
+  .result-headline.won,
+  .steps li.current::before {
+    animation: none;
+  }
+
+  button,
+  .timer-bar,
+  .action-icon {
+    transition: none;
+  }
 }

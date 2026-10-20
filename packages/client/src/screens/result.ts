@@ -25,11 +25,18 @@ export function showResult(
     ...message.ranking.map((seat, place) => {
       const item = document.createElement('li');
       const address = state.players[seat]?.address ?? '0x?';
-      item.textContent = `#${seat} ${short(address)}${seat === app.you ? ' (you)' : ''}`;
+      const medal = document.createElement('span');
+      medal.className = 'medal';
+      medal.textContent = MEDALS[place] ?? String(place + 1);
+      const name = document.createElement('span');
+      name.textContent = `#${seat} ${short(address)}${seat === app.you ? ' (you)' : ''}`;
+      item.append(medal, name);
       if (place === 0) item.classList.add('winner');
+      if (seat === app.you) item.classList.add('you');
       return item;
     }),
   );
+  renderHeadline(message.ranking, message.result.rounds);
 
   verification = verify(state, message.result);
   renderVerification();
@@ -68,6 +75,32 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
     // The local check already stands on its own; a failed read just leaves it at that.
   }
   void renderWinnings();
+}
+
+const MEDALS = ['🏆', '🥈', '🥉'];
+
+/** One line that says how it went for you, before the details. */
+function renderHeadline(ranking: readonly number[], rounds: number): void {
+  const place = app.you === null ? -1 : ranking.indexOf(app.you);
+  const title = document.createElement('strong');
+  const detail = document.createElement('span');
+  if (place === 0) {
+    title.textContent = 'Victory';
+    detail.textContent = `Last one standing after ${rounds} rounds`;
+  } else if (place > 0) {
+    title.textContent = `${ordinal(place + 1)} of ${ranking.length}`;
+    detail.textContent = `Seat #${ranking[0]} survived ${rounds} rounds`;
+  } else {
+    title.textContent = `Seat #${ranking[0] ?? '?'} wins`;
+    detail.textContent = `${rounds} rounds`;
+  }
+  dom.resultHeadline.className = `result-headline ${place === 0 ? 'won' : place > 0 ? 'lost' : ''}`;
+  dom.resultHeadline.replaceChildren(title, detail);
+}
+
+function ordinal(value: number): string {
+  const suffix = value % 100 >= 11 && value % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][value % 10] ?? 'th');
+  return `${value}${suffix}`;
 }
 
 export function hideResult(): void {

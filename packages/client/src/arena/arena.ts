@@ -1,50 +1,28 @@
-import { Application, Assets, Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Application, Container, FillGradient, Graphics, Text, type Texture } from 'pixi.js';
 import {
+  Action,
   MatchPhase,
-  chainInfo,
+  stormDamageForRound,
+  type ActionValue,
   type AvatarEntry,
   type PublicMatchState,
   type RoundRecord,
 } from '@lms/protocol';
+import { defaultAvatar } from '../assets/avatars.js';
 import { loadAssets, type FxTextures } from '../assets/loader.js';
 import { gsap } from '../motion.js';
 import { choreograph } from './choreography.js';
-import { Effects } from './effects.js';
-import {
-  AVATAR_RADIUS,
-  AVATAR_SIZE,
-  BADGE_Y,
-  HP_ARC_RADIUS,
-  SEAT_RADIUS,
-  seatPosition,
-  stormRing,
-  type Point,
-} from './layout.js';
+import { Effects, prefersReducedMotion, softGlow } from './effects.js';
+import { HP_ARC_RADIUS, centreOf, seatPosition, stormRing, type Point } from './layout.js';
 import { buildReplay, DEAD_FADE, type Replay, type SeatDisplay } from './replay.js';
-import { BADGE, COLORS, FX, LABEL, SUBLABEL, hpColor } from './theme.js';
+import { HALO_RADIUS, SeatToken, dashedRing } from './seat.js';
+import { Storm } from './storm.js';
+import { COLORS, HUD, HUD_VALUE } from './theme.js';
 
-/** Half a breath of the storm ring's idle pulse, in seconds. */
-const STORM_BREATH = 2.2;
-
-interface SeatView {
-  root: Container;
-  body: Graphics;
-  ring: Graphics;
-  name: Text;
-  hp: Text;
-  status: Text;
-  /** Origin-chain badge: which chain this seat's stake came from. */
-  chainBg: Graphics;
-  chainText: Text;
-  /** Chain currently drawn, so the badge is only re-rendered when it changes. */
-  chainDrawn: number | null;
-  /** Holds the avatar sprite, so z-order stays fixed while the texture loads. */
-  avatarLayer: Container;
-  avatarMask: Graphics;
-  /** Image URL currently shown, so a repaint does not reload the texture. */
-  avatarUrl: string | null;
-  /** Where the seat sits on the ring, before any replay offset is applied. */
-  home: Point;
+/** A move the player has picked but not yet seen resolved. Local only. */
+export interface Aim {
+  action: ActionValue;
+  target: number;
 }
 
 /**
@@ -52,7 +30,8 @@ interface SeatView {
  *
  * The arena renders only what the server published, so it can never leak a move
  * that has not been revealed: during the commit phase a seat shows *that* it
- * has committed, never what it committed to.
+ * has committed, never what it committed to. The one exception is your own
+ * draft — the aim line and reticle — which never leaves this browser.
  *
  * While a round is being replayed, the arena deliberately shows *less* than it
  * knows. The post-round snapshot arrives a few milliseconds after the round
@@ -62,32 +41,100 @@ interface SeatView {
  * tweening — and the snapshot takes over again once the replay has finished.
  */
 export class Arena {
-  private readonly seats = new Map<number, SeatView>();
-  private readonly avatars = new Map<number, AvatarEntry>();
-  /** Everything that shakes together when a seat is eliminated. */
+  /** Called when the player clicks a seat they could target. */
+  onPick: ((seat: number) => void) | null = null;
+
+  private readonly seats = new Map<number, SeatToken>();
+  /** Zooms about the centre for the replay's big moments. */
+  private readonly camera = new Container();
+  /** Everything that shakes together when a blow lands. */
   private readonly world = new Container();
+  private readonly floor = new Graphics();
+  private readonly storm: Storm;
   private readonly seatLayer = new Container();
-  private readonly stormLayer = new Graphics();
+  private readonly hudRound = new Text({ text: '', style: HUD_VALUE });
+  private readonly hudStorm = new Text({ text: '', style: { ...HUD, fill: COLORS.stormEdge } });
   private readonly effects: Effects;
-  /** The storm ring's idle breathing, 0..1, tweened forever. */
-  private readonly idle = { pulse: 0 };
+  private readonly glow: Texture;
+  private readonly reduced = prefersReducedMotion();
+
+  // Your own pick, drawn on the floor. Built once; GSAP keeps them moving.
+  private readonly aimLine = new Graphics();
+  private readonly reticle = new Graphics()
+    .circle(0, 0, HALO_RADIUS)
+    .stroke({ width: 2, color: COLORS.aim, alpha: 0.9 })
+    .moveTo(0, -HALO_RADIUS - 7)
+    .lineTo(0, -HALO_RADIUS + 7)
+    .moveTo(0, HALO_RADIUS - 7)
+    .lineTo(0, HALO_RADIUS + 7)
+    .moveTo(-HALO_RADIUS - 7, 0)
+    .lineTo(-HALO_RADIUS + 7, 0)
+    .moveTo(HALO_RADIUS - 7, 0)
+    .lineTo(HALO_RADIUS + 7, 0)
+    .stroke({ width: 3, color: COLORS.aim, cap: 'round' });
+  private readonly guard = new Graphics()
+    .circle(0, 0, HALO_RADIUS + 6)
+    .stroke({ width: 3, color: COLORS.parried });
+  private readonly veil = dashedRing(HALO_RADIUS + 6, 20, 0.35).stroke({ width: 2, color: COLORS.hpLow });
+
   private state: PublicMatchState | null = null;
   private you: number | null = null;
+  private aim: Aim | null = null;
+  /** Whether your aim is already sealed: it is then drawn quieter. */
+  private aimSealed = false;
   /** The most recent round replayed, whether or not it is still playing. */
   private replay: Replay | null = null;
-  /** Whether the last frame was drawn from a playing replay. */
-  private wasReplaying = false;
 
   private constructor(
     private readonly app: Application,
     textures: FxTextures,
   ) {
-    this.effects = new Effects(app, textures, (seat) => this.homeOf(seat), this.world);
-    this.world.addChild(this.stormLayer, this.seatLayer, this.effects.layer);
-    app.stage.addChild(this.world);
-    app.ticker.add(() => this.animate());
+    this.glow = textures.glow ?? app.renderer.generateTexture(softGlow());
+    this.storm = new Storm(this.reduced);
+    this.effects = new Effects({
+      app,
+      textures,
+      positionOf: (seat) => this.seats.get(seat)?.home ?? null,
+      world: this.world,
+      camera: this.camera,
+      storm: () => (this.state ? stormRing(app.screen.width, app.screen.height, this.state.round) : null),
+    });
+
+    const hud = new Container();
+    const hudLabel = new Text({ text: 'ROUND', style: HUD });
+    hudLabel.position.set(18, 14);
+    this.hudRound.position.set(18, 28);
+    this.hudStorm.position.set(18, 58);
+    hud.addChild(hudLabel, this.hudRound, this.hudStorm);
+
+    const aimLayer = new Container();
+    aimLayer.addChild(this.aimLine, this.reticle, this.guard, this.veil);
+    this.world.addChild(this.floor, this.storm.layer, aimLayer, this.seatLayer, this.effects.layer);
+    this.camera.addChild(this.world);
+    app.stage.addChild(this.camera, hud, this.effects.overlay);
+    app.ticker.add(() => this.paint());
     app.renderer.on('resize', () => this.layout());
-    gsap.to(this.idle, { pulse: 1, duration: STORM_BREATH, ease: 'sine.inOut', yoyo: true, repeat: -1 });
+
+    if (!this.reduced) {
+      gsap.to(this.reticle, { rotation: Math.PI * 2, duration: 8, repeat: -1, ease: 'none' });
+      gsap.to(this.reticle.scale, {
+        x: 1.06,
+        y: 1.06,
+        duration: 0.5,
+        yoyo: true,
+        repeat: -1,
+        ease: 'sine.inOut',
+      });
+      gsap.to(this.veil, { rotation: -Math.PI * 2, duration: 7, repeat: -1, ease: 'none' });
+      gsap.to(this.guard.scale, {
+        x: 1.05,
+        y: 1.05,
+        duration: 0.6,
+        yoyo: true,
+        repeat: -1,
+        ease: 'sine.inOut',
+      });
+    }
   }
 
   static async mount(element: HTMLElement): Promise<Arena> {
@@ -112,30 +159,41 @@ export class Arena {
       this.replay?.timeline.kill();
       this.replay = null;
       this.effects.clear();
+      for (const seat of this.seats.values()) seat.destroy();
+      this.seats.clear();
     }
     this.state = state;
     this.you = you;
 
     for (const player of state.players) {
-      if (!this.seats.has(player.index)) this.seats.set(player.index, this.createSeat(player.index));
+      if (this.seats.has(player.index)) continue;
+      const seat = new SeatToken(player.index, player.chainId, this.glow, this.reduced, () =>
+        this.onPick?.(player.index),
+      );
+      this.seatLayer.addChild(seat.root);
+      this.seats.set(player.index, seat);
+      void seat.wear(defaultAvatar(player.address), false);
     }
 
     this.layout();
-    this.paint();
   }
 
   /**
-   * Applies the avatars the server resolved.
-   *
-   * Arrives separately from the match state and usually later, so a seat is
-   * playable long before it has a face. Textures load in the background and a
-   * seat that never gets one keeps its plain circle.
+   * Shows the move the player has picked: the aim line and reticle for an
+   * attack, a guard for a defend, a veil for a hide. Purely local — nothing
+   * here comes from or goes to the server.
    */
+  setAim(aim: Aim | null, sealed: boolean, pickable: readonly number[]): void {
+    this.aim = aim;
+    this.aimSealed = sealed;
+    for (const [index, seat] of this.seats) seat.pickable = pickable.includes(index);
+  }
+
+  /** Swaps in the NFT avatars the server resolved, over the generated faces. */
   setAvatars(entries: readonly AvatarEntry[]): void {
-    for (const entry of entries) this.avatars.set(entry.seat, entry);
-    this.layout();
-    this.paint();
-    void this.loadAvatars();
+    for (const entry of entries) {
+      if (entry.image) void this.seats.get(entry.seat)?.wear(entry.image, true);
+    }
   }
 
   /**
@@ -143,9 +201,10 @@ export class Arena {
    *
    * Must be called *before* the post-round snapshot is rendered: the replay
    * starts from the HP the arena is currently showing, which at this moment is
-   * still the state the round began with.
+   * still the state the round began with. `holdMs` is how long the server
+   * waits before the next round; the replay never runs past it.
    */
-  showRound(record: RoundRecord): void {
+  showRound(record: RoundRecord, holdMs = 0): void {
     const before = this.state?.players.map((player) => ({
       index: player.index,
       hp: player.hp,
@@ -155,12 +214,11 @@ export class Arena {
 
     const choreo = choreograph(record, before);
     const replay = buildReplay(record.round, choreo);
-    this.effects.decorate(replay, choreo);
+    this.effects.decorate(replay, choreo, holdMs / 1000);
     // The previous round's timeline is left to finish on its own: anything of
     // it still in flight lands normally, it just no longer drives the seats.
     this.replay = replay;
     replay.timeline.play();
-    this.paint();
   }
 
   /** Crowns the winner once the final round's replay has played out. */
@@ -184,7 +242,9 @@ export class Arena {
   destroy(): void {
     this.replay?.timeline.kill();
     this.effects.clear();
-    gsap.killTweensOf(this.idle);
+    this.storm.destroy();
+    for (const seat of this.seats.values()) seat.destroy();
+    gsap.killTweensOf([this.reticle, this.reticle.scale, this.veil, this.guard.scale]);
     this.app.destroy(true, { children: true });
   }
 
@@ -205,241 +265,140 @@ export class Arena {
     return (this.state?.round ?? 0) <= replay.round ? replay.seats : null;
   }
 
-  private homeOf(seat: number): Point | null {
-    return this.seats.get(seat)?.home ?? null;
-  }
-
-  private createSeat(index: number): SeatView {
-    const root = new Container();
-    const body = new Graphics();
-    const ring = new Graphics();
-    const name = new Text({ text: `#${index}`, style: LABEL });
-    const hp = new Text({ text: '', style: SUBLABEL });
-    const status = new Text({ text: '', style: SUBLABEL });
-    const chainBg = new Graphics();
-    const chainText = new Text({ text: '', style: BADGE });
-    const avatarLayer = new Container();
-    const avatarMask = new Graphics().circle(0, 0, AVATAR_RADIUS).fill(0xffffff);
-    avatarLayer.mask = avatarMask;
-
-    name.anchor.set(0.5);
-    hp.anchor.set(0.5);
-    status.anchor.set(0.5);
-    chainText.anchor.set(0.5);
-    chainBg.y = BADGE_Y;
-    chainText.y = BADGE_Y;
-
-    // Explicit order, because the picture has to land between the circle and
-    // the labels rather than on top of either.
-    root.addChild(ring, body, avatarLayer, avatarMask, name, hp, status, chainBg, chainText);
-    this.seatLayer.addChild(root);
-    return {
-      root,
-      body,
-      ring,
-      name,
-      hp,
-      status,
-      chainBg,
-      chainText,
-      chainDrawn: null,
-      avatarLayer,
-      avatarMask,
-      avatarUrl: null,
-      home: { x: 0, y: 0 },
-    };
-  }
-
-  /**
-   * Loads each seat's picture and drops it into the circle.
-   *
-   * Every failure is silent and local to one seat: these are third-party URLs
-   * behind a public IPFS gateway, so a 404, a CORS refusal or a gateway that
-   * simply never answers is an ordinary outcome, not an error worth showing a
-   * player mid-match.
-   */
-  private async loadAvatars(): Promise<void> {
-    await Promise.all(
-      [...this.avatars.values()].map(async (entry) => {
-        const view = this.seats.get(entry.seat);
-        if (!view || !entry.image || view.avatarUrl === entry.image) return;
-
-        try {
-          const texture = await Assets.load(entry.image);
-          // The view may have been torn down while the gateway was thinking.
-          if (!this.seats.has(entry.seat)) return;
-
-          const sprite = new Sprite(texture);
-          sprite.anchor.set(0.5);
-          sprite.width = AVATAR_SIZE;
-          sprite.height = AVATAR_SIZE;
-          view.avatarLayer.removeChildren();
-          view.avatarLayer.addChild(sprite);
-          view.avatarUrl = entry.image;
-          this.paint();
-        } catch {
-          // Keep the plain circle; the seat is still fully playable.
-        }
-      }),
-    );
-  }
-
-  /**
-   * Draws the origin-chain pill above a seat.
-   *
-   * The width follows the measured text rather than a fixed box, because an
-   * unknown chain falls back to its numeric id and those are much wider than a
-   * ticker. Redrawn only when the chain changes: a seat's origin is fixed for
-   * the match, and this runs for every seat on every state push.
-   */
-  private paintChainBadge(view: SeatView, chainId: number): void {
-    if (view.chainDrawn === chainId) return;
-    view.chainDrawn = chainId;
-
-    const chain = chainInfo(chainId);
-    view.chainText.text = chain.short;
-    view.chainText.style.fill = chain.color;
-
-    const width = view.chainText.width + 14;
-    view.chainBg
-      .clear()
-      .roundRect(-width / 2, -9, width, 18, 9)
-      .fill({ color: chain.color, alpha: 0.16 })
-      .stroke({ width: 1, color: chain.color, alpha: 0.75 });
-  }
-
   private layout(): void {
-    const state = this.state;
-    if (!state) return;
-
     const { width, height } = this.app.screen;
-    // Avatars push each seat's labels below its circle, so the ring has to sit
-    // further in or the bottom seats clip against the arena edge.
-    const hasAvatars = this.avatars.size > 0;
-    const count = state.players.length;
+    const centre = centreOf(width, height);
+    this.camera.pivot.set(centre.x, centre.y);
+    this.camera.position.set(centre.x, centre.y);
 
-    state.players.forEach((player, position) => {
-      const view = this.seats.get(player.index);
-      if (!view) return;
-      view.home = seatPosition(position, count, width, height, hasAvatars);
-      view.root.position.set(view.home.x, view.home.y);
+    const state = this.state;
+    const count = state?.players.length ?? 0;
+    state?.players.forEach((player, position) => {
+      const seat = this.seats.get(player.index);
+      if (seat) seat.home = seatPosition(position, count, width, height, true);
     });
+    this.paintFloor(centre, Math.max(width, height));
   }
 
+  /** The floor: lit in the middle, with the seat track etched into it. */
+  private paintFloor(centre: Point, size: number): void {
+    const first = this.seats.values().next().value;
+    const track = first ? Math.hypot(first.home.x - centre.x, first.home.y - centre.y) : 0;
+    const gradient = new FillGradient({
+      type: 'radial',
+      colorStops: [
+        { offset: 0, color: COLORS.floorCentre },
+        { offset: 1, color: COLORS.floorEdge },
+      ],
+    });
+    const line = { width: 1, color: COLORS.floorLine };
+    this.floor
+      .clear()
+      .circle(centre.x, centre.y, size * 0.65)
+      .fill(gradient)
+      .circle(centre.x, centre.y, track + HP_ARC_RADIUS + 10)
+      .stroke(line)
+      .circle(centre.x, centre.y, Math.max(0, track - HP_ARC_RADIUS - 10))
+      .stroke(line)
+      .circle(centre.x, centre.y, track * 0.32)
+      .stroke(line);
+  }
+
+  /** Runs every frame. GSAP moves the values; this hands them to the seats. */
   private paint(): void {
     const state = this.state;
     if (!state) return;
 
-    const committed = new Set(state.committed);
-    const revealed = new Set(state.revealed);
-
     const display = this.display;
     for (const player of state.players) {
-      const view = this.seats.get(player.index);
-      if (!view) continue;
+      const seat = this.seats.get(player.index);
+      if (!seat) continue;
 
       // During a replay the seat shows where the round has got to, not where
       // it ended up. `shown` is null the rest of the time.
       const shown = display?.get(player.index) ?? null;
-      const hp = shown?.hp ?? player.hp;
       const alive = shown?.alive ?? player.alive;
-      const dying = shown?.dying ?? false;
-
-      const isYou = player.index === this.you;
-      const fraction = Math.max(0, Math.min(1, hp / 100));
-      const arcColor = hpColor(fraction);
-
-      view.body
-        .clear()
-        .circle(0, 0, SEAT_RADIUS)
-        .fill(alive ? COLORS.seat : COLORS.seatDead)
-        .stroke({
-          width: isYou ? 3 : 1.5,
-          // A dying seat's outline heats up as it goes.
-          color: dying ? FX.kill : isYou ? COLORS.you : COLORS.outline,
-        });
-
-      // An eliminated seat greys out; the whole container is already faded, and
-      // dimming the picture keeps a bright avatar from reading as alive.
-      const wearing = view.avatarUrl !== null;
-      view.avatarLayer.visible = wearing;
-      view.avatarLayer.alpha = alive ? 1 : 0.5;
-
-      // A seat wearing an avatar gives the circle over to the picture and moves
-      // its labels below it. Keeping them inside would mean covering the avatar
-      // with a scrim to stay readable, which defeats the point of having one.
-      view.name.y = wearing ? 44 : -8;
-      view.hp.y = wearing ? 58 : 8;
-      // Clear of the HP arc, so the label never sits on it.
-      view.status.y = wearing ? 74 : 54;
-
-      view.ring.clear();
-      if (alive && fraction > 0) {
-        view.ring
-          .arc(0, 0, HP_ARC_RADIUS, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction)
-          .stroke({ width: 4, color: arcColor, cap: 'round' });
-      }
-
-      this.paintChainBadge(view, player.chainId);
-      view.name.text = isYou ? `#${player.index} (you)` : `#${player.index}`;
-      view.name.style.fill = alive ? COLORS.text : COLORS.muted;
-      view.hp.text = alive ? `${Math.round(hp)} hp` : 'out';
+      seat.update({
+        hp: shown?.hp ?? player.hp,
+        maxHp: state.rules.startingHp || 100,
+        alive,
+        dying: shown?.dying ?? false,
+        you: player.index === this.you,
+        // Mid-replay, the snapshot's phase text is for a round nobody has seen
+        // finish yet.
+        ...(display || !alive ? { status: '', statusColor: COLORS.muted } : statusOf(state, player.index)),
+      });
 
       // Scale, fade and offset are tweened on the replay's timeline; both ends
       // of every tween meet the static values, so nothing jumps when the
       // replay hands back to the snapshot.
-      view.root.scale.set(shown?.scale ?? 1);
-      view.root.alpha = shown ? shown.fade * shown.veil : alive ? 1 : DEAD_FADE;
-      view.root.position.set(view.home.x + (shown?.dx ?? 0), view.home.y + (shown?.dy ?? 0));
-
-      if (display) {
-        // Mid-replay, the snapshot's phase text is for a round nobody has seen
-        // finish yet.
-        view.status.text = '';
-      } else if (state.phase === MatchPhase.Commit) {
-        view.status.text = committed.has(player.index) ? 'locked in' : 'thinking…';
-      } else if (state.phase === MatchPhase.Reveal) {
-        view.status.text = revealed.has(player.index) ? 'revealed' : 'sealed';
-      } else {
-        view.status.text = '';
-      }
-      view.status.style.fill = COLORS.muted;
+      seat.root.scale.set(shown?.scale ?? 1);
+      seat.root.alpha = shown ? shown.fade * shown.veil : alive ? 1 : DEAD_FADE;
+      seat.root.position.set(seat.home.x + (shown?.dx ?? 0), seat.home.y + (shown?.dy ?? 0));
     }
 
-    this.paintStorm();
-  }
-
-  private paintStorm(): void {
-    const state = this.state;
-    if (!state) return;
-
     const { width, height } = this.app.screen;
-    const ring = stormRing(width, height, state.round);
-    const flare = this.replay?.storm.flare ?? 0;
-    this.stormLayer
-      .clear()
-      .circle(ring.centre.x, ring.centre.y, ring.radius)
-      .stroke({
-        width: 2 + ring.intensity * 6 + flare * 6,
-        color: flare > 0 ? FX.storm : COLORS.storm,
-        alpha: Math.min(1, 0.35 + 0.4 * this.idle.pulse + flare * 0.5),
-      });
+    this.storm.update(stormRing(width, height, state.round), this.replay?.storm.flare ?? 0);
+    this.paintAim(display !== null);
+
+    // The round on screen: the replay's while it plays, so the HUD never runs ahead.
+    const round = display ? (this.replay?.round ?? state.round) : state.round;
+    const bite = stormDamageForRound(state.rules, round);
+    this.hudRound.text = String(round);
+    this.hudStorm.text = bite > 0 ? `STORM  −${bite} HP THIS ROUND` : 'STORM  GATHERING';
   }
 
-  /**
-   * Called every frame. GSAP moves the values; this only draws them — every
-   * frame while a replay plays, once more as it hands back to the snapshot,
-   * and otherwise just the storm ring's idle breathing.
-   */
-  private animate(): void {
-    const replaying = this.replay !== null && isPlaying(this.replay);
-    if (replaying || replaying !== this.wasReplaying) this.paint();
-    else this.paintStorm();
-    this.wasReplaying = replaying;
+  /** Puts your pick on the floor, or hides it when there is nothing to show. */
+  private paintAim(replaying: boolean): void {
+    const state = this.state;
+    const aim = this.aim;
+    const you = this.you === null ? undefined : this.seats.get(this.you);
+    const target = aim ? this.seats.get(aim.target) : undefined;
+    const live = state?.phase === MatchPhase.Commit || state?.phase === MatchPhase.Reveal;
+    const ready = !!aim && !!you && live && !replaying && isAlive(state, this.you);
+    const attacking = ready && aim.action === Action.Attack && !!target && isAlive(state, aim.target);
+
+    this.reticle.visible = attacking;
+    this.guard.visible = ready && aim.action === Action.Defend;
+    this.veil.visible = ready && aim.action === Action.Hide;
+    for (const marker of [this.reticle, this.guard, this.veil, this.aimLine]) {
+      marker.alpha = this.aimSealed ? 0.45 : 1;
+    }
+
+    this.aimLine.clear();
+    if (!you) return;
+    this.guard.position.set(you.home.x, you.home.y);
+    this.veil.position.set(you.home.x, you.home.y);
+    if (attacking && target) {
+      this.reticle.position.set(target.home.x, target.home.y);
+      this.aimLine
+        .moveTo(you.home.x, you.home.y)
+        .lineTo(target.home.x, target.home.y)
+        .stroke({ width: 2, color: COLORS.aim, alpha: 0.6 });
+    }
   }
 }
 
 function isPlaying(replay: Replay): boolean {
   const { timeline } = replay;
   return !timeline.paused() && timeline.progress() < 1;
+}
+
+function isAlive(state: PublicMatchState | null, seat: number | null): boolean {
+  return state?.players.find((player) => player.index === seat)?.alive ?? false;
+}
+
+/** The line under a seat: whether it has moved yet this phase. */
+function statusOf(state: PublicMatchState, seat: number): { status: string; statusColor: number } {
+  if (state.phase === MatchPhase.Commit) {
+    return state.committed.includes(seat)
+      ? { status: '✓ locked in', statusColor: COLORS.you }
+      : { status: 'thinking…', statusColor: COLORS.muted };
+  }
+  if (state.phase === MatchPhase.Reveal) {
+    return state.revealed.includes(seat)
+      ? { status: 'revealed', statusColor: COLORS.parried }
+      : { status: 'sealed', statusColor: COLORS.muted };
+  }
+  return { status: '', statusColor: COLORS.muted };
 }

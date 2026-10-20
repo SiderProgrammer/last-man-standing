@@ -242,7 +242,7 @@ settlement deadline passes. Practice rooms are simply gone.
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring |
+| `arena/arena.ts` | Pixi scene: seats on a circle with address sigils or avatars, HP arcs with a lagging damage ghost, chain badges, the closing storm (fog and wall), your aim, a round HUD |
 | `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
 | `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
@@ -323,6 +323,15 @@ winner is crowned after the final round.
   page opens, so the arena finds them cached. The loader uses Pixi's `skip` strategy: a
   texture that fails is dropped, not the whole bundle, and the effects draw a generated
   glow in its place — just as a seat without an avatar keeps its plain circle.
+- **Hit-stop borrows only spare hold.** The first kill of a round freezes the replay
+  for a beat, but `round` carries `replayMs`, and the freeze is sized to what the
+  choreography leaves of it (at most 0.1 s, always 0.15 s short of the hold), so the
+  replay still ends before the next commit window opens. A server with no hold gets
+  no hit-stop.
+- **Your draft is drawn, nobody else's.** During the commit phase the arena shows the
+  move *you* have picked — an aim line and reticle, a guard, a veil — and seats can be
+  clicked to target them. It is local state only; other seats still show nothing but
+  whether they have locked in.
 - **Reduced motion is respected.** Under `prefers-reduced-motion`, travel, particles,
   lunges and shake are skipped; the HP drain and the floating numbers remain, because
   they carry information rather than decoration.
