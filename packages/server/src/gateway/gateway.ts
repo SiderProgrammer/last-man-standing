@@ -299,7 +299,7 @@ export class Gateway {
         return;
       }
       case 'practice': {
-        const room = this.options.lobby.createPractice(address, message.bots ?? 3, now);
+        const room = this.options.lobby.createPractice(address, message.bots ?? 3, now, message.difficulty);
         room.attach(session);
         return;
       }

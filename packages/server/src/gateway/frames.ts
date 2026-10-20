@@ -1,7 +1,9 @@
 import {
+  BOT_DIFFICULTIES,
   errorMessage,
   isActionValue,
   type ActionValue,
+  type BotDifficulty,
   type ClientMessage,
   type MoveAim,
   type ServerMessage,
@@ -49,9 +51,11 @@ export function parseClientMessage(raw: string): ClientMessage {
     case 'collect':
       return { type: 'collect' };
     case 'practice': {
-      if (frame.bots === undefined) return { type: 'practice' };
+      const out: Extract<ClientMessage, { type: 'practice' }> = { type: 'practice' };
       // The lobby clamps to the rules' seat range; this only rules out garbage.
-      return { type: 'practice', bots: integer(frame, 'bots', 0, 16) };
+      if (frame.bots !== undefined) out.bots = integer(frame, 'bots', 0, 16);
+      if (frame.difficulty !== undefined) out.difficulty = difficulty(frame);
+      return out;
     }
     case 'watch':
       return { type: 'watch', matchId: bytes32(frame, 'matchId') };
@@ -146,6 +150,12 @@ function integer(frame: Record<string, unknown>, field: string, min: number, max
     throw new FrameError(`${field} must be an integer from ${min} to ${max}`);
   }
   return value;
+}
+
+function difficulty(frame: Record<string, unknown>): BotDifficulty {
+  const value = frame.difficulty;
+  if (!BOT_DIFFICULTIES.includes(value as BotDifficulty)) throw new FrameError('unknown difficulty');
+  return value as BotDifficulty;
 }
 
 function action(frame: Record<string, unknown>): ActionValue {

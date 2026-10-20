@@ -30,6 +30,11 @@ export const ACTION_NAMES: Record<ActionValue, string> = {
   [Action.Hide]: 'hide',
 };
 
+/** How well the house bots play. Easy bots blunder often; hard bots never do. */
+export const BOT_DIFFICULTIES = ['easy', 'normal', 'hard'] as const;
+
+export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
+
 /** A player's hidden choice for one round, before it is committed. */
 export interface Move {
   action: ActionValue;

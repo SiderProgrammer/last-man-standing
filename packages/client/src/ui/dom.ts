@@ -24,6 +24,7 @@ export function queryDom(doc: Document = document) {
     matchScreen: el<HTMLElement>('match-screen'),
     practice: el<HTMLButtonElement>('practice'),
     botCount: el<HTMLSelectElement>('bot-count'),
+    botDifficulty: el<HTMLSelectElement>('bot-difficulty'),
     refreshLobbies: el<HTMLButtonElement>('refresh-lobbies'),
     createLobby: el<HTMLButtonElement>('create-lobby'),
     stake: el<HTMLInputElement>('stake'),

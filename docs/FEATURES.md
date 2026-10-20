@@ -820,9 +820,11 @@ whatsoever.
   guards, commitment verification, ranking, and the public snapshot.
 - **`match/replay.ts`** — recomputes an entire match from the seed and published move
   log, and checks a claimed result against it.
-- **`bots/strategy.ts`** — seeded bots: `randomStrategy` and `readerStrategy`, the
-  latter punishing repeat attackers and piling onto the seat everyone else is
-  hunting.
+- **`bots/strategy.ts`** — seeded bots: `randomStrategy`, `readerStrategy`, and
+  the house bot `smartStrategy`. It reads each opponent's revealed moves, prices
+  every move by expected HP lost and dealt, and finishes off low seats. Easy and
+  normal play a random move 6 and 3 rounds in 10; hard never does. `npm run sim`
+  puts hard at about 1.9x its share of wins, ahead of every mindless strategy.
 
 ### Why purity matters here
 

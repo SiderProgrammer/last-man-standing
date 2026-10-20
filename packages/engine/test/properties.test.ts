@@ -9,6 +9,8 @@ import {
   randomStrategy,
   readerStrategy,
   setupFor,
+  smartStrategy,
+  type Strategy,
 } from './helpers.js';
 
 const TRIALS = 120;
@@ -93,13 +95,15 @@ describe('engine invariants', () => {
   // `replay.ts` deliberately re-derives the initial state, the per-round fold
   // and the ranking rather than sharing them with `Match` — that independence
   // is what makes `verifyResult` an audit rather than a tautology. This test is
-  // what pays for the duplication, so it covers both strategies: `reader`
-  // concentrates fire and eliminates seats in a different order to `random`.
+  // what pays for the duplication, so it covers every strategy: `reader`
+  // concentrates fire and eliminates seats in a different order to `random`,
+  // and the house bot turtles until a hit would finish someone.
   it('lets an independent replay reproduce the signed result', () => {
-    for (let trial = 0; trial < 40; trial += 1) {
+    for (let trial = 0; trial < 45; trial += 1) {
       const setup = setupFor(4 + (trial % 5), `replay-${trial}`);
       const prng = new Prng(bytes32(`replay-strategy-${trial}`));
-      const strategy = trial % 2 === 0 ? randomStrategy(prng) : readerStrategy(prng);
+      const strategies = [randomStrategy(prng), readerStrategy(prng), smartStrategy(prng, 'hard')];
+      const strategy = strategies[trial % strategies.length] as Strategy;
       const { match, moveLog } = playMatch(setup, strategy);
 
       const replayed = replayMatch(setup, moveLog);
