@@ -4,7 +4,6 @@ import {
   AnalystError,
   ProviderError,
   AnalystLimits,
-  AnalystMetrics,
   KeyedLimiter,
   MemoryArchive,
   PostgresArchive,
@@ -14,7 +13,7 @@ import {
   type ModelReply,
 } from '@lms/server';
 import type { MatchAnalysis } from '@lms/protocol';
-import { FakeModel, answer, usage, type Turn } from './analystFakes.js';
+import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
 const practice = playReferenceMatch({ label: 'prod', strategies: ['reader', 'aggressor', 'turtle', 'hider'] });
 const staked: ArchivedMatch = { ...playReferenceMatch({ label: 'prod-staked', strategies: ['random', 'turtle', 'aggressor', 'reader'] }), staked: true };
@@ -30,6 +29,9 @@ function output() {
   };
 }
 
+/** No provider rate limits, for tests about the other ceilings. */
+const UNLIMITED = { requestsPerMinute: Infinity, requestsPerDay: Infinity };
+
 /** A priced final turn: 1,000 input, 500 output, 4,000 read from cache. */
 function pricedAnswer(): Turn {
   const turn = answer(output());
@@ -44,7 +46,6 @@ async function harness(script: Turn[], extra: Partial<ConstructorParameters<type
   await archive.save(practice);
   await archive.save(staked);
   const model = new FakeModel(script);
-  const metrics = new AnalystMetrics();
   let now = Date.UTC(2026, 9, 18, 12);
   const analyst = new Analyst({
     archive,
@@ -52,11 +53,10 @@ async function harness(script: Turn[], extra: Partial<ConstructorParameters<type
     modelId: 'gemini-3.8-flash',
     effort: 'medium',
     maxTokens: 16_000,
-    metrics,
     now: () => now,
     ...extra,
   });
-  return { analyst, model, archive, metrics, advance: (ms: number) => (now += ms) };
+  return { analyst, model, archive, advance: (ms: number) => (now += ms) };
 }
 
 async function failure(promise: Promise<unknown>): Promise<AnalystError> {
@@ -92,7 +92,7 @@ describe('analysis access', () => {
 
 describe('analysis cache', () => {
   it('answers the same question twice for the price of once', async () => {
-    const { analyst, model, metrics } = await harness([answer(output())]);
+    const { analyst, model } = await harness([answer(output())]);
     const request = { matchId: practice.result.matchId, requester: player(practice) };
     const first = await analyst.analyze(request);
     const second = await analyst.analyze(request);
@@ -102,7 +102,6 @@ describe('analysis cache', () => {
     expect(second.cached).toBe(true);
     expect(second.usage).toBeUndefined();
     expect(second.analysis).toEqual(first.analysis);
-    expect(metrics.snapshot().analysisCacheHitRate).toBe(0.5);
   });
 
   it('keeps one answer per seat, since the advice differs', async () => {
@@ -130,24 +129,22 @@ describe('analysis cache', () => {
     const gate = new Promise<void>((resolve) => (release = resolve));
     const model = new FakeModel([answer(output())]);
     const slow = {
-      stream: async (...args: Parameters<FakeModel['stream']>): Promise<ModelReply> => {
+      generate: async (...args: Parameters<FakeModel['generate']>): Promise<ModelReply> => {
         await gate;
-        return model.stream(...args);
+        return model.generate(...args);
       },
     };
-    const { analyst, metrics } = await harness([], { model: slow });
+    const { analyst } = await harness([], { model: slow });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
-    const steps: string[] = [];
     const first = analyst.analyze(request);
-    const second = analyst.analyze({ ...request, onStep: (step) => steps.push(step) });
+    const second = analyst.analyze(request);
     await new Promise((resolve) => setImmediate(resolve));
     release();
 
     const [a, b] = await Promise.all([first, second]);
     expect(model.requests).toHaveLength(1);
     expect(b.analysis).toEqual(a.analysis);
-    expect(steps).toEqual(['Another request is already writing this analysis']);
-    expect(metrics.prometheus()).toContain('analyst_requests_total{outcome="shared"} 1');
+    expect(b.cached).toBe(true);
   });
 
   it('round-trips through the Postgres archive, keyed by lower-cased id, seat and version', async () => {
@@ -186,7 +183,7 @@ describe('analysis cache', () => {
 
 describe('analysis limits', () => {
   it('stops a wallet at its hourly allowance, without touching the model', async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
     const { analyst, model } = await harness([answer(output())], { limits });
     await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
     const error = await failure(analyst.analyze({ matchId: staked.result.matchId, requester: player(practice) }));
@@ -195,7 +192,7 @@ describe('analysis limits', () => {
   });
 
   it('never charges for an answer from the cache', async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
     const { analyst } = await harness([answer(output())], { limits });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
     await analyst.analyze(request);
@@ -203,7 +200,7 @@ describe('analysis limits', () => {
   });
 
   it("refunds the allowance when the provider, not the player, failed", async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
     const overloaded = new ProviderError('busy', 'overloaded', 503);
     const { analyst } = await harness([{ error: overloaded }, answer(output())], { limits });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
@@ -212,7 +209,7 @@ describe('analysis limits', () => {
   });
 
   it('does not refund a refusal', async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
     const refusal: Turn = { reply: { stop_reason: 'refusal', content: [] } };
     const { analyst } = await harness([refusal], { limits });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
@@ -221,7 +218,7 @@ describe('analysis limits', () => {
   });
 
   it('caps analyses in flight across every wallet', () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 10, maxConcurrent: 1, dailyBudgetUsd: Infinity });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 10, maxConcurrent: 1, dailyBudgetUsd: Infinity });
     const first = limits.admit(player(practice), 0);
     expect('release' in first).toBe(true);
     expect(limits.admit(stranger, 0)).toMatchObject({ code: 'busy' });
@@ -230,7 +227,7 @@ describe('analysis limits', () => {
   });
 
   it('stops fresh analyses once the day budget is spent, until the next UTC day', async () => {
-    const limits = new AnalystLimits({ perWalletPerHour: 10, maxConcurrent: 4, dailyBudgetUsd: 0.002 });
+    const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 10, maxConcurrent: 4, dailyBudgetUsd: 0.002 });
     const { analyst, advance } = await harness([pricedAnswer(), answer(output())], { limits });
     await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
     expect(limits.spent).toBeGreaterThan(0.002);
@@ -258,10 +255,9 @@ describe('analysis limits', () => {
 
 describe('analysis deadline', () => {
   it('stops a model that never answers and reports a timeout', async () => {
-    const { analyst, metrics } = await harness([{ hang: true }], { deadlineMs: 20 });
+    const { analyst } = await harness([{ hang: true }], { deadlineMs: 20 });
     const error = await failure(analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) }));
     expect(error.code).toBe('timeout');
-    expect(metrics.prometheus()).toContain('analyst_errors_total{code="timeout"} 1');
   });
 
   it('tells a cancellation by the asker apart from a timeout', async () => {
@@ -279,7 +275,7 @@ describe('analysis deadline', () => {
   });
 });
 
-describe('analysis metrics', () => {
+describe('analysis cost', () => {
   it('prices a turn at list rates, cache reads included', () => {
     const cost = turnCost('gemini-3.8-flash', usage({ input_tokens: 1_000_000, output_tokens: 0 }));
     expect(cost).toBeCloseTo(0.75);
@@ -288,7 +284,7 @@ describe('analysis metrics', () => {
     expect(turnCost('some-future-model', usage())).toBeNull();
   });
 
-  it('accounts tokens, cost, cache hit rate and verifier drops', async () => {
+  it('accounts tokens, cost and verifier drops', async () => {
     const turn = pricedAnswer();
     if ('reply' in turn) {
       const text = JSON.stringify({
@@ -297,18 +293,68 @@ describe('analysis metrics', () => {
       });
       turn.reply.content = [{ type: 'text', text }];
     }
-    const { analyst, metrics } = await harness([turn]);
-    const { usage: spent } = await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
+    const { analyst } = await harness([turn]);
+    const { usage: spent, analysis } = await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
 
+    expect(spent).toMatchObject({ turns: 1, inputTokens: 1_000, cacheReadTokens: 4_000, outputTokens: 500 });
     expect(spent?.costUsd).toBeCloseTo((1_000 * 0.75 + 500 * 3.75 + 4_000 * 0.075) / 1_000_000);
-    const snapshot = metrics.snapshot();
-    expect(snapshot.promptCacheHitRate).toBeCloseTo(4_000 / 5_000);
-    expect(snapshot.verifierDropRate).toBe(0.5);
+    expect(analysis.keyMoments).toHaveLength(1);
+    expect(analysis.dropped).toBe(1);
+  });
+});
 
-    const text = metrics.prometheus();
-    expect(text).toContain('# TYPE analyst_tokens_total counter');
-    expect(text).toContain('analyst_tokens_total{kind="cache_read"} 4000');
-    expect(text).toContain('analyst_moments_total{verdict="dropped"} 1');
-    expect(text).toContain('analyst_latency_seconds_bucket{le="+Inf"} 1');
+describe('provider rate limits', () => {
+  const PACIFIC_NOON = Date.UTC(2026, 9, 20, 19);
+  const limits = (rpm: number, rpd: number) =>
+    new AnalystLimits({ perWalletPerHour: 100, maxConcurrent: 4, dailyBudgetUsd: Infinity, requestsPerMinute: rpm, requestsPerDay: rpd });
+
+  it('books requests into the minute, then queues the next one behind the oldest', () => {
+    const quota = limits(5, 100);
+    for (let i = 0; i < 5; i++) expect(quota.reserve(PACIFIC_NOON + i * 1_000)).toEqual({ waitMs: 0 });
+    // The sixth must wait until the first leaves the window, a minute after it went.
+    expect(quota.reserve(PACIFIC_NOON + 10_000)).toEqual({ waitMs: 50_000 });
+    // The seventh queues behind the second.
+    expect(quota.reserve(PACIFIC_NOON + 10_000)).toEqual({ waitMs: 51_000 });
+    // Once the window has passed, requests go straight out again.
+    expect(quota.reserve(PACIFIC_NOON + 200_000)).toEqual({ waitMs: 0 });
+  });
+
+  it('refuses requests past the daily allowance until midnight Pacific', () => {
+    const quota = limits(Infinity, 2);
+    expect(quota.reserve(PACIFIC_NOON)).toEqual({ waitMs: 0 });
+    expect(quota.reserve(PACIFIC_NOON)).toEqual({ waitMs: 0 });
+    expect(quota.reserve(PACIFIC_NOON)).toMatchObject({ code: 'quota' });
+    expect(quota.requests).toBe(2);
+    // 23:59 Pacific is still the same quota day; 00:01 is the next one.
+    expect(quota.reserve(PACIFIC_NOON + 12 * 3_600_000 - 60_000)).toMatchObject({ code: 'quota' });
+    expect(quota.reserve(PACIFIC_NOON + 12 * 3_600_000 + 60_000)).toEqual({ waitMs: 0 });
+  });
+
+  it('only starts an analysis the day still has room for', () => {
+    const quota = limits(Infinity, 5);
+    for (let i = 0; i < 2; i++) quota.reserve(PACIFIC_NOON);
+    expect('release' in quota.admit(player(practice), PACIFIC_NOON, 3)).toBe(true);
+    expect(quota.admit(stranger, PACIFIC_NOON, 4)).toMatchObject({ code: 'quota' });
+  });
+
+  it('waits for a slot between turns instead of tripping the provider', async () => {
+    const quota = limits(1, 100);
+    const waits: number[] = [];
+    const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }]), answer(output())], {
+      limits: quota,
+      sleep: async (ms) => void waits.push(ms),
+    });
+    await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
+    expect(model.requests).toHaveLength(2);
+    expect(waits).toEqual([60_000]);
+  });
+
+  it('refuses a new analysis once the daily requests are used up', async () => {
+    const quota = limits(Infinity, 1);
+    const { analyst } = await harness([answer(output())], { limits: quota, maxTurns: 1 });
+    await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
+    const error = await failure(analyst.analyze({ matchId: staked.result.matchId, requester: player(staked) }));
+    expect(error.code).toBe('quota');
+    expect(error.message).toMatch(/model requests/);
   });
 });

@@ -1,12 +1,11 @@
 # Match analyst
 
 A post-match analysis written by Gemini: a short narrative, the key moments that
-shaped the match, and advice for the player who asks. It streams into the match
-sidebar over the game's own WebSocket, and each key moment replays its round in
-the arena when clicked.
+shaped the match, and advice for the player who asks. It appears in the match
+sidebar, and each key moment replays its round in the arena when clicked.
 
 This page is the design: what it is allowed to touch, how an answer is produced
-and checked, and what it costs to run.
+and checked, and what keeps it inside the provider's limits.
 
 ## Out of consensus, by construction
 
@@ -23,7 +22,8 @@ the analyst produces may bend that, so it is kept out of every path that does:
   moment rebuilds the table from the published history (`stateBeforeRound`)
   and replays a round the client already holds.
 
-The worst a wrong analysis can do is be wrong, which is the next section's job.
+The worst a wrong analysis can do is be wrong, which the claim verifier keeps
+to the prose.
 
 ## How an answer is produced
 
@@ -31,12 +31,12 @@ The worst a wrong analysis can do is be wrong, which is the next section's job.
 client                 gateway                analyst                         Gemini
   │ analyze{matchId} ──▶ │ ── analyze() ──────▶ │ archive → access → cache hit? │
   │                      │                      │ limits.admit()                │
-  │                      │                      │ ── stream(tools, system) ───▶ │
-  │ ◀── analysis.step ── │ ◀── onStep ───────── │ ◀── functionCall get_round(4) │
-  │                      │                      │ ── functionResponse ────────▶ │
-  │ ◀── analysis.delta ─ │ ◀── onDelta ──────── │ ◀── JSON text, streamed ───── │
+  │                      │                      │ reserve slot → request ─────▶ │
+  │                      │                      │ ◀── functionCall get_round(4) │
+  │                      │                      │ reserve slot → results ─────▶ │
+  │                      │                      │ ◀── JSON answer ───────────── │
   │                      │                      │ schema parse → verify claims  │
-  │ ◀── analysis.done ── │ ◀── result ───────── │ cache, metrics, budget        │
+  │ ◀── analysis.done ── │ ◀── result ───────── │ cache, budget                 │
 ```
 
 1. **Access.** A wallet seated in the match may analyse it, written for its
@@ -47,38 +47,28 @@ client                 gateway                analyst                         Ge
    definitions and output schema. Change any of them and old answers stop
    matching instead of being served stale. A second request for an analysis
    already being written waits for it rather than paying twice.
-3. **Limits** (`AnalystLimits`) apply only to a fresh, paid call: a per-wallet
-   hourly allowance (refunded when the provider, not the player, failed), a
-   server-wide concurrency cap, and an estimated daily budget in dollars that
-   stops fresh analyses until the next UTC day — the one number that bounds the
-   bill however the others are tuned. All in memory: a restart forgives them.
+3. **Limits.** See [Limits](#limits).
 4. **The model call.** `gemini-3.8-flash` by default — any Gemini 3 model or
-   later, the first to combine structured output with function calling —
-   with effort pinned explicitly (`medium`, sent as the thinking level) and the
-   answer constrained to a JSON schema with structured output. `gemini.ts`
-   speaks the REST API directly: no SDK, one `fetch` per turn.
+   later, the first to combine structured output with function calling — with
+   effort pinned explicitly (`medium`, sent as the thinking level) and the
+   answer constrained to a JSON schema. `gemini.ts` speaks the REST API
+   directly: no SDK, one `generateContent` call per turn.
 5. **Tools.** `get_match`, `get_round(n)`, `get_reads(seat)` and
    `get_player_history(seat)` are bound by the server to the one match being
-   analysed. None takes a match id or a wallet address, so neither the model nor
-   anything a player types can reach another match or look up a stranger:
-   `get_player_history` takes a *seat* for exactly that reason. Tool schemas
-   are closed, and every call's arguments are re-validated with zod on arrival
-   — they are model output — so a bad call goes back to the model as an error
-   result instead of running.
+   analysed. None takes a match id or a wallet address, so the model cannot
+   reach another match or look up a stranger: `get_player_history` takes a
+   *seat* for exactly that reason. Tool schemas are closed, and every call's
+   arguments are re-validated with zod on arrival — they are model output — so
+   a bad call goes back to the model as an error result instead of running.
 6. **The loop** is written by hand, and the model is injected (`AnalystModel`,
    over the analyst's own provider-neutral message format in `model.ts`), so
    the network is not the analyst's concern: tests drive the whole loop with a
    scripted fake. Every tool result goes back in one message; assistant turns
    are echoed whole, thought signatures included; `max_tokens` and `refusal`
    end the analysis and a tool call cut off by either is never run; the last
-   allowed turn switches tools off so the model has to answer. A wall-clock
-   deadline covers the whole loop on top of the per-attempt timeout and
-   retries.
-7. **Streaming.** The answer is JSON, which is what makes it checkable, so the
-   server pulls the `summary` field out of the JSON as it arrives
-   (`JsonFieldStream`, linear-time, escape-aware) and forwards only the prose.
-   `analysis.done` then carries the parsed answer, which replaces whatever was
-   streamed; `analysis.error` tells the client to discard it.
+   allowed turn (the fourth, by default) switches tools off so the model has
+   to answer. A wall-clock deadline covers the whole loop on top of the
+   per-attempt timeout and retries.
 
 ## Checking the claims
 
@@ -98,46 +88,38 @@ part against the `RoundRecord`s, deterministically and without a model:
 
 The round must exist, the seat must have been alive at its start, and `target`
 must be present exactly for the targeted kinds. Unsupported moments are
-dropped and counted (`dropped` on the analysis, `analyst_moments_total` in
-metrics), and a decisive round the match never reached becomes null. The
-sentence attached to a moment is not checked; it is the one part left to the
-reader's trust, and the panel says so.
+dropped, counted on the analysis (`dropped`) and logged, and a decisive round
+the match never reached becomes null. The sentence attached to a moment is not
+checked; it is the one part left to the reader's trust, and the panel says so.
 
-## Follow-up questions
+## Limits
 
-Under a finished analysis the player can ask about the match
-(`analysis.ask` → `analysis.reply.delta`… → `analysis.reply`). The same model,
-system prompt and tools answer, in prose rather than the analysis schema.
+`AnalystLimits` holds two kinds of ceiling, all in memory — a restart forgives
+them.
 
-The question is the one piece of free text a player can put in front of the
-model, so it is handled as untrusted input at every layer:
+**Per analysis**, checked before anything is sent:
 
-- **Only the question travels.** The conversation — the overview, the analysis
-  as the analyst's own earlier answer, and earlier exchanges — is held by the
-  server per wallet and match, so a client cannot forge what the analyst said
-  or plant turns of its own.
-- **Bounded.** The gateway refuses empty questions and anything over 500
-  characters; `sanitizeQuestion` strips control characters, collapses blank
-  runs and caps the length again before the text reaches a prompt.
-- **Fenced.** It is wrapped in `<player_question>` tags with angle brackets
-  escaped, so it cannot close its own tag. The frozen system prompt says what
-  those tags hold and that nothing inside them can change the rules, the tools
-  or the topic.
-- **Operator voice stays with the operator.** The switch to answer mode is a
-  mid-conversation `role: "system"` message after each question, not text the
-  player could imitate. Gemini has no such role, so `gemini.ts` carries it in
-  the system instruction — still the operator's channel, never the player's.
-- **Scoped tools.** The tools are the same match-bound views; a question cannot
-  make them read another match or another wallet.
-- **Capped.** The last six exchanges are replayed with each question; twenty
-  questions per wallet per match; a separate hourly allowance per wallet; the
-  same concurrency cap and daily budget as analyses.
+- a per-wallet hourly allowance (3 by default), refunded when the provider,
+  not the player, made the analysis fail;
+- one analysis in flight server-wide, so it has the whole per-minute quota;
+- an estimated daily budget in dollars at list prices (`pricing.ts`), the
+  operator's circuit breaker once billing is on.
 
-Earlier turns are replayed as plain text, never with thought signatures, so
-dropping the oldest exchanges when the cap is reached cannot invalidate a
-signature the model has to read back. Within the cap the conversation only
-grows at the end, so each question's request extends the previous one's and
-the cache keeps hitting.
+**Per model request**, the Gemini project's own rate limits, enforced here so
+they are never met as errors. The defaults are the free tier for Gemini 3.8
+Flash — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
+`none` lifts either). Every turn books a slot first: over the minute's
+allowance it waits for one, past the day's it is refused. An analysis only
+starts if the day still has room for all of its turns, so one is never
+abandoned halfway, and the day turns at midnight Pacific time, when Gemini's
+quota resets. With at most four turns and about three typical, the free tier
+allows roughly six analyses a day. Tokens per minute (250K on the free tier)
+are not tracked: one analysis uses well under 20K.
+
+If Gemini answers 429 anyway — another client on the same key — the call is
+not retried, since that is the quota talking; the player is told to try again
+in a few minutes. Timeouts, 5xx and dropped connections are retried with
+backoff.
 
 ## Prompt caching
 
@@ -148,61 +130,43 @@ built once from constants, never interpolated with a match, a player or a
 time — so both are byte-identical on every request from every player, and
 everything per-match goes in the messages, which only grow at the end as the
 tool loop runs. A test pins the prefix byte-for-byte across turns and across
-matches. Gemini's `cachedContentTokenCount` is summed per analysis as cache
-reads, logged, and exported as the prompt-cache hit rate.
+matches.
 
 ## Operations
 
 - **Unavailable by default.** No `GEMINI_API_KEY`, no analyst: the `hello`
   frame says so and the panel explains it before anyone clicks.
   `ANALYST_ENABLED=false` turns it off even with a key.
-- **Demo mode.** `ANALYST_DEMO=true` runs the real pipeline — a tool turn, a
-  streamed JSON answer, the schema check, the verifier — over a rule-based
-  stand-in that needs no key and costs nothing. It plants one false claim so the
-  verifier visibly drops it, and its prose says plainly that it is not a real
-  model.
 - **Translation.** `gemini.ts` is the only file that knows Gemini's wire
   format: effort becomes `thinkingLevel` (`xhigh` and `max` become `high`),
-  the output schema becomes `responseJsonSchema` (in the subset Gemini
-  accepts — `outputSchema()` drops string lengths, which the parser enforces
-  anyway), and thought signatures ride back on the part that carried them.
-  Busy, timed-out and dropped calls are retried with backoff, but only while
-  nothing has streamed to the player.
+  the output schema becomes `responseJsonSchema` in the subset Gemini accepts
+  (`outputSchema()` drops string lengths, which the parser enforces anyway),
+  and thought signatures ride back on the part that carried them.
 - **Errors** reach the client as `analysis.error` with a code it can act on:
   `unavailable`, `not_found`, `forbidden`, `quota`, `busy`, `timeout`,
   `refused`, `failed`. Provider errors are classified by `ProviderError` kind,
   set from the HTTP status, never by message text; a credentials problem is
   logged for the operator and shown to the player only as "unavailable".
-- **Metrics.** `/metrics` serves Prometheus text — requests by outcome, errors
-  by code, tokens by kind, turns, tool calls, estimated cost at list prices
-  (priced by the model that served each turn),
-  verifier verdicts, a latency histogram. Set `METRICS_TOKEN` on anything
-  public. `/health` adds the ratios: analysis-cache hit rate, prompt-cache hit
-  rate, verifier drop rate, today's estimated spend.
-- **Evals.** `npm run eval:analyst` — see the README. Opt-in, never part of
-  `npm test`, and it refuses to spend without `--yes`.
+- **Visibility.** Each fresh analysis logs one line — turns, tool calls,
+  latency, tokens, estimated cost, moments kept and dropped — and `/health`
+  reports the model, today's model requests and today's estimated spend.
 
 ## Files
 
 ```
-packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, error codes, question length
+packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, error codes
 packages/protocol/src/game/reads.ts    the reads logic, shared by the client panel and get_reads
 packages/server/src/analyst/
-  analyst.ts    access, cache, limits, the tool loop, deadline, usage, follow-up conversations
+  analyst.ts    access, cache, limits, the tool loop, deadline, usage
   model.ts      the injected model interface and the analyst's message format
   gemini.ts     the Gemini model: request and reply translation over REST
-  prompt.ts     the frozen system prompt, match rendering, question fencing
+  prompt.ts     the frozen system prompt and match rendering
   tools.ts      tool definitions and their execution against one match
   schema.ts     the output schema, re-validated on arrival
-  stream.ts     JsonFieldStream: the narrative out of streaming JSON
   verify.ts     the claim verifier
-  limits.ts     per-wallet allowance, concurrency, daily budget
-  metrics.ts    counters, Prometheus text, health ratios
+  limits.ts     per-wallet allowance, concurrency, daily budget, provider rate limits
   pricing.ts    list prices for the cost estimate
-  demo.ts       the offline demo model
-  reference.ts  deterministic bot matches for tests and evals
-  evals.ts      the eval suite and its scoring
+  reference.ts  deterministic bot matches for tests
 packages/client/src/screens/analysis.ts   the analysis tab
 packages/client/src/game/rewind.ts        the table before a given round
-scripts/analyst-eval.mjs                  the eval runner
 ```

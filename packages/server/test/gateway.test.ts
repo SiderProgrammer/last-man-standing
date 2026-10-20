@@ -12,8 +12,6 @@ import { AnalystError, Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/s
 import type {
   AnalyzeRequest,
   AnalyzeResult,
-  AskRequest,
-  AskResult,
   MatchAnalyst,
   SignatureVerifier,
   Socket,
@@ -299,33 +297,9 @@ class ManualAnalyst implements MatchAnalyst {
   readonly requests: AnalyzeRequest[] = [];
   private pending: Array<{ resolve: (result: AnalyzeResult) => void; reject: (error: unknown) => void }> = [];
 
-  readonly questions: AskRequest[] = [];
-
   analyze(request: AnalyzeRequest): Promise<AnalyzeResult> {
     this.requests.push(request);
     return new Promise((resolve, reject) => this.pending.push({ resolve, reject }));
-  }
-
-  /** Answers at once, streaming the answer in two pieces. */
-  async ask(request: AskRequest): Promise<AskResult> {
-    this.questions.push(request);
-    request.onDelta?.('Round 3, ');
-    request.onDelta?.('mostly.');
-    return {
-      question: request.question.trim(),
-      answer: 'Round 3, mostly.',
-      model: 'gemini-3.8-flash',
-      usage: {
-        model: 'gemini-3.8-flash',
-        turns: 1,
-        toolCalls: 0,
-        inputTokens: 1,
-        outputTokens: 1,
-        cacheReadTokens: 0,
-        costUsd: 0,
-        latencyMs: 1,
-      },
-    };
   }
 
   async finish(matchId: `0x${string}`): Promise<void> {
@@ -382,19 +356,17 @@ describe('gateway analysis frames', () => {
     expect(socket.last('analysis.error')).toMatchObject({ matchId: MATCH, code: 'unavailable' });
   });
 
-  it('streams deltas and then the finished analysis to the asker', async () => {
+  it('sends the finished analysis to the asker', async () => {
     const analyst = new ManualAnalyst();
     const { socket } = harness({ analyst });
     await login(socket);
     await socket.deliver({ type: 'analyze', matchId: MATCH });
 
     expect(analyst.requests[0]).toMatchObject({ matchId: MATCH, requester: account.address });
-    analyst.requests[0]?.onDelta?.('first ');
-    analyst.requests[0]?.onDelta?.('second');
     await analyst.finish(MATCH);
 
     const frames = socket.sent.filter((m) => m.type.startsWith('analysis.'));
-    expect(frames.map((m) => m.type)).toEqual(['analysis.delta', 'analysis.delta', 'analysis.done']);
+    expect(frames.map((m) => m.type)).toEqual(['analysis.done']);
     expect(socket.last('analysis.done')?.analysis.summary).toBe('all of it');
   });
 
@@ -432,47 +404,5 @@ describe('gateway analysis frames', () => {
     expect(signal?.aborted).toBe(false);
     socket.close();
     expect(signal?.aborted).toBe(true);
-  });
-});
-
-describe('gateway follow-up frames', () => {
-  it('streams the answer to a question, then the whole of it', async () => {
-    const analyst = new ManualAnalyst();
-    const { socket } = harness({ analyst });
-    await login(socket);
-    await socket.deliver({ type: 'analysis.ask', matchId: MATCH, question: '  Which round decided it?  ' });
-
-    expect(analyst.questions[0]).toMatchObject({ matchId: MATCH, requester: account.address });
-    const frames = socket.sent.filter((m) => m.type.startsWith('analysis.'));
-    expect(frames.map((m) => m.type)).toEqual(['analysis.reply.delta', 'analysis.reply.delta', 'analysis.reply']);
-    expect(socket.last('analysis.reply')).toMatchObject({ question: 'Which round decided it?', answer: 'Round 3, mostly.' });
-  });
-
-  it('refuses an empty or oversized question at the boundary', async () => {
-    const analyst = new ManualAnalyst();
-    const { socket } = harness({ analyst });
-    await login(socket);
-    await socket.deliver({ type: 'analysis.ask', matchId: MATCH, question: '   ' });
-    expect(socket.last('error')?.message).toMatch(/must not be empty/);
-    await socket.deliver({ type: 'analysis.ask', matchId: MATCH, question: 'x'.repeat(501) });
-    expect(socket.last('error')?.message).toMatch(/at most 500/);
-    expect(analyst.questions).toHaveLength(0);
-  });
-
-  it('marks a failed question as such, so the client keeps the analysis on screen', async () => {
-    const { socket } = harness();
-    await login(socket);
-    await socket.deliver({ type: 'analysis.ask', matchId: MATCH, question: 'why?' });
-    expect(socket.last('analysis.error')).toMatchObject({ code: 'unavailable', stage: 'ask' });
-  });
-
-  it('will not take a question while an analysis is still being written', async () => {
-    const analyst = new ManualAnalyst();
-    const { socket } = harness({ analyst });
-    await login(socket);
-    await socket.deliver({ type: 'analyze', matchId: MATCH });
-    await socket.deliver({ type: 'analysis.ask', matchId: MATCH, question: 'why?' });
-    expect(socket.last('analysis.error')).toMatchObject({ code: 'busy', stage: 'ask' });
-    expect(analyst.questions).toHaveLength(0);
   });
 });

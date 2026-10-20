@@ -1,5 +1,4 @@
 import {
-  MAX_QUESTION_CHARS,
   errorMessage,
   isActionValue,
   type ActionValue,
@@ -58,14 +57,6 @@ export function parseClientMessage(raw: string): ClientMessage {
       return { type: 'watch', matchId: bytes32(frame, 'matchId') };
     case 'analyze':
       return { type: 'analyze', matchId: bytes32(frame, 'matchId') };
-    case 'analysis.ask': {
-      const question = string(frame, 'question');
-      if (question.trim().length === 0) throw new FrameError('question must not be empty');
-      if (question.length > MAX_QUESTION_CHARS) {
-        throw new FrameError(`question must be at most ${MAX_QUESTION_CHARS} characters`);
-      }
-      return { type: 'analysis.ask', matchId: bytes32(frame, 'matchId'), question };
-    }
     case 'commit': {
       const commitment = bytes32(frame, 'commitment');
       if (frame.hold === undefined) return { type: 'commit', commitment, ...aim(frame) };

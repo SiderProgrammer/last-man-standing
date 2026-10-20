@@ -67,7 +67,6 @@ describe('analysis presentation', () => {
 
   it('names the model that wrote it', () => {
     expect(analysisNote(analysis, false)).toMatch(/^Written by Gemini \(gemini-3\.8-flash\)\./);
-    expect(analysisNote({ ...analysis, model: 'demo' }, false)).toMatch(/offline demo analyst, not a real model/);
   });
 
   it('says what the verifier removed', () => {

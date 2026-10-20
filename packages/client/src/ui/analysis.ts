@@ -25,7 +25,7 @@ export function momentHeading(moment: KeyMoment): string {
   return `Round ${moment.round} · #${moment.seat} ${KIND_ICONS[moment.kind]} ${moment.kind}${target}`;
 }
 
-/** The narrative split into paragraphs, for streaming and final text alike. */
+/** The narrative split into paragraphs. */
 export function paragraphs(summary: string): string[] {
   return summary
     .split(/\n\s*\n|\n/)
@@ -35,11 +35,7 @@ export function paragraphs(summary: string): string[] {
 
 /** The small print under an analysis: provenance, and what the verifier removed. */
 export function analysisNote(analysis: MatchAnalysis, cached: boolean): string {
-  const author =
-    analysis.model === 'demo'
-      ? 'Written by the offline demo analyst, not a real model.'
-      : `Written by Gemini (${analysis.model}).`;
-  const parts = [`${author} Key moments are checked against the published rounds.`];
+  const parts = [`Written by Gemini (${analysis.model}). Key moments are checked against the published rounds.`];
   if (analysis.dropped > 0) {
     parts.push(
       `${analysis.dropped} claim${analysis.dropped === 1 ? '' : 's'} the record did not support ${analysis.dropped === 1 ? 'was' : 'were'} removed.`,

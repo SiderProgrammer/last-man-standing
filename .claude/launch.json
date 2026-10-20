@@ -61,16 +61,6 @@
       "port": 8797
     },
     {
-      "name": "analyst-server-demo",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "--input-type=module",
-        "-e",
-        "delete process.env.GEMINI_API_KEY; process.env.ANALYST_DEMO='true'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
-      ],
-      "port": 8797
-    },
-    {
       "name": "analyst-client",
       "runtimeExecutable": "node",
       "runtimeArgs": [

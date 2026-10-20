@@ -65,16 +65,9 @@ export interface MatchAnalysis {
   advice: string[];
   /** Moments the model produced that the history did not support, and were dropped. */
   dropped: number;
-  /**
-   * The model that wrote the final answer, as the API reported it. Usually the
-   * one configured, but a refusal fallback can hand the answer to another.
-   * `demo` for the offline demo analyst.
-   */
+  /** The model that wrote it, e.g. `gemini-3.8-flash`. */
   model: string;
 }
-
-/** Longest follow-up question the server accepts, in characters. */
-export const MAX_QUESTION_CHARS = 500;
 
 /**
  * Why an analysis request failed. Machine-readable so the client can choose
@@ -87,9 +80,9 @@ export type AnalysisErrorCode =
   | 'not_found'
   /** The match is private to the players who sat in it. */
   | 'forbidden'
-  /** This wallet has used its analyses for now. */
+  /** This wallet, or the server, has used its analyses for now. */
   | 'quota'
-  /** The model provider is rate limiting or overloaded. */
+  /** The model provider is rate limiting or overloaded, or another analysis is running. */
   | 'busy'
   /** The model took too long. */
   | 'timeout'

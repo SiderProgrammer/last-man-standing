@@ -1,8 +1,8 @@
 import { ProviderError, type AnalystModel, type ModelReply, type ModelRequest } from '@lms/server';
 
-/** One scripted model turn: text to stream, then the message to return — or an error to throw. */
+/** One scripted model turn: the message to return — or an error to throw. */
 export type Turn =
-  | { chunks?: string[]; reply: Partial<ModelReply> & Pick<ModelReply, 'content' | 'stop_reason'> }
+  | { reply: Partial<ModelReply> & Pick<ModelReply, 'content' | 'stop_reason'> }
   | { error: unknown }
   /** Never answers: waits for the abort signal, then fails as a cancelled call does. */
   | { hang: true };
@@ -16,7 +16,7 @@ export class FakeModel implements AnalystModel {
 
   constructor(private readonly script: Turn[]) {}
 
-  async stream(request: ModelRequest, onText: (delta: string) => void, signal: AbortSignal): Promise<ModelReply> {
+  async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelReply> {
     // Deep-copied, because the analyst appends to its message array after the call.
     this.requests.push(structuredClone(request));
     const turn = this.script.shift();
@@ -25,10 +25,6 @@ export class FakeModel implements AnalystModel {
     if ('hang' in turn) {
       if (!signal.aborted) await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
       throw new ProviderError('aborted', 'the request was cancelled');
-    }
-    for (const chunk of turn.chunks ?? []) {
-      if (signal.aborted) throw new Error('aborted');
-      onText(chunk);
     }
     return { id: `msg_${this.requests.length}`, model: request.model, usage: usage(), ...turn.reply };
   }
@@ -43,21 +39,9 @@ export function usage(fields: Partial<ModelReply['usage']> = {}): ModelReply['us
   };
 }
 
-/** A final turn answering with `document` as JSON, streamed in chunks of `size`. */
-export function answer(document: unknown, size = 16): Turn {
-  const text = JSON.stringify(document);
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
-  return { chunks, reply: { stop_reason: 'end_turn', content: [{ type: 'text', text }] } };
-}
-
-/** A final turn answering in plain prose, as a follow-up answer does. */
-export function prose(text: string): Turn {
-  const half = Math.ceil(text.length / 2);
-  return {
-    chunks: [text.slice(0, half), text.slice(half)],
-    reply: { stop_reason: 'end_turn', content: [{ type: 'text', text }] },
-  };
+/** A final turn answering with `document` as JSON. */
+export function answer(document: unknown): Turn {
+  return { reply: { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(document) }] } };
 }
 
 /** A turn that asks for tools, with a signature ahead of the calls as the real model sends. */

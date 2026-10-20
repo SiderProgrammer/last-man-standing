@@ -36,8 +36,7 @@ export interface ToolResultBlock {
 export type ContentBlock = TextBlock | SignatureBlock | ToolUseBlock;
 
 export interface Message {
-  /** `system` is the operator speaking mid-conversation, never a player. */
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string | Array<ContentBlock | ToolResultBlock>;
 }
 
@@ -87,8 +86,7 @@ export interface ModelReply {
 }
 
 /**
- * One streamed model turn: send a request, hear its text as it is written,
- * get the whole message back.
+ * One model turn: send a request, get the whole reply back.
  *
  * Injected rather than constructed by the analyst, for the same reason the
  * gateway takes a `SignatureVerifier`: the interesting logic — the tool loop,
@@ -97,13 +95,14 @@ export interface ModelReply {
  * a socket or spends a cent.
  */
 export interface AnalystModel {
-  stream(request: ModelRequest, onText: (delta: string) => void, signal: AbortSignal): Promise<ModelReply>;
+  generate(request: ModelRequest, signal: AbortSignal): Promise<ModelReply>;
 }
 
 /** A failed model call, sorted by what the analyst should do about it. */
 export class ProviderError extends Error {
   constructor(
-    readonly kind: 'auth' | 'busy' | 'timeout' | 'unreachable' | 'aborted' | 'failed',
+    /** `limited`: the provider's own quota said no (a 429). Waiting, not retrying, fixes it. */
+    readonly kind: 'auth' | 'limited' | 'busy' | 'timeout' | 'unreachable' | 'aborted' | 'failed',
     message: string,
     readonly status?: number,
   ) {

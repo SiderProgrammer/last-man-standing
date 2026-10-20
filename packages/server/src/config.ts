@@ -109,12 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * as unavailable and nothing is ever sent anywhere.
      */
     analyst: {
-      enabled: env.ANALYST_DEMO === 'true' || (env.ANALYST_ENABLED !== 'false' && Boolean(env.GEMINI_API_KEY)),
-      /**
-       * Answers with the offline demo model instead of a real one: no key, no
-       * network, no cost, formulaic prose. For UI work and demos. See `analyst/demo.ts`.
-       */
-      demo: env.ANALYST_DEMO === 'true',
+      enabled: env.ANALYST_ENABLED !== 'false' && Boolean(env.GEMINI_API_KEY),
       /** A Gemini 3 model or later: the first to combine structured output with function calling. */
       model: env.ANALYST_MODEL || 'gemini-3.8-flash',
       geminiApiKey: env.GEMINI_API_KEY ?? '',
@@ -124,26 +119,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       effort: parseEffort(env.ANALYST_EFFORT),
       /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
       maxTokens: Number(env.ANALYST_MAX_TOKENS ?? 16_000),
-      /** Per attempt; timeouts, 429s and 5xx are retried up to `maxRetries` times. */
+      /** Per attempt; timeouts and 5xx are retried up to `maxRetries` times. */
       timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 120_000),
       maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
       /** Ceiling on one whole analysis, every turn and retry included. */
       deadlineMs: Number(env.ANALYST_DEADLINE_MS ?? 180_000),
       /** Fresh analyses per wallet per hour. Cached answers do not count. */
-      quotaPerHour: Number(env.ANALYST_QUOTA_PER_HOUR ?? 6),
-      /** Analyses being written at once, server-wide. */
-      maxConcurrent: Number(env.ANALYST_MAX_CONCURRENT ?? 4),
+      quotaPerHour: Number(env.ANALYST_QUOTA_PER_HOUR ?? 3),
+      /** Analyses being written at once, server-wide. One, so a single analysis has the whole per-minute quota. */
+      maxConcurrent: Number(env.ANALYST_MAX_CONCURRENT ?? 1),
+      /**
+       * The Gemini project's own rate limits, enforced here so they are never
+       * hit as errors. Defaults are the free tier for Gemini 3.8 Flash: 5
+       * requests a minute, 20 a day. `none` lifts either.
+       */
+      requestsPerMinute: limit(env.ANALYST_RPM, 5),
+      requestsPerDay: limit(env.ANALYST_RPD, 20),
       /**
        * Estimated spend per UTC day, in US dollars, after which fresh
        * analyses stop until midnight. `none` lifts the ceiling.
        */
       dailyBudgetUsd: env.ANALYST_DAILY_BUDGET_USD === 'none' ? Infinity : Number(env.ANALYST_DAILY_BUDGET_USD ?? 10),
     },
-    /**
-     * Bearer token `/metrics` requires, if set. The page shows spend and
-     * traffic, which a public server should not hand to anyone who asks.
-     */
-    metricsToken: env.METRICS_TOKEN ?? '',
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
       return Boolean(this.rpcUrl) && this.escrow !== ZERO_ADDRESS;
@@ -159,6 +156,15 @@ function parseLimits(raw: string | undefined): Record<string, number> {
   return Object.fromEntries(
     Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
   );
+}
+
+/** A positive whole-number limit, `none` for no limit, or the default when unset. */
+function limit(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === '') return fallback;
+  if (value === 'none') return Infinity;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`expected a positive integer or "none", got "${value}"`);
+  return parsed;
 }
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;

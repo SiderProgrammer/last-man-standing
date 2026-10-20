@@ -50,18 +50,11 @@ async function failure(promise: Promise<unknown>): Promise<AnalystError> {
 }
 
 describe('analyst', () => {
-  it('streams the narrative and returns a verified analysis', async () => {
-    const { analyst } = await harness([answer(output(), 7)]);
-    const deltas: string[] = [];
-    const { analysis, cached } = await analyst.analyze({
-      matchId: match.result.matchId,
-      requester: human,
-      onDelta: (text) => deltas.push(text),
-    });
+  it('returns a verified analysis', async () => {
+    const { analyst } = await harness([answer(output())]);
+    const { analysis, cached } = await analyst.analyze({ matchId: match.result.matchId, requester: human });
 
     expect(cached).toBe(false);
-    expect(deltas.length).toBeGreaterThan(3);
-    expect(deltas.join('')).toBe(output().summary);
     expect(analysis.summary).toBe(output().summary);
     expect(analysis.seat).toBe(0);
     expect(analysis.decisiveRound).toBe(2);
@@ -187,15 +180,9 @@ describe('analyst tool loop', () => {
       ]),
       answer(output()),
     ]);
-    const steps: string[] = [];
-    const { analysis, usage } = await analyst.analyze({
-      matchId: match.result.matchId,
-      requester: human,
-      onStep: (step) => steps.push(step),
-    });
+    const { analysis, usage } = await analyst.analyze({ matchId: match.result.matchId, requester: human });
 
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
-    expect(steps).toEqual(['Reading round 1', 'Studying seat #2']);
     expect(usage).toMatchObject({ turns: 2, toolCalls: 2 });
 
     const second = model.requests[1];
@@ -261,12 +248,8 @@ describe('analyst tool loop', () => {
 
   it('never runs a tool call cut off at the token limit', async () => {
     const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }], 'max_tokens')]);
-    const steps: string[] = [];
-    const error = await failure(
-      analyst.analyze({ matchId: match.result.matchId, requester: human, onStep: (step) => steps.push(step) }),
-    );
+    const error = await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }));
     expect(error.code).toBe('failed');
-    expect(steps).toEqual([]);
     expect(model.requests).toHaveLength(1);
   });
 

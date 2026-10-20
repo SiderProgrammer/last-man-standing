@@ -55,8 +55,8 @@ Around that core:
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
-- **Match analyst** — after a match, Gemini writes a post-match analysis that
-  streams into the sidebar, with key moments checked against the published
+- **Match analyst** — after a match, Gemini writes a post-match analysis for
+  the sidebar, with key moments checked against the published
   rounds and clickable to replay. Commentary only: it reads the archive after
   the result is signed and can never touch a match. See
   [Match analyst](#match-analyst) below.
@@ -184,46 +184,19 @@ a thousand or more real WebSocket players against a running server
 After a match ends, **Analyse match** asks the server for a written analysis:
 a short narrative, three to six key moments, and advice for the player's seat.
 Gemini reads the match through tools bound to that one archived match
-(`get_match`, `get_round`, `get_reads`, `get_player_history`), the narrative
-streams over the existing WebSocket, and every key moment's round, seat, kind
-and target is checked against the round records before anyone sees it —
-moments the history does not support are dropped and counted. Clicking a moment
-rewinds the arena and plays that round again, and the player can ask follow-up
-questions underneath — treated as untrusted input, with the conversation held
-by the server. Design, trust boundaries and
-operations: [docs/ANALYST.md](docs/ANALYST.md).
+(`get_match`, `get_round`, `get_reads`, `get_player_history`), and every key
+moment's round, seat, kind and target is checked against the round records
+before anyone sees it — moments the history does not support are dropped and
+counted. Clicking a moment rewinds the arena and plays that round again.
+Design, trust boundaries and limits: [docs/ANALYST.md](docs/ANALYST.md).
 
 ```bash
-GEMINI_API_KEY=… npm run dev --workspace @lms/server     # real analyses
-ANALYST_DEMO=true npm run dev --workspace @lms/server    # offline demo model: no key, no cost
+GEMINI_API_KEY=… npm run dev --workspace @lms/server
 ```
 
-Without either the server runs as before and the panel says analysis is not
-available. `.env.example` lists the knobs: model, effort, per-wallet quota,
-concurrency, daily budget, deadline, and a token for `/metrics`.
-
-### Evals
-
-`npm run eval:analyst` scores the analyst on 24 reference matches — real games
-played by the engine's seeded bots, identical on every run, with lobbies of 4
-to 8 seats and half the cases asked by a spectator. Scoring is mechanical:
-
-- **grounding** — verified key moments over all claimed, pooled across cases;
-- **decisive round** — the named round is the final round or one that knocked
-  out the most players;
-- **names winner** — the narrative names the winning seat;
-- plus prompt-cache hit rate, cost at list prices and latency.
-
-```bash
-npm run eval:analyst -- --demo         # free: checks the harness with the offline demo model
-npm run eval:analyst -- --yes          # calls Gemini — spends money (roughly $0.50 for the full suite)
-npm run eval:analyst -- --yes --cases=6 --effort=low
-```
-
-It is not part of `npm test`, and without `--yes` or `--demo` it only prints
-what it would do. Results land in `eval-results/` (ignored by git); the last
-line printed is a row for this table:
-
-| run | cases | grounding | decisive round | names winner | prompt cache | cost | mean latency |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| _not run yet — `gemini-3.8-flash · medium`_ | | | | | | | |
+Without a key the server runs as before and the panel says analysis is not
+available. The analyst keeps to the Gemini free tier by default — 5 requests a
+minute and 20 a day, enforced on the server, which is about six analyses a
+day; set `ANALYST_RPM` and `ANALYST_RPD` to your project's limits once billing
+is on. `.env.example` lists the other knobs: model, effort, per-wallet quota,
+concurrency, daily budget and deadline.

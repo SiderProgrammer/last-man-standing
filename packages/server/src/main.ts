@@ -23,7 +23,6 @@ import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { Analyst } from './analyst/analyst.js';
-import { demoModel } from './analyst/demo.js';
 import { geminiModel } from './analyst/gemini.js';
 import { AnalystLimits } from './analyst/limits.js';
 
@@ -115,19 +114,19 @@ async function main(): Promise<void> {
     perWalletPerHour: config.analyst.quotaPerHour,
     maxConcurrent: config.analyst.maxConcurrent,
     dailyBudgetUsd: config.analyst.dailyBudgetUsd,
+    requestsPerMinute: config.analyst.requestsPerMinute,
+    requestsPerDay: config.analyst.requestsPerDay,
   });
   const analyst = config.analyst.enabled
     ? new Analyst({
         archive,
-        model: config.analyst.demo
-          ? demoModel(archive)
-          : geminiModel({
-              apiKey: config.analyst.geminiApiKey,
-              baseUrl: config.analyst.geminiBaseUrl,
-              timeoutMs: config.analyst.timeoutMs,
-              maxRetries: config.analyst.maxRetries,
-            }),
-        modelId: config.analyst.demo ? 'demo' : config.analyst.model,
+        model: geminiModel({
+          apiKey: config.analyst.geminiApiKey,
+          baseUrl: config.analyst.geminiBaseUrl,
+          timeoutMs: config.analyst.timeoutMs,
+          maxRetries: config.analyst.maxRetries,
+        }),
+        modelId: config.analyst.model,
         effort: config.analyst.effort,
         maxTokens: config.analyst.maxTokens,
         deadlineMs: config.analyst.deadlineMs,
@@ -176,16 +175,6 @@ async function main(): Promise<void> {
       response.end(route.body);
       return;
     }
-    if (request.url === '/metrics') {
-      // Prometheus text; analyst counters only, for now.
-      if (config.metricsToken && request.headers.authorization !== `Bearer ${config.metricsToken}`) {
-        response.writeHead(401).end();
-        return;
-      }
-      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
-      response.end(analyst ? analyst.metrics.prometheus() : '# match analyst disabled\n');
-      return;
-    }
     if (request.url === '/health') {
       const directory = bridge?.directory() ?? { open: [], live: [] };
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -198,9 +187,9 @@ async function main(): Promise<void> {
           lobbies: { open: directory.open.length, live: directory.live.length },
           analyst: analyst
             ? {
-                model: config.analyst.demo ? 'demo' : config.analyst.model,
+                model: config.analyst.model,
+                requestsToday: analystLimits.requests,
                 spentTodayUsd: Math.round(analystLimits.spent * 1e4) / 1e4,
-                ...analyst.metrics.snapshot(),
               }
             : null,
         }),
@@ -296,9 +285,8 @@ async function main(): Promise<void> {
 
   console.log(
     analyst
-      ? config.analyst.demo
-        ? '[server] match analyst in offline demo mode: canned answers, no model is called'
-        : `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort`
+      ? `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort, ` +
+          `${config.analyst.requestsPerMinute} requests a minute, ${config.analyst.requestsPerDay} a day`
       : '[server] no GEMINI_API_KEY: match analysis unavailable',
   );
 

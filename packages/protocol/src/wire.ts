@@ -62,16 +62,11 @@ export type ClientMessage =
    */
   | { type: 'collect' }
   /**
-   * Asks for a written analysis of a finished match, streamed back as
-   * `analysis.*` frames. Written from the asking wallet's seat if it had one.
+   * Asks for a written analysis of a finished match, answered with
+   * `analysis.done` or `analysis.error`. Written from the asking wallet's
+   * seat if it had one.
    */
-  | { type: 'analyze'; matchId: `0x${string}` }
-  /**
-   * A follow-up question about a match this wallet already has an analysis
-   * of. Only the question travels: the conversation so far is held by the
-   * server, so a client cannot put words in the analyst's mouth.
-   */
-  | { type: 'analysis.ask'; matchId: `0x${string}`; question: string };
+  | { type: 'analyze'; matchId: `0x${string}` };
 
 export type ServerMessage =
   | {
@@ -153,27 +148,9 @@ export type ServerMessage =
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
-  /**
-   * A fragment of an analysis's narrative, in order. Purely for showing
-   * progress: `analysis.done` carries the whole text again, and an
-   * `analysis.error` means everything streamed so far should be discarded.
-   */
-  | { type: 'analysis.delta'; matchId: `0x${string}`; text: string }
-  /** What the analyst is looking at before it starts writing, e.g. "Reading round 4". */
-  | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
-  | {
-      type: 'analysis.error';
-      matchId: `0x${string}`;
-      code: AnalysisErrorCode;
-      message: string;
-      /** Set when a follow-up question failed rather than the analysis. Absent from older servers. */
-      stage?: 'ask';
-    }
-  /** A fragment of the answer to a follow-up question, in order; `analysis.reply` repeats it whole. */
-  | { type: 'analysis.reply.delta'; matchId: `0x${string}`; text: string }
-  | { type: 'analysis.reply'; matchId: `0x${string}`; question: string; answer: string; model: string }
+  | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
   | { type: 'error'; code: string; message: string };
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */

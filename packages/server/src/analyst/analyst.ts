@@ -18,19 +18,10 @@ import {
   type ToolResultBlock,
   type ToolUseBlock,
 } from './model.js';
-import {
-  SYSTEM_PROMPT,
-  renderConversation,
-  renderRequest,
-  sanitizeQuestion,
-  type Exchange,
-  type SeatedMatch,
-} from './prompt.js';
+import { SYSTEM_PROMPT, renderRequest, type SeatedMatch } from './prompt.js';
 import { MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './schema.js';
-import { JsonFieldStream } from './stream.js';
 import { MatchTools, TOOLS } from './tools.js';
 import type { AnalystLimits } from './limits.js';
-import { AnalystMetrics } from './metrics.js';
 import { turnCost } from './pricing.js';
 import { checkDecisiveRound, verifyMoments } from './verify.js';
 
@@ -49,7 +40,7 @@ export interface AnalystOptions {
   /**
    * Model turns per analysis, tool turns included. The last one is sent with
    * tools switched off, so a model that keeps asking still has to answer.
-   * Defaults to 6.
+   * Defaults to 4, which keeps one analysis inside a 5-requests-a-minute quota.
    */
   maxTurns?: number;
   /**
@@ -58,22 +49,18 @@ export interface AnalystOptions {
    * whole thing. Defaults to three minutes.
    */
   deadlineMs?: number;
-  /** Quotas, concurrency and the daily budget. Omitted, nothing is limited. */
+  /** Quotas, concurrency, the daily budget and the provider's rate limits. Omitted, nothing is limited. */
   limits?: AnalystLimits;
-  /** Where counters go. Omitted, the analyst keeps its own. */
-  metrics?: AnalystMetrics;
   /** Wall clock in milliseconds, injectable for tests. */
   now?: () => number;
+  /** Waits out a rate-limit slot. Injectable so tests do not sleep. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface AnalyzeRequest {
   matchId: `0x${string}`;
   /** The authenticated wallet asking. Decides whose seat the advice is for. */
   requester: `0x${string}`;
-  /** Each new fragment of the narrative, as it is written. */
-  onDelta?: (text: string) => void;
-  /** A short line saying what the analyst is looking at, e.g. "Reading round 4". */
-  onStep?: (step: string) => void;
   /** Aborts the model call: the asker went away. */
   signal?: AbortSignal;
 }
@@ -101,29 +88,9 @@ export interface AnalyzeResult {
   usage?: AnalysisUsage;
 }
 
-export interface AskRequest {
-  matchId: `0x${string}`;
-  /** The authenticated wallet asking; its conversation is kept apart from everyone else's. */
-  requester: `0x${string}`;
-  /** Untrusted text typed by the player. */
-  question: string;
-  onDelta?: (text: string) => void;
-  onStep?: (step: string) => void;
-  signal?: AbortSignal;
-}
-
-export interface AskResult {
-  /** The question as it was put to the model, after sanitising. */
-  question: string;
-  answer: string;
-  model: string;
-  usage: AnalysisUsage;
-}
-
 /** What the gateway needs from an analyst. An interface so the gateway's tests can fake it. */
 export interface MatchAnalyst {
   analyze(request: AnalyzeRequest): Promise<AnalyzeResult>;
-  ask(request: AskRequest): Promise<AskResult>;
 }
 
 /** A failure with a code the client can act on. */
@@ -137,15 +104,8 @@ export class AnalystError extends Error {
   }
 }
 
-const DEFAULT_MAX_TURNS = 6;
+const DEFAULT_MAX_TURNS = 4;
 const DEFAULT_DEADLINE_MS = 180_000;
-
-/** Questions one wallet may ask about one match. */
-const MAX_QUESTIONS = 20;
-/** Earlier exchanges replayed with each question; older ones fall out of the model's view. */
-const MAX_HISTORY = 6;
-/** Longest answer kept, in characters. The prompt asks for far less. */
-const MAX_ANSWER_CHARS = 2_000;
 
 /**
  * Writes post-match analyses with a language model.
@@ -167,7 +127,6 @@ const MAX_ANSWER_CHARS = 2_000;
  * loop runs.
  */
 export class Analyst implements MatchAnalyst {
-  readonly metrics: AnalystMetrics;
   /**
    * Digest of everything that shapes an answer. Cached analyses are keyed by
    * it, so a new prompt, tool, schema, model or effort level never serves an
@@ -176,11 +135,8 @@ export class Analyst implements MatchAnalyst {
   readonly version: string;
   /** Analyses being written, by match and seat, so a second asker waits instead of paying twice. */
   private readonly inflight = new Map<string, Promise<AnalyzeResult>>();
-  /** Follow-up conversations, by wallet and match. */
-  private readonly conversations = new Conversations();
 
   constructor(private readonly options: AnalystOptions) {
-    this.metrics = options.metrics ?? new AnalystMetrics();
     this.version = analysisVersion(options);
   }
 
@@ -189,9 +145,7 @@ export class Analyst implements MatchAnalyst {
     try {
       return await this.serve(request);
     } catch (error) {
-      const failure = classify(error);
-      this.metrics.fail(failure.code);
-      throw failure;
+      throw classify(error);
     }
   }
 
@@ -204,27 +158,19 @@ export class Analyst implements MatchAnalyst {
     const { match, seat } = await this.authorize(request.matchId, request.requester);
 
     const cached = await this.cached(match, seat);
-    if (cached) {
-      this.metrics.count('cached');
-      return { analysis: cached, cached: true };
-    }
+    if (cached) return { analysis: cached, cached: true };
 
     const key = `${match.result.matchId.toLowerCase()}:${seat ?? 'spectator'}`;
     const running = this.inflight.get(key);
     if (running) {
-      request.onStep?.('Another request is already writing this analysis');
       const { analysis } = await running;
-      this.metrics.count('shared');
       return { analysis, cached: true };
     }
 
-    const job = this.paid(request.requester, 'analysis', request.signal, () => this.write(request, match, seat));
+    const job = this.paid(request.requester, request.signal, () => this.write(request, match, seat));
     this.inflight.set(key, job);
     try {
       const result = await job;
-      if (result.usage) {
-        this.metrics.fresh({ ...result.usage, kept: result.analysis.keyMoments.length, dropped: result.analysis.dropped });
-      }
       await this.options.archive.saveAnalysis({ analysis: result.analysis, version: this.version }).catch((error: unknown) => {
         console.warn('[analyst] could not cache the analysis:', errorMessage(error));
       });
@@ -260,11 +206,10 @@ export class Analyst implements MatchAnalyst {
    */
   private async paid<T extends { usage?: AnalysisUsage }>(
     wallet: `0x${string}`,
-    kind: 'analysis' | 'question',
     signal: AbortSignal | undefined,
     job: () => Promise<T>,
   ): Promise<T> {
-    const ticket = this.options.limits?.admit(wallet, this.now(), kind);
+    const ticket = this.options.limits?.admit(wallet, this.now(), this.maxTurns());
     if (ticket && 'code' in ticket) throw new AnalystError(ticket.code, ticket.message);
     let refund = false;
     try {
@@ -304,20 +249,11 @@ export class Analyst implements MatchAnalyst {
   private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
     const started = this.now();
     const usage = this.emptyUsage();
-    // One stream for the whole loop: the narrative is only ever written in
-    // the final answer, and a stream that has finished its field stays quiet.
-    const narrative = new JsonFieldStream('summary');
     const reply = await this.withDeadline(request.signal, (signal) =>
       this.converse([{ role: 'user', content: renderRequest(match, seat) }], {
-        structured: true,
         tools: new MatchTools(match, seat, this.options.styles),
         usage,
         signal,
-        onText: (delta) => {
-          const text = narrative.push(delta);
-          if (text) request.onDelta?.(text);
-        },
-        ...(request.onStep ? { onStep: request.onStep } : {}),
       }),
     );
 
@@ -349,96 +285,29 @@ export class Analyst implements MatchAnalyst {
     };
   }
 
-  /** Every failure comes out as an `AnalystError`, as for `analyze`. */
-  async ask(request: AskRequest): Promise<AskResult> {
-    try {
-      return await this.answer(request);
-    } catch (error) {
-      const failure = classify(error);
-      this.metrics.fail(failure.code);
-      throw failure;
-    }
-  }
-
-  /**
-   * A follow-up question about a match the asker already has an analysis
-   * of. The conversation lives here, keyed by wallet and match, and only the
-   * question comes from the client — so a client cannot forge what the
-   * analyst said earlier, and the history it replays is the server's own.
-   */
-  private async answer(request: AskRequest): Promise<AskResult> {
-    const question = sanitizeQuestion(request.question);
-    if (question === null) throw new AnalystError('failed', 'the question is empty');
-    const { match, seat } = await this.authorize(request.matchId, request.requester);
-    const analysis = await this.cached(match, seat);
-    if (!analysis) throw new AnalystError('not_found', 'analyse the match before asking about it');
-
-    const key = `${addressKey(request.requester)}:${match.result.matchId.toLowerCase()}`;
-    const exchanges = this.conversations.get(key, this.now());
-    if (exchanges.length >= MAX_QUESTIONS) {
-      throw new AnalystError('quota', `this conversation has reached its ${MAX_QUESTIONS} questions`);
-    }
-
-    const result = await this.paid(request.requester, 'question', request.signal, async () => {
-      const started = this.now();
-      const usage = this.emptyUsage();
-      const history = exchanges.slice(-MAX_HISTORY);
-      const reply = await this.withDeadline(request.signal, (signal) =>
-        this.converse(renderConversation(match, seat, analysis, history, question), {
-          structured: false,
-          tools: new MatchTools(match, seat, this.options.styles),
-          usage,
-          signal,
-          onText: (delta) => request.onDelta?.(delta),
-          ...(request.onStep ? { onStep: request.onStep } : {}),
-        }),
-      );
-      usage.latencyMs = this.now() - started;
-      const answer = finalText(reply).trim().slice(0, MAX_ANSWER_CHARS);
-      if (!answer) throw new AnalystError('failed', 'the analyst gave an empty answer');
-      return { answer, model: reply.model, usage };
-    });
-
-    this.conversations.append(key, { question, answer: result.answer }, this.now());
-    this.metrics.reply(result.usage);
-    console.info(`[analyst] follow-up on ${request.matchId}: ${describeUsage(result.usage)}`);
-    return { question, ...result };
-  }
-
   /**
    * The tool loop: sends the conversation, runs the tools the model asks
    * for, and repeats until it answers. Appends to `messages` and `usage`.
-   *
-   * @param structured Constrains the answer to the analysis schema. Off for
-   *        follow-up answers, which are prose.
    */
   private async converse(
     messages: Message[],
-    turn: {
-      structured: boolean;
-      tools: MatchTools;
-      usage: AnalysisUsage;
-      signal: AbortSignal;
-      onText: (delta: string) => void;
-      onStep?: (step: string) => void;
-    },
+    turn: { tools: MatchTools; usage: AnalysisUsage; signal: AbortSignal },
   ): Promise<ModelReply> {
-    const maxTurns = Math.max(1, this.options.maxTurns ?? DEFAULT_MAX_TURNS);
+    const maxTurns = this.maxTurns();
     for (;;) {
       const final = turn.usage.turns + 1 >= maxTurns;
-      const reply = await this.call(this.request(messages, final, turn.structured), turn.onText, turn.signal);
+      const reply = await this.call(this.request(messages, final), turn.signal);
       addUsage(turn.usage, reply);
       if (reply.stop_reason !== 'tool_use') return reply;
 
       const calls = reply.content.filter((block): block is ToolUseBlock => block.type === 'tool_use');
       if (calls.length === 0) throw new AnalystError('failed', 'the model asked for a tool but named none');
       turn.usage.toolCalls += calls.length;
-      // Echoed back whole: thinking blocks included, which the next turn needs.
+      // Echoed back whole: signatures included, which the next turn needs.
       messages.push({ role: 'assistant', content: reply.content });
       // Every result goes back in one message, in call order.
       const results = await Promise.all(
         calls.map(async (call): Promise<ToolResultBlock> => {
-          turn.onStep?.(describeCall(call));
           const output = await turn.tools.run(call.name, call.input);
           return {
             type: 'tool_result',
@@ -458,7 +327,7 @@ export class Analyst implements MatchAnalyst {
    *
    * @param final Switches tools off, so the model has to answer now.
    */
-  private request(messages: readonly Message[], final: boolean, structured: boolean): ModelRequest {
+  private request(messages: readonly Message[], final: boolean): ModelRequest {
     return {
       model: this.options.modelId,
       max_tokens: this.options.maxTokens,
@@ -466,18 +335,22 @@ export class Analyst implements MatchAnalyst {
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       ...(final ? { tool_choice: 'none' as const } : {}),
-      ...(structured ? { output_schema: outputSchema() } : {}),
+      output_schema: outputSchema(),
       // A copy: the loop keeps appending to its own array.
       messages: [...messages],
     };
   }
 
   /**
-   * One model turn. A finished answer or a request for tools continues;
-   * anything else ends the analysis.
+   * One model turn, once the provider's rate limits allow it. A finished
+   * answer or a request for tools continues; anything else ends the analysis.
    */
-  private async call(request: ModelRequest, onText: (delta: string) => void, signal: AbortSignal): Promise<ModelReply> {
-    const reply = await this.options.model.stream(request, onText, signal);
+  private async call(request: ModelRequest, signal: AbortSignal): Promise<ModelReply> {
+    const slot = this.options.limits?.reserve(this.now());
+    if (slot && 'code' in slot) throw new AnalystError(slot.code, slot.message);
+    if (slot && slot.waitMs > 0) await (this.options.sleep ?? sleep)(slot.waitMs, signal);
+
+    const reply = await this.options.model.generate(request, signal);
     switch (reply.stop_reason) {
       case 'end_turn':
       case 'tool_use':
@@ -491,6 +364,10 @@ export class Analyst implements MatchAnalyst {
       default:
         throw new AnalystError('failed', `the model stopped unexpectedly (${reply.stop_reason})`);
     }
+  }
+
+  private maxTurns(): number {
+    return Math.max(1, this.options.maxTurns ?? DEFAULT_MAX_TURNS);
   }
 
   private emptyUsage(): AnalysisUsage {
@@ -531,39 +408,6 @@ function describeUsage(usage: AnalysisUsage): string {
   );
 }
 
-/**
- * Follow-up conversations in memory, least recently used dropped first and
- * anything idle for an hour forgotten. Losing one costs the player the
- * context of earlier questions, nothing else; the analysis itself is cached
- * in the archive.
- */
-class Conversations {
-  private readonly entries = new Map<string, { exchanges: Exchange[]; touched: number }>();
-
-  constructor(
-    private readonly capacity = 1_000,
-    private readonly idleMs = 3_600_000,
-  ) {}
-
-  get(key: string, now: number): readonly Exchange[] {
-    const entry = this.entries.get(key);
-    if (!entry || now - entry.touched > this.idleMs) return [];
-    return entry.exchanges;
-  }
-
-  append(key: string, exchange: Exchange, now: number): void {
-    const exchanges = [...this.get(key, now), exchange];
-    // Delete first, so the key moves to the back of the insertion order.
-    this.entries.delete(key);
-    this.entries.set(key, { exchanges, touched: now });
-    while (this.entries.size > this.capacity) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-    }
-  }
-}
-
 /** See `Analyst.version`. */
 function analysisVersion(options: AnalystOptions): string {
   const inputs = JSON.stringify({
@@ -577,22 +421,20 @@ function analysisVersion(options: AnalystOptions): string {
   return createHash('sha256').update(inputs).digest('hex').slice(0, 16);
 }
 
-/** A tool call as a progress line for the player. The input is model output, so only numbers are echoed. */
-export function describeCall(call: Pick<ToolUseBlock, 'name' | 'input'>): string {
-  const input = (call.input ?? {}) as Record<string, unknown>;
-  const number = (key: string) => (typeof input[key] === 'number' ? String(input[key]) : '?');
-  switch (call.name) {
-    case 'get_round':
-      return `Reading round ${number('round')}`;
-    case 'get_reads':
-      return `Studying seat #${number('seat')}`;
-    case 'get_player_history':
-      return `Checking seat #${number('seat')}'s record`;
-    case 'get_match':
-      return 'Reviewing the match';
-    default:
-      return 'Looking something up';
-  }
+/** Waits `ms`, or rejects as soon as `signal` aborts. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new ProviderError('aborted', 'the request was cancelled'));
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new ProviderError('aborted', 'the request was cancelled'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 /** The answer text: every text block of the final turn, in order. */
@@ -622,6 +464,9 @@ function classifyProvider(error: ProviderError): AnalystError {
     case 'auth':
       console.error('[analyst] the model provider rejected our credentials:', error.message);
       return new AnalystError('unavailable', 'match analysis is not available on this server');
+    case 'limited':
+      console.error('[analyst] the model provider rate-limited us:', error.message);
+      return new AnalystError('busy', 'the analyst has hit its rate limit; try again in a few minutes');
     case 'busy':
       return new AnalystError('busy', 'the analyst is busy; try again in a minute');
     case 'unreachable':

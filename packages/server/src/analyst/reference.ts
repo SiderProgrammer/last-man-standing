@@ -17,9 +17,9 @@ import type { ArchivedMatch } from '../lobby/store.js';
  * every fact is known in advance because the same label always plays the
  * same match.
  *
- * Unit tests use them as realistic fixtures for the claim verifier, and the
- * analyst's evals use them as the ground truth to score answers against — no
- * hand-written history that the engine could never have produced.
+ * Unit tests use them as realistic fixtures for the analyst and the claim
+ * verifier — no hand-written history that the engine could never have
+ * produced.
  */
 export interface ReferenceMatch extends ArchivedMatch {
   /** The strategy each seat played, by seat index. */

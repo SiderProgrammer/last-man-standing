@@ -22,12 +22,8 @@ import {
 } from './screens/match.js';
 import { onSettled, wireResultControls } from './screens/result.js';
 import {
-  onAnalysisDelta,
   onAnalysisDone,
   onAnalysisError,
-  onAnalysisReply,
-  onAnalysisReplyDelta,
-  onAnalysisStep,
 } from './screens/analysis.js';
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
@@ -155,28 +151,12 @@ function onServerMessage(message: ServerMessage): void {
       void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
       break;
 
-    case 'analysis.step':
-      onAnalysisStep(message);
-      break;
-
-    case 'analysis.delta':
-      onAnalysisDelta(message);
-      break;
-
     case 'analysis.done':
       onAnalysisDone(message);
       break;
 
     case 'analysis.error':
       onAnalysisError(message);
-      break;
-
-    case 'analysis.reply.delta':
-      onAnalysisReplyDelta(message);
-      break;
-
-    case 'analysis.reply':
-      onAnalysisReply(message);
       break;
 
     case 'error':
