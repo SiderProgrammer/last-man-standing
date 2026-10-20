@@ -17,6 +17,7 @@ import type { SessionRelayer } from '../chain/relayer.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
+import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
 
 /**
  * Checks a login signature against an address.
@@ -80,6 +81,8 @@ interface Session extends Client {
   loginFailures: number;
   lastCollectAt: number;
   closed: boolean;
+  /** The analysis being written for this socket, if any; aborted if it closes. */
+  analysis: AbortController | null;
 }
 
 export interface GatewayOptions {
@@ -97,6 +100,8 @@ export interface GatewayOptions {
   staking?: StakingInfo | null;
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;
+  /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
+  analyst?: MatchAnalyst;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   /**
@@ -179,6 +184,7 @@ export class Gateway {
       loginFailures: 0,
       lastCollectAt: Number.NEGATIVE_INFINITY,
       closed: false,
+      analysis: null,
     };
     this.sessions.set(socket, session);
     this.perIp.set(ip, (this.perIp.get(ip) ?? 0) + 1);
@@ -193,6 +199,7 @@ export class Gateway {
       zap: this.options.zap ?? null,
       collect: this.options.relayer?.canCollect ?? false,
       staking: this.options.staking ?? null,
+      analyst: this.options.analyst !== undefined,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -328,6 +335,10 @@ export class Gateway {
         session.send({ type: 'relayed', hash });
         return;
       }
+      case 'analyze': {
+        await this.analyze(session, address, message.matchId);
+        return;
+      }
       case 'commit': {
         this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold, aimOf(message));
         return;
@@ -366,6 +377,42 @@ export class Gateway {
     session.send({ type: 'authed', address: message.address });
   }
 
+  /**
+   * Writes an analysis for one socket. Failures go out as `analysis.error`,
+   * not `error`, so the client can tell them apart from a refused move.
+   */
+  private async analyze(session: Session, address: `0x${string}`, matchId: `0x${string}`): Promise<void> {
+    const fail = (error: AnalystError) =>
+      session.send({ type: 'analysis.error', matchId, code: error.code, message: error.message });
+
+    const analyst = this.options.analyst;
+    if (!analyst) {
+      fail(new AnalystError('unavailable', 'match analysis is not available on this server'));
+      return;
+    }
+    // One at a time per socket: each costs real money, and the panel shows one.
+    if (session.analysis) {
+      fail(new AnalystError('busy', 'an analysis is already being written for you'));
+      return;
+    }
+
+    const controller = new AbortController();
+    session.analysis = controller;
+    try {
+      const { analysis, cached } = await analyst.analyze({
+        matchId,
+        requester: address,
+        signal: controller.signal,
+        onStep: (step) => session.send({ type: 'analysis.step', matchId, step }),
+      });
+      session.send({ type: 'analysis.done', analysis, cached });
+    } catch (error) {
+      if (!session.closed) fail(classify(error));
+    } finally {
+      session.analysis = null;
+    }
+  }
+
   private requireRoom(address: `0x${string}`) {
     const room = this.options.lobby.roomFor(address);
     if (!room) throw new Error('you are not in a live match');
@@ -399,6 +446,8 @@ export class Gateway {
   private forget(session: Session): void {
     if (session.closed) return;
     session.closed = true;
+    // Nobody is left to read it; stop paying for it.
+    session.analysis?.abort();
     for (const room of this.options.lobby.list()) room.detach(session);
     this.sessions.delete(session.socket);
     const count = (this.perIp.get(session.ip) ?? 1) - 1;

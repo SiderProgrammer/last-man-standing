@@ -1,0 +1,133 @@
+import {
+  Action,
+  DEFAULT_RULES,
+  KEY_MOMENT_KINDS,
+  addressKey,
+  type RoundRecord,
+  type Rules,
+  type Seat,
+} from '@lms/protocol';
+import type { ArchivedMatch } from '../lobby/store.js';
+
+/**
+ * The analyst's standing instructions.
+ *
+ * Frozen: built once from constants and never interpolated with anything
+ * about a particular match, player or time. It is the front of every request,
+ * so one changed byte here would miss the provider's prefix cache on every
+ * call behind it. Everything that varies goes in the messages.
+ */
+export const SYSTEM_PROMPT = `You are the post-match analyst for Last Man Standing, a hidden-information elimination game. After a match ends you explain to a player what happened and how they could play better. You write for a player who has just finished, so be concrete and brief, and refer to players by seat, like #3.
+
+How the game works:
+- 4 to 8 players start with ${DEFAULT_RULES.startingHp} HP. Every round each living player secretly commits to one action, then all actions are revealed and resolved together.
+- Attack #n: deals ${DEFAULT_RULES.attackDamage} damage to seat n unless it is parried or evaded.
+- Defend: parries one of the attackers that came at you (picked by the round's randomness); that attacker deals nothing and takes ${DEFAULT_RULES.riposteDamage} riposte damage. Any other attackers still connect, so focus fire beats a defender.
+- Hide: evades each attack with a ${DEFAULT_RULES.hideEvadeBps / 100}% chance, and takes ${DEFAULT_RULES.hideStormBps / 100}% of the storm.
+- A player who does not reveal in time is recorded as a timeout: every attack on them lands and they take the full storm.
+- The storm hits everyone at the end of each round from round ${DEFAULT_RULES.stormGraceRounds + 1}: ${DEFAULT_RULES.stormBaseDamage} damage times (round - ${DEFAULT_RULES.stormGraceRounds}). It is the clock that forces the match to end.
+- Players at 0 HP or below are eliminated. If a round would eliminate everyone, the one with the least overkill survives on 1 HP. The last player standing wins; the rest rank by how long they lasted.
+- Every move is published after each round, so the real skill is reading the table: who always attacks, who turtles, who is hunting whom.
+These are the default rules; the match data states the rules the match was actually played under, and those win if they differ.
+
+How to work:
+- The first message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, attacks and their outcomes, storm, eliminations, HP), each seat's tendencies over the match, and, when the server keeps them, each seat's record in earlier matches.
+- That is everything there is. Answer straight away from it. Tools, when they are offered, only repeat parts of it; do not call them unless a detail has dropped out of view.
+
+What to write:
+- summary: two or three short paragraphs telling the story of the match: how the field thinned out, who was hunted, and why the winner won.
+- decisiveRound: the round that settled the outcome, or null if none did.
+- keyMoments: three to six moments that shaped the match, in round order. Each names a round, a seat, a kind, and for some kinds a target seat, plus one sentence on why it mattered. The kinds are: ${KEY_MOMENT_KINDS.join(', ')}.
+  attack = seat declared an attack on target; hit = seat's attack on target connected; parry = seat defended and parried target's attack; evade = seat hid and evaded target's attack; defend = seat defended; hide = seat hid; timeout = seat failed to reveal; eliminated = seat was knocked out. Use target only for attack, hit, parry and evade, and null otherwise.
+- advice: two to four concrete tips for the player the analysis is written for, grounded in what the table did in this match. For a spectator, advise someone who wants to beat this table.
+
+Every key moment is checked against the published round records before anyone sees it, and moments that do not match the records are thrown away. Only state what the records show; if you are unsure whether something happened, leave it out.`;
+
+/** An archived match that recorded who sat where, which every analysis needs. */
+export type SeatedMatch = ArchivedMatch & { seats: readonly Seat[] };
+
+/**
+ * The opening user message: whose perspective, the overview, then the
+ * briefing — the full detail, so the model can answer without a lookup.
+ */
+export function renderRequest(match: SeatedMatch, seat: number | null, briefing = ''): string {
+  const perspective =
+    seat === null
+      ? 'Write the analysis for a spectator who did not play in this match.'
+      : `Write the analysis for the player in seat #${seat}.`;
+  return [perspective, renderOverview(match, seat), briefing].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Rules, table, ranking and one line per round: the shape of the match at a
+ * glance, ahead of the full detail.
+ *
+ * Plain lines rather than the raw JSON records, because the records carry
+ * salts and hashes the analysis has no use for and that would triple the
+ * token count.
+ */
+export function renderOverview(match: SeatedMatch, you: number | null): string {
+  const seatOf = new Map(match.seats.map((seat) => [addressKey(seat.address), seat.index]));
+  const name = (address: `0x${string}`) => {
+    const seat = seatOf.get(addressKey(address));
+    return seat === undefined ? short(address) : `#${seat}`;
+  };
+
+  const lines = [
+    `Match ${match.result.matchId}, ${match.result.rounds} rounds.`,
+    `Rules: ${renderRules(match.rules ?? DEFAULT_RULES)}`,
+    `Seats: ${match.seats.map((seat) => `#${seat.index} ${short(seat.address)}${seat.index === you ? ' (you)' : ''}`).join(', ')}`,
+    `Final ranking, winner first: ${match.result.ranking.map(name).join(', ')}`,
+    '',
+  ];
+  for (const record of match.history) {
+    const out = record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'nobody';
+    lines.push(`Round ${record.round}: storm ${record.stormDamage}; out: ${out}; hp after: ${renderHp(record)}`);
+  }
+  return lines.join('\n');
+}
+
+export function renderRules(rules: Rules): string {
+  return [
+    `startingHp ${rules.startingHp}`,
+    `attackDamage ${rules.attackDamage}`,
+    `riposteDamage ${rules.riposteDamage}`,
+    `hideEvade ${rules.hideEvadeBps / 100}%`,
+    `hideStorm ${rules.hideStormBps / 100}%`,
+    `stormGraceRounds ${rules.stormGraceRounds}`,
+    `stormBaseDamage ${rules.stormBaseDamage}`,
+    `maxRounds ${rules.maxRounds}`,
+  ].join(', ');
+}
+
+export function renderRound(record: RoundRecord): string[] {
+  const moves = record.moves.map((move) => {
+    if (!move.revealed) return `#${move.index} timeout`;
+    if (move.action === Action.Attack) return `#${move.index} attack #${move.target}`;
+    if (move.action === Action.Defend) return `#${move.index} defend`;
+    if (move.action === Action.Hide) return `#${move.index} hide`;
+    return `#${move.index} none`;
+  });
+  const attacks = record.attacks.map((attack) => {
+    const extra = attack.riposte > 0 ? `, riposte ${attack.riposte}` : '';
+    return `#${attack.attacker}→#${attack.target} ${attack.outcome} (${attack.damage} dmg${extra})`;
+  });
+  return [
+    `Round ${record.round}:`,
+    `  moves: ${moves.join(' | ')}`,
+    `  attacks: ${attacks.length > 0 ? attacks.join(' | ') : 'none'}`,
+    `  storm: ${record.stormDamage}`,
+    `  eliminated: ${record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'none'}`,
+    `  hp after: ${renderHp(record)}`,
+  ];
+}
+
+/** HP after the round of every seat that started it, floored at zero. */
+function renderHp(record: RoundRecord): string {
+  return record.moves.map((move) => `#${move.index} ${Math.max(0, record.hpAfter[move.index] ?? 0)}`).join(', ');
+}
+
+/** First and last four hex digits: enough to tell wallets apart, a quarter of the tokens. */
+function short(address: `0x${string}`): string {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}

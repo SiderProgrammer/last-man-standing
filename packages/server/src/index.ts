@@ -23,6 +23,7 @@ export {
   MemoryArchive,
   PostgresArchive,
   createArchive,
+  type ArchivedAnalysis,
   type ArchivedMatch,
   type MatchArchive,
 } from './lobby/store.js';
@@ -76,3 +77,39 @@ export {
   type ProposalReader,
 } from './chain/proposals.js';
 export { config, loadConfig, type ServerConfig } from './config.js';
+export {
+  Analyst,
+  AnalystError,
+  classify,
+  describeCall,
+  type AnalysisUsage,
+  type AnalystOptions,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+  type Effort,
+  type MatchAnalyst,
+} from './analyst/analyst.js';
+export {
+  ProviderError,
+  type AnalystModel,
+  type ContentBlock,
+  type Message,
+  type ModelReply,
+  type ModelRequest,
+  type ToolDefinition,
+  type Usage,
+} from './analyst/model.js';
+export { fromGeminiResponse, geminiModel, toGeminiRequest, type GeminiModelOptions } from './analyst/gemini.js';
+export { AnalystLimits, type AnalystLimitOptions, type Refusal } from './analyst/limits.js';
+export { turnCost } from './analyst/pricing.js';
+export { AnalysisOutput, MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './analyst/schema.js';
+export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
+export {
+  SYSTEM_PROMPT,
+  renderOverview,
+  renderRequest,
+  renderRound,
+  type SeatedMatch,
+} from './analyst/prompt.js';
+export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
+export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

@@ -55,6 +55,11 @@ Around that core:
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
+- **Match analyst** — after a match, Gemini writes a post-match analysis for
+  the sidebar, with key moments checked against the published
+  rounds and clickable to replay. Commentary only: it reads the archive after
+  the result is signed and can never touch a match. See
+  [Match analyst](#match-analyst) below.
 
 For the full design — game rules, trust model, hashing, Yul optimisations,
 cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
@@ -173,3 +178,25 @@ clients over a simulated network that drops, stalls and resets connections
 ([docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md)), and a load generator opens
 a thousand or more real WebSocket players against a running server
 ([docs/LOAD_TESTING.md](docs/LOAD_TESTING.md)).
+
+## Match analyst
+
+After a match ends, **Analyse match** asks the server for a written analysis:
+a short narrative, three to six key moments, and advice for the player's seat.
+Gemini reads the match through tools bound to that one archived match
+(`get_match`, `get_round`, `get_reads`, `get_player_history`), and every key
+moment's round, seat, kind and target is checked against the round records
+before anyone sees it — moments the history does not support are dropped and
+counted. Clicking a moment rewinds the arena and plays that round again.
+Design, trust boundaries and limits: [docs/ANALYST.md](docs/ANALYST.md).
+
+```bash
+GEMINI_API_KEY=… npm run dev --workspace @lms/server
+```
+
+Without a key the server runs as before and the panel says analysis is not
+available. The analyst keeps to the Gemini free tier by default — 5 requests a
+minute and 20 a day, enforced on the server. It sends the whole match in one
+call, so that is about twenty analyses a day; set `ANALYST_RPM` and
+`ANALYST_RPD` to your project's limits once billing is on. `.env.example` lists the other knobs: model, effort, per-wallet quota,
+concurrency, daily budget and deadline.

@@ -22,6 +22,9 @@ import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
+import { Analyst } from './analyst/analyst.js';
+import { geminiModel } from './analyst/gemini.js';
+import { AnalystLimits } from './analyst/limits.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -39,6 +42,7 @@ async function main(): Promise<void> {
     gateway: config.ipfsGateway,
   });
 
+  const styles = await createStyleBook(config.databaseUrl);
   const lobby = new Lobby({
     archive,
     relayer,
@@ -46,7 +50,7 @@ async function main(): Promise<void> {
     revealMs: config.revealMs,
     replayMs: config.replayMs,
     avatars,
-    styles: await createStyleBook(config.databaseUrl),
+    styles,
     maxPracticeRooms: config.maxPracticeRooms,
   });
 
@@ -105,6 +109,33 @@ async function main(): Promise<void> {
 
   const verifyPool = new VerifyPool(config.verifyThreads);
 
+  // Reads finished matches from the archive and nothing else; see `analyst/analyst.ts`.
+  const analystLimits = new AnalystLimits({
+    perWalletPerHour: config.analyst.quotaPerHour,
+    maxConcurrent: config.analyst.maxConcurrent,
+    dailyBudgetUsd: config.analyst.dailyBudgetUsd,
+    requestsPerMinute: config.analyst.requestsPerMinute,
+    requestsPerDay: config.analyst.requestsPerDay,
+  });
+  const analyst = config.analyst.enabled
+    ? new Analyst({
+        archive,
+        model: geminiModel({
+          apiKey: config.analyst.geminiApiKey,
+          baseUrl: config.analyst.geminiBaseUrl,
+          timeoutMs: config.analyst.timeoutMs,
+          maxRetries: config.analyst.maxRetries,
+        }),
+        modelId: config.analyst.model,
+        effort: config.analyst.effort,
+        maxTokens: config.analyst.maxTokens,
+        deadlineMs: config.analyst.deadlineMs,
+        maxTurns: config.analyst.maxTurns,
+        limits: analystLimits,
+        styles,
+      })
+    : undefined;
+
   const gateway = new Gateway({
     lobby,
     chainId: config.chainId,
@@ -115,6 +146,7 @@ async function main(): Promise<void> {
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     relayer: sessionRelayer,
+    ...(analyst ? { analyst } : {}),
     zap,
     staking:
       config.stakedLms !== ZERO_ADDRESS
@@ -154,6 +186,13 @@ async function main(): Promise<void> {
           clients: gateway.connections,
           onChain: config.onChain,
           lobbies: { open: directory.open.length, live: directory.live.length },
+          analyst: analyst
+            ? {
+                model: config.analyst.model,
+                requestsToday: analystLimits.requests,
+                spentTodayUsd: Math.round(analystLimits.spent * 1e4) / 1e4,
+              }
+            : null,
         }),
       );
       return;
@@ -208,7 +247,10 @@ async function main(): Promise<void> {
 
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
-  const sweeper = setInterval(() => gateway.sweep(), SWEEP_MS);
+  const sweeper = setInterval(() => {
+    gateway.sweep();
+    analystLimits.sweep(Date.now());
+  }, SWEEP_MS);
   sweeper.unref();
   const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
   beat.unref();
@@ -241,6 +283,13 @@ async function main(): Promise<void> {
     feeKeeper.start(config.feeKeeperPollMs);
     console.log(`[server] harvesting fees for router ${config.feeRouter}`);
   }
+
+  console.log(
+    analyst
+      ? `[server] match analyst on ${config.analyst.model} at ${config.analyst.effort} effort, ` +
+          `${config.analyst.requestsPerMinute} requests a minute, ${config.analyst.requestsPerDay} a day`
+      : '[server] no GEMINI_API_KEY: match analysis unavailable',
+  );
 
   if (!avatars.empty) {
     console.log(`[server] avatar collections on chains ${avatars.chains.join(', ')}`);

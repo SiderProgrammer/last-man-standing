@@ -222,6 +222,19 @@ export class Arena {
   }
 
   /** Crowns the winner once the final round's replay has played out. */
+  /**
+   * Plays a round of a finished match again, from the table as it stood
+   * before it. Whatever is on screen — a replay in flight, the winner's
+   * banner — is cleared first: it belongs to a later point in the match.
+   */
+  rewindTo(before: PublicMatchState, record: RoundRecord): void {
+    this.replay?.timeline.kill();
+    this.replay = null;
+    this.effects.clear();
+    this.render(before, this.you);
+    this.showRound(record);
+  }
+
   showWinner(seat: number): void {
     this.effects.showWinner(seat);
   }

@@ -18,6 +18,8 @@ import { describeDraft, formatCountdown } from '../ui/format.js';
 import { gsap } from '../motion.js';
 import { readsTable, targetOptions } from '../ui/views.js';
 import { hideResult, showResult } from './result.js';
+import { offerAnalysis, resetAnalysis, wireAnalysisControls } from './analysis.js';
+import { stateBeforeRound } from '../game/rewind.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -105,6 +107,21 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   forgetMatch(message.result.matchId);
   lockControls('Match finished.');
   if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
+  offerAnalysis(message.result.matchId);
+}
+
+/**
+ * Plays one round of the finished match again: the table is set back to how
+ * it stood when the round began, then the round runs as it did live. Driven
+ * by the analysis tab's key moments.
+ */
+export function replayRound(round: number): void {
+  const state = app.match;
+  if (!state || !arena || app.replaying) return;
+  const record = state.history.find((entry) => entry.round === round);
+  const before = stateBeforeRound(state, round);
+  if (!record || !before) return;
+  arena.rewindTo(before, record);
 }
 
 export function onState(
@@ -130,6 +147,7 @@ export function onState(
     app.pendingFinish = null;
     dom.feed.replaceChildren();
     hideResult();
+    resetAnalysis();
     showMatchScreen();
   }
 
@@ -398,8 +416,10 @@ export function wireMatchControls(): void {
 
   dom.lockIn.onclick = lockIn;
 
-  dom.tabFeed.onclick = () => switchTab(true);
-  dom.tabReads.onclick = () => switchTab(false);
+  dom.tabFeed.onclick = () => switchTab('feed');
+  dom.tabReads.onclick = () => switchTab('reads');
+  dom.tabAnalysis.onclick = () => switchTab('analysis');
+  wireAnalysisControls({ replay: replayRound, showTab: () => switchTab('analysis') });
 
   // Keyboard shortcuts: the commit window is short enough that reaching for the
   // mouse is a real cost.
@@ -430,11 +450,16 @@ function clickAction(action: ActionValue): void {
   if (button && !button.disabled) button.click();
 }
 
-function switchTab(feed: boolean): void {
-  dom.tabFeed.classList.toggle('active', feed);
-  dom.tabReads.classList.toggle('active', !feed);
-  dom.feed.classList.toggle('hidden', !feed);
-  dom.reads.classList.toggle('hidden', feed);
+function switchTab(tab: 'feed' | 'reads' | 'analysis'): void {
+  const tabs = [
+    [dom.tabFeed, dom.feed, tab === 'feed'],
+    [dom.tabReads, dom.reads, tab === 'reads'],
+    [dom.tabAnalysis, dom.analysis, tab === 'analysis'],
+  ] as const;
+  for (const [button, pane, active] of tabs) {
+    button.classList.toggle('active', active);
+    pane.classList.toggle('hidden', !active);
+  }
 }
 
 function setActionsEnabled(enabled: boolean): void {

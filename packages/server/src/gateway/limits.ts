@@ -28,6 +28,12 @@ export class TokenBucket {
     return true;
   }
 
+  /** Returns `cost` tokens, up to the burst. */
+  give(now: number, cost = 1): void {
+    this.refill(now);
+    this.tokens = Math.min(this.burst, this.tokens + cost);
+  }
+
   /** True once the bucket has refilled completely, which is when it can be forgotten. */
   full(now: number): boolean {
     this.refill(now);
@@ -71,6 +77,15 @@ export class KeyedLimiter {
       this.buckets.set(key, bucket);
     }
     return bucket.take(now, cost);
+  }
+
+  /**
+   * Hands back tokens taken for work that then failed through no fault of
+   * the key's owner. Never above the burst, and a no-op for a key no longer
+   * tracked, which is already full.
+   */
+  refund(key: string, now: number, cost = 1): void {
+    this.buckets.get(key)?.give(now, cost);
   }
 
   /** Forgets every key whose bucket has refilled. */

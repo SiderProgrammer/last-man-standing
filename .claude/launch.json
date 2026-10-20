@@ -49,6 +49,26 @@
         "process.env.VERIFY_THREADS='0'; process.env.WS_PORT='8790'; await import('./scripts/load-server.mjs');"
       ],
       "port": 8790
+    },
+    {
+      "name": "analyst-server-off",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--input-type=module",
+        "-e",
+        "delete process.env.GEMINI_API_KEY; process.env.ANALYST_ENABLED='false'; process.env.WS_PORT='8797'; process.env.VERIFY_THREADS='0'; await import('./packages/server/dist/main.js');"
+      ],
+      "port": 8797
+    },
+    {
+      "name": "analyst-client",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--input-type=module",
+        "-e",
+        "process.env.VITE_WS_URL='ws://localhost:8797'; const { createServer } = await import('vite'); const server = await createServer({ configFile: 'packages/client/vite.config.ts', root: 'packages/client', server: { port: 5183, strictPort: true } }); await server.listen(); server.printUrls();"
+      ],
+      "port": 5183
     }
   ]
 }

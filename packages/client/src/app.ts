@@ -21,6 +21,11 @@ import {
   wireMatchControls,
 } from './screens/match.js';
 import { onSettled, wireResultControls } from './screens/result.js';
+import {
+  onAnalysisDone,
+  onAnalysisError,
+  onAnalysisStep,
+} from './screens/analysis.js';
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
@@ -86,6 +91,7 @@ function onServerMessage(message: ServerMessage): void {
       app.zap = message.zap;
       app.collect = message.collect;
       app.staking = message.staking;
+      app.analyst = message.analyst ?? false;
       renderPayWith();
       renderHubLabel();
       renderSessionPanel();
@@ -144,6 +150,18 @@ function onServerMessage(message: ServerMessage): void {
       void renderAvatarPanel();
       // A pushed payout is a relayed transaction too; re-read once it lands.
       void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
+      break;
+
+    case 'analysis.step':
+      onAnalysisStep(message);
+      break;
+
+    case 'analysis.done':
+      onAnalysisDone(message);
+      break;
+
+    case 'analysis.error':
+      onAnalysisError(message);
       break;
 
     case 'error':
