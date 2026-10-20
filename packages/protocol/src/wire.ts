@@ -1,7 +1,8 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
 import type { StakingInfo } from './chain/governance.js';
-import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
+import type { ActionValue, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
+import type { Rules } from './game/rules.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
@@ -66,7 +67,19 @@ export type ClientMessage =
    * `analysis.done` or `analysis.error`. Written from the asking wallet's
    * seat if it had one.
    */
-  | { type: 'analyze'; matchId: `0x${string}` };
+  | { type: 'analyze'; matchId: `0x${string}` }
+  /**
+   * Asks for a page of the authenticated wallet's own finished matches, newest
+   * first, answered with `history`. `before` is the `finishedAt` of the last
+   * match already shown; omitted, the newest page.
+   */
+  | { type: 'history'; before?: number }
+  /**
+   * Asks for everything needed to open a finished match again, answered with
+   * `review`. The same rule as an analysis: a staked match is public, a
+   * practice match is its player's own.
+   */
+  | { type: 'review'; matchId: `0x${string}` };
 
 export type ServerMessage =
   | {
@@ -153,7 +166,39 @@ export type ServerMessage =
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
+  /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
+  | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
+  | { type: 'review'; match: ReviewedMatch }
   | { type: 'error'; code: string; message: string };
+
+/** One finished match in a player's history, as seen from their seat. */
+export interface MatchSummary {
+  matchId: `0x${string}`;
+  /** Unix milliseconds the match was archived, or null if it predates the field. */
+  finishedAt: number | null;
+  rounds: number;
+  players: number;
+  /** The player's seat, or null if the archive does not record seating. */
+  seat: number | null;
+  /** 1 for the winner. */
+  place: number;
+  staked: boolean;
+  settledTx: `0x${string}` | null;
+  /** False for a match archived before its seed and seating were kept; it cannot be opened. */
+  reviewable: boolean;
+}
+
+/** A finished match as archived, complete enough to replay and verify in the browser. */
+export interface ReviewedMatch {
+  result: MatchResult;
+  history: RoundRecord[];
+  seats: Seat[];
+  rules: Rules;
+  seed: `0x${string}`;
+  staked: boolean;
+  settledTx: `0x${string}` | null;
+  finishedAt: number | null;
+}
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */
 export interface AvatarCollectionInfo {

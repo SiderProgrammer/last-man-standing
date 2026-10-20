@@ -7,12 +7,14 @@ import {
   type AvatarCollectionInfo,
   type ClientMessage,
   type LobbyInfo,
+  type MatchSummary,
   type MoveAim,
   type ServerMessage,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
+import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { SessionRelayer } from '../chain/relayer.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
@@ -67,6 +69,9 @@ const OPEN = 1;
 /** One `collect` per connection per window: each one can cost the relayer gas. */
 const COLLECT_COOLDOWN_MS = 30_000;
 
+/** Matches per `history` page. */
+export const HISTORY_PAGE = 20;
+
 interface Session extends Client {
   readonly nonce: string;
   readonly socket: Socket;
@@ -100,6 +105,8 @@ export interface GatewayOptions {
   staking?: StakingInfo | null;
   /** Submits session-authorised calls on players' behalf. */
   relayer?: SessionRelayer;
+  /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
+  archive?: MatchArchive;
   /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
   analyst?: MatchAnalyst;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
@@ -339,6 +346,22 @@ export class Gateway {
         await this.analyze(session, address, message.matchId);
         return;
       }
+      case 'history': {
+        // Always the authenticated wallet's own: there is no field to ask for anyone else's.
+        const archive = this.requireArchive();
+        const found = await archive.forPlayer(address, HISTORY_PAGE + 1, message.before);
+        session.send({
+          type: 'history',
+          matches: found.slice(0, HISTORY_PAGE).map((match) => summarise(match, address)),
+          before: message.before ?? null,
+          more: found.length > HISTORY_PAGE,
+        });
+        return;
+      }
+      case 'review': {
+        await this.review(session, address, message.matchId);
+        return;
+      }
       case 'commit': {
         this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold, aimOf(message));
         return;
@@ -413,6 +436,40 @@ export class Gateway {
     }
   }
 
+  /**
+   * Sends a finished match back to someone allowed to see it: anyone for a
+   * staked match, which was public while it ran; only its players for a
+   * practice match. The same rule the analyst applies.
+   */
+  private async review(session: Session, address: `0x${string}`, matchId: `0x${string}`): Promise<void> {
+    const match = await this.requireArchive().load(matchId);
+    if (!match) throw new Error('no finished match with that id');
+    const seated = match.seats?.some((seat) => addressKey(seat.address) === addressKey(address)) ?? false;
+    if (!seated && match.staked !== true) throw new Error('only the players who sat in this match can open it');
+    if (!match.seats || !match.rules || !match.seed) {
+      throw new Error('this match was archived before its replay data was kept, so it cannot be opened');
+    }
+    session.send({
+      type: 'review',
+      match: {
+        result: match.result,
+        history: [...match.history],
+        seats: [...match.seats],
+        rules: match.rules,
+        seed: match.seed,
+        staked: match.staked === true,
+        settledTx: (match.settledTx as `0x${string}` | null) ?? null,
+        finishedAt: match.finishedAt ?? null,
+      },
+    });
+  }
+
+  private requireArchive(): MatchArchive {
+    const archive = this.options.archive;
+    if (!archive) throw new Error('match history is not kept on this server');
+    return archive;
+  }
+
   private requireRoom(address: `0x${string}`) {
     const room = this.options.lobby.roomFor(address);
     if (!room) throw new Error('you are not in a live match');
@@ -470,3 +527,19 @@ function aimOf(message: MoveAim): MoveAim {
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
 const offlineVerify: SignatureVerifier = (args) => verifyMessage(args);
 
+/** One archived match as its player sees it in their history. */
+export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSummary {
+  const key = addressKey(player);
+  const place = match.result.ranking.findIndex((address) => addressKey(address) === key);
+  return {
+    matchId: match.result.matchId,
+    finishedAt: match.finishedAt ?? null,
+    rounds: match.result.rounds,
+    players: match.result.ranking.length,
+    seat: match.seats?.find((seat) => addressKey(seat.address) === key)?.index ?? null,
+    place: place + 1,
+    staked: match.staked === true,
+    settledTx: (match.settledTx as `0x${string}` | null) ?? null,
+    reviewable: match.seats !== undefined && match.rules !== undefined && match.seed !== undefined,
+  };
+}

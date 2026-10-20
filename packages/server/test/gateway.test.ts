@@ -2,15 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
+  DEFAULT_RULES,
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
-import { AnalystError, Gateway, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
+import { AnalystError, Gateway, HISTORY_PAGE, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
 import type {
   AnalyzeRequest,
+  ArchivedMatch,
   AnalyzeResult,
   MatchAnalyst,
   SignatureVerifier,
@@ -81,6 +83,7 @@ interface Extras {
   zap: ZapInfo | null;
   staking: StakingInfo | null;
   analyst: MatchAnalyst;
+  archive: MemoryArchive;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -101,6 +104,7 @@ function harness(extras: Partial<Extras> = {}) {
     zap: extras.zap ?? null,
     staking: extras.staking ?? null,
     ...(extras.analyst ? { analyst: extras.analyst } : {}),
+    ...(extras.archive ? { archive: extras.archive } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -406,5 +410,140 @@ describe('gateway analysis frames', () => {
     expect(signal?.aborted).toBe(false);
     socket.close();
     expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe('gateway match history', () => {
+  const STRANGER = `0x${'0e'.repeat(20)}` as const;
+  const BOT = `0x${'0b'.repeat(20)}` as const;
+
+  /** A finished match, archived at `finishedAt`, that `account` sat in at seat 1 unless `seats` says otherwise. */
+  function played(
+    label: number,
+    finishedAt: number,
+    options: { staked?: boolean; won?: boolean; seats?: ArchivedMatch['seats'] } = {},
+  ): ArchivedMatch {
+    const seats = options.seats ?? [
+      { index: 0, address: BOT, chainId: 11155111 },
+      { index: 1, address: account.address, chainId: 11155111 },
+    ];
+    const addresses = seats.map((seat) => seat.address);
+    return {
+      result: {
+        matchId: `0x${label.toString(16).padStart(64, '0')}`,
+        rounds: 4,
+        historyRoot: `0x${'77'.repeat(32)}`,
+        ranking: options.won ? [...addresses].reverse() : addresses,
+      },
+      history: [],
+      settledTx: null,
+      seats,
+      rules: DEFAULT_RULES,
+      staked: options.staked ?? false,
+      seed: `0x${'5e'.repeat(32)}`,
+      finishedAt,
+    };
+  }
+
+  const strangers = [{ index: 0, address: STRANGER, chainId: 11155111 }];
+
+  it('requires a login', async () => {
+    const { socket } = harness({ archive: new MemoryArchive() });
+    await socket.deliver({ type: 'history' });
+    expect(socket.last('history')).toBeUndefined();
+    expect(socket.last('error')?.message).toMatch(/authenticate/);
+  });
+
+  it("lists only the caller's own matches, newest first, from their seat", async () => {
+    const archive = new MemoryArchive();
+    await archive.save(played(1, 1_000));
+    await archive.save(played(2, 2_000, { seats: strangers }));
+    await archive.save(played(3, 3_000, { won: true, staked: true }));
+    const { socket } = harness({ archive });
+    await login(socket);
+
+    await socket.deliver({ type: 'history' });
+
+    const page = socket.last('history');
+    expect(page?.matches.map((match) => match.finishedAt)).toEqual([3_000, 1_000]);
+    expect(page?.matches[0]).toMatchObject({ place: 1, players: 2, seat: 1, staked: true, reviewable: true });
+    expect(page?.matches[1]).toMatchObject({ place: 2, staked: false });
+    expect(page?.before).toBeNull();
+    expect(page?.more).toBe(false);
+  });
+
+  it('pages older matches by the last one shown', async () => {
+    const archive = new MemoryArchive();
+    for (let i = 1; i <= HISTORY_PAGE + 3; i += 1) await archive.save(played(i, i * 1_000));
+    const { socket } = harness({ archive });
+    await login(socket);
+
+    await socket.deliver({ type: 'history' });
+    const first = socket.last('history');
+    expect(first?.matches).toHaveLength(HISTORY_PAGE);
+    expect(first?.more).toBe(true);
+
+    const oldest = first?.matches.at(-1)?.finishedAt ?? 0;
+    await socket.deliver({ type: 'history', before: oldest });
+    const second = socket.last('history');
+    expect(second?.before).toBe(oldest);
+    expect(second?.matches.map((match) => match.finishedAt)).toEqual([3_000, 2_000, 1_000]);
+    expect(second?.more).toBe(false);
+  });
+
+  it('marks a match archived without its seed as not reviewable, and will not open it', async () => {
+    const archive = new MemoryArchive();
+    const { seed: _seed, ...old } = played(1, 1_000);
+    await archive.save(old);
+    const { socket } = harness({ archive });
+    await login(socket);
+
+    await socket.deliver({ type: 'history' });
+    expect(socket.last('history')?.matches[0]?.reviewable).toBe(false);
+
+    await socket.deliver({ type: 'review', matchId: old.result.matchId });
+    expect(socket.last('review')).toBeUndefined();
+    expect(socket.last('error')?.message).toMatch(/cannot be opened/);
+  });
+
+  it('reopens a match the caller played', async () => {
+    const archive = new MemoryArchive();
+    const match = played(1, 1_000);
+    await archive.save(match);
+    const { socket } = harness({ archive });
+    await login(socket);
+
+    await socket.deliver({ type: 'review', matchId: match.result.matchId });
+    expect(socket.last('review')?.match).toMatchObject({
+      result: match.result,
+      seats: match.seats,
+      seed: match.seed,
+      staked: false,
+      finishedAt: 1_000,
+    });
+  });
+
+  it("keeps someone else's practice match private, but not a staked one", async () => {
+    const archive = new MemoryArchive();
+    const practice = played(1, 1_000, { seats: strangers });
+    const staked = played(2, 2_000, { seats: strangers, staked: true });
+    await archive.save(practice);
+    await archive.save(staked);
+    const { socket } = harness({ archive });
+    await login(socket);
+
+    await socket.deliver({ type: 'review', matchId: practice.result.matchId });
+    expect(socket.last('review')).toBeUndefined();
+    expect(socket.last('error')?.message).toMatch(/only the players/);
+
+    await socket.deliver({ type: 'review', matchId: staked.result.matchId });
+    expect(socket.last('review')?.match.result.matchId).toBe(staked.result.matchId);
+  });
+
+  it('says so when the server keeps no archive', async () => {
+    const { socket } = harness();
+    await login(socket);
+    await socket.deliver({ type: 'history' });
+    expect(socket.last('error')?.message).toMatch(/not kept/);
   });
 });
