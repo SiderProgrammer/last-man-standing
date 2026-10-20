@@ -39,8 +39,10 @@ export interface AnalystOptions {
   styles?: StyleBook;
   /**
    * Model turns per analysis, tool turns included. The last one is sent with
-   * tools switched off, so a model that keeps asking still has to answer.
-   * Defaults to 4, which keeps one analysis inside a 5-requests-a-minute quota.
+   * tools switched off, so a model that keeps asking still has to answer. The
+   * first message already holds the whole match, so 1 — a single call, no
+   * lookups — is enough and is what the server runs with; more lets the
+   * model look things up again. Defaults to 4 here.
    */
   maxTurns?: number;
   /**
@@ -150,7 +152,10 @@ export class Analyst implements MatchAnalyst {
     try {
       return await this.serve(request);
     } catch (error) {
-      throw classify(error);
+      const failure = classify(error);
+      // Logged here because the player only sees the code; the operator needs the reason.
+      console.warn(`[analyst] ${request.matchId} failed (${failure.code}): ${failure.message}`);
+      throw failure;
     }
   }
 
@@ -255,9 +260,11 @@ export class Analyst implements MatchAnalyst {
   private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
     const started = this.now();
     const usage = this.emptyUsage();
+    const tools = new MatchTools(match, seat, this.options.styles);
+    const opening = renderRequest(match, seat, await tools.briefing());
     const reply = await this.withDeadline(request.signal, (signal) =>
-      this.converse([{ role: 'user', content: renderRequest(match, seat) }], {
-        tools: new MatchTools(match, seat, this.options.styles),
+      this.converse([{ role: 'user', content: opening }], {
+        tools,
         usage,
         signal,
         step: (text) => request.onStep?.(text),
@@ -305,7 +312,11 @@ export class Analyst implements MatchAnalyst {
     for (;;) {
       const final = turn.usage.turns + 1 >= maxTurns;
       const doing =
-        turn.usage.turns === 0 ? 'Reading the match overview' : final ? 'Writing the analysis' : 'Thinking over what it found';
+        turn.usage.turns === 0
+          ? 'Gemini is reading the whole match and writing the analysis'
+          : final
+            ? 'Writing the analysis'
+            : 'Thinking over what it found';
       const reply = await this.call(this.request(messages, final), turn.signal, doing, turn.step);
       addUsage(turn.usage, reply);
       if (reply.stop_reason !== 'tool_use') return reply;
@@ -372,7 +383,9 @@ export class Analyst implements MatchAnalyst {
     }
 
     step(doing);
+    const started = this.now();
     const reply = await this.options.model.generate(request, signal);
+    console.info(`[analyst] model turn: ${reply.stop_reason} after ${this.now() - started} ms`);
     switch (reply.stop_reason) {
       case 'end_turn':
       case 'tool_use':

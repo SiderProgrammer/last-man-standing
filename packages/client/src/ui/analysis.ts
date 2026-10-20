@@ -51,7 +51,7 @@ export function analysisNote(analysis: MatchAnalysis, cached: boolean): string {
  */
 export function progressText(seconds: number): string {
   if (seconds < 60) return `Working… ${seconds}s · this usually takes under a minute.`;
-  return `Still working… ${Math.floor(seconds / 60)}m ${seconds % 60}s · rate limits can stretch this to a few minutes.`;
+  return `Still working… ${Math.floor(seconds / 60)}m ${seconds % 60}s · Gemini's free tier can take a few minutes.`;
 }
 
 /** What to tell the player, and whether trying again could help. */

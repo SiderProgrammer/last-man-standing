@@ -31,10 +31,8 @@ How the game works:
 These are the default rules; the match data states the rules the match was actually played under, and those win if they differ.
 
 How to work:
-- The first message gives you the overview: the table, the final ranking, and one line per round with eliminations and HP.
-- Use get_round to see a round's moves and attacks in full. Open every round you intend to cite as a key moment before you cite it, and the rounds where the HP lines show something changed sharply.
-- Use get_reads to see a seat's tendencies over the whole match, and get_player_history for its record in earlier matches when that would change the advice.
-- Call several tools at once when you already know you need them. A handful of calls is usually enough; you do not need to open every round.
+- The first message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, attacks and their outcomes, storm, eliminations, HP), each seat's tendencies over the match, and, when the server keeps them, each seat's record in earlier matches.
+- That is everything there is. Answer straight away from it. Tools, when they are offered, only repeat parts of it; do not call them unless a detail has dropped out of view.
 
 What to write:
 - summary: two or three short paragraphs telling the story of the match: how the field thinned out, who was hunted, and why the winner won.
@@ -48,18 +46,21 @@ Every key moment is checked against the published round records before anyone se
 /** An archived match that recorded who sat where, which every analysis needs. */
 export type SeatedMatch = ArchivedMatch & { seats: readonly Seat[] };
 
-/** The opening user message: whose perspective, then the overview. */
-export function renderRequest(match: SeatedMatch, seat: number | null): string {
+/**
+ * The opening user message: whose perspective, the overview, then the
+ * briefing — the full detail, so the model can answer without a lookup.
+ */
+export function renderRequest(match: SeatedMatch, seat: number | null, briefing = ''): string {
   const perspective =
     seat === null
       ? 'Write the analysis for a spectator who did not play in this match.'
       : `Write the analysis for the player in seat #${seat}.`;
-  return `${perspective}\n\n${renderOverview(match, seat)}`;
+  return [perspective, renderOverview(match, seat), briefing].filter(Boolean).join('\n\n');
 }
 
 /**
- * Rules, table, ranking and one line per round: enough to see the shape of
- * the match and decide which rounds to open with `get_round`.
+ * Rules, table, ranking and one line per round: the shape of the match at a
+ * glance, ahead of the full detail.
  *
  * Plain lines rather than the raw JSON records, because the records carry
  * salts and hashes the analysis has no use for and that would triple the

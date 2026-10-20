@@ -196,7 +196,7 @@ GEMINI_API_KEY=… npm run dev --workspace @lms/server
 
 Without a key the server runs as before and the panel says analysis is not
 available. The analyst keeps to the Gemini free tier by default — 5 requests a
-minute and 20 a day, enforced on the server, which is about six analyses a
-day; set `ANALYST_RPM` and `ANALYST_RPD` to your project's limits once billing
-is on. `.env.example` lists the other knobs: model, effort, per-wallet quota,
+minute and 20 a day, enforced on the server. It sends the whole match in one
+call, so that is about twenty analyses a day; set `ANALYST_RPM` and
+`ANALYST_RPD` to your project's limits once billing is on. `.env.example` lists the other knobs: model, effort, per-wallet quota,
 concurrency, daily budget and deadline.

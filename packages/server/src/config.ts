@@ -119,11 +119,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       effort: parseEffort(env.ANALYST_EFFORT),
       /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
       maxTokens: Number(env.ANALYST_MAX_TOKENS ?? 16_000),
-      /** Per attempt; timeouts and 5xx are retried up to `maxRetries` times. */
-      timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 120_000),
+      /**
+       * Per model call. Long, because the Gemini free tier can take a minute
+       * or two on even a tiny request. 5xx are retried up to `maxRetries`
+       * times; a timeout is not.
+       */
+      timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 240_000),
       maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
       /** Ceiling on one whole analysis, every turn and retry included. */
-      deadlineMs: Number(env.ANALYST_DEADLINE_MS ?? 180_000),
+      deadlineMs: Number(env.ANALYST_DEADLINE_MS ?? 300_000),
+      /**
+       * Model calls per analysis. 1: the whole match goes in the first
+       * message and the answer comes back in the same call. More lets the
+       * model look details up again, at one quota request per turn.
+       */
+      maxTurns: limit(env.ANALYST_MAX_TURNS, 1),
       /** Fresh analyses per wallet per hour. Cached answers do not count. */
       quotaPerHour: Number(env.ANALYST_QUOTA_PER_HOUR ?? 3),
       /** Analyses being written at once, server-wide. One, so a single analysis has the whole per-minute quota. */

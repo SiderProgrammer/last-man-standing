@@ -200,6 +200,34 @@ describe('gemini analyst model', () => {
     expect(limited.gemini.bodies).toHaveLength(1);
   });
 
+  it('never retries a timed-out call, which Gemini has already counted', async () => {
+    const slow = (async (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) =>
+        init.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError'))),
+      )) as unknown as typeof fetch;
+    let calls = 0;
+    const model = geminiModel({
+      apiKey: 'k',
+      timeoutMs: 20,
+      maxRetries: 2,
+      fetch: ((...args: Parameters<typeof fetch>) => {
+        calls++;
+        return slow(...args);
+      }) as typeof fetch,
+      sleep: async () => undefined,
+    });
+    const request: ModelRequest = {
+      model: 'gemini-3.8-flash',
+      max_tokens: 100,
+      effort: 'low',
+      system: 's',
+      tools: [],
+      messages: [{ role: 'user', content: 'hi' }],
+    };
+    await expect(model.generate(request, new AbortController().signal)).rejects.toMatchObject({ kind: 'timeout' });
+    expect(calls).toBe(1);
+  });
+
   it('gives up as busy once the retries run out', async () => {
     const { analyst } = await harness([{ status: 500 }, { status: 500 }], { maxRetries: 1 });
     expect((await failure(analyst.analyze({ matchId, requester: player }))).code).toBe('busy');
@@ -247,8 +275,9 @@ describe('analyst config', () => {
     expect(loadConfig({ GEMINI_API_KEY: 'g', ANALYST_MODEL: 'gemini-4-argon' }).analyst.model).toBe('gemini-4-argon');
   });
 
-  it('defaults to the free-tier rate limits, and can lift them', () => {
-    expect(loadConfig({}).analyst).toMatchObject({ requestsPerMinute: 5, requestsPerDay: 20, maxConcurrent: 1 });
+  it('defaults to one call per analysis and the free-tier rate limits, and can lift them', () => {
+    expect(loadConfig({}).analyst).toMatchObject({ maxTurns: 1, requestsPerMinute: 5, requestsPerDay: 20, maxConcurrent: 1 });
+    expect(loadConfig({ ANALYST_MAX_TURNS: '4' }).analyst.maxTurns).toBe(4);
     const paid = loadConfig({ ANALYST_RPM: '1000', ANALYST_RPD: 'none' }).analyst;
     expect(paid.requestsPerMinute).toBe(1_000);
     expect(paid.requestsPerDay).toBe(Infinity);

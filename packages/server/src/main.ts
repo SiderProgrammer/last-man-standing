@@ -130,6 +130,7 @@ async function main(): Promise<void> {
         effort: config.analyst.effort,
         maxTokens: config.analyst.maxTokens,
         deadlineMs: config.analyst.deadlineMs,
+        maxTurns: config.analyst.maxTurns,
         limits: analystLimits,
         styles,
       })

@@ -68,7 +68,7 @@ describe('analysis presentation', () => {
   it('says how long the analysis has been running, and what to expect', () => {
     expect(progressText(0)).toBe('Working… 0s · this usually takes under a minute.');
     expect(progressText(59)).toMatch(/^Working… 59s/);
-    expect(progressText(75)).toBe('Still working… 1m 15s · rate limits can stretch this to a few minutes.');
+    expect(progressText(75)).toBe("Still working… 1m 15s · Gemini's free tier can take a few minutes.");
   });
 
   it('names the model that wrote it', () => {

@@ -31,11 +31,9 @@ to the prose.
 client                 gateway                analyst                         Gemini
   │ analyze{matchId} ──▶ │ ── analyze() ──────▶ │ archive → access → cache hit? │
   │                      │                      │ limits.admit()                │
-  │                      │                      │ reserve slot → request ─────▶ │
-  │                      │                      │ ◀── functionCall get_round(4) │
-  │                      │                      │ reserve slot → results ─────▶ │
+  │ ◀── analysis.step ── │ ◀── onStep ───────── │ reserve slot → whole match ─▶ │
   │                      │                      │ ◀── JSON answer ───────────── │
-  │                      │                      │ schema parse → verify claims  │
+  │ ◀── analysis.step ── │ ◀── onStep ───────── │ schema parse → verify claims  │
   │ ◀── analysis.done ── │ ◀── result ───────── │ cache, budget                 │
 ```
 
@@ -48,27 +46,40 @@ client                 gateway                analyst                         Ge
    matching instead of being served stale. A second request for an analysis
    already being written waits for it rather than paying twice.
 3. **Limits.** See [Limits](#limits).
-4. **The model call.** `gemini-3.8-flash` by default — any Gemini 3 model or
+4. **One call.** The first message holds the whole match: an overview, every
+   round in full, each seat's tendencies over the match and, when the server
+   keeps them, each seat's record in earlier matches — a few thousand tokens
+   even for eight seats. The model answers from it in a single call, with
+   tools switched off (`ANALYST_MAX_TURNS=1`, the default). On the free tier
+   that is the difference between one rationed, sometimes minute-long request
+   and three or four of them.
+5. **The model.** `gemini-3.8-flash` by default — any Gemini 3 model or
    later, the first to combine structured output with function calling — with
    effort pinned explicitly (`medium`, sent as the thinking level) and the
    answer constrained to a JSON schema. `gemini.ts` speaks the REST API
    directly: no SDK, one `generateContent` call per turn.
-5. **Tools.** `get_match`, `get_round(n)`, `get_reads(seat)` and
+6. **Tools,** usable only when `ANALYST_MAX_TURNS` is above 1 (otherwise they are switched off). `get_match`, `get_round(n)`, `get_reads(seat)` and
    `get_player_history(seat)` are bound by the server to the one match being
    analysed. None takes a match id or a wallet address, so the model cannot
    reach another match or look up a stranger: `get_player_history` takes a
    *seat* for exactly that reason. Tool schemas are closed, and every call's
    arguments are re-validated with zod on arrival — they are model output — so
    a bad call goes back to the model as an error result instead of running.
-6. **The loop** is written by hand, and the model is injected (`AnalystModel`,
+7. **The loop** is written by hand, and the model is injected (`AnalystModel`,
    over the analyst's own provider-neutral message format in `model.ts`), so
    the network is not the analyst's concern: tests drive the whole loop with a
    scripted fake. Every tool result goes back in one message; assistant turns
    are echoed whole, thought signatures included; `max_tokens` and `refusal`
    end the analysis and a tool call cut off by either is never run; the last
-   allowed turn (the fourth, by default) switches tools off so the model has
-   to answer. A wall-clock deadline covers the whole loop on top of the
-   per-attempt timeout and retries.
+   allowed turn switches tools off so the model has to answer. A wall-clock
+   deadline (5 minutes) covers the whole loop on top of the per-call timeout
+   (4 minutes) — long, because the free tier has been seen taking 100 seconds
+   to answer a one-word prompt.
+8. **Progress.** While it works the analyst reports what it is doing —
+   reading the match, waiting for a rate-limit slot and for how long, any
+   lookups, checking the claims — as `analysis.step` frames, and the panel
+   lists them under an elapsed-time counter, so a slow call never looks like
+   a hang.
 
 ## Checking the claims
 
@@ -112,14 +123,15 @@ Flash — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
 allowance it waits for one, past the day's it is refused. An analysis only
 starts if the day still has room for all of its turns, so one is never
 abandoned halfway, and the day turns at midnight Pacific time, when Gemini's
-quota resets. With at most four turns and about three typical, the free tier
-allows roughly six analyses a day. Tokens per minute (250K on the free tier)
-are not tracked: one analysis uses well under 20K.
+quota resets. At one call per analysis, the free tier allows about twenty
+analyses a day. Tokens per minute (250K on the free tier) are not tracked: one
+analysis uses well under 20K.
 
 If Gemini answers 429 anyway — another client on the same key — the call is
 not retried, since that is the quota talking; the player is told to try again
-in a few minutes. Timeouts, 5xx and dropped connections are retried with
-backoff.
+in a few minutes. Nor is a timeout: Gemini received the request and counts it,
+so a retry would spend quota the limiter cannot see. Only 5xx and dropped
+connections are retried, with backoff.
 
 ## Prompt caching
 
@@ -147,9 +159,11 @@ matches.
   `refused`, `failed`. Provider errors are classified by `ProviderError` kind,
   set from the HTTP status, never by message text; a credentials problem is
   logged for the operator and shown to the player only as "unavailable".
-- **Visibility.** Each fresh analysis logs one line — turns, tool calls,
-  latency, tokens, estimated cost, moments kept and dropped — and `/health`
-  reports the model, today's model requests and today's estimated spend.
+- **Visibility.** Each model call logs how it ended and how long it took;
+  each fresh analysis logs one line — turns, tool calls, latency, tokens,
+  estimated cost, moments kept and dropped — and each failure its code and
+  reason. `/health` reports the model, today's model requests and today's
+  estimated spend.
 
 ## Files
 

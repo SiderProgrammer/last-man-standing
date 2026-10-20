@@ -110,8 +110,12 @@ export class ProviderError extends Error {
     this.name = 'ProviderError';
   }
 
-  /** Worth another attempt with the same request. */
+  /**
+   * Worth another attempt with the same request. Not a timeout: the provider
+   * got the request and is still working on it, so it counts against the
+   * quota, and a retry would pay for it twice without the limiter knowing.
+   */
   get retryable(): boolean {
-    return this.kind === 'busy' || this.kind === 'timeout' || this.kind === 'unreachable';
+    return this.kind === 'busy' || this.kind === 'unreachable';
   }
 }

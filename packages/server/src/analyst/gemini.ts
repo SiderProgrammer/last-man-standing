@@ -13,9 +13,9 @@ export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta
 
 export interface GeminiModelOptions {
   apiKey: string;
-  /** Per attempt, in milliseconds. A timed-out attempt is retried like a 5xx. */
+  /** Per attempt, in milliseconds. A timed-out attempt is not retried: Gemini already counted it. */
   timeoutMs: number;
-  /** Retries on 5xx, timeouts and dropped connections. A 429 is never retried: it is the quota talking. */
+  /** Retries on 5xx and dropped connections. Never a 429 (the quota talking) or a timeout. */
   maxRetries: number;
   baseUrl?: string;
   /** Injected by tests; the global `fetch` otherwise. */

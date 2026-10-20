@@ -110,6 +110,36 @@ describe('analyst', () => {
     expect(user).toContain('(you)');
   });
 
+  it('puts the whole match in the first message, so one call can answer', async () => {
+    const { analyst, model } = await harness([answer(output())]);
+    await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    const user = String(model.requests[0]?.messages[0]?.content);
+    expect(user).toContain('Every round in full:');
+    expect(user.match(/ {2}moves: /g)).toHaveLength(match.history.length);
+    expect(user).toContain('What each seat did over the whole match:');
+    for (const seat of match.seats ?? []) expect(user).toContain(`Seat #${seat.index} over the whole match`);
+  });
+
+  it('answers in a single call, tools off, when held to one turn', async () => {
+    const archive = new MemoryArchive();
+    await archive.save(match);
+    const model = new FakeModel([answer(output())]);
+    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000, maxTurns: 1 });
+    const steps: string[] = [];
+    const { analysis } = await analyst.analyze({
+      matchId: match.result.matchId,
+      requester: human,
+      onStep: (step) => steps.push(step),
+    });
+    expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
+    expect(model.requests).toHaveLength(1);
+    expect(model.requests[0]?.tool_choice).toBe('none');
+    expect(steps).toEqual([
+      'Gemini is reading the whole match and writing the analysis',
+      'Checking the key moments against the rounds',
+    ]);
+  });
+
   it('drops a decisive round the match never reached', async () => {
     const { analyst } = await harness([answer(output({ decisiveRound: 99 }))]);
     const { analysis } = await analyst.analyze({ matchId: match.result.matchId, requester: human });
@@ -190,7 +220,7 @@ describe('analyst tool loop', () => {
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
     // Every turn and every lookup is announced, so a slow call never looks like a hang.
     expect(steps).toEqual([
-      'Reading the match overview',
+      'Gemini is reading the whole match and writing the analysis',
       'Reading round 1',
       'Studying seat #2',
       'Thinking over what it found',

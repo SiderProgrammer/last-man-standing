@@ -89,6 +89,24 @@ export class MatchTools {
     };
   }
 
+  /**
+   * Everything the tools can say about this match, as one block of text for
+   * the first message: every round in full, each seat's tendencies and its
+   * record in earlier matches. With it the model can answer in a single call,
+   * which matters when every call is slow or rationed.
+   */
+  async briefing(): Promise<string> {
+    const lines = ['Every round in full:'];
+    for (const record of this.match.history) lines.push(...renderRound(record));
+    lines.push('', 'What each seat did over the whole match:');
+    for (const player of this.table.players) lines.push(this.reads(player.index).content);
+    if (this.styles) {
+      lines.push('', 'Earlier matches:');
+      for (const player of this.table.players) lines.push((await this.career(player.index)).content);
+    }
+    return lines.join('\n');
+  }
+
   async run(name: string, input: unknown): Promise<ToolOutput> {
     if (!isToolName(name)) return failure(`there is no tool named ${name}`);
     const parsed = INPUTS[name].safeParse(input);
