@@ -697,6 +697,25 @@ button.lock-in {
   padding: 8px 10px;
 }
 
+.history-list li.won {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.history-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-list li.won .history-place {
+  color: var(--accent);
+}
+
+#history-more {
+  margin-top: 8px;
+}
+
 .tabs {
   display: flex;
   gap: 6px;

@@ -138,6 +138,7 @@ async function main(): Promise<void> {
 
   const gateway = new Gateway({
     lobby,
+    archive,
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
     directory: () => bridge?.directory() ?? { open: [], live: [] },

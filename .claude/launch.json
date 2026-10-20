@@ -71,7 +71,7 @@
       "port": 5183
     },
     {
-      "name": "worktree-server",
+      "name": "master-server",
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--input-type=module",
@@ -81,14 +81,14 @@
       "port": 8798
     },
     {
-      "name": "worktree-client",
+      "name": "master-client",
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--input-type=module",
         "-e",
-        "process.env.VITE_WS_URL='ws://localhost:8798'; process.env.VITE_DEV_KEY='0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'; const { createServer } = await import('vite'); const server = await createServer({ configFile: 'packages/client/vite.config.ts', root: 'packages/client', server: { port: 5193, strictPort: true } }); await server.listen(); server.printUrls();"
+        "process.env.VITE_WS_URL='ws://localhost:8798'; const { createServer } = await import('vite'); const server = await createServer({ configFile: 'packages/client/vite.config.ts', root: 'packages/client', server: { port: 5184, strictPort: true } }); await server.listen(); server.printUrls();"
       ],
-      "port": 5193
+      "port": 5184
     }
   ]
 }

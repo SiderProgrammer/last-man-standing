@@ -2,7 +2,7 @@ import type { MatchResult, PublicMatchState, ServerMessage } from '@lms/protocol
 import { app, dom } from '../context.js';
 import { matchesChain, verifyMatch, type Verification } from '../game/verify.js';
 import { showLobbyScreen } from '../ui/chrome.js';
-import { short } from '../ui/format.js';
+import { ordinal, short } from '../ui/format.js';
 import { renderWinnings } from '../wallet/payouts.js';
 
 /**
@@ -94,11 +94,6 @@ function renderHeadline(ranking: readonly number[], rounds: number): void {
   }
   dom.resultHeadline.className = `result-headline ${place === 0 ? 'won' : place > 0 ? 'lost' : ''}`;
   dom.resultHeadline.replaceChildren(title, detail);
-}
-
-function ordinal(value: number): string {
-  const suffix = value % 100 >= 11 && value % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][value % 10] ?? 'th');
-  return `${value}${suffix}`;
 }
 
 export function hideResult(): void {
