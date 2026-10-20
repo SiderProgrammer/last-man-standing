@@ -340,13 +340,16 @@ describe('provider rate limits', () => {
   it('waits for a slot between turns instead of tripping the provider', async () => {
     const quota = limits(1, 100);
     const waits: number[] = [];
+    const steps: string[] = [];
     const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }]), answer(output())], {
       limits: quota,
       sleep: async (ms) => void waits.push(ms),
     });
-    await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
+    await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice), onStep: (step) => steps.push(step) });
     expect(model.requests).toHaveLength(2);
     expect(waits).toEqual([60_000]);
+    // The wait is said out loud, with how long it will be.
+    expect(steps).toContain('Waiting for a free Gemini slot, about 60s (free-tier rate limit)');
   });
 
   it('refuses a new analysis once the daily requests are used up', async () => {

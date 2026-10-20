@@ -565,6 +565,40 @@ button.wide {
   margin-bottom: 4px;
 }
 
+/* What the analyst is doing, newest last; the current step pulses until the next arrives. */
+.steps {
+  display: grid;
+  gap: 3px;
+  list-style: none;
+  margin: 8px 0 10px;
+  padding: 0;
+}
+
+.steps li {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.steps li::before {
+  content: '✓ ';
+  color: var(--accent);
+}
+
+.steps li.current {
+  color: inherit;
+}
+
+.steps li.current::before {
+  content: '● ';
+  animation: step-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
 button.moment {
   display: grid;
   gap: 2px;

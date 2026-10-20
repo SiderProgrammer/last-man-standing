@@ -85,6 +85,7 @@ export function queryDom(doc: Document = document) {
     analysis: el<HTMLDivElement>('analysis'),
     analyse: el<HTMLButtonElement>('analyse'),
     analysisStatus: el<HTMLSpanElement>('analysis-status'),
+    analysisSteps: el<HTMLOListElement>('analysis-steps'),
     analysisSummary: el<HTMLDivElement>('analysis-summary'),
     analysisMomentsHead: el<HTMLHeadingElement>('analysis-moments-head'),
     analysisMoments: el<HTMLOListElement>('analysis-moments'),

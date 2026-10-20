@@ -24,6 +24,7 @@ import { onSettled, wireResultControls } from './screens/result.js';
 import {
   onAnalysisDone,
   onAnalysisError,
+  onAnalysisStep,
 } from './screens/analysis.js';
 import { toast } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
@@ -149,6 +150,10 @@ function onServerMessage(message: ServerMessage): void {
       void renderAvatarPanel();
       // A pushed payout is a relayed transaction too; re-read once it lands.
       void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
+      break;
+
+    case 'analysis.step':
+      onAnalysisStep(message);
       break;
 
     case 'analysis.done':

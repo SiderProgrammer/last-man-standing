@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Action, type MatchAnalysis } from '@lms/protocol';
 import { stateBeforeRound } from '../src/game/rewind.js';
-import { analysisNote, errorText, momentHeading, paragraphs } from '../src/ui/analysis.js';
+import { analysisNote, errorText, momentHeading, paragraphs, progressText } from '../src/ui/analysis.js';
 import { round, stateWith } from './helpers.js';
 
 describe('rewinding a finished match', () => {
@@ -63,6 +63,12 @@ describe('analysis presentation', () => {
     expect(paragraphs(analysis.summary)).toEqual(['First paragraph.', 'Second paragraph.', 'Third line.']);
     expect(paragraphs('Half a sente')).toEqual(['Half a sente']);
     expect(paragraphs('')).toEqual([]);
+  });
+
+  it('says how long the analysis has been running, and what to expect', () => {
+    expect(progressText(0)).toBe('Working… 0s · this usually takes under a minute.');
+    expect(progressText(59)).toMatch(/^Working… 59s/);
+    expect(progressText(75)).toBe('Still working… 1m 15s · rate limits can stretch this to a few minutes.');
   });
 
   it('names the model that wrote it', () => {

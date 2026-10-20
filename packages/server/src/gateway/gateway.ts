@@ -403,6 +403,7 @@ export class Gateway {
         matchId,
         requester: address,
         signal: controller.signal,
+        onStep: (step) => session.send({ type: 'analysis.step', matchId, step }),
       });
       session.send({ type: 'analysis.done', analysis, cached });
     } catch (error) {

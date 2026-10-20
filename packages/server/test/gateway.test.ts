@@ -356,17 +356,19 @@ describe('gateway analysis frames', () => {
     expect(socket.last('analysis.error')).toMatchObject({ matchId: MATCH, code: 'unavailable' });
   });
 
-  it('sends the finished analysis to the asker', async () => {
+  it('sends progress, then the finished analysis, to the asker', async () => {
     const analyst = new ManualAnalyst();
     const { socket } = harness({ analyst });
     await login(socket);
     await socket.deliver({ type: 'analyze', matchId: MATCH });
 
     expect(analyst.requests[0]).toMatchObject({ matchId: MATCH, requester: account.address });
+    analyst.requests[0]?.onStep?.('Reading round 4');
     await analyst.finish(MATCH);
 
     const frames = socket.sent.filter((m) => m.type.startsWith('analysis.'));
-    expect(frames.map((m) => m.type)).toEqual(['analysis.done']);
+    expect(frames.map((m) => m.type)).toEqual(['analysis.step', 'analysis.done']);
+    expect(socket.last('analysis.step')).toMatchObject({ matchId: MATCH, step: 'Reading round 4' });
     expect(socket.last('analysis.done')?.analysis.summary).toBe('all of it');
   });
 

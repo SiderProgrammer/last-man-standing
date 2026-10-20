@@ -81,6 +81,7 @@ export {
   Analyst,
   AnalystError,
   classify,
+  describeCall,
   type AnalysisUsage,
   type AnalystOptions,
   type AnalyzeRequest,

@@ -61,6 +61,11 @@ export interface AnalyzeRequest {
   matchId: `0x${string}`;
   /** The authenticated wallet asking. Decides whose seat the advice is for. */
   requester: `0x${string}`;
+  /**
+   * A short line on what the analyst is doing now, e.g. "Reading round 4", so
+   * the asker can see it is working through a call that takes up to a minute.
+   */
+  onStep?: (step: string) => void;
   /** Aborts the model call: the asker went away. */
   signal?: AbortSignal;
 }
@@ -163,6 +168,7 @@ export class Analyst implements MatchAnalyst {
     const key = `${match.result.matchId.toLowerCase()}:${seat ?? 'spectator'}`;
     const running = this.inflight.get(key);
     if (running) {
+      request.onStep?.('Another request is already writing this analysis');
       const { analysis } = await running;
       return { analysis, cached: true };
     }
@@ -254,9 +260,11 @@ export class Analyst implements MatchAnalyst {
         tools: new MatchTools(match, seat, this.options.styles),
         usage,
         signal,
+        step: (text) => request.onStep?.(text),
       }),
     );
 
+    request.onStep?.('Checking the key moments against the rounds');
     const output = parseAnalysisOutput(finalText(reply));
     const moments: KeyMoment[] = output.keyMoments.map((moment) => ({ ...moment }));
     const { kept, dropped } = verifyMoments(moments, match.history);
@@ -291,12 +299,14 @@ export class Analyst implements MatchAnalyst {
    */
   private async converse(
     messages: Message[],
-    turn: { tools: MatchTools; usage: AnalysisUsage; signal: AbortSignal },
+    turn: { tools: MatchTools; usage: AnalysisUsage; signal: AbortSignal; step: (text: string) => void },
   ): Promise<ModelReply> {
     const maxTurns = this.maxTurns();
     for (;;) {
       const final = turn.usage.turns + 1 >= maxTurns;
-      const reply = await this.call(this.request(messages, final), turn.signal);
+      const doing =
+        turn.usage.turns === 0 ? 'Reading the match overview' : final ? 'Writing the analysis' : 'Thinking over what it found';
+      const reply = await this.call(this.request(messages, final), turn.signal, doing, turn.step);
       addUsage(turn.usage, reply);
       if (reply.stop_reason !== 'tool_use') return reply;
 
@@ -308,6 +318,7 @@ export class Analyst implements MatchAnalyst {
       // Every result goes back in one message, in call order.
       const results = await Promise.all(
         calls.map(async (call): Promise<ToolResultBlock> => {
+          turn.step(describeCall(call));
           const output = await turn.tools.run(call.name, call.input);
           return {
             type: 'tool_result',
@@ -344,12 +355,23 @@ export class Analyst implements MatchAnalyst {
   /**
    * One model turn, once the provider's rate limits allow it. A finished
    * answer or a request for tools continues; anything else ends the analysis.
+   *
+   * @param doing What to tell the asker the model is doing on this turn.
    */
-  private async call(request: ModelRequest, signal: AbortSignal): Promise<ModelReply> {
+  private async call(
+    request: ModelRequest,
+    signal: AbortSignal,
+    doing: string,
+    step: (text: string) => void,
+  ): Promise<ModelReply> {
     const slot = this.options.limits?.reserve(this.now());
     if (slot && 'code' in slot) throw new AnalystError(slot.code, slot.message);
-    if (slot && slot.waitMs > 0) await (this.options.sleep ?? sleep)(slot.waitMs, signal);
+    if (slot && slot.waitMs > 0) {
+      step(`Waiting for a free Gemini slot, about ${Math.ceil(slot.waitMs / 1000)}s (free-tier rate limit)`);
+      await (this.options.sleep ?? sleep)(slot.waitMs, signal);
+    }
 
+    step(doing);
     const reply = await this.options.model.generate(request, signal);
     switch (reply.stop_reason) {
       case 'end_turn':
@@ -419,6 +441,24 @@ function analysisVersion(options: AnalystOptions): string {
     schema: outputSchema(),
   });
   return createHash('sha256').update(inputs).digest('hex').slice(0, 16);
+}
+
+/** A tool call as a progress line for the asker. The input is model output, so only numbers are echoed. */
+export function describeCall(call: Pick<ToolUseBlock, 'name' | 'input'>): string {
+  const input = (call.input ?? {}) as Record<string, unknown>;
+  const number = (key: string) => (typeof input[key] === 'number' ? String(input[key]) : '?');
+  switch (call.name) {
+    case 'get_round':
+      return `Reading round ${number('round')}`;
+    case 'get_reads':
+      return `Studying seat #${number('seat')}`;
+    case 'get_player_history':
+      return `Checking seat #${number('seat')}'s record`;
+    case 'get_match':
+      return 'Reviewing the match';
+    default:
+      return 'Looking something up';
+  }
 }
 
 /** Waits `ms`, or rejects as soon as `signal` aborts. */

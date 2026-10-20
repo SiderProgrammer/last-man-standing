@@ -180,9 +180,22 @@ describe('analyst tool loop', () => {
       ]),
       answer(output()),
     ]);
-    const { analysis, usage } = await analyst.analyze({ matchId: match.result.matchId, requester: human });
+    const steps: string[] = [];
+    const { analysis, usage } = await analyst.analyze({
+      matchId: match.result.matchId,
+      requester: human,
+      onStep: (step) => steps.push(step),
+    });
 
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
+    // Every turn and every lookup is announced, so a slow call never looks like a hang.
+    expect(steps).toEqual([
+      'Reading the match overview',
+      'Reading round 1',
+      'Studying seat #2',
+      'Thinking over what it found',
+      'Checking the key moments against the rounds',
+    ]);
     expect(usage).toMatchObject({ turns: 2, toolCalls: 2 });
 
     const second = model.requests[1];

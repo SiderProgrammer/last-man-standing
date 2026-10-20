@@ -45,6 +45,15 @@ export function analysisNote(analysis: MatchAnalysis, cached: boolean): string {
   return parts.join(' ');
 }
 
+/**
+ * The line under the steps while an analysis is being written: how long it
+ * has been, and what to expect, so a long wait does not look like a hang.
+ */
+export function progressText(seconds: number): string {
+  if (seconds < 60) return `Working… ${seconds}s · this usually takes under a minute.`;
+  return `Still working… ${Math.floor(seconds / 60)}m ${seconds % 60}s · rate limits can stretch this to a few minutes.`;
+}
+
 /** What to tell the player, and whether trying again could help. */
 export function errorText(code: AnalysisErrorCode, message: string): { text: string; retry: boolean } {
   switch (code) {

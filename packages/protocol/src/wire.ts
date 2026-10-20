@@ -148,6 +148,8 @@ export type ServerMessage =
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a relayed session call. */
   | { type: 'relayed'; hash: `0x${string}` }
+  /** What the analyst is doing now, e.g. "Reading round 4". Progress only; `analysis.done` carries the answer. */
+  | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
