@@ -17,6 +17,7 @@
         <span>Last&nbsp;Man&nbsp;Standing</span>
       </h1>
       <div class="topbar-right">
+        <button id="nav-rules" class="ghost">How to play</button>
         <button id="nav-governance" class="ghost hidden">Governance</button>
         <span id="chain-label" class="pill">offline</span>
         <button id="connect" class="primary">Connect wallet</button>
@@ -249,16 +250,18 @@
               Reveal for me if I disconnect
             </label>
             <p id="move-status" class="muted small">Pick an action before the timer runs out.</p>
+            <button id="move-rules" class="link small">How does a round play out?</button>
           </div>
 
           <div id="result-panel" class="panel hidden">
             <div class="panel-head">
               <h2>Result</h2>
-              <span id="result-verify" class="pill">checking…</span>
+              <button id="result-verify" type="button" class="pill verify-pill" title="Once the match ends, this browser replays it to check the result. Click to learn more.">checking…</button>
             </div>
             <div id="result-headline" class="result-headline"></div>
             <ol id="result-ranking" class="result-ranking"></ol>
             <p id="result-detail" class="muted small"></p>
+            <button id="result-verify-why" class="link small">What does “verified” mean?</button>
             <p id="result-settle" class="muted small"></p>
             <div class="row">
               <button id="result-collect" class="primary hidden">Collect winnings</button>
@@ -292,6 +295,71 @@
         </aside>
       </section>
     </main>
+
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-rules-title">
+      <div class="help-head">
+        <h2>Help</h2>
+        <button id="help-close" class="ghost" aria-label="Close">Close</button>
+      </div>
+      <div class="help-scroll">
+        <section id="help-rules" class="help-section">
+          <h3 id="help-rules-title">How to play</h3>
+          <div id="help-rules-body" class="rules-grid"></div>
+        </section>
+
+        <section id="help-verify" class="help-section">
+          <h3>“Verified in your browser”</h3>
+          <p>
+            When a match ends, this page plays the whole match again by itself. It runs the
+            same game code the server runs, using only what was published to every player:
+            the match seed, the rules, the seats, and every move revealed round by round.
+          </p>
+          <p>
+            Every round is hashed into a chain, and the end of that chain is the
+            <strong>history root</strong>: one fingerprint of the entire match. The result is
+            <span class="pill ok">verified in your browser</span> when the replay arrives at the
+            same root and the same ranking the server announced. The server could not have
+            invented an outcome, altered a move, or bent a dice roll without that check failing.
+          </p>
+          <h4>Why moves and rolls can't be bent</h4>
+          <ul>
+            <li>
+              <strong>Commit, then reveal.</strong> Locking in sends only a hash of your move and
+              a secret salt. Moves open once everyone has locked in, and a reveal that does not
+              match its hash is rejected.
+            </li>
+            <li>
+              <strong>Dice nobody can see coming.</strong> Every roll (who gets parried, whether a
+              hider dodges) comes from the seed mixed with every player's revealed salt. No one,
+              the server included, can know the rolls before every move is locked.
+            </li>
+          </ul>
+          <h4>Staked matches go one step further</h4>
+          <p>
+            The escrow stores the history root that payouts follow. Once settlement lands, this
+            page reads that root from the chain and compares it with its own. A match then shows
+            <span class="pill ok">verified against chain</span>. If the chain disagrees, the
+            guardian can veto the result during the challenge window, which refunds every stake.
+          </p>
+          <h4>What it does not prove</h4>
+          <ul>
+            <li>
+              That the seed was fair. In staked lobbies it comes from an on-chain randomness
+              oracle, fixed before the first move. In practice matches the server picks it.
+            </li>
+            <li>
+              That the moves were secret from the server if you ticked “Reveal for me if I
+              disconnect”. The server then learns your move when you lock it in.
+            </li>
+            <li>That the other seats are not playing together.</li>
+          </ul>
+          <p class="muted small">
+            <span class="pill bad">does not verify</span> means this page could not reproduce the
+            announced result. Treat it as untrustworthy.
+          </p>
+        </section>
+      </div>
+    </dialog>
 
     <div id="toast" class="toast hidden"></div>
 

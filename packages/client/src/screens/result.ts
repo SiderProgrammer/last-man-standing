@@ -63,9 +63,7 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
     await wallet.waitFor(message.tx);
     const root = await wallet.settledRoot(escrow, message.matchId);
     const onChain = matchesChain(verification, root);
-    dom.resultVerify.textContent = onChain ? 'verified against chain' : 'chain disagrees';
-    dom.resultVerify.classList.toggle('ok', onChain);
-    dom.resultVerify.classList.toggle('bad', !onChain);
+    setVerifyPill(onChain ? 'chain-ok' : 'chain-bad');
     if (!onChain) {
       dom.resultDetail.textContent =
         `The escrow stored ${short(root)}, not the root this browser replayed. ` +
@@ -122,10 +120,42 @@ function verify(state: PublicMatchState, result: MatchResult): Verification {
 function renderVerification(): void {
   const result = verification;
   if (!result) return;
-  dom.resultVerify.textContent = result.ok ? 'verified in your browser' : 'does not verify';
-  dom.resultVerify.classList.toggle('ok', result.ok);
-  dom.resultVerify.classList.toggle('bad', !result.ok);
+  setVerifyPill(result.ok ? 'ok' : 'bad');
   dom.resultDetail.textContent = result.ok
     ? `Replayed every round from the seed and the revealed moves · root ${short(result.root)}`
     : `This browser could not reproduce the result: ${result.reason ?? 'unknown'}.`;
+}
+
+type VerifyState = 'ok' | 'bad' | 'chain-ok' | 'chain-bad';
+
+/** Pill label, and the one-line hover summary of what it means. Clicking it opens the full explanation. */
+const VERIFY_PILL: Record<VerifyState, { label: string; ok: boolean; hint: string }> = {
+  ok: {
+    label: 'verified in your browser',
+    ok: true,
+    hint: 'This browser replayed every round from the seed and the revealed moves, and got the exact result the server announced.',
+  },
+  bad: {
+    label: 'does not verify',
+    ok: false,
+    hint: 'This browser replayed the match and could not reproduce the result the server announced.',
+  },
+  'chain-ok': {
+    label: 'verified against chain',
+    ok: true,
+    hint: 'The history root the escrow stored on-chain matches the one this browser replayed. Payouts follow that root.',
+  },
+  'chain-bad': {
+    label: 'chain disagrees',
+    ok: false,
+    hint: 'The escrow stored a different history root from the one this browser replayed.',
+  },
+};
+
+function setVerifyPill(state: VerifyState): void {
+  const pill = VERIFY_PILL[state];
+  dom.resultVerify.textContent = pill.label;
+  dom.resultVerify.title = `${pill.hint} Click to learn more.`;
+  dom.resultVerify.classList.toggle('ok', pill.ok);
+  dom.resultVerify.classList.toggle('bad', !pill.ok);
 }

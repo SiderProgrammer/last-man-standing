@@ -1057,6 +1057,165 @@ button.moment.decisive {
   font-variant-numeric: tabular-nums;
 }
 
+/* The result's verification pill opens the explanation of what it means. */
+button.verify-pill:hover:not(:disabled) {
+  filter: brightness(1.2);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* A button that reads as an inline link, for "learn more" asides. */
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  text-align: left;
+}
+
+button.link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.help-dialog {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9);
+  color: var(--text);
+  max-height: min(86vh, 900px);
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 0;
+  width: 100%;
+}
+
+.help-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.help-dialog::backdrop {
+  backdrop-filter: blur(3px);
+  background: rgba(5, 7, 11, 0.7);
+}
+
+.help-head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 18px;
+}
+
+.help-head h2 {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.help-scroll {
+  overflow-y: auto;
+  padding: 4px 18px 18px;
+}
+
+.help-section {
+  scroll-margin-top: 8px;
+}
+
+.help-section + .help-section {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+}
+
+.help-section h3 {
+  font-size: 18px;
+  margin: 16px 0 10px;
+}
+
+.help-section h4 {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin: 16px 0 6px;
+  text-transform: uppercase;
+}
+
+.help-section p,
+.help-section li {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.help-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.help-section li + li {
+  margin-top: 6px;
+}
+
+.help-section .pill {
+  white-space: nowrap;
+}
+
+.rules-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.rule {
+  --tone: var(--line);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--tone);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.rule.attack {
+  --tone: var(--attack);
+}
+
+.rule.defend {
+  --tone: var(--defend);
+}
+
+.rule.hide {
+  --tone: var(--hide);
+}
+
+.rule.storm {
+  --tone: var(--storm);
+}
+
+.rule h4 {
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}
+
+.rule.attack h4,
+.rule.defend h4,
+.rule.hide h4,
+.rule.storm h4 {
+  color: var(--tone);
+}
+
+.rule p {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
 /* Motion that only decorates goes quiet for anyone who asked for less. */
 @media (prefers-reduced-motion: reduce) {
   .brand-mark,

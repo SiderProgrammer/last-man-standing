@@ -21,6 +21,7 @@ import {
   wireMatchControls,
 } from './screens/match.js';
 import { onSettled, wireResultControls } from './screens/result.js';
+import { wireHelpControls } from './screens/help.js';
 import { onHistory, onReview, requestHistory, wireHistoryControls } from './screens/history.js';
 import {
   onAnalysisDone,
@@ -70,6 +71,7 @@ export function start(): void {
   wireMatchControls();
   wirePayoutControls();
   wireResultControls();
+  wireHelpControls();
   wireHistoryControls();
   wireStakingControls();
   wireGovernanceControls(httpOrigin(SERVER_URL));
