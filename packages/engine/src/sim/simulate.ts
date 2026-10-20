@@ -1,7 +1,7 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
-import { Action, commitMove, type Move, type Rules, type Seat } from '@lms/protocol';
+import { Action, BOT_DIFFICULTIES, commitMove, type BotDifficulty, type Move, type Rules, type Seat } from '@lms/protocol';
 import { Match } from '../match/match.js';
-import { always, Prng, randomStrategy, readerStrategy, type Strategy } from '../bots/strategy.js';
+import { always, Prng, randomStrategy, readerStrategy, smartStrategy, type Strategy } from '../bots/strategy.js';
 
 /**
  * Balance simulator: plays many bot matches under a rule set and reports how
@@ -12,9 +12,16 @@ import { always, Prng, randomStrategy, readerStrategy, type Strategy } from '../
  * always defend, always hide, always attack — wins more than its share.
  */
 
-export type StrategyName = 'turtle' | 'hider' | 'aggressor' | 'random' | 'reader';
+export type StrategyName = 'turtle' | 'hider' | 'aggressor' | 'random' | 'reader' | BotDifficulty;
 
-export const STRATEGY_NAMES: readonly StrategyName[] = ['turtle', 'hider', 'aggressor', 'random', 'reader'];
+export const STRATEGY_NAMES: readonly StrategyName[] = [
+  'turtle',
+  'hider',
+  'aggressor',
+  'random',
+  'reader',
+  ...BOT_DIFFICULTIES,
+];
 
 /** Attacks a random living opponent every round. */
 export function aggressorStrategy(prng: Prng): Strategy {
@@ -37,6 +44,10 @@ function makeStrategy(name: StrategyName, prng: Prng): Strategy {
       return randomStrategy(prng);
     case 'reader':
       return readerStrategy(prng);
+    case 'easy':
+    case 'normal':
+    case 'hard':
+      return smartStrategy(prng, name);
   }
 }
 

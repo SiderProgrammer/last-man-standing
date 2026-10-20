@@ -143,6 +143,16 @@ describe('frame validation', () => {
       matchId: BYTES32,
     });
     expect(parseClientMessage(JSON.stringify({ type: 'practice' }))).toEqual({ type: 'practice' });
+    expect(parseClientMessage(JSON.stringify({ type: 'practice', bots: 5, difficulty: 'hard' }))).toEqual({
+      type: 'practice',
+      bots: 5,
+      difficulty: 'hard',
+    });
+  });
+
+  it('rejects a bot difficulty it does not know', () => {
+    expect(parse({ type: 'practice', difficulty: 'nightmare' })).toThrow(/difficulty/);
+    expect(parse({ type: 'practice', difficulty: 2 })).toThrow(/difficulty/);
   });
 
   it('rejects an address that is not an address', () => {

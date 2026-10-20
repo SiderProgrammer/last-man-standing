@@ -1,7 +1,7 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
 import type { StakingInfo } from './chain/governance.js';
-import type { ActionValue, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
+import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord } from './game/types.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
@@ -25,7 +25,7 @@ export interface MoveAim {
 export type ClientMessage =
   | { type: 'auth'; address: `0x${string}`; signature: `0x${string}` }
   | { type: 'lobbies' }
-  | { type: 'practice'; bots?: number }
+  | { type: 'practice'; bots?: number; difficulty?: BotDifficulty }
   | { type: 'watch'; matchId: `0x${string}` }
   | ({
       type: 'commit';

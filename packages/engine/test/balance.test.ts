@@ -21,3 +21,21 @@ describe('default rules balance', () => {
     expect(report.hitMaxRounds).toBe(0);
   }, 60_000);
 });
+
+describe('house bot difficulty', () => {
+  it('plays better at each level, and hard beats every mindless strategy', () => {
+    const report = simulate({
+      rules: DEFAULT_RULES,
+      matches: 300,
+      lobbySizes: [4, 5, 6, 7, 8],
+      seed: 'difficulty-test',
+      strategies: ['turtle', 'hider', 'aggressor', 'random', 'easy', 'normal', 'hard'],
+    });
+    const ratio = (name: keyof typeof report.byStrategy) => report.byStrategy[name].winRatio;
+    expect(ratio('easy')).toBeLessThan(ratio('normal'));
+    expect(ratio('normal')).toBeLessThan(ratio('hard'));
+    for (const name of ['turtle', 'hider', 'aggressor', 'random'] as const) {
+      expect(ratio('hard')).toBeGreaterThan(ratio(name));
+    }
+  }, 60_000);
+});

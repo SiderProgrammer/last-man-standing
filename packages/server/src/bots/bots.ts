@@ -1,6 +1,6 @@
 import { keccak256, toHex } from 'viem';
-import { commitMove, type SealedMove } from '@lms/protocol';
-import { Prng, readerStrategy, type Match } from '@lms/engine';
+import { commitMove, type BotDifficulty, type SealedMove } from '@lms/protocol';
+import { Prng, smartStrategy, type Match } from '@lms/engine';
 
 /**
  * Plays the seats the server fills with house bots.
@@ -17,7 +17,10 @@ export class BotDriver {
   private readonly seats: ReadonlySet<number>;
   private readonly pending = new Map<number, SealedMove>();
 
-  constructor(seats: readonly number[]) {
+  constructor(
+    seats: readonly number[],
+    private readonly difficulty: BotDifficulty = 'normal',
+  ) {
     this.seats = new Set(seats);
   }
 
@@ -28,7 +31,7 @@ export class BotDriver {
   /** Commits every living bot's move for the current round. */
   commit(match: Match): void {
     const prng = new Prng(keccak256(toHex(`${match.seed}:${match.round}`)));
-    const strategy = readerStrategy(prng);
+    const strategy = smartStrategy(prng, this.difficulty);
 
     for (const seat of this.seats) {
       if (!match.playerState(seat).alive) continue;

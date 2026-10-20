@@ -72,8 +72,9 @@ round the history feed shows exactly what happened:
 
 After five rounds you are no longer playing the dice, you are playing the table.
 *"#7 always attacks the leader"* is actionable: bait the attack with a Defend and take
-20 HP off them for free. The server's bots (`readerStrategy`) play the same way — they
-punish repeat attackers and pile onto the seat everyone else is hunting.
+20 HP off them for free. The server's bots (`smartStrategy`) play the same way — they
+read each opponent's revealed moves, price every move against the rules, and pounce
+when a hit would finish someone. Practice lets the player pick easy, normal or hard.
 
 Hidden information is enforced cryptographically, not by trusting the operator. During
 the commit window a player publishes only
@@ -151,10 +152,10 @@ instead of drifting silently.
   the per-round fold and the ranking rule are therefore written out twice **on purpose**:
   sharing them would make `verifyResult` a tautology, because a wrong ranking rule would
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
-  `properties.test.ts` replays 40 matches across both bot strategies to hold the two
+  `properties.test.ts` replays 45 matches across three bot strategies to hold the two
   derivations to the same answer.
-- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG plus `randomStrategy` and
-  `readerStrategy`.
+- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG, `randomStrategy`,
+  `readerStrategy`, and the house bot `smartStrategy` with its three difficulties.
 
 ### `packages/server` — authoritative, but not trusted
 

@@ -7,6 +7,7 @@ import {
   always,
   randomStrategy,
   readerStrategy,
+  smartStrategy,
   type Strategy,
   type StrategyName,
 } from '@lms/engine';
@@ -81,5 +82,9 @@ function strategyFor(name: StrategyName, prng: Prng): Strategy {
       return randomStrategy(prng);
     case 'reader':
       return readerStrategy(prng);
+    case 'easy':
+    case 'normal':
+    case 'hard':
+      return smartStrategy(prng, name);
   }
 }

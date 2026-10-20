@@ -4,6 +4,7 @@ import {
   errorFirstLine,
   gameEscrowAbi,
   sameAddress,
+  type BotDifficulty,
   type LobbyInfo,
   type ZapToken,
 } from '@lms/protocol';
@@ -28,7 +29,11 @@ let shown: { open: LobbyInfo[]; live: LobbyInfo[] } = { open: [], live: [] };
 
 export function wireLobbyControls(): void {
   dom.practice.onclick = () => {
-    net.send({ type: 'practice', bots: Number(dom.botCount.value) });
+    net.send({
+      type: 'practice',
+      bots: Number(dom.botCount.value),
+      difficulty: dom.botDifficulty.value as BotDifficulty,
+    });
   };
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });

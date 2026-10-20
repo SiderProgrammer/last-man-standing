@@ -7,6 +7,7 @@ import {
   deriveMatchId,
   errorMessage,
   tallyStyles,
+  type BotDifficulty,
   type MatchResult,
   type RoundRecord,
   type Rules,
@@ -109,7 +110,12 @@ export class Lobby {
    * flood of fresh wallets cannot grow the room table without bound — each room
    * holds a match, a bot driver and a timer.
    */
-  createPractice(human: `0x${string}`, opponents: number, now: number = Date.now()): Room {
+  createPractice(
+    human: `0x${string}`,
+    opponents: number,
+    now: number = Date.now(),
+    difficulty: BotDifficulty = 'normal',
+  ): Room {
     const owner = human.toLowerCase();
     const previous = this.practiceOf.get(owner);
     if (previous) {
@@ -142,6 +148,7 @@ export class Lobby {
       Array.from({ length: seatCount - 1 }, (_, i) => i + 1),
       now,
       false,
+      difficulty,
     );
     this.practiceOf.set(owner, room.matchId.toLowerCase());
     return room;
@@ -187,8 +194,14 @@ export class Lobby {
    * @param staked Whether the room holds escrowed stakes. Only those settle,
    *        and only those feed the style book.
    */
-  private open(setup: MatchSetup, botSeats: readonly number[], now: number, staked: boolean): Room {
-    const room = new Room(setup, this.roomOptions(setup, botSeats, staked), now);
+  private open(
+    setup: MatchSetup,
+    botSeats: readonly number[],
+    now: number,
+    staked: boolean,
+    botDifficulty: BotDifficulty = 'normal',
+  ): Room {
+    const room = new Room(setup, this.roomOptions(setup, botSeats, staked, botDifficulty), now);
     this.rooms.set(room.matchId.toLowerCase(), room);
     void this.decorate(room, setup);
     if (staked) void this.brief(room, setup);
@@ -215,12 +228,18 @@ export class Lobby {
     }
   }
 
-  private roomOptions(setup: MatchSetup, botSeats: readonly number[], staked: boolean): RoomOptions {
+  private roomOptions(
+    setup: MatchSetup,
+    botSeats: readonly number[],
+    staked: boolean,
+    botDifficulty: BotDifficulty,
+  ): RoomOptions {
     return {
       commitMs: this.options.commitMs,
       revealMs: this.options.revealMs,
       replayMs: this.options.replayMs ?? 0,
       botSeats,
+      botDifficulty,
       onFinished: (result, history) => {
         void this.finalise(setup, result, history, staked);
       },

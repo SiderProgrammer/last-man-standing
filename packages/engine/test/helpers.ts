@@ -12,7 +12,7 @@ import {
 import { Match, type MatchSetup, type Strategy } from '@lms/engine';
 import type { DeclaredMove } from '@lms/engine';
 
-export { Prng, always, randomStrategy, readerStrategy, type Strategy } from '@lms/engine';
+export { Prng, always, randomStrategy, readerStrategy, smartStrategy, type Strategy } from '@lms/engine';
 
 /** Deterministic stand-in wallet addresses, one per seat. */
 export function seatsFor(count: number, chainIds: number[] = [11155111]): Seat[] {

@@ -3,6 +3,7 @@ import {
   addressKey,
   commitMove,
   type AvatarEntry,
+  type BotDifficulty,
   type MatchResult,
   type PlayStyle,
   type MoveAim,
@@ -28,6 +29,8 @@ export interface RoomOptions {
   revealMs: number;
   /** Seats played by the server's bots. Empty for a fully human lobby. */
   botSeats: readonly number[];
+  /** How well those bots play. Defaults to normal. */
+  botDifficulty?: BotDifficulty;
   /**
    * Pause after a round resolves, before the next commit clock starts, so the
    * client can replay the round without eating into anyone's decision time.
@@ -71,7 +74,7 @@ export class Room {
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
     this.match = new Match(setup);
     this.options = options;
-    this.bots = new BotDriver(options.botSeats);
+    this.bots = new BotDriver(options.botSeats, options.botDifficulty);
 
     for (const seat of setup.seats) {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
