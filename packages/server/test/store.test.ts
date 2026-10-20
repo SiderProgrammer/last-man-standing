@@ -48,6 +48,22 @@ describe('memory archive', () => {
     expect(await archive.recent(10)).toHaveLength(1);
   });
 
+  it("finds a wallet's matches, newest first, before a cursor", async () => {
+    const archive = new MemoryArchive();
+    // Upper-cased: looked up case-insensitively, like every other address.
+    const you = '0x00000000000000000000000000000000000000A1' as const;
+    const other = '0x00000000000000000000000000000000000000b2' as const;
+    const theirs = entry(bytes32('b'));
+    await archive.save({ ...entry(bytes32('a')), finishedAt: 1 });
+    await archive.save({ ...theirs, result: { ...theirs.result, ranking: [other] }, finishedAt: 2 });
+    await archive.save({ ...entry(bytes32('c')), finishedAt: 3 });
+
+    expect((await archive.forPlayer(you, 10)).map((item) => item.finishedAt)).toEqual([3, 1]);
+    expect((await archive.forPlayer(you, 1)).map((item) => item.finishedAt)).toEqual([3]);
+    expect((await archive.forPlayer(you, 10, 3)).map((item) => item.finishedAt)).toEqual([1]);
+    expect(await archive.forPlayer(other, 10, 2)).toEqual([]);
+  });
+
   it('lists the most recent matches first, capped at the limit', async () => {
     const archive = new MemoryArchive();
     for (const label of ['a', 'b', 'c']) await archive.save(entry(bytes32(label)));
@@ -75,5 +91,8 @@ describe('archiving a finished match', () => {
     expect(saved?.rules).toEqual(setup.rules);
     // Adopted from the chain, so staked: public to spectators' analyses.
     expect(saved?.staked).toBe(true);
+    // Without the seed nothing could replay it later, so the history could not reopen it.
+    expect(saved?.seed).toBe(setup.seed);
+    expect(saved?.finishedAt).toEqual(expect.any(Number));
   });
 });

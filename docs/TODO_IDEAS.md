@@ -1,6 +1,6 @@
 dodac integracje AI (boty, self play balance, AI match analyst)
-improve bots, add different difficulty, add game rules info
-add all matches history, add explanation of 'verified in your browser'
+improve bots, add different difficulty
+add all matches history, add explanation of 'verified in your browser', add game rules info
 decide about LMS, LMS distribution and LMS staking for rewards & governance power
 what are bad design choices in this design? Fix them
 game balance

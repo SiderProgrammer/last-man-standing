@@ -302,7 +302,16 @@ export class Lobby {
     staked: boolean,
   ): Promise<void> {
     const settledTx = staked ? await this.settle(result) : await this.options.relayer.settle(result).catch(() => null);
-    await this.options.archive.save({ result, history, settledTx, seats: setup.seats, rules: setup.rules, staked });
+    await this.options.archive.save({
+      result,
+      history,
+      settledTx,
+      seats: setup.seats,
+      rules: setup.rules,
+      staked,
+      seed: setup.seed,
+      finishedAt: Date.now(),
+    });
     if (staked && this.options.styles) {
       const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];
       try {

@@ -21,6 +21,8 @@ import {
   wireMatchControls,
 } from './screens/match.js';
 import { onSettled, wireResultControls } from './screens/result.js';
+import { wireHelpControls } from './screens/help.js';
+import { onHistory, onReview, requestHistory, wireHistoryControls } from './screens/history.js';
 import {
   onAnalysisDone,
   onAnalysisError,
@@ -69,6 +71,8 @@ export function start(): void {
   wireMatchControls();
   wirePayoutControls();
   wireResultControls();
+  wireHelpControls();
+  wireHistoryControls();
   wireStakingControls();
   wireGovernanceControls(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
@@ -106,6 +110,7 @@ function onServerMessage(message: ServerMessage): void {
       dom.connect.disabled = true;
       net.flush();
       net.send({ type: 'lobbies' });
+      requestHistory();
       void renderWinnings();
       void renderStakingPanel();
       if (governanceVisible()) void renderGovernance();
@@ -142,6 +147,16 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'settled':
       void onSettled(message);
+      // Archived just before this was sent, so it belongs in the list now.
+      requestHistory();
+      break;
+
+    case 'history':
+      onHistory(message);
+      break;
+
+    case 'review':
+      onReview(message);
       break;
 
     case 'relayed':

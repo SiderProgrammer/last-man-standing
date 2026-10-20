@@ -3,9 +3,11 @@ import {
   MatchPhase,
   commitMove,
   type ActionValue,
+  type MatchResult,
   type PublicMatchState,
   type ServerMessage,
 } from '@lms/protocol';
+import { describeRound } from '@lms/engine';
 import { Arena } from '../arena/arena.js';
 import { app, dom, net } from '../context.js';
 import { phasePlan } from '../game/phase.js';
@@ -20,6 +22,7 @@ import { readsTable, targetOptions } from '../ui/views.js';
 import { hideResult, showResult } from './result.js';
 import { offerAnalysis, resetAnalysis, wireAnalysisControls } from './analysis.js';
 import { stateBeforeRound } from '../game/rewind.js';
+import type { Review } from '../game/review.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -108,6 +111,21 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   lockControls('Match finished.');
   if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
   offerAnalysis(message.result.matchId);
+}
+
+/**
+ * Opens a finished match from the history: the final table, every round in
+ * the feed, and the result panel with its browser check, as if it had just
+ * ended. Nothing is sent; the arena and analysis tab work as they do live.
+ */
+export function showReview(review: Review, result: MatchResult): void {
+  // Forgotten first, so reopening the match already on screen starts clean too.
+  app.match = null;
+  onState(review.state, review.you, 0);
+  for (const record of review.state.history) {
+    appendRound(describeRound(record), record.round, record.eliminated);
+  }
+  showFinished({ type: 'finished', result, ranking: review.ranking });
 }
 
 /**
