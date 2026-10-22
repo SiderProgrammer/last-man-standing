@@ -5,7 +5,7 @@
  *
  *   npm run sim                       2000 matches, lobbies of 4 to 8
  *   npm run sim -- 500                500 matches
- *   npm run sim -- 500 grace=0 riposte=25
+ *   npm run sim -- 500 strike=30 reflect=45
  *
  * Overrides are `key=value` pairs naming fields of `DEFAULT_RULES` by a short
  * alias (see `ALIASES`) or by their full name, so a candidate rule change can
@@ -15,15 +15,17 @@
 import { DEFAULT_RULES, assertValidRules } from '@lms/protocol';
 import { balanceFailures, simulate } from '@lms/engine';
 
-const TARGETS = { maxWinRatio: 1.5, maxMeanRounds: 15 };
+// Mindless play must lose: less than its share of wins, and money under the payout schedule.
+const TARGETS = { maxWinRatio: 1, maxMeanRounds: 16, maxMindlessProfit: 0 };
 
 const ALIASES = {
-  grace: 'stormGraceRounds',
-  storm: 'stormBaseDamage',
-  riposte: 'riposteDamage',
-  attack: 'attackDamage',
-  evade: 'hideEvadeBps',
-  hidestorm: 'hideStormBps',
+  strike: 'strikeDamage',
+  heal: 'strikeHealBps',
+  reflect: 'guardReflectDamage',
+  bonus: 'chargeBonusDamage',
+  exposure: 'chargeExposureBps',
+  grace: 'stallGraceRounds',
+  stall: 'stallDamage',
   hp: 'startingHp',
 };
 
@@ -44,12 +46,12 @@ const report = simulate({ rules, matches, lobbySizes: [4, 5, 6, 7, 8] });
 console.log(`${matches} matches in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 console.log(`rules: ${JSON.stringify(rules)}`);
 console.log('');
-console.log('strategy    seats   wins   win ratio   mean place');
+console.log('strategy    seats   wins   win ratio   mean place   profit/stake');
 for (const [name, stats] of Object.entries(report.byStrategy)) {
   console.log(
     `${name.padEnd(10)} ${String(stats.seats).padStart(6)} ${String(stats.wins).padStart(6)}   ${stats.winRatio
       .toFixed(2)
-      .padStart(9)}   ${stats.meanPlace.toFixed(2).padStart(10)}`,
+      .padStart(9)}   ${stats.meanPlace.toFixed(2).padStart(10)}   ${(stats.meanProfit >= 0 ? '+' : '') + stats.meanProfit.toFixed(2)}`,
   );
 }
 console.log('');

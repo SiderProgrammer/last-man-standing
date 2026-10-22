@@ -21,24 +21,25 @@ export const SYSTEM_PROMPT = `You are the post-match analyst for Last Man Standi
 
 How the game works:
 - 4 to 8 players start with ${DEFAULT_RULES.startingHp} HP. Every round each living player secretly commits to one action, then all actions are revealed and resolved together.
-- Attack #n: deals ${DEFAULT_RULES.attackDamage} damage to seat n unless it is parried or evaded.
-- Defend: parries one of the attackers that came at you (picked by the round's randomness); that attacker deals nothing and takes ${DEFAULT_RULES.riposteDamage} riposte damage. Any other attackers still connect, so focus fire beats a defender.
-- Hide: evades each attack with a ${DEFAULT_RULES.hideEvadeBps / 100}% chance, and takes ${DEFAULT_RULES.hideStormBps / 100}% of the storm.
-- A player who does not reveal in time is recorded as a timeout: every attack on them lands and they take the full storm.
-- The storm hits everyone at the end of each round from round ${DEFAULT_RULES.stormGraceRounds + 1}: ${DEFAULT_RULES.stormBaseDamage} damage times (round - ${DEFAULT_RULES.stormGraceRounds}). It is the clock that forces the match to end.
+- Strike #n: deals ${DEFAULT_RULES.strikeDamage} damage to seat n unless n blocks it with a Guard. A strike that lands heals the striker ${DEFAULT_RULES.strikeHealBps / 100}% of the damage it dealt, never above ${DEFAULT_RULES.startingHp} HP.
+- Guard: blocks one of the strikes that came at you (picked by the round's randomness) and reflects ${DEFAULT_RULES.guardReflectDamage} damage onto that striker. Any other strikes still connect, so focus fire beats a guard. Guard cannot be played two rounds in a row.
+- Charge: loads your next Strike with ${DEFAULT_RULES.chargeBonusDamage} bonus damage. While charging you take ${DEFAULT_RULES.chargeExposureBps / 100}% more damage from strikes. Charge cannot be played two rounds in a row or while one is already loaded, and everyone can see who is charged.
+- The cycle: Strike beats Charge, Guard beats Strike, Charge beats Guard. The cooldowns are public, so a seat that guarded last round is known not to be able to guard now.
+- A player who does not reveal in time, or reveals a move its cooldown forbids, is recorded as a timeout: every strike on them lands.
+- The stall penalty: once ${DEFAULT_RULES.stallGraceRounds} rounds in a row pass without anyone landing anything, everyone takes ${DEFAULT_RULES.stallDamage} damage, and ${DEFAULT_RULES.stallDamage} more for every further quiet round. It only exists to end a table that stops fighting.
 - Players at 0 HP or below are eliminated. If a round would eliminate everyone, the one with the least overkill survives on 1 HP. The last player standing wins; the rest rank by how long they lasted.
-- Every move is published after each round, so the real skill is reading the table: who always attacks, who turtles, who is hunting whom.
+- Every move is published after each round, so the real skill is reading the table: who always strikes, who guards whenever it can, who is charged and who it is hunting.
 These are the default rules; the match data states the rules the match was actually played under, and those win if they differ.
 
 How to work:
-- The first message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, attacks and their outcomes, storm, eliminations, HP), each seat's tendencies over the match, and, when the server keeps them, each seat's record in earlier matches.
+- The first message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, strikes and their outcomes, stall penalty, eliminations, HP), each seat's tendencies over the match, and, when the server keeps them, each seat's record in earlier matches.
 - That is everything there is. Answer straight away from it. Tools, when they are offered, only repeat parts of it; do not call them unless a detail has dropped out of view.
 
 What to write:
 - summary: two or three short paragraphs telling the story of the match: how the field thinned out, who was hunted, and why the winner won.
 - decisiveRound: the round that settled the outcome, or null if none did.
 - keyMoments: three to six moments that shaped the match, in round order. Each names a round, a seat, a kind, and for some kinds a target seat, plus one sentence on why it mattered. The kinds are: ${KEY_MOMENT_KINDS.join(', ')}.
-  attack = seat declared an attack on target; hit = seat's attack on target connected; parry = seat defended and parried target's attack; evade = seat hid and evaded target's attack; defend = seat defended; hide = seat hid; timeout = seat failed to reveal; eliminated = seat was knocked out. Use target only for attack, hit, parry and evade, and null otherwise.
+  strike = seat declared a strike on target; hit = seat's strike on target connected; charged-hit = seat's strike on target connected with a Charge behind it; block = seat guarded and blocked target's strike; guard = seat guarded; charge = seat charged; timeout = seat failed to reveal; eliminated = seat was knocked out. Use target only for strike, hit, charged-hit and block, and null otherwise.
 - advice: two to four concrete tips for the player the analysis is written for, grounded in what the table did in this match. For a spectator, advise someone who wants to beat this table.
 
 Every key moment is checked against the published round records before anyone sees it, and moments that do not match the records are thrown away. Only state what the records show; if you are unsure whether something happened, leave it out.`;
@@ -82,7 +83,7 @@ export function renderOverview(match: SeatedMatch, you: number | null): string {
   ];
   for (const record of match.history) {
     const out = record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'nobody';
-    lines.push(`Round ${record.round}: storm ${record.stormDamage}; out: ${out}; hp after: ${renderHp(record)}`);
+    lines.push(`Round ${record.round}: stall ${record.stallDamage}; out: ${out}; hp after: ${renderHp(record)}`);
   }
   return lines.join('\n');
 }
@@ -90,12 +91,13 @@ export function renderOverview(match: SeatedMatch, you: number | null): string {
 export function renderRules(rules: Rules): string {
   return [
     `startingHp ${rules.startingHp}`,
-    `attackDamage ${rules.attackDamage}`,
-    `riposteDamage ${rules.riposteDamage}`,
-    `hideEvade ${rules.hideEvadeBps / 100}%`,
-    `hideStorm ${rules.hideStormBps / 100}%`,
-    `stormGraceRounds ${rules.stormGraceRounds}`,
-    `stormBaseDamage ${rules.stormBaseDamage}`,
+    `strikeDamage ${rules.strikeDamage}`,
+    `strikeHeal ${rules.strikeHealBps / 100}%`,
+    `guardReflectDamage ${rules.guardReflectDamage}`,
+    `chargeBonusDamage ${rules.chargeBonusDamage}`,
+    `chargeExposure ${rules.chargeExposureBps / 100}%`,
+    `stallGraceRounds ${rules.stallGraceRounds}`,
+    `stallDamage ${rules.stallDamage}`,
     `maxRounds ${rules.maxRounds}`,
   ].join(', ');
 }
@@ -103,20 +105,24 @@ export function renderRules(rules: Rules): string {
 export function renderRound(record: RoundRecord): string[] {
   const moves = record.moves.map((move) => {
     if (!move.revealed) return `#${move.index} timeout`;
-    if (move.action === Action.Attack) return `#${move.index} attack #${move.target}`;
-    if (move.action === Action.Defend) return `#${move.index} defend`;
-    if (move.action === Action.Hide) return `#${move.index} hide`;
+    if (move.action === Action.Strike) return `#${move.index} strike #${move.target}`;
+    if (move.action === Action.Guard) return `#${move.index} guard`;
+    if (move.action === Action.Charge) return `#${move.index} charge`;
     return `#${move.index} none`;
   });
-  const attacks = record.attacks.map((attack) => {
-    const extra = attack.riposte > 0 ? `, riposte ${attack.riposte}` : '';
-    return `#${attack.attacker}→#${attack.target} ${attack.outcome} (${attack.damage} dmg${extra})`;
+  const strikes = record.strikes.map((strike) => {
+    const extra = [
+      strike.charged ? 'charged' : '',
+      strike.heal > 0 ? `heal ${strike.heal}` : '',
+      strike.reflected > 0 ? `reflected ${strike.reflected}` : '',
+    ].filter(Boolean);
+    return `#${strike.striker}→#${strike.target} ${strike.outcome} (${[`${strike.damage} dmg`, ...extra].join(', ')})`;
   });
   return [
     `Round ${record.round}:`,
     `  moves: ${moves.join(' | ')}`,
-    `  attacks: ${attacks.length > 0 ? attacks.join(' | ') : 'none'}`,
-    `  storm: ${record.stormDamage}`,
+    `  strikes: ${strikes.length > 0 ? strikes.join(' | ') : 'none'}`,
+    `  stall: ${record.stallDamage}`,
     `  eliminated: ${record.eliminated.length > 0 ? record.eliminated.map((seat) => `#${seat}`).join(', ') : 'none'}`,
     `  hp after: ${renderHp(record)}`,
   ];

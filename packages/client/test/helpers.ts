@@ -1,5 +1,6 @@
 import { keccak256, toHex } from 'viem';
 import {
+  Action,
   DEFAULT_RULES,
   MatchPhase,
   type ActionValue,
@@ -21,7 +22,7 @@ export interface MoveSpec {
 
 /**
  * A round record carrying only what the reads panel looks at: the declared
- * moves and the HP the round left behind. Attacks and storm damage are not
+ * moves and the HP the round left behind. Strikes and the stall penalty are not
  * read by `readOpponents`, so they stay empty rather than pretending to be
  * consistent with the moves.
  */
@@ -35,8 +36,8 @@ export function round(number: number, moves: MoveSpec[], hpAfter: number[]): Rou
       revealed: move.revealed ?? true,
       salt: ZERO_SALT,
     })),
-    attacks: [],
-    stormDamage: 0,
+    strikes: [],
+    stallDamage: 0,
     eliminated: [],
     hpAfter,
     hash: bytes32(`round:${number}`),
@@ -60,6 +61,8 @@ export function stateWith(
       chainId: 11155111,
       hp: dead.includes(index) ? 0 : 100,
       alive: !dead.includes(index),
+      charged: false,
+      lastAction: Action.None,
     })),
     committed: [],
     revealed: [],

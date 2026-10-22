@@ -17,8 +17,8 @@ const COMMIT_ABI = parseAbiParameters(
  *
  * The match id, round, and seat are bound into the hash so a commitment cannot
  * be replayed in a later round or claimed by a different seat. The target is
- * forced to zero for non-attack actions, otherwise the number of hash
- * preimages would leak whether a player intended to attack.
+ * forced to zero for every action but Strike, otherwise the number of hash
+ * preimages would leak whether a player intended to strike.
  */
 export function commitMove(
   matchId: `0x${string}`,
@@ -26,7 +26,7 @@ export function commitMove(
   seat: number,
   move: SealedMove,
 ): `0x${string}` {
-  const target = move.action === Action.Attack ? move.target : 0;
+  const target = move.action === Action.Strike ? move.target : 0;
   return keccak256(
     encodeAbiParameters(COMMIT_ABI, [matchId, round, seat, move.action, target, move.salt]),
   );
@@ -72,7 +72,7 @@ export function hashRound(
   const targets: number[] = new Array<number>(seats).fill(0);
   for (const move of record.moves) {
     actions[move.index] = move.action;
-    targets[move.index] = move.action === Action.Attack ? move.target : 0;
+    targets[move.index] = move.action === Action.Strike ? move.target : 0;
   }
   const salts = saltsBySeat(seats, record.moves);
   const hpAfter = record.hpAfter.map((hp) => (hp > 0 ? hp : 0));
@@ -108,11 +108,12 @@ const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32[]
  * salt, in seat order.
  *
  * The match seed alone is public from the moment the match starts, so rolls
- * keyed on it could be computed before anyone committed — Hide's evade chance
- * would be a lookup table. Mixing in the salts makes each round's rolls depend
- * on every player's secret, so nobody can know them until all reveals are in.
- * A player who withholds a reveal to change the roll forfeits their own move
- * and takes every hit at no evade, which prices that grind honestly.
+ * keyed on it could be computed before anyone committed — which striker a
+ * Guard blocks, and how ties break, would be a lookup table. Mixing in the
+ * salts makes each round's rolls depend on every player's secret, so nobody can
+ * know them until all reveals are in. A player who withholds a reveal to change
+ * a roll forfeits their own move and takes every hit unguarded, which prices
+ * that grind honestly.
  */
 export function roundSeed(
   seed: `0x${string}`,
@@ -147,5 +148,5 @@ export function deriveMatchId(
 
 /** Narrowing guard for values arriving off the wire. */
 export function isActionValue(value: unknown): value is ActionValue {
-  return value === Action.None || value === Action.Attack || value === Action.Defend || value === Action.Hide;
+  return value === Action.None || value === Action.Strike || value === Action.Guard || value === Action.Charge;
 }

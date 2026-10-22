@@ -1,10 +1,10 @@
-import { BPS_DENOMINATOR, stormDamageForRound, type Rules } from '@lms/protocol';
+import { BPS_DENOMINATOR, exposedDamage, stallDamageFor, strikeDamageFor, strikeHeal, type Rules } from '@lms/protocol';
 
 /** One titled block of the rules sheet. */
 export interface RulesSection {
   title: string;
   /** Tone of the section's accent, matching the action buttons. */
-  tone?: 'attack' | 'defend' | 'hide' | 'storm';
+  tone?: 'strike' | 'guard' | 'charge' | 'stall';
   lines: string[];
 }
 
@@ -13,12 +13,11 @@ export interface RulesSection {
  * than hard-coded, so it cannot drift from the kernel when the rules change.
  */
 export function rulesSheet(rules: Rules): RulesSection[] {
-  const evade = percent(rules.hideEvadeBps);
-  const hiddenStorm = percent(rules.hideStormBps);
-  const firstStormRound = rules.stormGraceRounds + 1;
-  const stormExamples = [0, 1, 2, 4]
-    .map((offset) => firstStormRound + offset)
-    .map((round) => `round ${round}: ${stormDamageForRound(rules, round)}`)
+  const hit = strikeDamageFor(rules, false);
+  const loaded = strikeDamageFor(rules, true);
+  const stallExamples = [0, 1, 2]
+    .map((extra) => rules.stallGraceRounds + extra)
+    .map((quiet) => `${quiet} quiet rounds: ${stallDamageFor(rules, quiet)}`)
     .join(' · ');
 
   return [
@@ -27,51 +26,52 @@ export function rulesSheet(rules: Rules): RulesSection[] {
       lines: [
         `${rules.minPlayers}–${rules.maxPlayers} seats, ${rules.startingHp} HP each. Be the last one standing.`,
         'Every round, everyone picks one action in secret. Moves are revealed together and resolve at the same time, so nobody acts first.',
+        'Strike beats Charge, Guard beats Strike, Charge beats Guard.',
       ],
     },
     {
-      title: 'Attack',
-      tone: 'attack',
+      title: 'Strike',
+      tone: 'strike',
       lines: [
-        `Strike one other seat for ${rules.attackDamage} damage.`,
+        `Hit one other seat for ${hit} damage. A hit that lands heals you ${percent(rules.strikeHealBps)} of it (${strikeHeal(rules, hit)} HP), never above ${rules.startingHp}.`,
         'Your hit lands even if you are knocked out in the same round.',
       ],
     },
     {
-      title: 'Defend',
-      tone: 'defend',
+      title: 'Guard',
+      tone: 'guard',
       lines: [
-        `Parry one attacker: they take ${rules.riposteDamage} riposte damage and you take nothing from them.`,
-        'With several attackers, the one you parry is picked at random. The rest still hit you.',
+        `Block one strike aimed at you and send ${rules.guardReflectDamage} damage back to that striker.`,
+        'With several strikers, the one you block is picked at random. The rest still hit you.',
+        'You cannot Guard two rounds in a row.',
       ],
     },
     {
-      title: 'Hide',
-      tone: 'hide',
+      title: 'Charge',
+      tone: 'charge',
       lines: [
-        `Each attack on you has a ${evade} chance to miss.`,
-        `You take only ${hiddenStorm} of the storm damage.`,
+        `Load your next Strike: it hits for ${loaded} instead of ${hit}. Everyone can see you are charged.`,
+        `While you charge, strikes on you hit ${percent(rules.chargeExposureBps)} harder (${exposedDamage(rules, hit)} instead of ${hit}).`,
+        'You cannot Charge two rounds in a row, or while a Charge is already loaded.',
       ],
     },
     {
-      title: 'The storm',
-      tone: 'storm',
+      title: 'The stall penalty',
+      tone: 'stall',
       lines: [
-        `From round ${firstStormRound} the storm hits every living seat, harder each round: ${stormExamples}, …`,
-        'It keeps everyone from turtling forever.',
+        `Once ${rules.stallGraceRounds} rounds pass in a row without anyone landing anything, every living seat takes damage, more for every further quiet round: ${stallExamples}, …`,
+        'Any hit, a Guard’s reflection included, resets it. It only stops a table that stops fighting.',
       ],
     },
     {
       title: 'Missing the timer',
-      lines: [
-        'No move locked in means no action: every attack on you hits and you take the full storm.',
-      ],
+      lines: ['No move locked in, or a move your cooldown rules out, means no action: every strike on you hits.'],
     },
     {
       title: 'Elimination and ranking',
       lines: [
         'A seat at 0 HP or below is out at the end of the round.',
-        'If a round would knock out everyone left, the seat with the least overkill survives on 1 HP. There is always exactly one winner.',
+        'If a round would knock out everyone left, the seat with the least overkill survives on 1 HP. An exact tie goes to the round’s random draw. There is always exactly one winner.',
         `After ${rules.maxRounds} rounds the match ends anyway, and survivors rank by HP. Everyone else ranks by how long they lasted.`,
       ],
     },

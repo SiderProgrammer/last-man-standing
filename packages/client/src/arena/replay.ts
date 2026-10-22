@@ -17,7 +17,7 @@ export interface SeatDisplay {
   scale: number;
   /** Opacity of the whole seat: fades as it shatters. */
   fade: number;
-  /** Opacity multiplier from the effects layer: a hider's shimmer. */
+  /** Opacity multiplier from the effects layer: a charging seat's pulse. */
   veil: number;
   /** Displacement from the seat's home: a lunge, or a sidestep. */
   dx: number;
@@ -29,8 +29,8 @@ export interface Replay {
   /** Paused on creation. The arena plays it; tests seek it. */
   timeline: gsap.core.Timeline;
   seats: Map<number, SeatDisplay>;
-  /** 0 outside the storm, peaking at 1 halfway through it. */
-  storm: { flare: number };
+  /** 0 outside the stall penalty, peaking at 1 halfway through it. */
+  stall: { flare: number };
 }
 
 /**
@@ -57,11 +57,11 @@ export function buildReplay(round: number, choreo: Timeline): Replay {
   const seats = new Map<number, SeatDisplay>();
 
   for (const [index, track] of choreo.tracks) {
-    const attack = track.attackWindow;
+    const strike = track.strikeWindow;
     const settle = track.settleWindow;
     const seat: SeatDisplay = {
       // A seat nothing touches starts, and stays, on its final value.
-      hp: attack || settle ? track.before : track.after,
+      hp: strike || settle ? track.before : track.after,
       alive: track.aliveBefore,
       dying: false,
       scale: 1,
@@ -72,15 +72,15 @@ export function buildReplay(round: number, choreo: Timeline): Replay {
     };
     seats.set(index, seat);
 
-    if (attack) {
-      timeline.to(seat, { hp: track.afterAttacks, duration: span(attack), ease: DRAIN }, attack.start);
+    if (strike) {
+      timeline.to(seat, { hp: track.afterStrikes, duration: span(strike), ease: DRAIN }, strike.start);
     }
     if (settle) {
-      // The storm, and whatever else the engine did that the client cannot
-      // reconstruct — landing on the published value either way.
+      // The stall penalty, and whatever else the engine did that the client
+      // cannot reconstruct — landing on the published value either way.
       timeline.to(seat, { hp: track.after, duration: span(settle), ease: DRAIN }, settle.start);
-    } else if (attack) {
-      timeline.set(seat, { hp: track.after }, attack.end);
+    } else if (strike) {
+      timeline.set(seat, { hp: track.after }, strike.end);
     }
 
     const shatter = track.eliminateWindow;
@@ -106,14 +106,14 @@ export function buildReplay(round: number, choreo: Timeline): Replay {
     }
   }
 
-  const storm = { flare: 0 };
-  if (choreo.storm) {
-    // Up and back down over the storm: `sine.out` mirrored by the yoyo traces
-    // one arch of a sine wave.
+  const stall = { flare: 0 };
+  if (choreo.stall) {
+    // Up and back down over the penalty: `sine.out` mirrored by the yoyo
+    // traces one arch of a sine wave.
     timeline.to(
-      storm,
-      { flare: 1, duration: span(choreo.storm) / 2, ease: 'sine.out', yoyo: true, repeat: 1 },
-      choreo.storm.start,
+      stall,
+      { flare: 1, duration: span(choreo.stall) / 2, ease: 'sine.out', yoyo: true, repeat: 1 },
+      choreo.stall.start,
     );
   }
 
@@ -121,7 +121,7 @@ export function buildReplay(round: number, choreo: Timeline): Replay {
   // before the last beat nor reports a shorter duration than the schedule.
   timeline.set({}, {}, choreo.duration);
 
-  return { round, timeline, seats, storm };
+  return { round, timeline, seats, stall };
 }
 
 function span(window: { start: number; end: number }): number {

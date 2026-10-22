@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem';
 import {
   DEFAULT_RULES,
   MatchStatus,
+  hashRules,
   addressKey,
   errorMessage,
   normaliseOriginChainId,
@@ -186,8 +187,18 @@ export class ChainBridge {
         await this.maybeCancel(matchId, raw.settleDeadline);
         continue;
       }
+      // The escrow pins the rule set a match was created under, and the history
+      // root a result is signed over is seeded with it. A match created under
+      // other rules — before a rules change, or by a config this server does
+      // not run — cannot be played honestly here: players staked on rules this
+      // server would not apply. It is called off and refunded, never re-ruled.
+      const foreign = raw.rulesHash.toLowerCase() !== RULES_HASH;
+      if (raw.status === MatchStatus.Live && !entry.adopted && foreign) {
+        await this.abandon(entry, matchId, 'it was created under rules this server does not play');
+        continue;
+      }
       if (raw.status === MatchStatus.Live && !entry.adopted && !this.booted) {
-        await this.abandon(entry, matchId);
+        await this.abandon(entry, matchId, 'it was cancelled after a server restart');
         continue;
       }
 
@@ -209,7 +220,9 @@ export class ChainBridge {
         players: seats,
       };
 
-      if (raw.status === MatchStatus.Open) {
+      // Not locked: locking spends an oracle request on a match that would be
+      // abandoned the moment its seed arrived.
+      if (raw.status === MatchStatus.Open && !foreign) {
         await this.maybeLock(entry.info);
       } else if (raw.status === MatchStatus.Live && !entry.adopted) {
         entry.adopted = true;
@@ -227,10 +240,10 @@ export class ChainBridge {
    * to call it off and give every stake back. The quorum aborts it at once;
    * if that cannot be sent, `maybeCancel` refunds at the settlement deadline.
    */
-  private async abandon(entry: TrackedMatch, matchId: `0x${string}`): Promise<void> {
+  private async abandon(entry: TrackedMatch, matchId: `0x${string}`, reason: string): Promise<void> {
     entry.abandoned = true;
-    this.deps.lobby.markAbandoned(matchId);
-    console.warn(`[chain] ${matchId} was live before this restart; cancelling and refunding`);
+    this.deps.lobby.markAbandoned(matchId, reason);
+    console.warn(`[chain] ${matchId} will not be played (${reason}); cancelling and refunding`);
     try {
       const tx = await this.deps.abort?.(matchId);
       if (tx) console.log(`[chain] aborted ${matchId}: ${tx}`);
@@ -306,6 +319,9 @@ export class ChainBridge {
     console.log(`[chain] opened room for ${matchId} with ${seats.length} seats`);
   }
 }
+
+/** The rule set every room this server opens is played under, as the escrow records it. */
+const RULES_HASH = hashRules(DEFAULT_RULES).toLowerCase();
 
 function placeholder(matchId: `0x${string}`): LobbyInfo {
   return {

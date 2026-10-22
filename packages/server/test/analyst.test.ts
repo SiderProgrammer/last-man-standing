@@ -12,21 +12,21 @@ import {
 import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
 // Staked, so a wallet that did not play may still ask for the spectator's view.
-const match = { ...playReferenceMatch({ label: 'analyst', strategies: ['reader', 'aggressor', 'turtle', 'hider'] }), staked: true };
+const match = { ...playReferenceMatch({ label: 'analyst', strategies: ['reader', 'striker', 'guarder', 'charger'] }), staked: true };
 const human = (match.seats ?? [])[0]?.address as `0x${string}`;
 const stranger = `0x${'99'.repeat(20)}` as const;
 
-/** A claim the history supports: seat 2 is the turtle, so it defended in round 1. */
-const TRUE_MOMENT = { round: 1, seat: 2, kind: 'defend', target: null, claim: 'The turtle dug in.' } as const;
-/** One it does not: the turtle never attacks. */
-const FALSE_MOMENT = { round: 1, seat: 2, kind: 'attack', target: 0, claim: 'The turtle lashed out.' } as const;
+/** A claim the history supports: seat 2 is the guarder, so it guarded in round 1. */
+const TRUE_MOMENT = { round: 1, seat: 2, kind: 'guard', target: null, claim: 'The guarder dug in.' } as const;
+/** One it does not: the guarder never charges. */
+const FALSE_MOMENT = { round: 1, seat: 2, kind: 'charge', target: null, claim: 'The guarder loaded up.' } as const;
 
 function output(overrides: Record<string, unknown> = {}) {
   return {
-    summary: 'Seat #1 swung every round and paid for it.\nThe turtle outlasted everyone.',
+    summary: 'Seat #1 swung every round and paid for it.\nThe guarder outlasted everyone.',
     decisiveRound: 2,
     keyMoments: [TRUE_MOMENT, FALSE_MOMENT],
-    advice: ['Defend when #1 has you in its sights.'],
+    advice: ['Guard when #1 has you in its sights.'],
     ...overrides,
   };
 }
@@ -243,7 +243,7 @@ describe('analyst tool loop', () => {
 
   it('keeps tools and system byte-identical across turns and matches, so the prefix caches', async () => {
     const other = {
-      ...playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'hider', 'turtle'] }),
+      ...playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'charger', 'guarder'] }),
       staked: true,
     };
     const archive = new MemoryArchive();

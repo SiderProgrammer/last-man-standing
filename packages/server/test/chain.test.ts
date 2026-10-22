@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
-import { MatchStatus } from '@lms/protocol';
+import { DEFAULT_RULES, MatchStatus, hashRules } from '@lms/protocol';
 import {
   ChainBridge,
   Lobby,
@@ -26,6 +26,7 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     seatCount: 4,
     status: MatchStatus.Open,
     joinDeadline: 9_999_999_999n,
+    rulesHash: hashRules(DEFAULT_RULES),
     seed: bytes32('seed'),
     settleDeadline: 0n,
     challengeDeadline: 0n,
@@ -300,6 +301,41 @@ describe('chain bridge adoption', () => {
     nowMs = 2_000_000;
     await bridge.poll();
     expect(reader.finalized).toEqual([[id, [seat(2), seat(1), seat(3), seat(0)]]]);
+  });
+});
+
+describe('chain bridge and the rules a match was created under', () => {
+  it('calls off a live match created under other rules instead of playing it under these', async () => {
+    const reader = new FakeEscrow();
+    const id = bytes32('old-rules');
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Pending, seatCount: 4 }));
+    reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
+    const aborted: string[] = [];
+    const { bridge, lobby } = bridgeOver(reader, () => 1_000_000, async (matchId) => {
+      aborted.push(matchId);
+      return `0x${'ab'.repeat(32)}`;
+    });
+
+    await bridge.poll();
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4, rulesHash: bytes32('old rules') }));
+    await bridge.poll();
+
+    expect(aborted).toEqual([id]);
+    expect(lobby.get(id)).toBeNull();
+    expect(() => lobby.attach(id, { address: null, send: () => {} })).toThrow(/rules this server does not play/);
+  });
+
+  it('never locks an open lobby created under other rules', async () => {
+    const reader = new FakeEscrow();
+    const id = bytes32('old-rules-open');
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Open, seatCount: 4, rulesHash: bytes32('old rules') }));
+    reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
+    const { bridge } = bridgeOver(reader);
+
+    await bridge.poll();
+    expect(reader.locked).toEqual([]);
   });
 });
 

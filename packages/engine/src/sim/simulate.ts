@@ -7,39 +7,39 @@ import { always, Prng, randomStrategy, readerStrategy, smartStrategy, type Strat
  * Balance simulator: plays many bot matches under a rule set and reports how
  * each pure strategy fares against a mixed field.
  *
- * It exists because every rule parameter was hand-picked. A rule change
- * should come with a run of this showing that no single mindless strategy —
- * always defend, always hide, always attack — wins more than its share.
+ * A rule change should come with a run of this showing that no mindless
+ * strategy — always strike, guard or charge whenever it can — wins more than
+ * its share, or makes money under the payout schedule.
  */
 
-export type StrategyName = 'turtle' | 'hider' | 'aggressor' | 'random' | 'reader' | BotDifficulty;
+export type StrategyName = 'striker' | 'guarder' | 'charger' | 'random' | 'reader' | BotDifficulty;
 
-export const STRATEGY_NAMES: readonly StrategyName[] = [
-  'turtle',
-  'hider',
-  'aggressor',
-  'random',
-  'reader',
-  ...BOT_DIFFICULTIES,
-];
+/** The strategies that never look at the table. None of them may be worth playing. */
+export const MINDLESS_STRATEGIES = ['striker', 'guarder', 'charger'] as const;
 
-/** Attacks a random living opponent every round. */
-export function aggressorStrategy(prng: Prng): Strategy {
+export const STRATEGY_NAMES: readonly StrategyName[] = [...MINDLESS_STRATEGIES, 'random', 'reader', ...BOT_DIFFICULTIES];
+
+/** The deployed payout schedule and protocol fee, in basis points, for pricing a finish. */
+export const DEFAULT_PAYOUT_BPS: readonly number[] = [6000, 2500, 1500];
+export const DEFAULT_FEE_BPS = 500;
+
+/** Strikes a random living opponent every round. */
+export function strikerStrategy(prng: Prng): Strategy {
   return (seat, match) => {
     const opponents = match.alive.filter((other) => other !== seat);
-    if (opponents.length === 0) return { action: Action.Defend, target: 0 };
-    return { action: Action.Attack, target: prng.pick(opponents) };
+    return { action: Action.Strike, target: opponents.length > 0 ? prng.pick(opponents) : seat };
   };
 }
 
-function makeStrategy(name: StrategyName, prng: Prng): Strategy {
+/** The strategy a name stands for, seeded with `prng`. */
+export function strategyByName(name: StrategyName, prng: Prng): Strategy {
   switch (name) {
-    case 'turtle':
-      return always(Action.Defend);
-    case 'hider':
-      return always(Action.Hide);
-    case 'aggressor':
-      return aggressorStrategy(prng);
+    case 'guarder':
+      return always(Action.Guard);
+    case 'charger':
+      return always(Action.Charge);
+    case 'striker':
+      return strikerStrategy(prng);
     case 'random':
       return randomStrategy(prng);
     case 'reader':
@@ -59,6 +59,8 @@ export interface StrategyStats {
   winRatio: number;
   /** Mean finishing place, 1 = winner. */
   meanPlace: number;
+  /** Mean payout minus the stake, in stakes, under the payout schedule and fee. */
+  meanProfit: number;
 }
 
 export interface SimulationReport {
@@ -78,6 +80,9 @@ export interface SimulationOptions {
   lobbySizes: readonly number[];
   seed?: string;
   strategies?: readonly StrategyName[];
+  /** Share of the pot each place takes, best first. Defaults to the deployed schedule. */
+  payoutBps?: readonly number[];
+  feeBps?: number;
 }
 
 const LABEL_ABI = parseAbiParameters('string label');
@@ -86,10 +91,12 @@ const label = (text: string): `0x${string}` => keccak256(encodeAbiParameters(LAB
 export function simulate(options: SimulationOptions): SimulationReport {
   const roster = options.strategies ?? STRATEGY_NAMES;
   const base = options.seed ?? 'lms-sim';
+  const payout = options.payoutBps ?? DEFAULT_PAYOUT_BPS;
+  const fee = options.feeBps ?? DEFAULT_FEE_BPS;
 
   const totals = Object.fromEntries(
-    roster.map((name) => [name, { seats: 0, wins: 0, expectedWins: 0, placeSum: 0 }]),
-  ) as Record<StrategyName, { seats: number; wins: number; expectedWins: number; placeSum: number }>;
+    roster.map((name) => [name, { seats: 0, wins: 0, expectedWins: 0, placeSum: 0, profit: 0 }]),
+  ) as Record<StrategyName, { seats: number; wins: number; expectedWins: number; placeSum: number; profit: number }>;
 
   let roundSum = 0;
   let hitMaxRounds = 0;
@@ -113,7 +120,7 @@ export function simulate(options: SimulationOptions): SimulationReport {
       seed: label(`${base}:seed:${n}`),
       rules: options.rules,
     });
-    const strategies = names.map((name, seat) => makeStrategy(name, new Prng(label(`${base}:${n}:${seat}`))));
+    const strategies = names.map((name, seat) => strategyByName(name, new Prng(label(`${base}:${n}:${seat}`))));
 
     while (!match.finished) {
       const round = match.round;
@@ -146,11 +153,13 @@ export function simulate(options: SimulationOptions): SimulationReport {
     roundSum += match.history.length;
     if (match.alive.length > 1) hitMaxRounds += 1;
 
+    const pot = size * (1 - fee / 10_000);
     match.ranking().forEach((seat, place) => {
       const entry = totals[names[seat] as StrategyName];
       entry.seats += 1;
       entry.placeSum += place + 1;
       entry.expectedWins += 1 / size;
+      entry.profit += ((payout[place] ?? 0) / 10_000) * pot - 1;
       if (place === 0) entry.wins += 1;
     });
   }
@@ -165,6 +174,7 @@ export function simulate(options: SimulationOptions): SimulationReport {
           wins: entry.wins,
           winRatio: entry.expectedWins === 0 ? 0 : entry.wins / entry.expectedWins,
           meanPlace: entry.seats === 0 ? 0 : entry.placeSum / entry.seats,
+          meanProfit: entry.seats === 0 ? 0 : entry.profit / entry.seats,
         },
       ];
     }),
@@ -185,13 +195,17 @@ export function simulate(options: SimulationOptions): SimulationReport {
  */
 export function balanceFailures(
   report: SimulationReport,
-  limits: { maxWinRatio: number; maxMeanRounds: number },
+  limits: { maxWinRatio: number; maxMeanRounds: number; maxMindlessProfit?: number },
 ): string[] {
   const failures: string[] = [];
-  for (const name of ['turtle', 'hider', 'aggressor'] as const) {
+  for (const name of MINDLESS_STRATEGIES) {
     const stats = report.byStrategy[name];
-    if (stats && stats.seats > 0 && stats.winRatio > limits.maxWinRatio) {
+    if (!stats || stats.seats === 0) continue;
+    if (stats.winRatio > limits.maxWinRatio) {
       failures.push(`${name} wins ${stats.winRatio.toFixed(2)}x its share (limit ${limits.maxWinRatio})`);
+    }
+    if (limits.maxMindlessProfit !== undefined && stats.meanProfit > limits.maxMindlessProfit) {
+      failures.push(`${name} makes ${stats.meanProfit.toFixed(2)} stakes per seat (limit ${limits.maxMindlessProfit})`);
     }
   }
   if (report.meanRounds > limits.maxMeanRounds) {

@@ -3,6 +3,7 @@ import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
   Action,
+  legalActions,
   MatchPhase,
   commitMove,
   type ActionValue,
@@ -328,11 +329,14 @@ export class BotClient {
 
   private chooseMove(state: PublicMatchState, you: number): SealedMove {
     const opponents = state.players.filter((player) => player.alive && player.index !== you);
-    const actions: ActionValue[] = [Action.Attack, Action.Defend, Action.Hide];
-    let action = actions[Math.floor(this.options.random() * actions.length)] ?? Action.Hide;
-    if (action === Action.Attack && opponents.length === 0) action = Action.Hide;
+    const me = state.players.find((player) => player.index === you);
+    // Only what the cooldowns allow: a repeated Guard or Charge would be
+    // rejected at reveal and the bot would lose its turn.
+    const actions: ActionValue[] = me ? legalActions(me) : [Action.Strike];
+    let action = actions[Math.floor(this.options.random() * actions.length)] ?? Action.Strike;
+    if (action === Action.Strike && opponents.length === 0) action = actions.find((a) => a !== Action.Strike) ?? Action.Strike;
     const target =
-      action === Action.Attack ? (opponents[Math.floor(this.options.random() * opponents.length)]?.index ?? 0) : 0;
+      action === Action.Strike ? (opponents[Math.floor(this.options.random() * opponents.length)]?.index ?? 0) : 0;
     // Derived rather than random, so a bot that reconnects after losing its
     // memory would still open its own commitment — and so a seeded run is
     // reproducible down to the salts.

@@ -1,6 +1,6 @@
 import 'pixi.js/math-extras';
 import { Container, Graphics, Point, Sprite, Text, type Application, type Texture } from 'pixi.js';
-import { Action, AttackOutcome } from '@lms/protocol';
+import { Action, StrikeOutcome } from '@lms/protocol';
 import type { FxTextures } from '../assets/loader.js';
 import { FX_TEXTURES, type FxTexture } from '../assets/manifest.js';
 import { gsap } from '../motion.js';
@@ -37,15 +37,13 @@ const FLOAT_RISE = 26;
 const FLOAT_LIFE = 0.8;
 /** Vertical spacing between numbers that land on one seat at once. */
 const FLOAT_STACK = 22;
-/** How far an attacker leans toward its target while declaring. */
+/** How far a striker leans toward its target while declaring. */
 const LUNGE = 10;
-/** How far a hider steps aside when a blow misses. */
-const SIDESTEP = 12;
 /** Projectiles bow sideways, so two seats trading blows do not overlap. */
 const ARC = 18;
 const SHIELD_SIZE = 92;
 const SHIELD_FADE = 0.15;
-/** Half a breath of a hider's shimmer. */
+/** Half a breath of a charging seat's pulse. */
 const SHIMMER = 0.175;
 /** How far the camera pushes in on a kill. */
 const ZOOM_PUNCH = 1.045;
@@ -63,7 +61,7 @@ export interface EffectsOptions {
   world: Container;
   /** Zoomed about the arena's centre on a kill. */
   camera: Container;
-  /** Where the storm wall is now, for strikes that leap off it. */
+  /** Where the arena wall is now, for the stall penalty's bolts that leap off it. */
   storm: () => StormRing | null;
 }
 
@@ -105,15 +103,15 @@ export class Effects {
     const spare = (holdSeconds - choreo.duration - HOLD_MARGIN) / (1 - HIT_STOP_SCALE);
     this.stopBudget = this.reduced ? 0 : gsap.utils.clamp(0, MAX_HIT_STOP, spare);
     this.when(timeline, 0, () => this.title(`ROUND ${replay.round}`, 0xdbe3f0));
-    if (choreo.storm) {
-      this.when(timeline, choreo.storm.start, () => {
+    if (choreo.stall) {
+      this.when(timeline, choreo.stall.start, () => {
         this.screenFlash(FX.storm, 0.16);
-        this.title('STORM', FX.storm, 0.6);
+        this.title('STALL', FX.storm, 0.6);
       });
     }
 
-    // Shields and shimmers hold until every blow of the round has landed.
-    const combat = new Set<Beat['kind']>(['declare', 'travel', 'impact', 'riposte']);
+    // Shields and charge-ups hold until every blow of the round has landed.
+    const combat = new Set<Beat['kind']>(['declare', 'travel', 'impact', 'reflect', 'heal']);
     const combatEnd = Math.max(
       0,
       ...choreo.beats.filter((beat) => combat.has(beat.kind)).map((beat) => beat.end),
@@ -125,33 +123,32 @@ export class Effects {
           this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.noShow, 'no show', FX.noShow));
           break;
         case 'declare':
-          if (beat.action === Action.Attack) {
+          if (beat.action === Action.Strike) {
             this.sway(timeline, seats.get(beat.seat), this.direction(beat.seat, beat.target), LUNGE, beat);
-            this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.charge));
-          } else if (beat.action === Action.Defend) {
+            this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.windup));
+          } else if (beat.action === Action.Guard) {
             this.shield(timeline, beat.seat, beat.start, combatEnd);
-          } else if (beat.action === Action.Hide) {
+          } else if (beat.action === Action.Charge) {
             this.shimmer(timeline, seats.get(beat.seat), beat.start, combatEnd);
+            this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.charging, 'CHARGING', FX.charge));
           }
           break;
         case 'travel':
-          this.projectile(timeline, beat.from, beat.to, beat, FX.projectile);
+          this.projectile(timeline, beat.from, beat.to, beat, beat.charged ? FX.charge : FX.projectile);
           break;
         case 'impact':
           this.when(timeline, beat.start, () => this.impact(beat));
-          if (beat.outcome === AttackOutcome.Missed) {
-            // Perpendicular to the blow: a dodge, not a retreat.
-            const blow = this.direction(beat.from, beat.seat);
-            this.sway(timeline, seats.get(beat.seat), new Point(-blow.y, blow.x), SIDESTEP, beat);
-          }
           break;
-        case 'riposte':
+        case 'heal':
+          this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.heal, `+${beat.amount}`, FX.heal));
+          break;
+        case 'reflect':
           this.projectile(timeline, beat.from, beat.to, beat, FX.parry);
           this.when(timeline, beat.end, () =>
-            this.moment(beat.to, RECIPES.riposte, `RIPOSTE -${beat.damage}`, FX.parry),
+            this.moment(beat.to, RECIPES.reflect, `REFLECT -${beat.damage}`, FX.parry),
           );
           break;
-        case 'storm':
+        case 'stall':
           this.when(timeline, beat.start, () => {
             this.lightning(beat.seat);
             this.moment(beat.seat, RECIPES.storm, `-${beat.damage}`, FX.storm);
@@ -256,7 +253,7 @@ export class Effects {
     );
   }
 
-  /** A defender's bubble, raised on declaring and dropped once the blows are in; its twirl turns. */
+  /** A guard's bubble, raised on declaring and dropped once the blows are in; its twirl turns. */
   private shield(timeline: gsap.core.Timeline, seat: number, from: number, until: number): void {
     const at = this.options.positionOf(seat);
     if (!at || this.reduced) return;
@@ -277,7 +274,7 @@ export class Effects {
     }
   }
 
-  /** A hider flickering until the blows are in. */
+  /** A charging seat pulsing until the blows are in. */
   private shimmer(
     timeline: gsap.core.Timeline,
     seat: SeatDisplay | undefined,
@@ -362,10 +359,10 @@ export class Effects {
   // --------------------------------------------------------------- moments
 
   private impact(beat: Extract<Beat, { kind: 'impact' }>): void {
-    if (beat.outcome === AttackOutcome.Hit)
-      this.moment(beat.seat, RECIPES.hit, `-${beat.damage}`, FX.hit, 1.25);
-    else if (beat.outcome === AttackOutcome.Parried) this.moment(beat.seat, RECIPES.parry, 'PARRY', FX.parry);
-    else if (beat.outcome === AttackOutcome.Missed) this.moment(beat.seat, RECIPES.evade, 'EVADE', FX.miss);
+    if (beat.outcome === StrikeOutcome.Hit && beat.charged)
+      this.moment(beat.seat, RECIPES.chargedHit, `-${beat.damage}`, FX.charge, 1.5);
+    else if (beat.outcome === StrikeOutcome.Hit) this.moment(beat.seat, RECIPES.hit, `-${beat.damage}`, FX.hit, 1.25);
+    else if (beat.outcome === StrikeOutcome.Guarded) this.moment(beat.seat, RECIPES.block, 'BLOCK', FX.parry);
   }
 
   /** A moment on one seat: its recipe, and the word or number that rises off it. */
@@ -490,7 +487,7 @@ export class Effects {
     );
   }
 
-  /** A big word across the middle of the floor: the round number, the storm. */
+  /** A big word across the middle of the floor: the round number, the stall. */
   private title(text: string, tint: number, size = 1): void {
     const centre = this.options.storm()?.centre;
     if (!centre) return;
@@ -508,7 +505,7 @@ export class Effects {
       .to(label, { alpha: 0, duration: 0.35, ease: 'power1.in' }, 0.65);
   }
 
-  /** A strike from the storm wall down onto a seat: the streak texture, stretched between them. */
+  /** A bolt from the arena wall down onto a seat: the streak texture, stretched between them. */
   private lightning(seat: number): void {
     const storm = this.options.storm();
     const at = this.options.positionOf(seat);
@@ -530,7 +527,7 @@ export class Effects {
 
   /**
    * A number or word rising off a seat. Several landing on one seat at once —
-   * a hit and a riposte, say — stack upward instead of printing over each other.
+   * a hit and a reflection, say — stack upward instead of printing over each other.
    */
   private floatText(seat: number, at: PointLike, text: string, tint: number, size: number): void {
     const slot = this.floats.get(seat) ?? 0;

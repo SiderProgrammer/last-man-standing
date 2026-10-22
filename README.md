@@ -9,14 +9,17 @@ Each round every surviving player secretly picks one of three actions:
 
 | Action | Effect |
 | --- | --- |
-| ⚔️ Attack | Damage a chosen seat, unless they parry or evade |
-| 🛡️ Defend | Parry one attacker and riposte them; any others still connect |
-| 🏃 Hide | Sometimes dodge attacks, and take less of the closing storm |
+| ⚔️ Strike | Hit a chosen seat; a hit that lands heals you part of it |
+| 🛡️ Guard | Block one striker and reflect a full hit back; any others still connect. Not two rounds running |
+| ⚡ Charge | Load a much bigger next Strike, taking more damage while you do. Not two rounds running |
+
+Strike beats Charge, Guard beats Strike, Charge beats Guard. There is no storm: a
+table that stops fighting takes a growing stall penalty instead.
 
 Choices are committed as hashes and opened together, so nobody can react to
 anybody else. After the reveal the entire round is published, which is the point
 of the game: within a few rounds the history tells you who always swings, who
-turtles, and who keeps coming after you. The client derives those tells from the
+guards whenever it can, who is charged, and who keeps coming after you. The client derives those tells from the
 same public history everyone else can see.
 
 ## How a staked match runs

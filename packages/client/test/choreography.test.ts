@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   Action,
-  AttackOutcome,
-  type AttackRecord,
+  StrikeOutcome,
   type RoundRecord,
+  type StrikeRecord,
   ZERO_SALT,
 } from '@lms/protocol';
 import { choreograph, type SeatSnapshot, type Timeline } from '../src/arena/choreography.js';
@@ -12,6 +12,7 @@ import { bytes32 } from './helpers.js';
 
 /** The server's default replay hold, which every timeline must fit inside. */
 const HOLD_SECONDS = 2.5;
+const MAX_HP = 100;
 
 function seats(...hp: number[]): SeatSnapshot[] {
   return hp.map((value, index) => ({ index, hp: value, alive: value > 0 }));
@@ -22,27 +23,26 @@ function record(fields: Partial<RoundRecord> & Pick<RoundRecord, 'hpAfter'>): Ro
     round: 3,
     moves: fields.hpAfter.map((_, index) => ({
       index,
-      action: Action.Defend,
+      action: Action.Guard,
       target: 0,
       revealed: true,
       salt: ZERO_SALT,
     })),
-    attacks: [],
-    stormDamage: 0,
+    strikes: [],
+    stallDamage: 0,
     eliminated: [],
     hash: bytes32('round'),
     ...fields,
   };
 }
 
-function attack(
-  attacker: number,
+function strike(
+  striker: number,
   target: number,
-  outcome: AttackRecord['outcome'],
-  damage = 0,
-  riposte = 0,
-): AttackRecord {
-  return { attacker, target, outcome, damage, riposte };
+  outcome: StrikeRecord['outcome'],
+  { damage = 0, heal = 0, reflected = 0, charged = false } = {},
+): StrikeRecord {
+  return { striker, target, outcome, charged, damage, heal, reflected };
 }
 
 const END = 99;
@@ -61,17 +61,21 @@ describe('choreograph', () => {
   it('ends every seat exactly on the published hpAfter', () => {
     const timeline = choreograph(
       record({
-        attacks: [attack(0, 1, AttackOutcome.Hit, 34), attack(2, 3, AttackOutcome.Parried, 0, 20)],
-        stormDamage: 6,
-        hpAfter: [94, 60, 74, 94],
+        strikes: [
+          strike(0, 1, StrikeOutcome.Hit, { damage: 25, heal: 12 }),
+          strike(2, 3, StrikeOutcome.Guarded, { reflected: 34 }),
+        ],
+        stallDamage: 8,
+        hpAfter: [92, 67, 58, 92],
       }),
       seats(100, 100, 100, 100),
+      MAX_HP,
     );
 
     const end = sample(timeline, END);
-    expect([0, 1, 2, 3].map((seat) => end.get(seat)?.hp)).toEqual([94, 60, 74, 94]);
+    expect([0, 1, 2, 3].map((seat) => end.get(seat)?.hp)).toEqual([92, 67, 58, 92]);
     // Also exactly at the end of the timeline, not only long after it.
-    expect(sample(timeline, timeline.duration).get(1)?.hp).toBe(60);
+    expect(sample(timeline, timeline.duration).get(1)?.hp).toBe(67);
   });
 
   /**
@@ -82,11 +86,15 @@ describe('choreograph', () => {
   it('lands on the survivor rule even when the arithmetic says everyone died', () => {
     const timeline = choreograph(
       record({
-        attacks: [attack(0, 1, AttackOutcome.Hit, 34), attack(1, 0, AttackOutcome.Hit, 34)],
+        strikes: [
+          strike(0, 1, StrikeOutcome.Hit, { damage: 25, heal: 12 }),
+          strike(1, 0, StrikeOutcome.Hit, { damage: 25, heal: 12 }),
+        ],
         hpAfter: [1, 0],
         eliminated: [1],
       }),
-      seats(20, 10),
+      seats(12, 10),
+      MAX_HP,
     );
 
     const end = sample(timeline, END);
@@ -94,49 +102,70 @@ describe('choreograph', () => {
     expect(end.get(1)).toMatchObject({ hp: 0, alive: false });
   });
 
-  it('drains to the damage-plus-riposte waypoint before the storm', () => {
+  it('moves HP to the hits, reflections and heals before the stall penalty', () => {
     const timeline = choreograph(
       record({
-        attacks: [
-          attack(0, 1, AttackOutcome.Hit, 34),
-          // Seat 0 also attacks a defender and eats the riposte.
-          attack(0, 2, AttackOutcome.Parried, 0, 20),
+        strikes: [
+          strike(0, 1, StrikeOutcome.Hit, { damage: 25, heal: 12 }),
+          // Seat 0 also strikes a guard and eats the reflection.
+          strike(0, 2, StrikeOutcome.Guarded, { reflected: 34 }),
         ],
-        stormDamage: 6,
-        hpAfter: [74, 60, 94],
+        stallDamage: 8,
+        hpAfter: [70, 67, 92],
       }),
       seats(100, 100, 100),
+      MAX_HP,
     );
 
-    const storm = timeline.storm;
-    expect(storm).not.toBeNull();
-    // Just before the storm starts, every blow has landed and drained.
-    const beforeStorm = sample(timeline, (storm?.start ?? 0) - 0.001);
-    expect(beforeStorm.get(0)?.hp).toBe(80);
-    expect(beforeStorm.get(1)?.hp).toBe(66);
-    expect(beforeStorm.get(2)?.hp).toBe(100);
+    const stall = timeline.stall;
+    expect(stall).not.toBeNull();
+    // Just before the penalty starts, every blow has landed and drained.
+    const beforeStall = sample(timeline, (stall?.start ?? 0) - 0.001);
+    expect(beforeStall.get(0)?.hp).toBe(100 - 34 + 12);
+    expect(beforeStall.get(1)?.hp).toBe(75);
+    expect(beforeStall.get(2)?.hp).toBe(100);
   });
 
-  it('bounces a riposte back onto the attacker of a parried blow', () => {
+  it('never fills a striker past the HP cap with its heal', () => {
     const timeline = choreograph(
-      record({
-        attacks: [attack(3, 1, AttackOutcome.Parried, 0, 20)],
-        hpAfter: [100, 100, 100, 80],
-      }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 25, heal: 12 })], hpAfter: [100, 75] }),
+      seats(100, 100),
+      MAX_HP,
+    );
+
+    expect(timeline.beats).toContainEqual(expect.objectContaining({ kind: 'heal', seat: 0, amount: 12 }));
+    for (let t = 0; t <= timeline.duration; t += 0.05) {
+      expect(sample(timeline, t).get(0)?.hp).toBeLessThanOrEqual(MAX_HP);
+    }
+  });
+
+  it('bounces a Guard’s reflection back onto the striker it blocked', () => {
+    const timeline = choreograph(
+      record({ strikes: [strike(3, 1, StrikeOutcome.Guarded, { reflected: 34 })], hpAfter: [100, 100, 100, 66] }),
       seats(100, 100, 100, 100),
     );
 
-    const riposte = timeline.beats.find((beat) => beat.kind === 'riposte');
-    expect(riposte).toMatchObject({ from: 1, to: 3, damage: 20 });
+    const reflect = timeline.beats.find((beat) => beat.kind === 'reflect');
+    expect(reflect).toMatchObject({ from: 1, to: 3, damage: 34 });
 
     const impact = timeline.beats.find((beat) => beat.kind === 'impact');
-    // The riposte launches the moment the blow is parried.
-    expect(riposte?.start).toBe(impact?.start);
+    // The reflection launches the moment the blow is blocked.
+    expect(reflect?.start).toBe(impact?.start);
   });
 
-  it('gives a void attack no travel and no impact', () => {
+  it('marks a strike that spent a Charge, in flight and on impact', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Void)], hpAfter: [100, 0] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 59, heal: 29, charged: true })], hpAfter: [100, 41] }),
+      seats(100, 100),
+    );
+
+    expect(timeline.beats).toContainEqual(expect.objectContaining({ kind: 'travel', charged: true }));
+    expect(timeline.beats).toContainEqual(expect.objectContaining({ kind: 'impact', charged: true, damage: 59 }));
+  });
+
+  it('gives a void strike no travel and no impact', () => {
+    const timeline = choreograph(
+      record({ strikes: [strike(0, 1, StrikeOutcome.Void)], hpAfter: [100, 0] }),
       [
         { index: 0, hp: 100, alive: true },
         { index: 1, hp: 0, alive: false },
@@ -147,14 +176,14 @@ describe('choreograph', () => {
     expect(timeline.beats.some((beat) => beat.kind === 'impact')).toBe(false);
   });
 
-  it('shows a miss without draining the target', () => {
+  it('shows a block without draining the target', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Missed)], hpAfter: [100, 100] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Guarded, { reflected: 34 })], hpAfter: [66, 100] }),
       seats(100, 100),
     );
 
     const impact = timeline.beats.find((beat) => beat.kind === 'impact');
-    expect(impact).toMatchObject({ outcome: AttackOutcome.Missed, damage: 0 });
+    expect(impact).toMatchObject({ outcome: StrikeOutcome.Guarded, damage: 0 });
     for (let t = 0; t <= timeline.duration; t += 0.05) {
       expect(sample(timeline, t).get(1)?.hp).toBe(100);
     }
@@ -162,7 +191,7 @@ describe('choreograph', () => {
 
   it('eliminates in the record order, one after another', () => {
     const timeline = choreograph(
-      record({ stormDamage: 30, hpAfter: [0, 10, 0, 0], eliminated: [3, 0, 2] }),
+      record({ stallDamage: 30, hpAfter: [0, 10, 0, 0], eliminated: [3, 0, 2] }),
       seats(20, 40, 25, 5),
     );
 
@@ -175,7 +204,7 @@ describe('choreograph', () => {
 
   it('keeps the doomed seat alive on screen until its shatter has played', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], hpAfter: [100, 0], eliminated: [1] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 25 })], hpAfter: [100, 0], eliminated: [1] }),
       seats(100, 20),
     );
     const beat = timeline.beats.find((entry) => entry.kind === 'eliminate');
@@ -188,7 +217,7 @@ describe('choreograph', () => {
 
   it('shows the pre-round HP before anything has happened', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], stormDamage: 6, hpAfter: [94, 60] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 25 })], stallDamage: 8, hpAfter: [92, 67] }),
       seats(100, 100),
     );
 
@@ -198,25 +227,26 @@ describe('choreograph', () => {
     expect(sample(timeline, -1).get(1)?.hp).toBe(100);
   });
 
-  it('shows storm damage as the HP a seat visibly loses to it', () => {
+  it('shows the stall penalty as the HP each seat visibly loses to it', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Defend, target: 0, revealed: true, salt: ZERO_SALT },
-          { index: 1, action: Action.Hide, target: 0, revealed: true, salt: ZERO_SALT },
+          { index: 0, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT },
+          { index: 1, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT },
         ],
-        stormDamage: 12,
-        // A hider takes a reduced share; the client learns that from hpAfter,
-        // not from a rule constant.
-        hpAfter: [88, 94],
+        stallDamage: 8,
+        // A seat already low loses only what it had; the client learns that
+        // from hpAfter, not from a rule constant.
+        hpAfter: [92, 0],
+        eliminated: [1],
       }),
-      seats(100, 100),
+      seats(100, 5),
     );
 
-    const storms = timeline.beats.filter((beat) => beat.kind === 'storm');
-    expect(storms.map((beat) => (beat.kind === 'storm' ? [beat.seat, beat.damage] : []))).toEqual([
-      [0, 12],
-      [1, 6],
+    const stalls = timeline.beats.filter((beat) => beat.kind === 'stall');
+    expect(stalls.map((beat) => (beat.kind === 'stall' ? [beat.seat, beat.damage] : []))).toEqual([
+      [0, 8],
+      [1, 5],
     ]);
   });
 
@@ -224,7 +254,7 @@ describe('choreograph', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Attack, target: 1, revealed: true, salt: ZERO_SALT },
+          { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT },
           { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
         ],
         hpAfter: [100, 100],
@@ -234,14 +264,14 @@ describe('choreograph', () => {
 
     expect(timeline.beats).toContainEqual(expect.objectContaining({ kind: 'noShow', seat: 1 }));
     expect(timeline.beats).toContainEqual(
-      expect.objectContaining({ kind: 'declare', seat: 0, action: Action.Attack }),
+      expect.objectContaining({ kind: 'declare', seat: 0, action: Action.Strike }),
     );
   });
 
   it('never moves HP for a quiet round', () => {
     const timeline = choreograph(record({ hpAfter: [100, 100] }), seats(100, 100));
 
-    expect(timeline.storm).toBeNull();
+    expect(timeline.stall).toBeNull();
     for (let t = 0; t <= timeline.duration; t += 0.05) {
       expect(sample(timeline, t).get(0)?.hp).toBe(100);
     }
@@ -249,33 +279,34 @@ describe('choreograph', () => {
 
   /**
    * The budget that justifies the server's default hold: eight seats, every
-   * one attacking, parries bouncing ripostes, a heavy storm and several kills.
+   * one striking, guards reflecting, heals rising, a stall penalty and several
+   * kills.
    */
   it('fits the worst case inside the default replay hold', () => {
-    const attacks = Array.from({ length: 8 }, (_, seat) =>
-      attack(
+    const strikes = Array.from({ length: 8 }, (_, seat) =>
+      strike(
         seat,
         (seat + 1) % 8,
-        seat % 2 === 0 ? AttackOutcome.Parried : AttackOutcome.Hit,
-        seat % 2 === 0 ? 0 : 34,
-        seat % 2 === 0 ? 20 : 0,
+        seat % 2 === 0 ? StrikeOutcome.Guarded : StrikeOutcome.Hit,
+        seat % 2 === 0 ? { reflected: 34 } : { damage: 59, heal: 29, charged: true },
       ),
     );
     const timeline = choreograph(
       record({
         moves: Array.from({ length: 8 }, (_, index) => ({
           index,
-          action: Action.Attack,
+          action: Action.Strike,
           target: (index + 1) % 8,
           revealed: true,
           salt: ZERO_SALT,
         })),
-        attacks,
-        stormDamage: 60,
+        strikes,
+        stallDamage: 40,
         hpAfter: [0, 0, 0, 0, 0, 0, 0, 1],
         eliminated: [0, 1, 2, 3, 4, 5, 6],
       }),
       seats(40, 40, 40, 40, 40, 40, 40, 40),
+      MAX_HP,
     );
 
     expect(timeline.duration).toBeLessThanOrEqual(HOLD_SECONDS);
@@ -286,7 +317,7 @@ describe('choreograph', () => {
 describe('replay timeline', () => {
   it('runs exactly as long as the choreography', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], stormDamage: 6, hpAfter: [94, 60] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 25 })], stallDamage: 8, hpAfter: [92, 67] }),
       seats(100, 100),
     );
     expect(buildReplay(3, timeline).timeline.duration()).toBeCloseTo(timeline.duration, 6);
@@ -294,36 +325,36 @@ describe('replay timeline', () => {
 
   it('eases the drain with a cubic ease-out, as the arena always has', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 60)], hpAfter: [100, 40] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 60 })], hpAfter: [100, 40] }),
       seats(100, 100),
     );
     const track = timeline.tracks.get(1);
-    const window = track?.attackWindow;
-    if (!window) throw new Error('no attack window');
+    const window = track?.strikeWindow;
+    if (!window) throw new Error('no strike window');
 
     // Halfway through a cubic ease-out, 1 - 0.5^3 = 87.5% of the drop is done.
     const halfway = sample(timeline, (window.start + window.end) / 2).get(1)?.hp;
     expect(halfway).toBeCloseTo(100 - 60 * 0.875, 6);
   });
 
-  it('flares the storm ring up and back down across the storm', () => {
-    const timeline = choreograph(record({ stormDamage: 12, hpAfter: [88, 88] }), seats(100, 100));
-    const storm = timeline.storm;
-    if (!storm) throw new Error('no storm');
+  it('flares the arena wall up and back down across the stall penalty', () => {
+    const timeline = choreograph(record({ stallDamage: 8, hpAfter: [92, 92] }), seats(100, 100));
+    const stall = timeline.stall;
+    if (!stall) throw new Error('no stall');
 
     const flareAt = (t: number) => {
       const replay = buildReplay(3, timeline);
       replay.timeline.seek(t);
-      return replay.storm.flare;
+      return replay.stall.flare;
     };
-    expect(flareAt(storm.start)).toBe(0);
-    expect(flareAt((storm.start + storm.end) / 2)).toBeCloseTo(1, 6);
-    expect(flareAt(storm.end)).toBeCloseTo(0, 6);
+    expect(flareAt(stall.start)).toBe(0);
+    expect(flareAt((stall.start + stall.end) / 2)).toBeCloseTo(1, 6);
+    expect(flareAt(stall.end)).toBeCloseTo(0, 6);
   });
 
   it('swells a shattering seat, then shrinks it into the dead style', () => {
     const timeline = choreograph(
-      record({ attacks: [attack(0, 1, AttackOutcome.Hit, 34)], hpAfter: [100, 0], eliminated: [1] }),
+      record({ strikes: [strike(0, 1, StrikeOutcome.Hit, { damage: 25 })], hpAfter: [100, 0], eliminated: [1] }),
       seats(100, 20),
     );
     const beat = timeline.beats.find((entry) => entry.kind === 'eliminate');

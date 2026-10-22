@@ -1,6 +1,6 @@
 import {
   Action,
-  AttackOutcome,
+  StrikeOutcome,
   TARGETED_MOMENT_KINDS,
   type KeyMoment,
   type RoundRecord,
@@ -52,34 +52,36 @@ export function refute(moment: KeyMoment, history: readonly RoundRecord[]): stri
   if (!targeted && moment.target !== null) return `a ${moment.kind} has no target`;
   const target = moment.target;
 
-  const attack = (attacker: number, victim: number) =>
-    record.attacks.find((entry) => entry.attacker === attacker && entry.target === victim);
+  const strike = (striker: number, victim: number) =>
+    record.strikes.find((entry) => entry.striker === striker && entry.target === victim);
 
   switch (moment.kind) {
-    case 'attack':
-      return move.revealed && move.action === Action.Attack && move.target === target
+    case 'strike':
+      return move.revealed && move.action === Action.Strike && move.target === target
         ? null
-        : `seat ${moment.seat} did not attack seat ${target} in round ${moment.round}`;
+        : `seat ${moment.seat} did not strike seat ${target} in round ${moment.round}`;
     case 'hit':
-      return attack(moment.seat, target as number)?.outcome === AttackOutcome.Hit
+      return strike(moment.seat, target as number)?.outcome === StrikeOutcome.Hit
         ? null
         : `seat ${moment.seat} did not land a hit on seat ${target} in round ${moment.round}`;
-    case 'parry':
-      return attack(target as number, moment.seat)?.outcome === AttackOutcome.Parried
+    case 'charged-hit': {
+      const landed = strike(moment.seat, target as number);
+      return landed?.outcome === StrikeOutcome.Hit && landed.charged
         ? null
-        : `seat ${moment.seat} did not parry seat ${target} in round ${moment.round}`;
-    case 'evade':
-      return attack(target as number, moment.seat)?.outcome === AttackOutcome.Missed
+        : `seat ${moment.seat} did not land a charged hit on seat ${target} in round ${moment.round}`;
+    }
+    case 'block':
+      return strike(target as number, moment.seat)?.outcome === StrikeOutcome.Guarded
         ? null
-        : `seat ${moment.seat} did not evade seat ${target} in round ${moment.round}`;
-    case 'defend':
-      return move.revealed && move.action === Action.Defend
+        : `seat ${moment.seat} did not block seat ${target} in round ${moment.round}`;
+    case 'guard':
+      return move.revealed && move.action === Action.Guard
         ? null
-        : `seat ${moment.seat} did not defend in round ${moment.round}`;
-    case 'hide':
-      return move.revealed && move.action === Action.Hide
+        : `seat ${moment.seat} did not guard in round ${moment.round}`;
+    case 'charge':
+      return move.revealed && move.action === Action.Charge
         ? null
-        : `seat ${moment.seat} did not hide in round ${moment.round}`;
+        : `seat ${moment.seat} did not charge in round ${moment.round}`;
     case 'timeout':
       return !move.revealed ? null : `seat ${moment.seat} revealed a move in round ${moment.round}`;
     case 'eliminated':

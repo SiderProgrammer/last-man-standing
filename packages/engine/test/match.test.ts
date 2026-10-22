@@ -18,12 +18,12 @@ describe('commit / reveal lifecycle', () => {
   it('rejects a reveal that does not match the commitment', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const honest = sealed(Action.Defend, 0, 'salt-a');
+    const honest = sealed(Action.Guard, 0, 'salt-a');
 
     match.submitCommit(0, commitMove(setup.matchId, 1, 0, honest));
     match.openRevealPhase();
 
-    expect(() => match.submitReveal(0, sealed(Action.Attack, 1, 'salt-a'))).toThrow(MatchError);
+    expect(() => match.submitReveal(0, sealed(Action.Strike, 1, 'salt-a'))).toThrow(MatchError);
     expect(() => match.submitReveal(0, { ...honest, salt: bytes32('salt-b') })).toThrow(
       /does not match its commitment/,
     );
@@ -34,7 +34,7 @@ describe('commit / reveal lifecycle', () => {
   it('binds a commitment to its round so it cannot be replayed', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const move = sealed(Action.Hide, 0, 'salt-replay');
+    const move = sealed(Action.Charge, 0, 'salt-replay');
 
     // A commitment computed for round 2 must not be revealable in round 1.
     match.submitCommit(0, commitMove(setup.matchId, 2, 0, move));
@@ -45,7 +45,7 @@ describe('commit / reveal lifecycle', () => {
   it('binds a commitment to its seat so it cannot be claimed by another player', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const move = sealed(Action.Hide, 0, 'salt-seat');
+    const move = sealed(Action.Charge, 0, 'salt-seat');
 
     match.submitCommit(1, commitMove(setup.matchId, 1, 0, move));
     match.openRevealPhase();
@@ -55,7 +55,7 @@ describe('commit / reveal lifecycle', () => {
   it('refuses a second commitment from the same seat in one round', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const commitment = commitMove(setup.matchId, 1, 0, sealed(Action.Defend, 0, 'salt'));
+    const commitment = commitMove(setup.matchId, 1, 0, sealed(Action.Guard, 0, 'salt'));
 
     match.submitCommit(0, commitment);
     expect(() => match.submitCommit(0, commitment)).toThrow(/already committed/);
@@ -64,21 +64,47 @@ describe('commit / reveal lifecycle', () => {
   it('refuses a reveal from a seat that never committed', () => {
     const match = new Match(setupFor(4));
     match.openRevealPhase();
-    expect(() => match.submitReveal(2, sealed(Action.Hide, 0, 'salt'))).toThrow(/did not commit/);
+    expect(() => match.submitReveal(2, sealed(Action.Charge, 0, 'salt'))).toThrow(/did not commit/);
   });
 
   it('rejects illegal targets at reveal time', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    match.submitCommit(0, commitMove(setup.matchId, 1, 0, sealed(Action.Attack, 0, 'salt')));
+    match.submitCommit(0, commitMove(setup.matchId, 1, 0, sealed(Action.Strike, 0, 'salt')));
     match.openRevealPhase();
-    expect(() => match.submitReveal(0, sealed(Action.Attack, 0, 'salt'))).toThrow(/cannot attack itself/);
+    expect(() => match.submitReveal(0, sealed(Action.Strike, 0, 'salt'))).toThrow(/cannot strike itself/);
+  });
+
+  it('rejects a Guard or Charge its cooldown rules out, and shows the cooldown publicly', () => {
+    const setup = setupFor(4);
+    const match = new Match(setup);
+    const round1 = [sealed(Action.Guard, 0, 'g1'), sealed(Action.Charge, 0, 'c1'), sealed(Action.Guard, 0, 'g2'), sealed(Action.Guard, 0, 'g3')];
+    round1.forEach((move, seat) => match.submitCommit(seat, commitMove(setup.matchId, 1, seat, move)));
+    match.openRevealPhase();
+    round1.forEach((move, seat) => match.submitReveal(seat, move));
+    match.resolve();
+
+    const players = match.publicState().players;
+    expect(players[0]?.lastAction).toBe(Action.Guard);
+    expect(players[1]?.charged).toBe(true);
+
+    const again = sealed(Action.Guard, 0, 'g1-again');
+    const stack = sealed(Action.Charge, 0, 'c1-again');
+    match.submitCommit(0, commitMove(setup.matchId, 2, 0, again));
+    match.submitCommit(1, commitMove(setup.matchId, 2, 1, stack));
+    match.openRevealPhase();
+    expect(() => match.submitReveal(0, again)).toThrow(/cannot guard again yet/);
+    expect(() => match.submitReveal(1, stack)).toThrow(/cannot charge again yet/);
+
+    // The lost moves count as no-shows: no Guard, and every strike lands.
+    const record = match.resolve();
+    expect(record.moves.find((entry) => entry.index === 0)?.revealed).toBe(false);
   });
 
   it('enforces phase ordering', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    expect(() => match.submitReveal(0, sealed(Action.Hide, 0, 'salt'))).toThrow(/expected phase reveal/);
+    expect(() => match.submitReveal(0, sealed(Action.Charge, 0, 'salt'))).toThrow(/expected phase reveal/);
     match.openRevealPhase();
     expect(() => match.submitCommit(0, bytes32('x'))).toThrow(/expected phase commit/);
   });
@@ -86,7 +112,7 @@ describe('commit / reveal lifecycle', () => {
   it('reports when the commit and reveal windows can close early', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const move = sealed(Action.Hide, 0, 'salt-early');
+    const move = sealed(Action.Charge, 0, 'salt-early');
 
     expect(match.allCommitted()).toBe(false);
     for (const seat of match.alive) {
@@ -103,7 +129,7 @@ describe('commit / reveal lifecycle', () => {
   it('does not wait on a seat that missed the commit window', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const move = sealed(Action.Hide, 0, 'salt-partial');
+    const move = sealed(Action.Charge, 0, 'salt-partial');
 
     match.submitCommit(0, commitMove(setup.matchId, 1, 0, move));
     match.submitCommit(1, commitMove(setup.matchId, 1, 1, move));
@@ -119,7 +145,7 @@ describe('commit / reveal lifecycle', () => {
   it('never leaks a move before the reveal phase', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    match.submitCommit(0, commitMove(setup.matchId, 1, 0, sealed(Action.Attack, 3, 'salt')));
+    match.submitCommit(0, commitMove(setup.matchId, 1, 0, sealed(Action.Strike, 3, 'salt')));
 
     const broadcast = JSON.stringify(match.publicState());
     expect(match.publicState().committed).toEqual([0]);
@@ -131,7 +157,7 @@ describe('commit / reveal lifecycle', () => {
   it('never publishes a salt before the round resolves', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    const moves = [0, 1, 2, 3].map((seat) => sealed(Action.Hide, 0, `leak-${seat}`));
+    const moves = [0, 1, 2, 3].map((seat) => sealed(Action.Charge, 0, `leak-${seat}`));
     moves.forEach((move, seat) => match.submitCommit(seat, commitMove(setup.matchId, 1, seat, move)));
     match.openRevealPhase();
     // Three of four revealed: anyone holding those salts and the fourth would
@@ -155,7 +181,7 @@ describe('commit / reveal lifecycle', () => {
 
 describe('match completion', () => {
   it('ends with exactly one survivor and a full ranking', () => {
-    const { match } = playMatch(setupFor(6, 'completion'), always(Action.Attack));
+    const { match } = playMatch(setupFor(6, 'completion'), always(Action.Strike));
 
     expect(match.finished).toBe(true);
     expect(match.alive).toHaveLength(1);
@@ -167,7 +193,7 @@ describe('match completion', () => {
   });
 
   it('ranks the survivor first and the earliest casualty last', () => {
-    const { match } = playMatch(setupFor(5, 'ordering'), always(Action.Attack));
+    const { match } = playMatch(setupFor(5, 'ordering'), always(Action.Strike));
     const ranking = match.ranking();
 
     const eliminationRound = (seat: number) => match.playerState(seat).eliminatedInRound;
@@ -182,7 +208,7 @@ describe('match completion', () => {
 
   it('produces a signable result addressed by wallet', () => {
     const setup = setupFor(4, 'result');
-    const { match } = playMatch(setup, always(Action.Attack));
+    const { match } = playMatch(setup, always(Action.Strike));
     const result = match.result();
 
     expect(result.matchId).toBe(setup.matchId);
@@ -197,7 +223,7 @@ describe('match completion', () => {
   });
 
   it('resolves a lobby where some players never reveal', () => {
-    const { match } = playMatch(setupFor(6, 'silent'), always(Action.Defend), new Set([1, 4]));
+    const { match } = playMatch(setupFor(6, 'silent'), always(Action.Guard), new Set([1, 4]));
     expect(match.finished).toBe(true);
     expect(match.playerState(1).timeouts).toBeGreaterThan(0);
     expect(match.playerState(4).timeouts).toBeGreaterThan(0);

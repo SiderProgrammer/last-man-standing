@@ -179,7 +179,7 @@ contract DeployTest is Test {
     /// @dev `config/rules.json` → `Deploy` → the deployed hash, pinned to the
     ///      same vector `parity.test.ts` pins `hashRules(DEFAULT_RULES)` to.
     function test_deploysTheRulesTheServerPlays() public view {
-        assertEq(d.config.rulesHash(), 0x51f49b7b1499dec3d067b46387f9a171346327f29942d32497e74e995181c334);
+        assertEq(d.config.rulesHash(), 0x07d102f371d483468baf28515199dc3b888d3604c16f48ae909ab07145044d93);
     }
 
     /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script

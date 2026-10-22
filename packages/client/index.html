@@ -28,7 +28,7 @@
       <section id="lobby-screen" class="screen">
         <div class="panel hero">
           <h2>Play now</h2>
-          <p class="hero-title">Up to eight seats. One closing storm. One survivor.</p>
+          <p class="hero-title">Up to eight seats. Strike, guard or charge. One survivor.</p>
           <p class="muted">
             Practice runs entirely off-chain against house bots. Staked lobbies escrow a
             real testnet stake and settle on-chain when the match ends.
@@ -226,22 +226,22 @@
             </div>
             <div class="timer-track"><div id="timer-bar" class="timer-bar"></div></div>
             <div id="action-bar" class="actions">
-              <button data-action="1" class="action attack" title="Attack (1)">
+              <button data-action="1" class="action strike" title="Strike (1)">
                 <span class="action-icon" aria-hidden="true">⚔️</span>
-                <span class="action-name">Attack</span>
-                <span class="action-desc">Strike one seat</span>
+                <span class="action-name">Strike</span>
+                <span class="action-desc">Hit one seat, heal on a hit</span>
                 <kbd>1</kbd>
               </button>
-              <button data-action="2" class="action defend" title="Defend (2)">
+              <button data-action="2" class="action guard" title="Guard (2)">
                 <span class="action-icon" aria-hidden="true">🛡️</span>
-                <span class="action-name">Defend</span>
-                <span class="action-desc">Parry &amp; riposte</span>
+                <span class="action-name">Guard</span>
+                <span class="action-desc">Block one &amp; reflect</span>
                 <kbd>2</kbd>
               </button>
-              <button data-action="3" class="action hide" title="Hide (3)">
-                <span class="action-icon" aria-hidden="true">💨</span>
-                <span class="action-name">Hide</span>
-                <span class="action-desc">Dodge, less storm</span>
+              <button data-action="3" class="action charge" title="Charge (3)">
+                <span class="action-icon" aria-hidden="true">⚡</span>
+                <span class="action-name">Charge</span>
+                <span class="action-desc">Load a big next hit</span>
                 <kbd>3</kbd>
               </button>
             </div>
@@ -335,8 +335,8 @@
               match its hash is rejected.
             </li>
             <li>
-              <strong>Dice nobody can see coming.</strong> Every roll (who gets parried, whether a
-              hider dodges) comes from the seed mixed with every player's revealed salt. No one,
+              <strong>Dice nobody can see coming.</strong> Every roll (which striker a Guard blocks,
+              how an exact tie breaks) comes from the seed mixed with every player's revealed salt. No one,
               the server included, can know the rolls before every move is locked.
             </li>
           </ul>
