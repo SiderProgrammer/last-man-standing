@@ -6,8 +6,8 @@ import {
   Lobby,
   MemoryArchive,
   nullRelayer,
-  nullSessionRelayer,
-  type SessionRelayer,
+  nullPayoutPusher,
+  type PayoutPusher,
   type Socket,
 } from '@lms/server';
 import { FakeClient, HUMAN, botSeats, lastOfType, setupWithBots } from './helpers.js';
@@ -94,14 +94,14 @@ class FakeSocket implements Socket {
   }
 }
 
-function gatewayHarness(relayer: SessionRelayer, clock = { now: 0 }) {
+function gatewayHarness(payouts: PayoutPusher, clock = { now: 0 }) {
   const lobby = lobbyWith();
   const gateway = new Gateway({
     lobby,
     chainId: 11155111,
     now: () => clock.now,
     directory: () => ({ open: [], live: [] }),
-    relayer,
+    payouts,
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -114,13 +114,11 @@ async function login(socket: FakeSocket): Promise<void> {
   await socket.deliver({ type: 'auth', address: account.address, signature });
 }
 
-function collectingRelayer(): SessionRelayer & { collected: string[] } {
+function collectingPusher(): PayoutPusher & { collected: string[] } {
   const collected: string[] = [];
   return {
     enabled: true,
-    canCollect: true,
     collected,
-    submit: () => Promise.reject(new Error('unused')),
     collect: async (target) => {
       collected.push(target);
       return `0x${'ee'.repeat(32)}`;
@@ -130,13 +128,13 @@ function collectingRelayer(): SessionRelayer & { collected: string[] } {
 
 describe('gateway limits', () => {
   it('refuses an oversized frame without parsing it', async () => {
-    const { socket } = gatewayHarness(nullSessionRelayer);
+    const { socket } = gatewayHarness(nullPayoutPusher);
     await socket.raw('x'.repeat(MAX_CLIENT_FRAME_BYTES + 1));
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/too large/);
   });
 
   it('rate-limits a socket that floods the server, and lets it recover', async () => {
-    const { socket, clock } = gatewayHarness(nullSessionRelayer);
+    const { socket, clock } = gatewayHarness(nullPayoutPusher);
     for (let i = 0; i < 40; i += 1) await socket.deliver({ type: 'lobbies' });
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/slow down/);
 
@@ -151,36 +149,36 @@ describe('gateway limits', () => {
 
 describe('collect', () => {
   it('advertises whether payouts are pushed', () => {
-    expect(lastOfType(gatewayHarness(nullSessionRelayer).socket.sent, 'hello')?.collect).toBe(false);
-    expect(lastOfType(gatewayHarness(collectingRelayer()).socket.sent, 'hello')?.collect).toBe(true);
+    expect(lastOfType(gatewayHarness(nullPayoutPusher).socket.sent, 'hello')?.collect).toBe(false);
+    expect(lastOfType(gatewayHarness(collectingPusher()).socket.sent, 'hello')?.collect).toBe(true);
   });
 
   it('pushes the payout to the logged-in account and no other', async () => {
-    const relayer = collectingRelayer();
-    const { socket } = gatewayHarness(relayer);
+    const pusher = collectingPusher();
+    const { socket } = gatewayHarness(pusher);
     await login(socket);
     await socket.deliver({ type: 'collect' });
 
-    expect(relayer.collected).toEqual([account.address]);
+    expect(pusher.collected).toEqual([account.address]);
     expect(lastOfType(socket.sent, 'relayed')?.hash).toBe(`0x${'ee'.repeat(32)}`);
   });
 
-  it('throttles repeated requests, since each can cost the relayer gas', async () => {
-    const relayer = collectingRelayer();
-    const { socket, clock } = gatewayHarness(relayer);
+  it('throttles repeated requests, since each can cost the keeper gas', async () => {
+    const pusher = collectingPusher();
+    const { socket, clock } = gatewayHarness(pusher);
     await login(socket);
     await socket.deliver({ type: 'collect' });
     await socket.deliver({ type: 'collect' });
-    expect(relayer.collected).toHaveLength(1);
+    expect(pusher.collected).toHaveLength(1);
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/just requested/);
 
     clock.now += 31_000;
     await socket.deliver({ type: 'collect' });
-    expect(relayer.collected).toHaveLength(2);
+    expect(pusher.collected).toHaveLength(2);
   });
 
   it('refuses when the server does not push payouts', async () => {
-    const { socket } = gatewayHarness(nullSessionRelayer);
+    const { socket } = gatewayHarness(nullPayoutPusher);
     await login(socket);
     await socket.deliver({ type: 'collect' });
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/does not push payouts/);

@@ -55,12 +55,11 @@ export {
   type ViemEscrowReaderOptions,
 } from './chain/escrowReader.js';
 export {
-  createSessionRelayer,
-  nullSessionRelayer,
-  type ChainRelayerOptions,
-  type SessionCall,
-  type SessionRelayer,
-} from './chain/relayer.js';
+  createPayoutPusher,
+  nullPayoutPusher,
+  type PayoutPusher,
+  type PayoutPusherOptions,
+} from './chain/payouts.js';
 export {
   AvatarRegistry,
   parseCollections,

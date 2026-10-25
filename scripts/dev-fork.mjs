@@ -293,7 +293,8 @@ function deploy() {
   const deployKeys = [
     ...['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
     ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
-    ...['STAKER_FEE_BPS'],
+    ...['STAKER_FEE_BPS', 'QUORUM_FLOOR', 'REWARD_DURATION', 'TEAM_BENEFICIARY'],
+    ...['REWARDS_FIRST_EPOCH', 'MAX_REWARD_PER_ETH'],
   ];
   for (const key of deployKeys) {
     delete env[key];
@@ -304,6 +305,10 @@ function deploy() {
   env.VOTING_PERIOD = '1800';
   // Low enough that each dev player's 1,000 staked LMS can make a proposal.
   env.PROPOSAL_THRESHOLD = parseEther(PLAYER_STAKE).toString();
+  // The production floor is 1M sLMS; the operator's demo stake has to clear it.
+  env.QUORUM_FLOOR = parseEther(PLAYER_STAKE).toString();
+  // Staker rewards stream over an hour, not a week, so they visibly accrue.
+  env.REWARD_DURATION = '3600';
   run('forge script', 'forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast'], {
     cwd: CONTRACTS,
     env,
@@ -524,11 +529,12 @@ async function main() {
       // threshold a dev lobby's fees would never reach.
       FEE_ROUTER: addresses.FeeRouter,
       STAKED_LMS: addresses.StakedLms,
+      REWARDS_DISTRIBUTOR: addresses.RewardsDistributor,
       GOVERNOR_ADDRESS: addresses.LmsGovernor,
       GOVERNOR_FROM_BLOCK: String(addresses.deployBlock),
       FEE_KEEPER_POLL_MS: '10000',
       HARVEST_MIN_WEI: '1',
-      // One-click play: anvil's fork runs the latest hardfork, so EIP-7702 works.
+      // Prompt-free logins: anvil's fork runs the latest hardfork, so EIP-7702 works.
       SESSION_DELEGATE: addresses.SessionKeyDelegate,
       AVATAR_COLLECTIONS: JSON.stringify([
         { chainId: CHAIN_ID, address: addresses.PlayerAvatars, rpcUrl: RPC },

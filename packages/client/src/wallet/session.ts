@@ -1,6 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { addressKey, sameAddress, sessionCallDigest } from '@lms/protocol';
+import { addressKey, sameAddress } from '@lms/protocol';
 import { readRaw, removeRaw, writeRaw } from '../io/storage.js';
 
 /**
@@ -17,8 +17,8 @@ import { readRaw, removeRaw, writeRaw } from '../io/storage.js';
  * matters: the escrow keys seats and payouts by it.
  *
  * What is stored is a real private key, so it is scoped like one: it expires,
- * it can only call an explicit list of functions, and it can only move a capped
- * amount of value. Losing it costs at most that scope, and the player can
+ * and it is granted no calls and no value, so all it can do is log in. Losing
+ * it lets someone log in as the player until it expires, and the player can
  * revoke it on-chain at any time.
  */
 export interface StoredSession {
@@ -116,24 +116,5 @@ export class Session {
   /** Signs the login nonce locally — the prompt this whole mechanism removes. */
   signLogin(message: string): Promise<Hex> {
     return this.account.signMessage({ message });
-  }
-
-  /**
-   * Authorises one call for a relayer to submit.
-   *
-   * The digest itself lives in `@lms/protocol` next to the other hashes the
-   * Solidity side has to agree with byte for byte.
-   */
-  signCall(target: Address, value: bigint, data: Hex, nonce: bigint): Promise<Hex> {
-    return this.account.sign({
-      hash: sessionCallDigest({
-        account: this.stored.owner,
-        chainId: this.stored.chainId,
-        target,
-        value,
-        data,
-        nonce,
-      }),
-    });
   }
 }

@@ -1,17 +1,18 @@
 import { errorFirstLine, sharesForUnstake } from '@lms/protocol';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { parseLms, stakingPanel, type StakingPosition } from '../ui/staking.js';
+import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
 
 /**
- * The staking panel: stake, unstake, withdraw, and claim the ETH that
- * staking earns.
+ * The staking panel: stake, unstake, withdraw, claim the ETH that staking
+ * earns, claim the LMS that playing earns, and delegate the votes.
  *
  * Reads the chain through the player's own wallet. Every write simulates
  * first, so a revert reads as its reason.
  */
 
 let position: StakingPosition | null = null;
+let playRewards: PlayRewards | null = null;
 let busy = false;
 
 export function wireStakingControls(): void {
@@ -22,6 +23,9 @@ export function wireStakingControls(): void {
   dom.unstakeLms.onclick = () => void act('Unstake requested. Your vote stops now.', unstake());
   dom.withdrawUnstaked.onclick = () => void act('Withdrawn to your wallet.', withdraw());
   dom.claimRewards.onclick = () => void act('ETH sent to your wallet.', claimRewards());
+  dom.claimPlayRewards.onclick = () => void act('LMS claimed and staked. It votes from now.', claimPlayRewards());
+  dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
+  dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
 }
 
 export async function renderStakingPanel(): Promise<void> {
@@ -41,10 +45,21 @@ export async function renderStakingPanel(): Promise<void> {
     position = null;
   }
 
+  playRewards = null;
+  if (wallet && info?.rewards && !error) {
+    try {
+      playRewards = await wallet.playRewards(info.rewards);
+    } catch (err) {
+      // The stake read fine, so this is the distributor alone: show the rest.
+      console.warn('[staking] could not read play rewards', err);
+    }
+  }
+
   const view = stakingPanel({
     info,
     connected: Boolean(wallet),
     position,
+    playRewards,
     nowSeconds: Math.floor(Date.now() / 1000),
     error,
   });
@@ -52,6 +67,9 @@ export async function renderStakingPanel(): Promise<void> {
   dom.stakingRewards.textContent = view.rewards;
   dom.claimRewards.classList.toggle('hidden', !view.claimRewardsVisible);
   dom.claimRewards.disabled = busy;
+  dom.playRewards.textContent = view.playRewards;
+  dom.claimPlayRewards.classList.toggle('hidden', !view.claimPlayVisible);
+  dom.claimPlayRewards.disabled = busy;
   dom.stakingSummary.textContent = view.summary;
   dom.stakeLms.disabled = busy || view.stakeDisabled;
   dom.unstakeLms.disabled = busy || view.unstakeDisabled;
@@ -59,6 +77,10 @@ export async function renderStakingPanel(): Promise<void> {
   dom.withdrawUnstaked.disabled = busy;
   dom.unstakeStatus.textContent = view.pending.text;
   dom.withdrawUnstaked.classList.toggle('hidden', !view.pending.withdrawVisible);
+  dom.delegationStatus.textContent = view.delegation;
+  dom.delegateVotes.disabled = busy || view.delegateDisabled;
+  dom.undelegateVotes.classList.toggle('hidden', !view.undelegateVisible);
+  dom.undelegateVotes.disabled = busy;
   dom.stakingStatus.textContent = view.status;
 }
 
@@ -106,6 +128,31 @@ async function claimRewards(): Promise<`0x${string}` | null> {
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
   return wallet.claimRewards(vault);
+}
+
+async function claimPlayRewards(): Promise<`0x${string}` | null> {
+  const wallet = app.wallet;
+  const distributor = app.staking?.rewards;
+  if (!wallet || !distributor || !playRewards || playRewards.epochs.length === 0) return null;
+  return wallet.claimPlayRewards(distributor, playRewards.epochs);
+}
+
+async function delegate(): Promise<`0x${string}` | null> {
+  const wallet = app.wallet;
+  const vault = app.staking?.vault;
+  if (!wallet || !vault) return null;
+  const parsed = parseDelegatee(dom.delegateTo.value);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const hash = await wallet.delegateVotes(vault, parsed.address);
+  dom.delegateTo.value = '';
+  return hash;
+}
+
+async function undelegate(): Promise<`0x${string}` | null> {
+  const wallet = app.wallet;
+  const vault = app.staking?.vault;
+  if (!wallet || !vault) return null;
+  return wallet.delegateVotes(vault, wallet.address);
 }
 
 async function withdraw(): Promise<`0x${string}` | null> {

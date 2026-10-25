@@ -1,9 +1,7 @@
-import { encodeFunctionData, formatEther, parseEther } from 'viem';
 import {
   AUTH_PREFIX,
   chainInfo,
   errorFirstLine,
-  playerAvatarsAbi,
   type AvatarCollectionInfo,
 } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
@@ -14,8 +12,8 @@ import { Wallet } from './wallet.js';
 
 /**
  * Everything the player does with their wallet: connecting, logging in, the
- * session key that makes later logins prompt-free, relayed calls, and the
- * avatar and hub-chain panels that depend on which chain the wallet is on.
+ * session key that makes later logins prompt-free, and the avatar and
+ * hub-chain panels that depend on which chain the wallet is on.
  */
 
 export function wireWalletControls(): void {
@@ -134,17 +132,6 @@ async function mintAvatar(): Promise<void> {
   const collection = avatarCollection();
   if (!wallet || !collection) return;
 
-  const relayed = await relayCall(
-    collection.address,
-    0n,
-    encodeFunctionData({ abi: playerAvatarsAbi, functionName: 'mint' }),
-  );
-  if (relayed) {
-    dom.mintAvatar.disabled = true;
-    dom.avatarStatus.textContent = 'Minting without a prompt…';
-    return;
-  }
-
   try {
     dom.mintAvatar.disabled = true;
     dom.avatarStatus.textContent = 'Confirm in your wallet…';
@@ -162,8 +149,6 @@ async function mintAvatar(): Promise<void> {
 
 /** How long a granted key lasts. Long enough to cover a sitting, not a month. */
 const SESSION_HOURS = 12;
-/** Cumulative value a session key may move, across every call it makes. */
-const SESSION_SPEND_CAP = parseEther('0.05');
 
 export function renderSessionPanel(): void {
   const wallet = app.wallet;
@@ -191,14 +176,14 @@ export function renderSessionPanel(): void {
     const hours = Math.floor(active.secondsLeft() / 3600);
     const minutes = Math.floor((active.secondsLeft() % 3600) / 60);
     dom.sessionStatus.textContent =
-      `Signing in without prompts · expires in ${hours}h ${minutes}m · ` +
-      `capped at ${formatEther(SESSION_SPEND_CAP)} ETH`;
+      `Signing in without prompts · expires in ${hours}h ${minutes}m · logins only, it cannot spend`;
     return;
   }
 
   dom.enableSession.disabled = false;
   dom.sessionStatus.textContent =
-    `One signature now, then ${SESSION_HOURS}h of prompt-free reconnects.`;
+    `One signature now, then ${SESSION_HOURS}h of prompt-free reconnects. ` +
+    'Stakes still go through your wallet.';
 }
 
 /** Picks up a key this browser already holds for the connected account. */
@@ -223,55 +208,18 @@ async function enableSession(): Promise<void> {
     dom.enableSession.disabled = true;
     dom.sessionStatus.textContent = 'Confirm the delegation in your wallet…';
 
-    const hash = await wallet.grantSession(
-      delegate,
-      session.address,
-      validUntil,
-      SESSION_SPEND_CAP,
-      { escrow: app.escrow, avatars: avatarCollection()?.address ?? null },
-    );
+    const hash = await wallet.grantSession(delegate, session.address, validUntil);
     await wallet.waitFor(hash);
 
     // Stored only now: a key saved before the grant confirmed would fail every
     // login while a perfectly good wallet sat unused next to it.
     session.save();
     app.session = session;
-    toast('One-click play is on. Reconnects will not prompt your wallet.');
+    toast('Prompt-free logins are on. Reconnects will not prompt your wallet.');
   } catch (error) {
     toast(errorFirstLine(error));
   } finally {
     renderSessionPanel();
-  }
-}
-
-/**
- * Sends a call through the session key instead of the wallet.
- *
- * Returns false when there is no usable session, so callers fall back to a
- * normal wallet transaction rather than leaving the player stuck: a relayer
- * that is offline or a session that has lapsed should cost a prompt, not the
- * ability to play.
- */
-export async function relayCall(target: `0x${string}`, value: bigint, data: `0x${string}`): Promise<boolean> {
-  const wallet = app.wallet;
-  const session = app.session;
-  if (!wallet || !session) return false;
-
-  try {
-    const nonce = await wallet.sessionNonce();
-    const signature = await session.signCall(target, value, data, nonce);
-    net.send({
-      type: 'relay',
-      target,
-      value: value.toString(),
-      data,
-      nonce: nonce.toString(),
-      signature,
-    });
-    return true;
-  } catch (error) {
-    console.warn('[session] relay failed, falling back to the wallet', error);
-    return false;
   }
 }
 
