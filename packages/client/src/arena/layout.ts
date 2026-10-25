@@ -3,7 +3,7 @@
  *
  * Extracted from `arena.ts` so the geometry has names instead of literals, and
  * so the radius and centre are computed once rather than derived independently
- * by the seat ring and the storm ring. Pure: no Pixi, no canvas, testable in
+ * by the seat ring and the arena wall. Pure: no Pixi, no canvas, testable in
  * node.
  */
 
@@ -20,13 +20,11 @@ export const AVATAR_SIZE = 56;
 /** Edge of the arena kept clear, wider when avatars push labels downward. */
 const MARGIN_PLAIN = 70;
 const MARGIN_WITH_AVATARS = 92;
-/** How far inside the arena edge the storm ring starts. */
+/** How far inside the arena edge the wall starts. */
 const STORM_INSET = 20;
-/** Rounds over which the storm ring tightens to its maximum. */
-const STORM_RAMP_ROUNDS = 12;
 /**
- * How far the ring closes in at full intensity: far enough that, late in a
- * match, the wall is visibly cutting across the seats it is biting.
+ * How far the wall closes in at full pressure: far enough that, once the stall
+ * penalty is biting, it is visibly cutting across the seats it hits.
  */
 const STORM_TRAVEL = 64;
 
@@ -66,13 +64,16 @@ export function seatPosition(
 export interface StormRing {
   centre: Point;
   radius: number;
-  /** 0 at the start of a match, 1 once the storm is at full strength. */
+  /** 0 while the table is fighting, 1 once the stall penalty is biting. */
   intensity: number;
 }
 
-/** The storm ring, which tightens as its damage ramps with the round number. */
-export function stormRing(width: number, height: number, round: number): StormRing {
-  const intensity = Math.min(1, round / STORM_RAMP_ROUNDS);
+/**
+ * The arena wall, which closes in as the table stalls. `pressure` is how far
+ * the stall penalty has come: 0 while blows are landing, 1 once it bites.
+ */
+export function stormRing(width: number, height: number, pressure: number): StormRing {
+  const intensity = Math.min(1, Math.max(0, pressure));
   return {
     centre: centreOf(width, height),
     radius: Math.min(width, height) / 2 - STORM_INSET - intensity * STORM_TRAVEL,

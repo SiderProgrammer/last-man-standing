@@ -16,22 +16,22 @@
  * What a key moment claims happened. Each is checkable against one
  * `RoundRecord`:
  *
- * - `attack`     `seat` declared an attack on `target`.
- * - `hit`        `seat`'s attack on `target` connected.
- * - `parry`      `seat` defended and parried `target`'s attack.
- * - `evade`      `seat` hid and evaded `target`'s attack.
- * - `defend`     `seat` defended.
- * - `hide`       `seat` hid.
- * - `timeout`    `seat` failed to reveal a move.
- * - `eliminated` `seat` was eliminated.
+ * - `strike`      `seat` declared a strike on `target`.
+ * - `hit`         `seat`'s strike on `target` connected.
+ * - `charged-hit` `seat`'s strike on `target` connected with a loaded Charge behind it.
+ * - `block`       `seat` guarded and blocked `target`'s strike.
+ * - `guard`       `seat` guarded.
+ * - `charge`      `seat` charged.
+ * - `timeout`     `seat` failed to reveal a move.
+ * - `eliminated`  `seat` was eliminated.
  */
 export const KEY_MOMENT_KINDS = [
-  'attack',
+  'strike',
   'hit',
-  'parry',
-  'evade',
-  'defend',
-  'hide',
+  'charged-hit',
+  'block',
+  'guard',
+  'charge',
   'timeout',
   'eliminated',
 ] as const;
@@ -39,7 +39,7 @@ export const KEY_MOMENT_KINDS = [
 export type KeyMomentKind = (typeof KEY_MOMENT_KINDS)[number];
 
 /** Kinds that name a second seat; the rest must leave `target` null. */
-export const TARGETED_MOMENT_KINDS: readonly KeyMomentKind[] = ['attack', 'hit', 'parry', 'evade'];
+export const TARGETED_MOMENT_KINDS: readonly KeyMomentKind[] = ['strike', 'hit', 'charged-hit', 'block'];
 
 export interface KeyMoment {
   /** 1-based round, as in `RoundRecord.round`. */

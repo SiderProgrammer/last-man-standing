@@ -61,8 +61,8 @@ export const RECIPES = {
   noShow: {
     puffs: [{ texture: 'puff', tint: FX.noShow, life: 0.7, size: [40, 80], alpha: 0.6, rise: 18 }],
   },
-  /** An attacker gathering itself before the blow leaves. */
-  charge: {
+  /** A striker gathering itself before the blow leaves. */
+  windup: {
     puffs: [{ texture: 'glow', tint: FX.hit, life: 0.3, size: [110, 50], alpha: 0.55, additive: true }],
   },
   hit: {
@@ -75,7 +75,7 @@ export const RECIPES = {
     // Smaller than a kill's, so the kill still stands out.
     shake: [3, 3],
   },
-  parry: {
+  block: {
     puffs: [
       { texture: 'ring', tint: FX.parry, life: 0.35, size: [60, 110], additive: true },
       { texture: 'flash', tint: FX.parry, life: 0.2, size: [20, 55], additive: true },
@@ -83,10 +83,27 @@ export const RECIPES = {
     ],
     sprays: [sparks(FX.parry, 6, 8, [120, 200])],
   },
-  evade: {
-    puffs: [{ texture: 'puff', tint: FX.miss, life: 0.55, size: [30, 64], alpha: 0.7, rise: 14 }],
+  /** A Charge being loaded: a crackle that rises off the seat. */
+  charging: {
+    puffs: [
+      { texture: 'glow', tint: FX.charge, life: 0.4, size: [50, 100], alpha: 0.7, additive: true },
+      { texture: 'bolt', tint: FX.charge, life: 0.3, size: [40, 70], additive: true },
+    ],
+    sprays: [sparks(FX.charge, 5, 7, [60, 120])],
   },
-  riposte: {
+  /** A hit thrown with a Charge behind it. */
+  chargedHit: {
+    puffs: [
+      { texture: 'blast', tint: FX.charge, life: 0.35, size: [40, 110], additive: true },
+      { texture: 'claw', tint: 0xffffff, life: 0.45, size: [70, 76], randomTurn: true, additive: true },
+    ],
+    sprays: [sparks(FX.charge, 10, 12, [120, 240])],
+    shake: [5, 4],
+  },
+  heal: {
+    puffs: [{ texture: 'glow', tint: FX.heal, life: 0.4, size: [30, 70], alpha: 0.6, rise: 18, additive: true }],
+  },
+  reflect: {
     puffs: [{ texture: 'flash', tint: FX.parry, life: 0.22, size: [22, 60], additive: true }],
     sprays: [sparks(FX.parry, 4, 8, [70, 130])],
   },

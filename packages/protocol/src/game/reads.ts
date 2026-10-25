@@ -16,11 +16,11 @@ export interface ReadTable {
 export interface SeatRead {
   seat: number;
   alive: boolean;
-  attacks: number;
-  defends: number;
-  hides: number;
+  strikes: number;
+  guards: number;
+  charges: number;
   noShows: number;
-  /** Seat this player attacked most often, or null if they never attacked. */
+  /** Seat this player struck most often, or null if they never struck. */
   favourite: number | null;
   /** How many times they came after you. */
   againstYou: number;
@@ -52,9 +52,9 @@ export function readOpponents(
       past: describeStyle(dossier.get(addressKey(player.address))),
       seat: player.index,
       alive: player.alive,
-      attacks: 0,
-      defends: 0,
-      hides: 0,
+      strikes: 0,
+      guards: 0,
+      charges: 0,
       noShows: 0,
       favourite: null,
       againstYou: 0,
@@ -76,10 +76,10 @@ export function readOpponents(
         continue;
       }
 
-      if (move.action === Action.Defend) read.defends += 1;
-      else if (move.action === Action.Hide) read.hides += 1;
-      else if (move.action === Action.Attack) {
-        read.attacks += 1;
+      if (move.action === Action.Guard) read.guards += 1;
+      else if (move.action === Action.Charge) read.charges += 1;
+      else if (move.action === Action.Strike) {
+        read.strikes += 1;
         if (move.target === you) read.againstYou += 1;
         if (leaders.has(move.target)) {
           leaderHunts.set(move.index, (leaderHunts.get(move.index) ?? 0) + 1);
@@ -122,18 +122,19 @@ function hpLeaders(state: ReadTable, record: RoundRecord): Set<number> {
 }
 
 function tellFor(read: SeatRead, leaderHunts: number, you: number | null): string {
-  const revealed = read.attacks + read.defends + read.hides;
+  const revealed = read.strikes + read.guards + read.charges;
   // Two rounds is noise; three is the point where a habit is worth naming.
   if (revealed < 3) return '';
 
   if (you !== null && read.againstYou >= 2) return `has a grudge on you (${read.againstYou}×)`;
-  if (leaderHunts >= 2 && leaderHunts / Math.max(read.attacks, 1) >= 0.6) return 'hunts the leader';
-  if (read.attacks / revealed >= 0.7) return 'always swings';
-  if (read.defends / revealed >= 0.5) return 'turtles';
-  if (read.hides / revealed >= 0.5) return 'ghosts the round';
+  if (leaderHunts >= 2 && leaderHunts / Math.max(read.strikes, 1) >= 0.6) return 'hunts the leader';
+  if (read.strikes / revealed >= 0.7) return 'always swings';
+  // Guard and Charge cannot repeat, so every other round is the ceiling.
+  if (read.guards / revealed >= 0.45) return 'guards every chance it gets';
+  if (read.charges / revealed >= 0.4) return 'loves the big swing';
   if (read.noShows >= 2) return 'keeps timing out';
-  if (read.favourite !== null && (read.attacks >= 3 || revealed >= 5)) {
-    const counts = read.attacks;
+  if (read.favourite !== null && (read.strikes >= 3 || revealed >= 5)) {
+    const counts = read.strikes;
     if (counts >= 3) return `fixated on #${read.favourite}`;
   }
   return '';

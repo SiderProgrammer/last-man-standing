@@ -35,9 +35,9 @@ export function readsTable(reads: Read[]): string {
       (read) => `
       <tr style="opacity:${read.alive ? 1 : 0.45}">
         <td>#${read.seat}</td>
-        <td>${read.attacks}</td>
-        <td>${read.defends}</td>
-        <td>${read.hides}</td>
+        <td>${read.strikes}</td>
+        <td>${read.guards}</td>
+        <td>${read.charges}</td>
         <td>${read.favourite === null ? '—' : `#${read.favourite}`}</td>
         <td class="tell">${read.tell}</td>
       </tr>${
@@ -52,7 +52,7 @@ export function readsTable(reads: Read[]): string {
   return `
     <table>
       <thead>
-        <tr><th>seat</th><th>⚔️</th><th>🛡️</th><th>🏃</th><th>favours</th><th>tell</th></tr>
+        <tr><th>seat</th><th>⚔️</th><th>🛡️</th><th>⚡</th><th>favours</th><th>tell</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;

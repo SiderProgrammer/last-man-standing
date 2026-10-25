@@ -48,10 +48,8 @@ The client plays a full match, but these are missing:
   show the final ranking, the payout, and the settlement transaction hash.
 - **Spectator discovery.** `watch` works, but live matches are only listed if they came
   from the chain directory; practice rooms are invisible to everyone but their player.
-- **A relayed join can be double-submitted.** Joining through the session key sends the
-  relay and returns at once, without disabling the Stake button, so a second click
-  relays a second `join` that reverts `AlreadyJoined` on-chain — at the relayer's gas.
-  The lobby row also keeps saying *Stake* until the next directory refresh.
+- ~~**A relayed join can be double-submitted.**~~ Gone with relayed joins: the session
+  key only signs logins, and every join is the player's own transaction.
 - **Token joins cost two transactions the first time.** `approve`, then `joinWithToken`.
   Permit2, or EIP-2612 `permit` for USDC, would fold the approval into one signature.
   The slippage allowance is fixed at 0.5%; there is no control for it.
@@ -116,7 +114,7 @@ mainnet. Still open:
 - ~~No rate limiting, message size cap, or connection cap on the gateway.~~ Done: see
   `gateway/limits.ts`. Connection caps (global, per IP, connect rate), an origin
   allowlist, `ws` `maxPayload`, per-socket buckets with a separate one for moves, a
-  per-IP login budget ahead of the ERC-1271 verifier, a per-wallet relay budget, a strike
+  per-IP login budget ahead of the ERC-1271 verifier, a per-connection payout-push cooldown, a strike
   bucket that disconnects persistent offenders, slow-consumer eviction, and a ping/pong
   heartbeat. Limits are per process: a second instance would need shared state.
 - Commitments and reveals are held only in memory, deliberately. A match that was live
@@ -136,11 +134,26 @@ mainnet. Still open:
   SSTORE per seat, and nothing on-chain reads it any more. Consider dropping it for the event.
 - `SpokeEscrow.join` trusts the caller's `stake` argument for the event only; the hub is
   the authority, but a mismatch produces a confusing failure. Quote the hub's stake instead.
-- Token governance is in place (`LmsGovernor` over staked LMS), with the
-  fee keeper, ETH rewards for stakers, a staking panel and a governance screen.
-  Still open: the Safe's veto over the timelock has no planned removal, and the
-  whole LMS supply sits with the Safe — until it is distributed, the Safe's own
-  stake decides every vote. See FEATURES.md "Token governance and staking".
+- Token governance is in place (`LmsGovernor` over staked LMS, with a 1M-vote
+  minimum quorum), with the fee keeper, streamed ETH rewards for stakers,
+  on-chain play-mining for half the supply, a staking panel with both claims, and
+  a governance screen. The deploy script splits the supply (play-mining, timelock,
+  team vesting, Safe liquidity). Still open:
+  - **The veto's removal is a rule, not code.** The plan — revoke it once players
+    hold more sLMS than the team's 15%, or after twelve months — has to be carried
+    out by a proposal. See FEATURES.md "The Safe's veto: when it goes".
+  - **Governance is idle at launch** until players hold the quorum floor in sLMS:
+    with the cap binding, 10 ETH of fees paid in settled matches (200 ETH of
+    stakes), and never less than three weeks. At launch volumes that could be
+    months. Decide whether that is acceptable, or whether a bootstrap stake or a
+    lower floor is wanted.
+  - **Play-mining parameters are guesses.** The 100k LMS per ETH cap and the
+    yearly decay should be revisited against real volume before mainnet.
+  - **Legal review** of the stakers' fee share (0% on mainnet by default) and of
+    play-mining itself.
+  - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide
+    env, so it always sets one; the case where the Safe is the deployer (the
+    `dev:fork` setup) is covered only by an `assert` in `_distribute`.
 - No deploy script for spokes. `SpokeEscrow`, `LayerZeroMessenger` and
   `ChainlinkVrfAdapter` are plain `Ownable`; each must be constructed with a timelock
   (fed by a Safe on that chain) as owner. Consider `Ownable2Step` for them too.
@@ -166,8 +179,8 @@ any of this is a deliberate, visible change rather than a silent one.
   `parseCollections` already regex-checks addresses, so the validation exists and is
   applied to the least important setting. Pinned by `packages/server/test/config.test.ts`.
 - **One key silently takes three roles.** `KEEPER_PK` falls back to `ATTESTOR_PK`, and
-  `main.ts` then uses `keeperPk` as the session relayer's gas key. Result attestor,
-  lobby keeper and session relayer end up the same account with nothing logged. Splitting
+  `main.ts` then uses `keeperPk` as the payout pusher's gas key. Result attestor,
+  lobby keeper and payout pusher end up the same account with nothing logged. Splitting
   them is already noted in §3.2; this records the exact path.
 - **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
   `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
@@ -202,7 +215,7 @@ any of this is a deliberate, visible change rather than a silent one.
   match to a 4-seat one leaves orphan views at stale positions, and `destroy()` exists
   but is never called. A long session leaks views and Pixi textures.
 - **`reads.ts:tellFor` has an unreachable branch.** The outer guard admits
-  `attacks >= 3 || revealed >= 5`, then the inner one re-requires `attacks >= 3`, so
+  `strikes >= 3 || revealed >= 5`, then the inner one re-requires `strikes >= 3`, so
   `revealed >= 5` can never fire alone. Fixing it changes which tell is shown. Pinned by
   `packages/client/test/reads.test.ts`.
 - **`hpLeaders` is O(n²)** — `state.history.indexOf(record)` inside a loop over
@@ -292,8 +305,12 @@ reason as §1.1: no deployment has been driven end to end.
 - **Session keys.** `SessionKeyDelegate` is covered by 22 Foundry tests over real
   `vm.signAndAttachDelegation` delegations, and the digest is pinned to the TypeScript
   side by frozen vectors. What has *not* been exercised is the browser half: viem's
-  `signAuthorization` against a real wallet, and the relay round trip through the gateway.
-  Needs an Anvil run with `--hardfork prague` or a Pectra testnet.
+  `signAuthorization` against a real wallet, and a session login through the gateway's
+  ERC-1271 check. Needs an Anvil run with `--hardfork prague` or a Pectra testnet.
+- **Play-mining end to end** has run once by hand on `dev:fork`: a four-seat match
+  played to settlement from anvil's dev accounts, the clock moved past the week's
+  end, and the browser's **Claim LMS** paid the burner 50 sLMS (0.0005 ETH of fees
+  at the cap). There is no script for it, and nothing has run on a testnet.
 - **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
   `ChainBridge`, but only the in-arena badges have been seen rendered — the lobby list
   needs a staked lobby to appear at all.
@@ -322,13 +339,19 @@ reason as §1.1: no deployment has been driven end to end.
 These are open questions, not bugs:
 
 - **Lobby size.** The concept describes 10–50 players; `DEFAULT_RULES` caps a lobby at 8
-  and the storm curve is tuned for that. Large lobbies need a re-tuned storm and probably
-  multi-target rounds, plus a UI that stays readable at 50 seats. The arena already lays
-  seats out on a circle of any size, but the labels will collide past ~16.
-- **Balance.** No simulation harness exists to answer "is Hide too strong at 60%?".
-  The engine is pure and seeded, so a batch simulator over strategy pools is cheap to
-  build and would turn balance into data.
-- **Reads.** The tells in `packages/client/src/game/reads.ts` are hand-tuned thresholds
-  ("attacks ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
+  and Strike / Guard / Charge was validated at 4–8 seats only (the skill gap grows with
+  lobby size). Large lobbies need re-validated numbers and probably multi-target rounds,
+  plus a UI that stays readable at 50 seats. The arena already lays seats out on a circle
+  of any size, but the labels will collide past ~16.
+- **Skill versus luck.** With the current rules a hard bot wins about 2× its share
+  (`npm run sim`), well above the old rules. That suits a skill game, but in a staked one
+  new players lose to strong ones more often; worth deciding deliberately.
+- **Reads.** The tells in `packages/protocol/src/game/reads.ts` are hand-tuned thresholds
+  ("strikes ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
   against simulated play so the panel does not confidently mislabel a bot.
-- **Anti-collusion.** Nothing prevents two players from splitting a lobby.
+- **Anti-collusion.** Nothing prevents two players from splitting a lobby, and with the
+  current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
+  in validation (1.09× under the old storm rules). See "Known risk: collusion" in
+  `ARCHITECTURE.md`. Candidates: random matchmaking instead of lobbies joined by id,
+  flagging seat pairs that never strike each other from the public history, and a
+  payout schedule that pays a pact less.

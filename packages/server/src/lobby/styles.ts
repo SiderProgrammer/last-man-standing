@@ -51,14 +51,17 @@ export class PostgresStyleBook implements StyleBook {
     const pool = new Pool({ connectionString });
     // Idle connections dropped by the host would otherwise crash the process; see the archive.
     pool.on('error', (error) => console.warn('[styles] idle database connection lost:', errorMessage(error)));
+    // The action set changed from Attack / Defend / Hide to Strike / Guard /
+    // Charge, so records from the old game are a different game's habits and
+    // stay in the old `play_styles` table.
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS play_styles (
+      CREATE TABLE IF NOT EXISTS play_styles_v2 (
         address  TEXT PRIMARY KEY,
         matches  INTEGER NOT NULL DEFAULT 0,
         wins     INTEGER NOT NULL DEFAULT 0,
-        attacks  INTEGER NOT NULL DEFAULT 0,
-        defends  INTEGER NOT NULL DEFAULT 0,
-        hides    INTEGER NOT NULL DEFAULT 0,
+        strikes  INTEGER NOT NULL DEFAULT 0,
+        guards   INTEGER NOT NULL DEFAULT 0,
+        charges  INTEGER NOT NULL DEFAULT 0,
         no_shows INTEGER NOT NULL DEFAULT 0
       )
     `);
@@ -68,32 +71,32 @@ export class PostgresStyleBook implements StyleBook {
   async record(deltas: ReadonlyMap<string, PlayStyle>): Promise<void> {
     for (const [key, d] of deltas) {
       await this.pool.query(
-        `INSERT INTO play_styles (address, matches, wins, attacks, defends, hides, no_shows)
+        `INSERT INTO play_styles_v2 (address, matches, wins, strikes, guards, charges, no_shows)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (address) DO UPDATE SET
-           matches = play_styles.matches + EXCLUDED.matches,
-           wins = play_styles.wins + EXCLUDED.wins,
-           attacks = play_styles.attacks + EXCLUDED.attacks,
-           defends = play_styles.defends + EXCLUDED.defends,
-           hides = play_styles.hides + EXCLUDED.hides,
-           no_shows = play_styles.no_shows + EXCLUDED.no_shows`,
-        [key, d.matches, d.wins, d.attacks, d.defends, d.hides, d.noShows],
+           matches = play_styles_v2.matches + EXCLUDED.matches,
+           wins = play_styles_v2.wins + EXCLUDED.wins,
+           strikes = play_styles_v2.strikes + EXCLUDED.strikes,
+           guards = play_styles_v2.guards + EXCLUDED.guards,
+           charges = play_styles_v2.charges + EXCLUDED.charges,
+           no_shows = play_styles_v2.no_shows + EXCLUDED.no_shows`,
+        [key, d.matches, d.wins, d.strikes, d.guards, d.charges, d.noShows],
       );
     }
   }
 
   async lookup(addresses: readonly `0x${string}`[]): Promise<Map<string, PlayStyle>> {
     const keys = addresses.map(addressKey);
-    const { rows } = await this.pool.query('SELECT * FROM play_styles WHERE address = ANY($1)', [keys]);
+    const { rows } = await this.pool.query('SELECT * FROM play_styles_v2 WHERE address = ANY($1)', [keys]);
     return new Map(
       rows.map((row) => [
         row.address as string,
         {
           matches: Number(row.matches),
           wins: Number(row.wins),
-          attacks: Number(row.attacks),
-          defends: Number(row.defends),
-          hides: Number(row.hides),
+          strikes: Number(row.strikes),
+          guards: Number(row.guards),
+          charges: Number(row.charges),
           noShows: Number(row.no_shows),
         },
       ]),

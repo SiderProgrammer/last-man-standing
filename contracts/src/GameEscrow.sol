@@ -8,6 +8,7 @@ import {PullPayable} from "./PullPayable.sol";
 import {ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
+import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
 import {SeatSetLib} from "./libraries/SeatSetLib.sol";
@@ -33,7 +34,18 @@ import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient — or
 ///      anyone, on their behalf and to their address — withdraws it.
-contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver {
+///
+///      Fee accounting. When a match settles, every seat's fee is added to two
+///      running totals for the current fee epoch (`FEE_EPOCH`, Unix weeks):
+///      the player's own and the epoch's. Only a settled match pays its fee,
+///      so only a settled match counts — counting at join instead would let a
+///      player join a lobby that can never fill, claim rewards on the fee, and
+///      cancel for a full refund afterwards. And since a total only ever grows
+///      while its epoch is the current one, it is final the moment the epoch
+///      ends. The escrow does nothing with them; they exist so a rewards
+///      contract can pay players in proportion to the fees they paid, entirely
+///      on-chain.
+contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver, IFeeLedger {
     enum MatchStatus {
         None,
         /// @dev Accepting joins.
@@ -89,6 +101,8 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     }
 
     uint16 private constant BPS_DENOMINATOR = 10_000;
+    /// @notice Length of a fee epoch. Epoch `n` is `[n * FEE_EPOCH, (n + 1) * FEE_EPOCH)`.
+    uint256 public constant FEE_EPOCH = 7 days;
 
     ProtocolConfig public immutable config;
 
@@ -103,6 +117,11 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     mapping(bytes32 matchId => mapping(address player => uint32)) public seatOrigin;
     /// @notice Oracle request handle back to the match it belongs to.
     mapping(bytes32 requestId => bytes32 matchId) public randomnessRequest;
+
+    /// @notice Fees `player` paid in matches that settled during `epoch`.
+    mapping(address player => mapping(uint256 epoch => uint256)) public feesPaid;
+    /// @notice Fees every player paid in matches that settled during `epoch`.
+    mapping(uint256 epoch => uint256) public epochFees;
 
     /// @notice Stakes held for matches that have not yet settled or cancelled.
     /// @dev This and `PullPayable.totalOwed` account for the entire contract
@@ -390,8 +409,22 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         info.status = MatchStatus.Settled;
         totalEscrowed -= uint256(info.stake) * info.seatCount;
         _distribute(matchId, info, ranking);
+        _recordFees(info, ranking);
 
         emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
+    }
+
+    /// @dev Adds every seat's fee to this epoch's totals, now that it is paid.
+    ///      `ranking` was checked against the seat set when it was proposed,
+    ///      and again by hash above, so it is exactly the seats.
+    function _recordFees(MatchInfo storage info, address[] calldata ranking) private {
+        uint256 fee = (uint256(info.stake) * info.feeBps) / BPS_DENOMINATOR;
+        if (fee == 0) return;
+        uint256 epoch = block.timestamp / FEE_EPOCH;
+        for (uint256 i = 0; i < ranking.length; ++i) {
+            feesPaid[ranking[i]][epoch] += fee;
+        }
+        epochFees[epoch] += fee * ranking.length;
     }
 
     /// @notice Throws out a proposed result and refunds every stake.

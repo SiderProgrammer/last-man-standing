@@ -31,8 +31,9 @@ the gateway — is `npm test`.
 ## 2. In the browser (`npm run dev:fork`)
 
 Covered by the UI: practice matches, staking in ETH, paying in USDC / USDT /
-DAI through Uniswap v4, one-click play (EIP-7702 session keys), avatar minting
-without a prompt, and a staked match once its lobby fills.
+DAI through Uniswap v4, prompt-free logins (EIP-7702 session keys), avatar
+minting, the staking panel's ETH and play-mining claims, and a staked match once
+its lobby fills.
 
 A staked lobby needs 4 wallets and has no bots, so fill the other seats from the
 command line (§3.2). Once it is full the server locks it, the fork's oracle

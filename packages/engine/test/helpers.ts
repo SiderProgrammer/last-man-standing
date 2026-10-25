@@ -35,6 +35,8 @@ export function freshStates(count: number, hp = DEFAULT_RULES.startingHp): Playe
     alive: true,
     eliminatedInRound: 0,
     timeouts: 0,
+    charged: false,
+    lastAction: Action.None,
   }));
 }
 
@@ -90,7 +92,7 @@ export function playMatch(
       revealedMoves.push({
         index: seat,
         action: move.action,
-        target: move.action === Action.Attack ? move.target : 0,
+        target: move.action === Action.Strike ? move.target : 0,
         revealed: true,
         salt,
       });

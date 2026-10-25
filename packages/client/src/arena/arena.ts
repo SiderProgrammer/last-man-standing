@@ -2,7 +2,8 @@ import { Application, Container, FillGradient, Graphics, Text, type Texture } fr
 import {
   Action,
   MatchPhase,
-  stormDamageForRound,
+  quietRounds,
+  stallDamageFor,
   type ActionValue,
   type AvatarEntry,
   type PublicMatchState,
@@ -97,7 +98,7 @@ export class Arena {
       positionOf: (seat) => this.seats.get(seat)?.home ?? null,
       world: this.world,
       camera: this.camera,
-      storm: () => (this.state ? stormRing(app.screen.width, app.screen.height, this.state.round) : null),
+      storm: () => (this.state ? stormRing(app.screen.width, app.screen.height, stallPressure(this.state)) : null),
     });
 
     const hud = new Container();
@@ -179,9 +180,9 @@ export class Arena {
   }
 
   /**
-   * Shows the move the player has picked: the aim line and reticle for an
-   * attack, a guard for a defend, a veil for a hide. Purely local — nothing
-   * here comes from or goes to the server.
+   * Shows the move the player has picked: the aim line and reticle for a
+   * strike, a ring for a guard, a crackling halo for a charge. Purely local —
+   * nothing here comes from or goes to the server.
    */
   setAim(aim: Aim | null, sealed: boolean, pickable: readonly number[]): void {
     this.aim = aim;
@@ -212,7 +213,7 @@ export class Arena {
     }));
     if (!before) return;
 
-    const choreo = choreograph(record, before);
+    const choreo = choreograph(record, before, this.state?.rules.startingHp);
     const replay = buildReplay(record.round, choreo);
     this.effects.decorate(replay, choreo, holdMs / 1000);
     // The previous round's timeline is left to finish on its own: anything of
@@ -338,14 +339,15 @@ export class Arena {
     }
 
     const { width, height } = this.app.screen;
-    this.storm.update(stormRing(width, height, state.round), this.replay?.storm.flare ?? 0);
+    this.storm.update(stormRing(width, height, stallPressure(state)), this.replay?.stall.flare ?? 0);
     this.paintAim(display !== null);
 
     // The round on screen: the replay's while it plays, so the HUD never runs ahead.
     const round = display ? (this.replay?.round ?? state.round) : state.round;
-    const bite = stormDamageForRound(state.rules, round);
+    // What the penalty would be if this round passes without a hit too.
+    const threat = stallDamageFor(state.rules, quietRounds(state.history) + 1);
     this.hudRound.text = String(round);
-    this.hudStorm.text = bite > 0 ? `STORM  −${bite} HP THIS ROUND` : 'STORM  GATHERING';
+    this.hudStorm.text = threat > 0 ? `STALL  −${threat} HP IF NOBODY HITS` : 'STALL  NONE';
   }
 
   /** Puts your pick on the floor, or hides it when there is nothing to show. */
@@ -356,11 +358,11 @@ export class Arena {
     const target = aim ? this.seats.get(aim.target) : undefined;
     const live = state?.phase === MatchPhase.Commit || state?.phase === MatchPhase.Reveal;
     const ready = !!aim && !!you && live && !replaying && isAlive(state, this.you);
-    const attacking = ready && aim.action === Action.Attack && !!target && isAlive(state, aim.target);
+    const striking = ready && aim.action === Action.Strike && !!target && isAlive(state, aim.target);
 
-    this.reticle.visible = attacking;
-    this.guard.visible = ready && aim.action === Action.Defend;
-    this.veil.visible = ready && aim.action === Action.Hide;
+    this.reticle.visible = striking;
+    this.guard.visible = ready && aim.action === Action.Guard;
+    this.veil.visible = ready && aim.action === Action.Charge;
     for (const marker of [this.reticle, this.guard, this.veil, this.aimLine]) {
       marker.alpha = this.aimSealed ? 0.45 : 1;
     }
@@ -369,7 +371,7 @@ export class Arena {
     if (!you) return;
     this.guard.position.set(you.home.x, you.home.y);
     this.veil.position.set(you.home.x, you.home.y);
-    if (attacking && target) {
+    if (striking && target) {
       this.reticle.position.set(target.home.x, target.home.y);
       this.aimLine
         .moveTo(you.home.x, you.home.y)
@@ -384,12 +386,28 @@ function isPlaying(replay: Replay): boolean {
   return !timeline.paused() && timeline.progress() < 1;
 }
 
+/** How far the stall has come, from 0 (blows landed last round) to 1 (the penalty is biting). */
+function stallPressure(state: PublicMatchState): number {
+  return Math.min(1, quietRounds(state.history) / Math.max(1, state.rules.stallGraceRounds));
+}
+
 function isAlive(state: PublicMatchState | null, seat: number | null): boolean {
   return state?.players.find((player) => player.index === seat)?.alive ?? false;
 }
 
-/** The line under a seat: whether it has moved yet this phase. */
+/**
+ * The line under a seat: whether it has moved yet this phase, and a loaded
+ * Charge, which is public and the first thing a reader wants to know.
+ */
 function statusOf(state: PublicMatchState, seat: number): { status: string; statusColor: number } {
+  const phase = phaseStatusOf(state, seat);
+  if (!state.players.find((player) => player.index === seat)?.charged) return phase;
+  return phase.status
+    ? { status: `⚡ ${phase.status}`, statusColor: phase.statusColor }
+    : { status: '⚡ charged', statusColor: COLORS.charged };
+}
+
+function phaseStatusOf(state: PublicMatchState, seat: number): { status: string; statusColor: number } {
   if (state.phase === MatchPhase.Commit) {
     return state.committed.includes(seat)
       ? { status: '✓ locked in', statusColor: COLORS.you }

@@ -2,6 +2,8 @@ import {
   Action,
   MatchPhase,
   commitMove,
+  isLegalAction,
+  strikeDamageFor,
   type ActionValue,
   type MatchResult,
   type PublicMatchState,
@@ -185,6 +187,7 @@ export function onState(
  * only produce accidental no-shows.
  */
 function syncPhase(state: PublicMatchState): void {
+  dropIllegalDraft(state);
   const plan = phasePlan(state, {
     you: app.you,
     committedRound: app.committedRound,
@@ -271,7 +274,7 @@ function renderTargets(state: PublicMatchState, you: number | null): void {
   fillSelect(dom.target, targetOptions(state, you));
   // A target that has since been eliminated falls back to whoever the picker
   // now shows, so the move on screen is always the move that would be sealed.
-  if (app.draft?.action === Action.Attack && dom.target.value !== String(app.draft.target)) {
+  if (app.draft?.action === Action.Strike && dom.target.value !== String(app.draft.target)) {
     app.draft.target = Number(dom.target.value || 0);
   }
 }
@@ -284,11 +287,11 @@ function renderMove(): void {
   const state = app.match;
   const draft = app.draft;
   const sealed = state !== null && app.committedRound === state.round;
-  const attacking = draft?.action === Action.Attack;
+  const striking = draft?.action === Action.Strike;
 
   const finished = state?.phase === MatchPhase.Finished;
   dom.movePanel.classList.toggle('sealed', sealed && !finished);
-  dom.targetRow.classList.toggle('hidden', !attacking || finished);
+  dom.targetRow.classList.toggle('hidden', !striking || finished);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
     button.setAttribute('aria-pressed', String(Number(button.dataset.action) === draft?.action));
   }
@@ -303,7 +306,7 @@ function renderMove(): void {
       chip.type = 'button';
       chip.className = 'chip';
       chip.disabled = !controlsOpen;
-      chip.classList.toggle('active', attacking && draft?.target === seat);
+      chip.classList.toggle('active', striking && draft?.target === seat);
       const name = document.createElement('b');
       name.textContent = `#${seat}`;
       const life = document.createElement('span');
@@ -326,13 +329,13 @@ function lockInLabel(finished: boolean, sealed: boolean, draft: typeof app.draft
   return draft ? `Lock in · ${describeDraft(draft)}` : 'Pick a move';
 }
 
-/** Targets a seat, from a chip or a click in the arena: an attack on it. */
+/** Targets a seat, from a chip or a click in the arena: a strike on it. */
 function pickTarget(seat: number): void {
   if (!controlsOpen) return;
   if (![...dom.target.options].some((option) => option.value === String(seat))) return;
   dom.target.value = String(seat);
-  const attack = dom.actionBar.querySelector<HTMLButtonElement>(`[data-action="${Action.Attack}"]`);
-  if (attack) selectAction(Action.Attack, attack);
+  const strike = dom.actionBar.querySelector<HTMLButtonElement>(`[data-action="${Action.Strike}"]`);
+  if (strike) selectAction(Action.Strike, strike);
 }
 
 /** "Round 3 — commit" as the round, plus a coloured chip for the phase. */
@@ -380,9 +383,9 @@ function appendLine(text: string, className = ''): void {
 
 /** Colours a history line by what it describes. */
 function lineKind(text: string): string {
-  if (text.includes('attacked')) return 'act-attack';
-  if (text.includes('defended')) return 'act-defend';
-  if (text.endsWith('hid')) return 'act-hide';
+  if (text.includes('struck')) return 'act-strike';
+  if (text.includes('guarded')) return 'act-guard';
+  if (text.endsWith('charged')) return 'act-charge';
   if (text.includes('eliminated')) return 'kill';
   if (text.includes('did not reveal')) return 'act-none';
   return '';
@@ -443,9 +446,9 @@ export function wireMatchControls(): void {
   // mouse is a real cost.
   window.addEventListener('keydown', (event) => {
     if (event.target instanceof HTMLInputElement) return;
-    if (event.key === '1') clickAction(Action.Attack);
-    else if (event.key === '2') clickAction(Action.Defend);
-    else if (event.key === '3') clickAction(Action.Hide);
+    if (event.key === '1') clickAction(Action.Strike);
+    else if (event.key === '2') clickAction(Action.Guard);
+    else if (event.key === '3') clickAction(Action.Charge);
     else if (event.key === 'Enter' && !dom.lockIn.disabled) lockIn();
   });
 }
@@ -454,7 +457,7 @@ function selectAction(action: ActionValue, button: HTMLButtonElement): void {
   for (const other of dom.actionBar.querySelectorAll('.action')) other.classList.remove('selected');
   button.classList.add('selected');
 
-  const needsTarget = action === Action.Attack;
+  const needsTarget = action === Action.Strike;
   dom.targetRow.classList.toggle('hidden', !needsTarget);
   const target = needsTarget ? Number(dom.target.value || 0) : 0;
   app.draft = { action, target };
@@ -480,11 +483,57 @@ function switchTab(tab: 'feed' | 'reads' | 'analysis'): void {
   }
 }
 
+/** Your seat as the snapshot shows it: HP, whether a Charge is loaded, last round's action. */
+function yourSeat(state: PublicMatchState | null) {
+  return app.you === null ? undefined : state?.players.find((player) => player.index === app.you);
+}
+
+/**
+ * Opens or closes the move buttons. Open ones still respect your cooldowns:
+ * Guard and Charge cannot follow themselves and Charge cannot stack, so those
+ * buttons stay shut with the reason on them, and Strike says when it is loaded.
+ */
 function setActionsEnabled(enabled: boolean): void {
   controlsOpen = enabled;
+  const state = app.match;
+  const me = yourSeat(state);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    button.disabled = !enabled;
+    const action = Number(button.dataset.action) as ActionValue;
+    const legal = !me || isLegalAction(action, me);
+    button.disabled = !enabled || !legal;
+    button.classList.toggle('cooldown', !legal);
+    // The markup's own tooltip, kept so it comes back once the cooldown ends.
+    button.dataset.title ??= button.title;
+    button.title = legal ? button.dataset.title : cooldownReason(action, me?.charged ?? false);
+    if (action === Action.Strike) {
+      const loaded = me?.charged ?? false;
+      button.classList.toggle('loaded', loaded);
+      const desc = button.querySelector('.action-desc');
+      if (desc && state) {
+        desc.textContent = loaded
+          ? `Loaded: hits for ${strikeDamageFor(state.rules, true)}`
+          : 'Hit one seat, heal on a hit';
+      }
+    }
   }
+}
+
+function cooldownReason(action: ActionValue, charged: boolean): string {
+  if (action === Action.Guard) return 'You guarded last round — Guard is on cooldown';
+  return charged ? 'Your Charge is already loaded — Strike to spend it' : 'You charged last round — Charge is on cooldown';
+}
+
+/**
+ * A draft is kept from round to round so a player can lock in the same move
+ * again; one the cooldowns now rule out is dropped instead, or it would be
+ * sealed, rejected at reveal, and cost the player the round.
+ */
+function dropIllegalDraft(state: PublicMatchState): void {
+  const me = yourSeat(state);
+  if (!app.draft || !me || isLegalAction(app.draft.action, me)) return;
+  if (app.committedRound === state.round) return;
+  app.draft = null;
+  for (const button of dom.actionBar.querySelectorAll('.action')) button.classList.remove('selected');
 }
 
 function lockControls(reason: string): void {

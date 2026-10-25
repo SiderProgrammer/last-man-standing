@@ -40,13 +40,13 @@ contract HashLibTest is Test {
     function test_defaultRulesHashMatchesTypeScript() public pure {
         assertEq(
             HashLib.hashRules(HashLib.defaultRules()),
-            0x51f49b7b1499dec3d067b46387f9a171346327f29942d32497e74e995181c334
+            0x07d102f371d483468baf28515199dc3b888d3604c16f48ae909ab07145044d93
         );
     }
 
     function test_commitMoveMatchesTypeScript() public pure {
         bytes32 commitment = HashLib.commitMove(
-            keccak256("match"), 3, 2, HashLib.ACTION_ATTACK, 5, keccak256("salt")
+            keccak256("match"), 3, 2, HashLib.ACTION_STRIKE, 5, keccak256("salt")
         );
         assertEq(commitment, 0xfdceee9c106ff31a867d56723ef84165171e63afe5797667d11127ede92df028);
     }

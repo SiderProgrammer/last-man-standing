@@ -9,12 +9,12 @@ import type { AnalysisErrorCode, KeyMoment, MatchAnalysis } from '@lms/protocol'
  */
 
 const KIND_ICONS: Record<KeyMoment['kind'], string> = {
-  attack: '⚔️',
+  strike: '⚔️',
   hit: '💥',
-  parry: '🛡️',
-  evade: '🏃',
-  defend: '🛡️',
-  hide: '🏃',
+  'charged-hit': '⚡',
+  block: '🛡️',
+  guard: '🛡️',
+  charge: '⚡',
   timeout: '⌛',
   eliminated: '☠️',
 };

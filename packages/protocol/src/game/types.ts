@@ -11,23 +11,23 @@ import type { Rules } from './rules.js';
 
 /** Action identifiers. Values are part of the wire format and the commit hash. */
 export const Action = {
-  /** No action recorded (player timed out). Takes every attack and the full storm. */
+  /** No action recorded (timed out, or an illegal move). Takes every strike in full. */
   None: 0,
-  /** Attempt to eliminate another player. */
-  Attack: 1,
-  /** Block incoming attacks and riposte the attacker. */
-  Defend: 2,
-  /** Evade attacks with high probability, but exposed to the storm. */
-  Hide: 3,
+  /** Hit a chosen seat. A landed hit heals the striker part of the damage. */
+  Strike: 1,
+  /** Block one strike and reflect damage onto that striker. Never two rounds running. */
+  Guard: 2,
+  /** Load the next Strike with bonus damage, at the cost of taking more this round. Never two rounds running. */
+  Charge: 3,
 } as const;
 
 export type ActionValue = (typeof Action)[keyof typeof Action];
 
 export const ACTION_NAMES: Record<ActionValue, string> = {
   [Action.None]: 'none',
-  [Action.Attack]: 'attack',
-  [Action.Defend]: 'defend',
-  [Action.Hide]: 'hide',
+  [Action.Strike]: 'strike',
+  [Action.Guard]: 'guard',
+  [Action.Charge]: 'charge',
 };
 
 /** How well the house bots play. Easy bots blunder often; hard bots never do. */
@@ -39,8 +39,8 @@ export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
 export interface Move {
   action: ActionValue;
   /**
-   * Seat index of the attack target. Ignored (and forced to 0 in the commit
-   * hash) for every action other than Attack.
+   * Seat index of the strike target. Ignored (and forced to 0 in the commit
+   * hash) for every action other than Strike.
    */
   target: number;
 }
@@ -69,35 +69,44 @@ export interface PlayerState {
   eliminatedInRound: number;
   /** Number of rounds the player failed to reveal a move. */
   timeouts: number;
+  /** True while a Charge is loaded: the player's next Strike deals bonus damage. */
+  charged: boolean;
+  /**
+   * What the player did last round (`None` before the first). Guard and Charge
+   * cannot be repeated, so this is what decides which moves are legal now.
+   */
+  lastAction: ActionValue;
 }
 
-/** Why an individual attack did or did not connect. */
-export const AttackOutcome = {
+/** Why an individual strike did or did not connect. */
+export const StrikeOutcome = {
   /** Damage applied to the target. */
   Hit: 'hit',
   /**
-   * Target was defending and chose this attacker to parry: no damage, the
-   * attacker takes riposte damage. A defender parries one attacker per round;
+   * Target was guarding and picked this striker to block: no damage, and the
+   * striker takes the reflected damage. A guard blocks one striker per round;
    * the others connect.
    */
-  Parried: 'parried',
-  /** Target was hiding and evaded the roll. */
-  Missed: 'missed',
+  Guarded: 'guarded',
   /** Target was already eliminated, or the target index was invalid. */
   Void: 'void',
 } as const;
 
-export type AttackOutcomeValue = (typeof AttackOutcome)[keyof typeof AttackOutcome];
+export type StrikeOutcomeValue = (typeof StrikeOutcome)[keyof typeof StrikeOutcome];
 
-/** One resolved attack, published in the round history. */
-export interface AttackRecord {
-  attacker: number;
+/** One resolved strike, published in the round history. */
+export interface StrikeRecord {
+  striker: number;
   target: number;
-  outcome: AttackOutcomeValue;
+  outcome: StrikeOutcomeValue;
+  /** True when the strike spent a loaded Charge, hit or not. */
+  charged: boolean;
   /** Damage dealt to the target. */
   damage: number;
-  /** Damage reflected back onto the attacker. */
-  riposte: number;
+  /** HP the striker regained from landing it. */
+  heal: number;
+  /** Damage the target's Guard reflected back onto the striker. */
+  reflected: number;
 }
 
 /** The public, post-reveal record of a single round. */
@@ -115,9 +124,13 @@ export interface RoundRecord {
     revealed: boolean;
     salt: `0x${string}`;
   }>;
-  attacks: AttackRecord[];
-  /** Storm damage applied to every surviving player at the end of the round. */
-  stormDamage: number;
+  strikes: StrikeRecord[];
+  /**
+   * Stall penalty applied to every living player at the end of the round:
+   * non-zero only once the table has gone `stallGraceRounds` rounds without a
+   * single hit, and growing for every further quiet round.
+   */
+  stallDamage: number;
   /** Seat indices eliminated this round, in deterministic tie-broken order. */
   eliminated: number[];
   /** HP of every seat after the round, indexed by seat. */
@@ -160,6 +173,10 @@ export interface PublicMatchState {
     chainId: number;
     hp: number;
     alive: boolean;
+    /** A loaded Charge, visible to everyone: this seat's next Strike hits harder. */
+    charged: boolean;
+    /** Last round's action, which decides whether Guard or Charge is on cooldown. */
+    lastAction: ActionValue;
   }>;
   /** Seats whose commitment has been received this round. */
   committed: number[];

@@ -25,17 +25,17 @@ export const TOOLS: ToolDefinition[] = [
   ),
   tool(
     'get_player_history',
-    "A seat's wallet record across earlier settled matches: matches, wins, and how often it attacks, defends, hides or times out. Practice matches are not recorded.",
+    "A seat's wallet record across earlier settled matches: matches, wins, and how often it strikes, guards, charges or times out. Practice matches are not recorded.",
     { seat: { type: 'integer', description: 'Seat index in this match.' } },
   ),
   tool(
     'get_reads',
-    "A seat's tendencies over this whole match, as the reads panel shows them: action counts, favourite target, attacks on the player the analysis is for, and the named tell if one stands out.",
+    "A seat's tendencies over this whole match, as the reads panel shows them: action counts, favourite target, strikes on the player the analysis is for, and the named tell if one stands out.",
     { seat: { type: 'integer', description: 'Seat index in this match.' } },
   ),
   tool(
     'get_round',
-    "One round in full: every seat's move, every attack and its outcome (hit, parried, missed, void) with damage and riposte, the storm, eliminations and HP afterwards. Check a round here before citing it as a key moment.",
+    "One round in full: every seat's move, every strike and its outcome (hit, guarded, void) with damage, heal, reflection and whether a Charge was behind it, the stall penalty, eliminations and HP afterwards. Check a round here before citing it as a key moment.",
     { round: { type: 'integer', description: 'Round number, starting at 1.' } },
   ),
 ];
@@ -140,10 +140,10 @@ export class MatchTools {
     if (!read) return failure(this.noSuchSeat(seat));
 
     const parts = [
-      `Seat #${seat} over the whole match: ${read.attacks} attacks, ${read.defends} defends, ${read.hides} hides, ${read.noShows} timeouts.`,
-      read.favourite === null ? 'Never attacked.' : `Attacked #${read.favourite} most often.`,
+      `Seat #${seat} over the whole match: ${read.strikes} strikes, ${read.guards} guards, ${read.charges} charges, ${read.noShows} timeouts.`,
+      read.favourite === null ? 'Never struck.' : `Struck #${read.favourite} most often.`,
     ];
-    if (perspective !== null) parts.push(`Attacked #${perspective} (the player this analysis is for) ${read.againstYou} times.`);
+    if (perspective !== null) parts.push(`Struck #${perspective} (the player this analysis is for) ${read.againstYou} times.`);
     parts.push(read.tell ? `Tell: ${read.tell}.` : 'No tell stands out.');
     const fell = this.match.history.find((record) => record.eliminated.includes(seat));
     parts.push(fell ? `Eliminated in round ${fell.round}.` : 'Still standing at the end.');
@@ -158,7 +158,7 @@ export class MatchTools {
     if (!style || style.matches === 0) return success(`Seat #${seat} has no settled matches on record.`);
     return success(
       `Seat #${seat} across ${style.matches} settled matches (this one included if it was staked): ${style.wins} won; ` +
-        `${style.attacks} attacks, ${style.defends} defends, ${style.hides} hides, ${style.noShows} timeouts. ` +
+        `${style.strikes} strikes, ${style.guards} guards, ${style.charges} charges, ${style.noShows} timeouts. ` +
         `Summary: ${describeStyle(style)}`,
     );
   }

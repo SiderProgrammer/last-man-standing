@@ -39,7 +39,7 @@ function playOut(instance: Room, now = 0): number {
     const pending = instance.match.publicState().committed.includes(0);
     if (phase === MatchPhase.Commit && instance.match.playerState(0).alive && !pending) {
       const target = instance.match.alive.find((seat) => seat !== 0) ?? 0;
-      const move = humanMove(instance, Action.Attack, target);
+      const move = humanMove(instance, Action.Strike, target);
       instance.submitCommit(HUMAN, commitMove(instance.matchId, instance.match.round, 0, move), clock);
       if (instance.match.phase === MatchPhase.Reveal) instance.submitReveal(HUMAN, move, clock);
     } else {
@@ -65,7 +65,7 @@ describe('room lifecycle', () => {
     const client = new FakeClient(HUMAN);
     instance.attach(client);
 
-    const move = humanMove(instance, Action.Defend);
+    const move = humanMove(instance, Action.Guard);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, move), 1_000);
     // Every seat has committed, so the reveal window opened immediately.
     expect(instance.match.phase).toBe(MatchPhase.Reveal);
@@ -89,7 +89,7 @@ describe('room lifecycle', () => {
     const spectator = new FakeClient('0x00000000000000000000000000000000000000ff');
     instance.attach(spectator);
 
-    const move = humanMove(instance, Action.Attack, 2);
+    const move = humanMove(instance, Action.Strike, 2);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, move), 100);
 
     const snapshot = JSON.stringify(spectator.last('state'));
@@ -99,10 +99,10 @@ describe('room lifecycle', () => {
 
   it('rejects a reveal that does not match the commitment', () => {
     const instance = room();
-    const honest = humanMove(instance, Action.Defend);
+    const honest = humanMove(instance, Action.Guard);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, honest), 100);
 
-    expect(() => instance.submitReveal(HUMAN, humanMove(instance, Action.Attack, 1), 200)).toThrow(
+    expect(() => instance.submitReveal(HUMAN, humanMove(instance, Action.Strike, 1), 200)).toThrow(
       /commitment/,
     );
   });
@@ -145,7 +145,7 @@ describe('replay hold', () => {
 
   /** Resolves round 1 at t=1000 by committing and revealing the human's move. */
   function resolveFirstRound(instance: Room): void {
-    const move = humanMove(instance, Action.Defend);
+    const move = humanMove(instance, Action.Guard);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 1, 0, move), 1_000);
     instance.submitReveal(HUMAN, move, 1_000);
   }
@@ -176,7 +176,7 @@ describe('replay hold', () => {
     const instance = room(4, 'hold-early', { replayMs: REPLAY });
     resolveFirstRound(instance);
 
-    const move = humanMove(instance, Action.Hide);
+    const move = humanMove(instance, Action.Charge);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_500);
 
     expect(instance.match.phase).toBe(MatchPhase.Commit);
@@ -186,7 +186,7 @@ describe('replay hold', () => {
   it('opens the reveal as soon as the replay ends for a table that is already committed', () => {
     const instance = room(4, 'hold-release', { replayMs: REPLAY });
     resolveFirstRound(instance);
-    const move = humanMove(instance, Action.Hide);
+    const move = humanMove(instance, Action.Charge);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_500);
 
     instance.tick(1_000 + REPLAY - 1);
@@ -229,7 +229,7 @@ describe('replay hold', () => {
     resolveFirstRound(instance);
 
     expect(instance.deadline).toBe(1_000 + OPTIONS.commitMs);
-    const move = humanMove(instance, Action.Hide);
+    const move = humanMove(instance, Action.Charge);
     instance.submitCommit(HUMAN, commitMove(instance.matchId, 2, 0, move), 1_001);
     expect(instance.match.phase).toBe(MatchPhase.Reveal);
   });
@@ -249,7 +249,7 @@ describe('spectators', () => {
 describe('move aim', () => {
   it('refuses a commit made for another round instead of taking it for this one', () => {
     const instance = room();
-    const move = humanMove(instance, Action.Defend);
+    const move = humanMove(instance, Action.Guard);
     const stale = commitMove(instance.matchId, 0, 0, move);
     expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { round: 0 })).toThrow(
       /for round 0; the match is on round 1/,
@@ -259,7 +259,7 @@ describe('move aim', () => {
 
   it('refuses a move made for another match', () => {
     const instance = room();
-    const move = humanMove(instance, Action.Defend);
+    const move = humanMove(instance, Action.Guard);
     const commitment = commitMove(instance.matchId, 1, 0, move);
     expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere') })).toThrow(
       /another match/,
@@ -268,7 +268,7 @@ describe('move aim', () => {
 
   it('accepts a move that names the match and round in progress', () => {
     const instance = room();
-    const move = humanMove(instance, Action.Defend);
+    const move = humanMove(instance, Action.Guard);
     const commitment = commitMove(instance.matchId, instance.match.round, 0, move);
     instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: instance.matchId, round: instance.match.round });
     expect(instance.match.publicState().committed).toContain(0);

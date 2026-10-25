@@ -10,6 +10,8 @@ export interface EscrowMatch {
   seatCount: number;
   status: number;
   joinDeadline: bigint;
+  /** Digest of the rule set the match was created under; see `hashRules`. */
+  rulesHash: `0x${string}`;
   seed: `0x${string}`;
   /** Unix seconds after which a live match with no result may be cancelled. */
   settleDeadline: bigint;

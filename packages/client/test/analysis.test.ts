@@ -6,9 +6,9 @@ import { round, stateWith } from './helpers.js';
 
 describe('rewinding a finished match', () => {
   const history = [
-    round(1, [{ index: 0, action: Action.Attack, target: 1 }, { index: 1, action: Action.Defend }, { index: 2, action: Action.Hide }], [100, 66, 100]),
-    { ...round(2, [{ index: 0, action: Action.Attack, target: 1 }, { index: 1, action: Action.Defend }, { index: 2, action: Action.Hide }], [94, -2, 90]), eliminated: [1] },
-    round(3, [{ index: 0, action: Action.Attack, target: 2 }, { index: 2, action: Action.Hide }], [80, 0, 40]),
+    round(1, [{ index: 0, action: Action.Strike, target: 1 }, { index: 1, action: Action.Guard }, { index: 2, action: Action.Charge }], [100, 66, 100]),
+    { ...round(2, [{ index: 0, action: Action.Strike, target: 1 }, { index: 1, action: Action.Guard }, { index: 2, action: Action.Charge }], [94, -2, 90]), eliminated: [1] },
+    round(3, [{ index: 0, action: Action.Strike, target: 2 }, { index: 2, action: Action.Charge }], [80, 0, 40]),
   ];
   const state = stateWith(3, history, [1]);
 

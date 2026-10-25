@@ -2,11 +2,12 @@
   "minPlayers": 4,
   "maxPlayers": 8,
   "startingHp": 100,
-  "attackDamage": 34,
-  "riposteDamage": 5,
-  "hideEvadeBps": 2500,
-  "hideStormBps": 7500,
-  "stormGraceRounds": 1,
-  "stormBaseDamage": 6,
+  "strikeDamage": 25,
+  "strikeHealBps": 5000,
+  "guardReflectDamage": 34,
+  "chargeBonusDamage": 34,
+  "chargeExposureBps": 2500,
+  "stallGraceRounds": 2,
+  "stallDamage": 8,
   "maxRounds": 30
 }

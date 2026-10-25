@@ -71,6 +71,16 @@
       "port": 5183
     },
     {
+      "name": "sgc-client",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--input-type=module",
+        "-e",
+        "const fs = await import('node:fs'); process.env.VITE_DEV_KEY = fs.readFileSync('scripts/dev-fork.mjs', 'utf8').match(/PLAYER_KEY = '(0x[0-9a-f]+)'/)[1]; process.env.VITE_WS_URL='ws://localhost:8798'; const { createServer } = await import('vite'); const server = await createServer({ configFile: 'packages/client/vite.config.ts', root: 'packages/client', server: { port: 5185, strictPort: true } }); await server.listen(); server.printUrls();"
+      ],
+      "port": 5185
+    },
+    {
       "name": "master-server",
       "runtimeExecutable": "node",
       "runtimeArgs": [

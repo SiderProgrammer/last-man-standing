@@ -9,7 +9,7 @@ pragma solidity 0.8.28;
 ///      in `packages/protocol/src/game/hash.ts`.
 library HashLib {
     uint256 internal constant BPS_DENOMINATOR = 10_000;
-    uint8 internal constant ACTION_ATTACK = 1;
+    uint8 internal constant ACTION_STRIKE = 1;
 
     /// @dev Field order is the hash order: `abi.encode` of this all-static
     ///      struct is byte-identical to encoding the fields one by one, which is
@@ -18,12 +18,13 @@ library HashLib {
         uint16 minPlayers;
         uint16 maxPlayers;
         uint32 startingHp;
-        uint32 attackDamage;
-        uint32 riposteDamage;
-        uint16 hideEvadeBps;
-        uint16 hideStormBps;
-        uint16 stormGraceRounds;
-        uint32 stormBaseDamage;
+        uint32 strikeDamage;
+        uint16 strikeHealBps;
+        uint32 guardReflectDamage;
+        uint32 chargeBonusDamage;
+        uint16 chargeExposureBps;
+        uint16 stallGraceRounds;
+        uint32 stallDamage;
         uint16 maxRounds;
     }
 
@@ -35,7 +36,7 @@ library HashLib {
         uint8 target,
         bytes32 salt
     ) internal pure returns (bytes32) {
-        if (action != ACTION_ATTACK) target = 0;
+        if (action != ACTION_STRIKE) target = 0;
         return keccak256(abi.encode(matchId, round, seat, action, target, salt));
     }
 
@@ -104,12 +105,13 @@ library HashLib {
             minPlayers: 4,
             maxPlayers: 8,
             startingHp: 100,
-            attackDamage: 34,
-            riposteDamage: 5,
-            hideEvadeBps: 2500,
-            hideStormBps: 7500,
-            stormGraceRounds: 1,
-            stormBaseDamage: 6,
+            strikeDamage: 25,
+            strikeHealBps: 5000,
+            guardReflectDamage: 34,
+            chargeBonusDamage: 34,
+            chargeExposureBps: 2500,
+            stallGraceRounds: 2,
+            stallDamage: 8,
             maxRounds: 30
         });
     }

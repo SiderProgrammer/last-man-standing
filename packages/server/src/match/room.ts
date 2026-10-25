@@ -2,6 +2,7 @@ import {
   MatchPhase,
   addressKey,
   commitMove,
+  errorMessage,
   type AvatarEntry,
   type BotDifficulty,
   type MatchResult,
@@ -143,8 +144,10 @@ export class Room {
 
   /**
    * @param hold The move behind `commitment`, if the player wants the server to
-   *        reveal it for them. Checked against the commitment up front, so a
-   *        held move can never be one the player could not have revealed.
+   *        reveal it for them. Checked against the commitment and against the
+   *        rules up front, so a held move can never be one the player could not
+   *        have revealed: the server opens it unattended, on the room's clock,
+   *        where a rejection would have nobody to report to.
    */
   submitCommit(
     address: `0x${string}`,
@@ -160,6 +163,7 @@ export class Room {
       if (opened.toLowerCase() !== commitment.toLowerCase()) {
         throw new Error('the held move does not open the commitment');
       }
+      this.match.assertPlayable(seat, hold);
     }
     this.match.submitCommit(seat, commitment);
     if (hold) this.held.set(seat, hold);
@@ -218,7 +222,15 @@ export class Room {
     this.match.openRevealPhase();
     this.bots.reveal(this.match);
     // Held moves open at once, whether or not their players are still here.
-    for (const [seat, move] of this.held) this.match.submitReveal(seat, move);
+    // Each was checked at commit, but one that is still refused must cost only
+    // its own seat the round, never the reveals queued behind it.
+    for (const [seat, move] of this.held) {
+      try {
+        this.match.submitReveal(seat, move);
+      } catch (error) {
+        console.warn(`[room] held move for seat ${seat} refused; it sits the round out:`, errorMessage(error));
+      }
+    }
     this.held.clear();
 
     if (this.match.allRevealed()) {

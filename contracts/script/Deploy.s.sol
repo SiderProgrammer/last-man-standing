@@ -17,6 +17,8 @@ import {LmsToken} from "../src/governance/LmsToken.sol";
 import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
+import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
+import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /// @notice Hub deploy: token-governed config, randomness oracle, attestors, hub escrow.
 /// @dev Governance ends up as:
@@ -27,12 +29,15 @@ import {FeeRouter} from "../src/governance/FeeRouter.sol";
 ///         |                                                     has passed)
 ///         +- guardian: may pause GameEscrow at once, never unpause;
 ///         |            may veto a proposed result, which refunds every stake
-///         +- receives the LMS supply, to distribute
+///         +- receives the liquidity share of LMS, to seed a pool
 ///         +- treasury: receives the non-staker share of fees
 ///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
 ///
 ///      Fees: the escrow's treasury is `FeeRouter`, which passes the stakers'
 ///      share to `StakedLms` as ETH and forwards the rest to the treasury.
+///
+///      LMS: split between play-mining, the timelock, the team's vesting
+///      wallet and the Safe; see `_distribute`.
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
@@ -45,6 +50,17 @@ import {FeeRouter} from "../src/governance/FeeRouter.sol";
 contract Deploy is Script {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
+    /// @dev The hub's home: Ethereum L1.
+    uint256 private constant MAINNET_CHAIN_ID = 1;
+
+    /// @dev The LMS supply's split, in basis points. The timelock takes the
+    ///      treasury and reserve shares, plus any rounding: see `_distribute`.
+    uint256 private constant BPS = 10_000;
+    uint256 private constant PLAY_MINING_BPS = 5_000;
+    uint256 private constant TEAM_BPS = 1_500;
+    uint256 private constant LIQUIDITY_BPS = 500;
+    uint64 private constant TEAM_CLIFF = 365 days;
+    uint64 private constant TEAM_VESTING = 3 * 365 days;
 
     /// @dev Returned as one struct rather than as named values: each named
     ///      return is a stack slot held for the whole body, and this frame is
@@ -63,6 +79,8 @@ contract Deploy is Script {
         StakedLms stakedLms;
         LmsGovernor governor;
         FeeRouter feeRouter;
+        RewardsDistributor rewards;
+        VestingWallet teamVesting;
         address safe;
         address oracle;
         address messenger;
@@ -72,6 +90,8 @@ contract Deploy is Script {
     error MockOffLocal();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
     error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
+    error RewardsUnderfunded(uint256 budget, uint256 funded);
+    error TeamBeneficiaryRequired();
 
     function run() external returns (Deployment memory deployment) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
@@ -106,6 +126,7 @@ contract Deploy is Script {
         deployment.sessionDelegate = new SessionKeyDelegate();
         deployment.zap = _zap(deployment.escrow);
         _governance(deployment, deployer);
+        _distribute(deployment, deployer);
 
         deployment.config.transferOwnership(address(deployment.timelock));
         _handOver(deployment, deployer);
@@ -150,7 +171,9 @@ contract Deploy is Script {
             maxSeats: 8,
             joinWindow: 15 minutes,
             settleWindow: 2 hours,
-            minStake: 0.001 ether,
+            // The hub is Ethereum L1, where a join costs real gas. Below about
+            // 0.01 ETH the 5% fee is smaller than the gas of the join paying it.
+            minStake: 0.01 ether,
             maxStake: 1 ether,
             treasury: vm.envOr("TREASURY", safe)
         });
@@ -200,12 +223,13 @@ contract Deploy is Script {
         rules.minPlayers = uint16(vm.parseJsonUint(json, ".minPlayers"));
         rules.maxPlayers = uint16(vm.parseJsonUint(json, ".maxPlayers"));
         rules.startingHp = uint32(vm.parseJsonUint(json, ".startingHp"));
-        rules.attackDamage = uint32(vm.parseJsonUint(json, ".attackDamage"));
-        rules.riposteDamage = uint32(vm.parseJsonUint(json, ".riposteDamage"));
-        rules.hideEvadeBps = uint16(vm.parseJsonUint(json, ".hideEvadeBps"));
-        rules.hideStormBps = uint16(vm.parseJsonUint(json, ".hideStormBps"));
-        rules.stormGraceRounds = uint16(vm.parseJsonUint(json, ".stormGraceRounds"));
-        rules.stormBaseDamage = uint32(vm.parseJsonUint(json, ".stormBaseDamage"));
+        rules.strikeDamage = uint32(vm.parseJsonUint(json, ".strikeDamage"));
+        rules.strikeHealBps = uint16(vm.parseJsonUint(json, ".strikeHealBps"));
+        rules.guardReflectDamage = uint32(vm.parseJsonUint(json, ".guardReflectDamage"));
+        rules.chargeBonusDamage = uint32(vm.parseJsonUint(json, ".chargeBonusDamage"));
+        rules.chargeExposureBps = uint16(vm.parseJsonUint(json, ".chargeExposureBps"));
+        rules.stallGraceRounds = uint16(vm.parseJsonUint(json, ".stallGraceRounds"));
+        rules.stallDamage = uint32(vm.parseJsonUint(json, ".stallDamage"));
         rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
     }
 
@@ -232,7 +256,12 @@ contract Deploy is Script {
         uint256 exposure = votingPeriod + _timelockDelay();
         if (cooldown <= exposure) revert CooldownTooShort(cooldown, exposure);
 
-        deployment.stakedLms = new StakedLms(deployment.lms, address(deployment.timelock), uint64(cooldown));
+        deployment.stakedLms = new StakedLms(
+            deployment.lms,
+            address(deployment.timelock),
+            uint64(cooldown),
+            uint64(vm.envOr("REWARD_DURATION", uint256(7 days)))
+        );
 
         deployment.governor = new LmsGovernor(
             deployment.stakedLms,
@@ -240,7 +269,9 @@ contract Deploy is Script {
             uint48(vm.envOr("VOTING_DELAY", uint256(1 days))),
             uint32(votingPeriod),
             vm.envOr("PROPOSAL_THRESHOLD", uint256(100_000e18)),
-            vm.envOr("QUORUM_PERCENT", uint256(4))
+            vm.envOr("QUORUM_PERCENT", uint256(4)),
+            // 1% of the default supply: what a vote needs while little is staked.
+            vm.envOr("QUORUM_FLOOR", uint256(1_000_000e18))
         );
 
         deployment.feeRouter = new FeeRouter(
@@ -248,14 +279,80 @@ contract Deploy is Script {
             deployment.stakedLms,
             address(deployment.timelock),
             deployment.config.treasury(),
-            uint16(vm.envOr("STAKER_FEE_BPS", uint256(5_000)))
+            uint16(vm.envOr("STAKER_FEE_BPS", _defaultStakerBps()))
         );
         // The deployer still owns the config, so this skips the timelock.
         ProtocolConfig.Params memory params = deployment.config.getParams();
         params.treasury = address(deployment.feeRouter);
         deployment.config.setParams(params);
+    }
 
-        deployment.lms.transfer(deployment.safe, deployment.lms.balanceOf(deployer));
+    /// @dev Nothing on Ethereum mainnet until there is legal advice on paying
+    ///      holders a share of a gambling protocol's revenue; governance can
+    ///      raise it with one proposal. Half everywhere else, to show the
+    ///      mechanism working.
+    function _defaultStakerBps() internal view returns (uint256) {
+        return block.chainid == MAINNET_CHAIN_ID ? 0 : 5_000;
+    }
+
+    /// @dev Hands out the whole supply, so the deployer ends with none of its
+    ///      own (on a local node, where it is also the Safe, it holds the Safe's):
+    ///
+    ///        50%  play-mining     RewardsDistributor, paid to players over four years
+    ///        25%  treasury        the timelock: only a passed proposal can spend it
+    ///        15%  team            a VestingWallet: nothing for a year, then linear over three
+    ///         5%  liquidity       the Safe, to seed a pool
+    ///         5%  reserve         the timelock, with the treasury
+    ///
+    ///      None of the tokens the timelock, the distributor or the vesting
+    ///      wallet holds is staked, so none of them votes: governance starts
+    ///      with the players, as play-mining pays them. The vesting wallet and
+    ///      the distributor have no way to stake; the timelock could only by a
+    ///      proposal, which needs votes it does not have.
+    function _distribute(Deployment memory deployment, address deployer) private {
+        LmsToken lms = deployment.lms;
+        uint256 supply = lms.totalSupply();
+
+        deployment.rewards = _rewards(deployment);
+        uint256 play = (supply * PLAY_MINING_BPS) / BPS;
+        lms.transfer(address(deployment.rewards), play);
+        uint256 budget = deployment.rewards.totalBudget();
+        if (budget > play) revert RewardsUnderfunded(budget, play);
+
+        uint64 vestingStart = uint64(block.timestamp + TEAM_CLIFF);
+        deployment.teamVesting = new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
+        uint256 team = (supply * TEAM_BPS) / BPS;
+        lms.transfer(address(deployment.teamVesting), team);
+
+        // Treasury and reserve, and the rounding of the other three. Counted,
+        // not swept from the deployer's balance: on a local node the Safe *is*
+        // the deployer, and a sweep after the Safe's share would take it too.
+        uint256 liquidity = (supply * LIQUIDITY_BPS) / BPS;
+        lms.transfer(address(deployment.timelock), supply - play - team - liquidity);
+        lms.transfer(deployment.safe, liquidity);
+        assert(lms.balanceOf(deployer) == (deployer == deployment.safe ? liquidity : 0));
+    }
+
+    function _rewards(Deployment memory deployment) private returns (RewardsDistributor) {
+        uint256 epochLength = deployment.escrow.FEE_EPOCH();
+        return new RewardsDistributor(
+            deployment.escrow,
+            deployment.stakedLms,
+            address(deployment.timelock),
+            // The first full epoch after the deploy, unless told otherwise.
+            vm.envOr("REWARDS_FIRST_EPOCH", block.timestamp / epochLength + 1),
+            (deployment.lms.totalSupply() * PLAY_MINING_BPS) / BPS,
+            vm.envOr("MAX_REWARD_PER_ETH", uint256(100_000e18))
+        );
+    }
+
+    /// @dev Required everywhere but a local node, like the Safe, so a missing
+    ///      variable cannot quietly vest the team's tokens to the Safe.
+    function _teamBeneficiary(address safe) internal view returns (address team) {
+        team = vm.envOr("TEAM_BENEFICIARY", address(0));
+        if (team != address(0)) return team;
+        if (block.chainid != LOCAL_CHAIN_ID) revert TeamBeneficiaryRequired();
+        return safe;
     }
 
     /// @dev A queued change must not be able to land on a match that was

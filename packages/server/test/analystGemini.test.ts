@@ -15,15 +15,15 @@ import {
   type ModelRequest,
 } from '@lms/server';
 
-const match = playReferenceMatch({ label: 'gemini', strategies: ['reader', 'aggressor', 'turtle', 'hider'] });
+const match = playReferenceMatch({ label: 'gemini', strategies: ['reader', 'striker', 'guarder', 'charger'] });
 const player = match.seats?.[0]?.address as `0x${string}`;
 const matchId = match.result.matchId;
 
 const ANALYSIS = {
-  summary: 'The turtle outlasted the brawlers.',
+  summary: 'The guarder outlasted the brawlers.',
   decisiveRound: 2,
-  keyMoments: [{ round: 1, seat: 2, kind: 'defend', target: null, claim: 'Dug in early.' }],
-  advice: ['Focus the turtle.'],
+  keyMoments: [{ round: 1, seat: 2, kind: 'guard', target: null, claim: 'Dug in early.' }],
+  advice: ['Focus the guarder.'],
 };
 
 type Body = Record<string, unknown>;

@@ -32,7 +32,7 @@ export const AnalysisOutput = z.object({
           .number()
           .int()
           .nullable()
-          .describe('The other seat, for attack/hit/parry/evade; null for every other kind.'),
+          .describe('The other seat, for strike/hit/charged-hit/block; null for every other kind.'),
         claim: z.string().min(1).max(300).describe('One sentence explaining why the moment mattered.'),
       }),
     )

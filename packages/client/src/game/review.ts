@@ -1,4 +1,4 @@
-import { MatchPhase, sameAddress, type PublicMatchState, type ReviewedMatch } from '@lms/protocol';
+import { MatchPhase, cooldownsFrom, sameAddress, type PublicMatchState, type ReviewedMatch } from '@lms/protocol';
 
 /** An archived match, rebuilt into what the match screen draws. */
 export interface Review {
@@ -32,6 +32,7 @@ export function reviewOf(match: ReviewedMatch, viewer: `0x${string}` | null): Re
       chainId: seat.chainId,
       hp: last?.hpAfter[seat.index] ?? match.rules.startingHp,
       alive: !eliminated.has(seat.index),
+      ...cooldownsFrom(match.history, seat.index),
     })),
     committed: [],
     revealed: [],

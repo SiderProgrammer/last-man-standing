@@ -26,6 +26,49 @@ export interface StakingInfo {
   governor: `0x${string}` | null;
   /** `FeeRouter`, so proposals that change it are labelled. Null when there is none. */
   feeRouter: `0x${string}` | null;
+  /**
+   * `RewardsDistributor`, for claiming play-mining rewards. Optional for older
+   * servers; absent or null hides the claim.
+   */
+  rewards?: `0x${string}` | null;
+}
+
+/**
+ * The `RewardsDistributor` surface: play-mining, paid by fee epoch as sLMS.
+ * `claimable` loops over a range on-chain, so it is meant for `eth_call`.
+ */
+export const rewardsDistributorAbi = parseAbi([
+  'function firstEpoch() view returns (uint256)',
+  'function epochLength() view returns (uint256)',
+  'function PROGRAM_EPOCHS() view returns (uint256)',
+  'function claimable(address player, uint256 fromEpoch, uint256 toEpoch) view returns (uint256 total, uint256[] epochs)',
+  'function claim(address player, uint256[] epochs) returns (uint256 reward)',
+  'function setMaxRewardPerEth(uint256 maxRewardPerEth)',
+  'function sweep(address to) returns (uint256 amount)',
+  'error EpochNotClaimable(uint256 epoch)',
+  'error AlreadyClaimed(uint256 epoch)',
+  'error NothingToClaim()',
+  'error ClaimsClosed()',
+  'error ClaimsStillOpen(uint256 closesAt)',
+]);
+
+/**
+ * The epochs worth asking `claimable` about at `chainTime`: from the program's
+ * first to the last one that has ended, capped at the program's length.
+ * Null when none has ended yet.
+ */
+export function claimableEpochRange(
+  firstEpoch: bigint,
+  epochLength: bigint,
+  programEpochs: bigint,
+  chainTime: bigint,
+): { from: bigint; to: bigint } | null {
+  if (epochLength === 0n || programEpochs === 0n) return null;
+  const current = chainTime / epochLength;
+  if (current <= firstEpoch) return null;
+  const lastEnded = current - 1n;
+  const lastInProgram = firstEpoch + programEpochs - 1n;
+  return { from: firstEpoch, to: lastEnded < lastInProgram ? lastEnded : lastInProgram };
 }
 
 /** The `StakedLms` surface the client uses. Errors are included so a failed simulation reads as its cause. */
@@ -34,6 +77,8 @@ export const stakedLmsAbi = parseAbi([
   'function balanceOf(address account) view returns (uint256)',
   'function convertToAssets(uint256 shares) view returns (uint256)',
   'function getVotes(address account) view returns (uint256)',
+  'function delegates(address account) view returns (address)',
+  'function delegate(address delegatee)',
   'function cooldown() view returns (uint64)',
   'function unstakeOf(address account) view returns (uint128 assets, uint64 unlockAt)',
   'function deposit(uint256 assets, address receiver) returns (uint256 shares)',

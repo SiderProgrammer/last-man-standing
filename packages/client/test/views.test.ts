@@ -147,10 +147,10 @@ describe('formatting', () => {
     expect(short(`0x${'ab'.repeat(20)}`)).toBe('0xabab…abab');
   });
 
-  it('names an attack with its target and everything else by action', () => {
-    expect(describeDraft({ action: 1, target: 5 })).toBe('attack #5');
-    expect(describeDraft({ action: 2, target: 0 })).toBe('defend');
-    expect(describeDraft({ action: 3, target: 0 })).toBe('hide');
+  it('names a strike with its target and everything else by action', () => {
+    expect(describeDraft({ action: 1, target: 5 })).toBe('strike #5');
+    expect(describeDraft({ action: 2, target: 0 })).toBe('guard');
+    expect(describeDraft({ action: 3, target: 0 })).toBe('charge');
   });
 
   it('counts down to the deadline, never past zero', () => {

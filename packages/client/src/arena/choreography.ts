@@ -1,8 +1,8 @@
 import {
-  AttackOutcome,
+  StrikeOutcome,
   type ActionValue,
-  type AttackOutcomeValue,
   type RoundRecord,
+  type StrikeOutcomeValue,
 } from '@lms/protocol';
 
 /**
@@ -16,10 +16,11 @@ import {
  *
  * HP is moved between two waypoints and deliberately knows no rule constants:
  *
- *   before → afterAttacks   exact from the record: damage taken as a target and
- *                           riposte taken as an attacker
- *   afterAttacks → hpAfter  whatever the storm and the engine's survivor rule
- *                           did, landing on the *published* value
+ *   before → afterStrikes   exact from the record: damage taken as a target,
+ *                           reflections taken as a striker, and heals gained
+ *                           from landed hits, capped at `maxHp`
+ *   afterStrikes → hpAfter  whatever the stall penalty and the engine's
+ *                           survivor rule did, landing on the *published* value
  *
  * Ending on `hpAfter` rather than on our own arithmetic is what keeps the
  * replay honest when the engine does something the client cannot reconstruct —
@@ -35,26 +36,29 @@ export interface SeatSnapshot {
 }
 
 export type Beat =
-  /** A seat shows the move it revealed: a lunge, a raised shield, a shimmer. */
+  /** A seat shows the move it revealed: a lunge, a raised shield, a charge-up. */
   | { kind: 'declare'; seat: number; action: ActionValue; target: number; start: number; end: number }
-  /** A seat that never revealed, and is resolved as a weaker Hide. */
+  /** A seat that never revealed, and is resolved as having done nothing. */
   | { kind: 'noShow'; seat: number; start: number; end: number }
-  /** A projectile on its way from attacker to target. */
-  | { kind: 'travel'; from: number; to: number; outcome: AttackOutcomeValue; start: number; end: number }
+  /** A projectile on its way from striker to target. */
+  | { kind: 'travel'; from: number; to: number; outcome: StrikeOutcomeValue; charged: boolean; start: number; end: number }
   /** The projectile arriving, and what the target did about it. */
   | {
       kind: 'impact';
       seat: number;
       from: number;
-      outcome: AttackOutcomeValue;
+      outcome: StrikeOutcomeValue;
+      charged: boolean;
       damage: number;
       start: number;
       end: number;
     }
-  /** A defender's reflected damage flying back at the attacker. */
-  | { kind: 'riposte'; from: number; to: number; damage: number; start: number; end: number }
-  /** The storm biting one seat. `damage` is the HP the seat visibly loses. */
-  | { kind: 'storm'; seat: number; damage: number; start: number; end: number }
+  /** A guard's reflected damage flying back at the striker. */
+  | { kind: 'reflect'; from: number; to: number; damage: number; start: number; end: number }
+  /** A striker drawing HP back from a hit that landed. */
+  | { kind: 'heal'; seat: number; amount: number; start: number; end: number }
+  /** The stall penalty biting one seat. `damage` is the HP the seat visibly loses. */
+  | { kind: 'stall'; seat: number; damage: number; start: number; end: number }
   /** A seat shattering. `order` is its place in the record's tie-broken order. */
   | { kind: 'eliminate'; seat: number; order: number; start: number; end: number };
 
@@ -65,10 +69,10 @@ export interface Window {
 
 export interface SeatTrack {
   before: number;
-  afterAttacks: number;
+  afterStrikes: number;
   after: number;
   aliveBefore: boolean;
-  attackWindow: Window | null;
+  strikeWindow: Window | null;
   settleWindow: Window | null;
   eliminateWindow: Window | null;
 }
@@ -77,21 +81,22 @@ export interface Timeline {
   beats: Beat[];
   /** Seconds from the first beat starting to the last one ending. */
   duration: number;
-  /** True when the storm did damage this round, so the ring should flare. */
-  storm: Window | null;
+  /** When the stall penalty bit this round, so the wall should flare. */
+  stall: Window | null;
   tracks: Map<number, SeatTrack>;
 }
 
 // Timings, in seconds. Tuned so the worst case — eight seats, every one of them
-// attacking, several dying — still ends inside the server's default replay
+// striking, several dying — still ends inside the server's default replay
 // hold of 2.5s. `choreography.test.ts` holds this to account.
 const DECLARE = 0.25;
 const TRAVEL = 0.35;
-/** Total spread of attack launches, however many attacks there are. */
+/** Total spread of strike launches, however many strikes there are. */
 const TRAVEL_SPREAD = 0.2;
 const MAX_TRAVEL_STAGGER = 0.06;
 const IMPACT = 0.35;
-const RIPOSTE = 0.25;
+const REFLECT = 0.25;
+const HEAL = 0.25;
 /** How long an HP arc takes to drain after a blow lands. */
 const DRAIN = 0.2;
 const GAP = 0.05;
@@ -105,7 +110,12 @@ function stagger(count: number, spread: number, cap: number): number {
   return count > 1 ? Math.min(cap, spread / (count - 1)) : 0;
 }
 
-export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]): Timeline {
+/**
+ * `maxHp` is the cap healing cannot pass. It is the only rule the replay needs
+ * up front: without it a full-HP striker's heal would overfill the arc for a
+ * moment before the settle pulled it back.
+ */
+export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[], maxHp = Infinity): Timeline {
   const beats: Beat[] = [];
   const snapshot = new Map(before.map((seat) => [seat.index, seat]));
 
@@ -125,52 +135,60 @@ export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]
     });
   }
 
-  // --- Travel, impact, riposte ----------------------------------------------
-  // Every attack resolves against the start-of-round state at once; the stagger
+  // --- Travel, impact, reflect, heal --------------------------------------------
+  // Every strike resolves against the start-of-round state at once; the stagger
   // is purely so eight simultaneous bolts stay individually readable.
-  const attacks = record.attacks.filter((attack) => attack.outcome !== AttackOutcome.Void);
-  const travelStep = stagger(attacks.length, TRAVEL_SPREAD, MAX_TRAVEL_STAGGER);
-  const incoming = new Map<number, number>();
-  /** When each seat's HP is seen to drop during the combat phase. */
+  const strikes = record.strikes.filter((strike) => strike.outcome !== StrikeOutcome.Void);
+  const travelStep = stagger(strikes.length, TRAVEL_SPREAD, MAX_TRAVEL_STAGGER);
+  /** Net HP each seat loses in the combat phase; negative for a net heal. */
+  const net = new Map<number, number>();
+  /** When each seat's HP is seen to move during the combat phase. */
   const landings = new Map<number, number[]>();
   const land = (seat: number, at: number, amount: number) => {
-    if (amount <= 0) return;
-    incoming.set(seat, (incoming.get(seat) ?? 0) + amount);
+    if (amount === 0) return;
+    net.set(seat, (net.get(seat) ?? 0) + amount);
     landings.set(seat, [...(landings.get(seat) ?? []), at]);
   };
 
-  attacks.forEach((attack, position) => {
+  strikes.forEach((strike, position) => {
     const start = DECLARE + position * travelStep;
     const arrive = start + TRAVEL;
     beats.push({
       kind: 'travel',
-      from: attack.attacker,
-      to: attack.target,
-      outcome: attack.outcome,
+      from: strike.striker,
+      to: strike.target,
+      outcome: strike.outcome,
+      charged: strike.charged,
       start,
       end: arrive,
     });
     beats.push({
       kind: 'impact',
-      seat: attack.target,
-      from: attack.attacker,
-      outcome: attack.outcome,
-      damage: attack.damage,
+      seat: strike.target,
+      from: strike.striker,
+      outcome: strike.outcome,
+      charged: strike.charged,
+      damage: strike.damage,
       start: arrive,
       end: arrive + IMPACT,
     });
-    land(attack.target, arrive, attack.damage);
+    land(strike.target, arrive, strike.damage);
 
-    if (attack.outcome === AttackOutcome.Parried && attack.riposte > 0) {
+    if (strike.heal > 0) {
+      beats.push({ kind: 'heal', seat: strike.striker, amount: strike.heal, start: arrive, end: arrive + HEAL });
+      land(strike.striker, arrive + HEAL, -strike.heal);
+    }
+
+    if (strike.outcome === StrikeOutcome.Guarded && strike.reflected > 0) {
       beats.push({
-        kind: 'riposte',
-        from: attack.target,
-        to: attack.attacker,
-        damage: attack.riposte,
+        kind: 'reflect',
+        from: strike.target,
+        to: strike.striker,
+        damage: strike.reflected,
         start: arrive,
-        end: arrive + RIPOSTE,
+        end: arrive + REFLECT,
       });
-      land(attack.attacker, arrive + RIPOSTE, attack.riposte);
+      land(strike.striker, arrive + REFLECT, strike.reflected);
     }
   });
 
@@ -195,21 +213,21 @@ export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]
     tracks.set(index, {
       before: start,
       // Clamped: the engine lets HP run negative to rank overkill, but an arc
-      // cannot drain below empty.
-      afterAttacks: Math.max(0, start - (incoming.get(index) ?? 0)),
+      // cannot drain below empty, and healing stops at the cap.
+      afterStrikes: Math.max(0, Math.min(Math.max(start, maxHp), start - (net.get(index) ?? 0))),
       after,
       aliveBefore: seat?.alive ?? after > 0,
-      attackWindow:
+      strikeWindow:
         times.length > 0 ? { start: Math.min(...times), end: Math.max(...times) + DRAIN } : null,
       settleWindow: null,
       eliminateWindow: null,
     });
   }
 
-  // --- Storm, and anything else that moved HP after the attacks ----------------
-  const settling = [...tracks.values()].some((track) => track.afterAttacks !== track.after);
+  // --- Stall penalty, and anything else that moved HP after the strikes -------
+  const settling = [...tracks.values()].some((track) => track.afterStrikes !== track.after);
   const settleWindow: Window | null =
-    record.stormDamage > 0 || settling
+    record.stallDamage > 0 || settling
       ? { start: combatEnd + GAP, end: combatEnd + GAP + SETTLE }
       : null;
 
@@ -217,9 +235,9 @@ export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]
     for (const [index, track] of tracks) {
       if (!track.aliveBefore) continue;
       track.settleWindow = settleWindow;
-      const loss = track.afterAttacks - track.after;
-      if (record.stormDamage > 0 && loss > 0) {
-        beats.push({ kind: 'storm', seat: index, damage: loss, ...settleWindow });
+      const loss = track.afterStrikes - track.after;
+      if (record.stallDamage > 0 && loss > 0) {
+        beats.push({ kind: 'stall', seat: index, damage: loss, ...settleWindow });
       }
     }
   }
@@ -238,7 +256,7 @@ export function choreograph(record: RoundRecord, before: readonly SeatSnapshot[]
   return {
     beats,
     duration: Math.max(DECLARE, ...beats.map((beat) => beat.end)),
-    storm: record.stormDamage > 0 ? settleWindow : null,
+    stall: record.stallDamage > 0 ? settleWindow : null,
     tracks,
   };
 }

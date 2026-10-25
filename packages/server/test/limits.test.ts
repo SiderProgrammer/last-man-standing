@@ -15,7 +15,6 @@ import {
   type GatewayLimits,
   type Peer,
   type Pingable,
-  type SessionRelayer,
   type Socket,
 } from '@lms/server';
 import { lastOfType } from './helpers.js';
@@ -70,7 +69,7 @@ class FakeSocket implements Socket {
 
 function harness(
   limits: Partial<GatewayLimits> = {},
-  extra: { relayer?: SessionRelayer; verify?: () => Promise<boolean> } = {},
+  extra: { verify?: () => Promise<boolean> } = {},
 ) {
   const clock = { now: 0 };
   const lobby = new Lobby({ archive: new MemoryArchive(), relayer: nullRelayer, commitMs: 10_000, revealMs: 5_000 });
@@ -80,7 +79,6 @@ function harness(
     now: () => clock.now,
     directory: () => ({ open: [], live: [] }),
     limits,
-    ...(extra.relayer ? { relayer: extra.relayer } : {}),
     ...(extra.verify ? { verify: extra.verify } : {}),
   });
   const connect = (peer: Peer = { ip: '10.0.0.1' }) => {
@@ -159,13 +157,10 @@ describe('frame validation', () => {
     expect(parse({ type: 'auth', address: 'oops', signature: '0x1234' })).toThrow(/address/);
   });
 
-  it('rejects a relay value BigInt would choke on', () => {
-    const relay = { type: 'relay', target: ADDRESS, value: 'abc', data: '0x', nonce: '0', signature: '0x12' };
-    expect(parse(relay)).toThrow(/value must be a non-negative decimal/);
-    expect(parse({ ...relay, value: '1e18' })).toThrow(/value/);
-    expect(parse({ ...relay, value: '-1' })).toThrow(/value/);
-    expect(parse({ ...relay, value: '10', data: '0xabc' })).toThrow(/data must be hex/);
-    expect(parse({ ...relay, value: '10' })).not.toThrow();
+  /** Players send their own joins on L1: the server relays no session call. */
+  it('refuses a relayed call outright', () => {
+    const relay = { type: 'relay', target: ADDRESS, value: '0', data: '0x', nonce: '0', signature: '0x12' };
+    expect(parse(relay)).toThrow(/unsupported message/);
   });
 
   it('rejects a target outside a uint8 and an unknown action', () => {
@@ -311,31 +306,6 @@ describe('message limits', () => {
     await socket.deliver({ type: 'commit', commitment: BYTES32 });
     expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(errors);
     expect(lastOfType(socket.sent, 'state')?.state.committed).toContain(0);
-  });
-
-  it('budgets relayed calls per wallet, across sockets', async () => {
-    const submitted: string[] = [];
-    const relayer: SessionRelayer = {
-      enabled: true,
-      canCollect: false,
-      submit: async (call) => {
-        submitted.push(call.account);
-        return BYTES32;
-      },
-      collect: () => Promise.reject(new Error('unused')),
-    };
-    const { connect } = harness({ relayBurstPerWallet: 2, relayRatePerWallet: 0 }, { relayer });
-    const relay = { type: 'relay', target: ADDRESS, value: '0', data: '0x', nonce: '1', signature: '0x12' } as const;
-
-    const a = connect({ ip: 'a' }).socket;
-    const b = connect({ ip: 'b' }).socket;
-    await login(a);
-    await login(b);
-    await a.deliver(relay);
-    await b.deliver(relay);
-    await b.deliver(relay);
-    expect(submitted).toHaveLength(2);
-    expect(b.lastError()).toMatch(/too many relayed calls/);
   });
 });
 
