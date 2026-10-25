@@ -561,7 +561,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | `ESCROW_ADDRESS` | zero | `GameEscrow` to watch and settle against |
 | `ATTESTOR_PK` | — | Attestor key; without it results are archived but not submitted |
 | `KEEPER_PK` | `ATTESTOR_PK` | Pays for the permissionless `lockMatch` call |
-| `DATABASE_URL` | — | Postgres archive; falls back to in-memory |
+| `DATABASE_URL` | — | Postgres (e.g. Neon) for the archive, analysis cache and play styles; falls back to in-memory |
 | `SESSION_DELEGATE` | zero | `SessionKeyDelegate` for 7702 session keys. Needs `RPC_URL` to be verified |
 | `AVATAR_COLLECTIONS` | — | `PlayerAvatars` deployments as JSON: `chainId`, `address`, `rpcUrl` per chain |
 | `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Prefix `ipfs://` is rewritten to when fetching metadata |

@@ -33,6 +33,7 @@ export class MemoryStyleBook implements StyleBook {
 
 interface PgPool {
   query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+  on(event: 'error', listener: (error: Error) => void): unknown;
 }
 
 /** Postgres-backed style book; `pg` stays optional, as for the archive. */
@@ -48,6 +49,8 @@ export class PostgresStyleBook implements StyleBook {
     const Pool = pg.Pool ?? pg.default?.Pool;
     if (!Pool) throw new Error('pg is installed but does not export Pool');
     const pool = new Pool({ connectionString });
+    // Idle connections dropped by the host would otherwise crash the process; see the archive.
+    pool.on('error', (error) => console.warn('[styles] idle database connection lost:', errorMessage(error)));
     await pool.query(`
       CREATE TABLE IF NOT EXISTS play_styles (
         address  TEXT PRIMARY KEY,

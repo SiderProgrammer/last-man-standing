@@ -91,7 +91,8 @@ npm install
 cp .env.example .env
 ```
 
-Practice mode needs no chain at all. In two terminals:
+The server's `dev` and `start` scripts read this root `.env`; variables already set
+in the shell win. Practice mode needs no chain at all. In two terminals:
 
 ```bash
 npm run dev --workspace @lms/server     # ws://localhost:8787

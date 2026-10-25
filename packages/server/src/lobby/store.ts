@@ -116,6 +116,11 @@ interface PgPool {
   query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 }
 
+/** What `pg` actually constructs; `fromPool` needs only the queries. */
+interface PgClientPool extends PgPool {
+  on(event: 'error', listener: (error: Error) => void): unknown;
+}
+
 /**
  * Postgres-backed archive. `pg` is loaded through a computed specifier so the
  * package stays an optional dependency: a deployment without a database just
@@ -132,13 +137,17 @@ export class PostgresArchive implements MatchArchive {
   static async connect(connectionString: string): Promise<PostgresArchive> {
     const specifier = 'pg';
     const pg = (await import(specifier)) as {
-      default?: { Pool: new (config: { connectionString: string }) => PgPool };
-      Pool?: new (config: { connectionString: string }) => PgPool;
+      default?: { Pool: new (config: { connectionString: string }) => PgClientPool };
+      Pool?: new (config: { connectionString: string }) => PgClientPool;
     };
     const Pool = pg.Pool ?? pg.default?.Pool;
     if (!Pool) throw new Error('pg is installed but does not export Pool');
 
     const pool = new Pool({ connectionString });
+    // A serverless host such as Neon drops idle connections when it scales to
+    // zero. The pool reports that on an idle client as an `error` event, which
+    // would crash the process if nothing listened; the next query reconnects.
+    pool.on('error', (error) => console.warn('[store] idle database connection lost:', errorMessage(error)));
     await pool.query(`
       CREATE TABLE IF NOT EXISTS matches (
         match_id     TEXT PRIMARY KEY,
