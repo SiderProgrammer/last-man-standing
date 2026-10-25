@@ -27,9 +27,10 @@ import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 ///          self-delegated on receipt unless it already chose a delegate, so
 ///          staking is enough to vote.
 ///        - **Earns.** `FeeRouter` sends the stakers' share of every fee here
-///          as ETH, through `depositRewards`, and it is split across sLMS
-///          holders in proportion to their balance at that moment. Each
-///          staker collects theirs with `claimRewards`.
+///          as ETH, through `depositRewards`. It is not handed out at once:
+///          it is paid out evenly over the next `rewardDuration`, and each
+///          second of that goes to whoever is staked during it, pro rata.
+///          Each staker collects theirs with `claimRewards`.
 ///        - **Commits.** Leaving takes `cooldown`. `requestUnstake` burns the
 ///          shares at once — so they stop voting and stop earning — and
 ///          `claim` returns the LMS once the cooldown has passed. A voter is
@@ -37,13 +38,29 @@ import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 ///          which is what slashing would otherwise be for. `Deploy` checks that
 ///          `cooldown` outlasts the voting period plus the timelock delay.
 ///
-///      Rewards use the usual reward-per-share accumulator: `rewardPerShare`
-///      only ever grows, each account remembers the value it was last settled
-///      at, and the difference times its balance is what it has earned since.
-///      Settling happens in `_update`, before any balance moves, so a mint,
-///      burn or transfer can never carry rewards earned by someone else. ETH
-///      that arrives while nothing is staked waits in `queuedRewards` and goes
-///      to the first stakers rather than being lost.
+///      Rewards are streamed, Synthetix-style. Paying a harvest out the moment
+///      it arrived would let anyone stake, call the permissionless `harvest`
+///      and take a full share of every fee since the last one, in a single
+///      transaction: being staked for a week would earn no more than being
+///      staked for a second. Instead each deposit, plus whatever of the last
+///      one is still unpaid, is spread over a fresh `rewardDuration`, so a
+///      late staker earns only for the time they are actually staked.
+///
+///      The accumulator is the usual one: `rewardPerShare` only ever grows,
+///      each account remembers the value it was last settled at, and the
+///      difference times its balance is what it has earned since. `_accrue`
+///      brings it up to date before anything changes, and settling happens
+///      in `_update`, before any balance moves, so a mint, burn or transfer
+///      can never carry rewards earned by someone else. While nothing is
+///      staked the stream pauses — its end moves out by the time that passed
+///      — so ETH that arrives with no stakers waits for the first ones rather
+///      than being lost.
+///
+///      Anyone may deposit rewards, and every deposit restarts the period.
+///      That can never take anything from stakers, only slow the payout down:
+///      someone depositing dust every block turns the straight-line payout of
+///      the remainder into a decay with the same time constant, at their own
+///      gas.
 ///
 ///      One sLMS is always one LMS. `totalAssets` is the LMS actually staked,
 ///      tracked here, not this contract's token balance, so LMS sent here
@@ -69,12 +86,22 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     uint64 public constant MIN_COOLDOWN = 1 days;
     uint64 public constant MAX_COOLDOWN = 30 days;
-    /// @dev Fixed-point scale of `rewardPerShare`. Large enough that a fee of a
-    ///      few gwei still registers against the whole supply staked.
+    uint64 public constant MIN_REWARD_DURATION = 1 hours;
+    uint64 public constant MAX_REWARD_DURATION = 30 days;
+    /// @dev Fixed-point scale of `rewardPerShare` and `rewardRate`. Large
+    ///      enough that a fee of a few gwei still registers against the whole
+    ///      supply staked.
     uint256 private constant PRECISION = 1e27;
+
+    /// @notice Seconds each reward deposit is paid out over.
+    uint64 public immutable rewardDuration;
 
     /// @notice Seconds between `requestUnstake` and `claim`.
     uint64 public cooldown;
+    /// @notice When the reward stream runs dry, if nothing more arrives.
+    uint64 public periodFinish;
+    /// @notice When `rewardPerShare` was last brought up to date.
+    uint64 public lastAccrual;
 
     /// @notice LMS staked, and so the backing of every sLMS. Not the token balance.
     uint256 public totalStaked;
@@ -82,10 +109,11 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     uint256 public totalUnstaking;
     mapping(address account => Unstake) public unstakeOf;
 
-    /// @notice ETH earned per sLMS since deployment, scaled by 1e27.
-    uint256 public rewardPerShare;
-    /// @notice ETH received while nothing was staked, for the first stakers.
-    uint256 public queuedRewards;
+    /// @notice ETH paid out per second while the stream runs, scaled by 1e27.
+    uint256 public rewardRate;
+    /// @dev ETH earned per sLMS up to `lastAccrual`, scaled by 1e27. Read it
+    ///      through `rewardPerShare`, which adds what has accrued since.
+    uint256 private rewardPerShareStored;
     /// @dev `rewardPerShare` when each account was last settled.
     mapping(address account => uint256) private settledAt;
     /// @dev ETH settled to each account and not yet claimed.
@@ -94,21 +122,26 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     event UnstakeRequested(address indexed account, uint256 shares, uint256 assets, uint64 unlockAt);
     event UnstakeClaimed(address indexed account, address indexed receiver, uint256 assets);
     event CooldownUpdated(uint64 previous, uint64 current);
-    event RewardsDeposited(address indexed from, uint256 amount, uint256 rewardPerShare);
+    event RewardsDeposited(address indexed from, uint256 amount, uint256 rewardRate, uint64 periodFinish);
     event RewardsClaimed(address indexed account, address indexed to, uint256 amount);
     event StraySwept(address indexed to, uint256 amount);
 
     error CooldownOutOfRange(uint64 cooldown);
+    error RewardDurationOutOfRange(uint64 rewardDuration);
     error ZeroShares();
     error NothingToClaim();
     error StillCoolingDown(uint64 unlockAt);
 
-    constructor(IERC20 lms, address owner_, uint64 cooldown_)
+    constructor(IERC20 lms, address owner_, uint64 cooldown_, uint64 rewardDuration_)
         ERC20("Staked LMS", "sLMS")
         ERC4626(lms)
         EIP712("Staked LMS", "1")
         Ownable(owner_)
     {
+        if (rewardDuration_ < MIN_REWARD_DURATION || rewardDuration_ > MAX_REWARD_DURATION) {
+            revert RewardDurationOutOfRange(rewardDuration_);
+        }
+        rewardDuration = rewardDuration_;
         _setCooldown(cooldown_);
     }
 
@@ -135,30 +168,43 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     // ------------------------------------------------------------------ rewards
 
-    /// @notice Shares `msg.value` across everyone staked right now, pro rata.
+    /// @notice Adds `msg.value` to the reward stream: it and whatever is still
+    ///         unpaid are paid out evenly over the next `rewardDuration`.
     /// @dev Open to anyone: `FeeRouter` calls it with every harvest, but a
     ///      donation to stakers is a donation to stakers.
     function depositRewards() external payable {
-        uint256 amount = msg.value + queuedRewards;
+        _accrue();
+        uint64 now_ = uint64(block.timestamp);
+        uint64 finish = periodFinish;
+        uint256 unpaid = now_ < finish ? (uint256(finish - now_) * rewardRate) / PRECISION : 0;
+
+        uint256 rate = Math.mulDiv(msg.value + unpaid, PRECISION, rewardDuration);
+        finish = now_ + rewardDuration;
+        rewardRate = rate;
+        lastAccrual = now_;
+        periodFinish = finish;
+        emit RewardsDeposited(msg.sender, msg.value, rate, finish);
+    }
+
+    /// @notice ETH earned per sLMS since deployment, scaled by 1e27, up to now.
+    function rewardPerShare() public view returns (uint256) {
+        uint64 last = lastAccrual;
+        uint64 finish = periodFinish;
         uint256 supply = totalSupply();
-        if (supply == 0) {
-            queuedRewards = amount;
-            emit RewardsDeposited(msg.sender, msg.value, rewardPerShare);
-            return;
-        }
-        queuedRewards = 0;
-        rewardPerShare += Math.mulDiv(amount, PRECISION, supply);
-        emit RewardsDeposited(msg.sender, msg.value, rewardPerShare);
+        if (last >= finish || supply == 0) return rewardPerShareStored;
+        uint64 until = uint64(block.timestamp) < finish ? uint64(block.timestamp) : finish;
+        return rewardPerShareStored + (uint256(until - last) * rewardRate) / supply;
     }
 
     /// @notice ETH `account` can claim now.
     function earned(address account) public view returns (uint256) {
-        return owed[account] + Math.mulDiv(balanceOf(account), rewardPerShare - settledAt[account], PRECISION);
+        return owed[account] + Math.mulDiv(balanceOf(account), rewardPerShare() - settledAt[account], PRECISION);
     }
 
     /// @notice Pays the caller's earned ETH to `to`.
     function claimRewards(address to) external nonReentrant returns (uint256 amount) {
         if (to == address(0)) revert ZeroAddress();
+        _accrue();
         _settle(msg.sender);
         amount = owed[msg.sender];
         if (amount == 0) revert NothingToWithdraw();
@@ -169,8 +215,31 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
         emit RewardsClaimed(msg.sender, to, amount);
     }
 
+    /// @dev Brings `rewardPerShareStored` up to now. With nothing staked the
+    ///      stream pauses instead: its end moves out by the time that passed,
+    ///      so what it still holds waits for the next staker.
+    function _accrue() private {
+        uint64 last = lastAccrual;
+        uint64 finish = periodFinish;
+        if (last >= finish) return;
+
+        uint64 now_ = uint64(block.timestamp);
+        if (now_ == last) return;
+        uint256 supply = totalSupply();
+        if (supply == 0) {
+            periodFinish = finish + (now_ - last);
+            lastAccrual = now_;
+            return;
+        }
+        uint64 until = now_ < finish ? now_ : finish;
+        rewardPerShareStored += (uint256(until - last) * rewardRate) / supply;
+        lastAccrual = until;
+    }
+
+    /// @dev Credits `account` with what it earned since it was last settled.
+    ///      Reads `rewardPerShareStored`, so `_accrue` must have run first.
     function _settle(address account) private {
-        uint256 current = rewardPerShare;
+        uint256 current = rewardPerShareStored;
         uint256 last = settledAt[account];
         if (current == last) return;
         owed[account] += Math.mulDiv(balanceOf(account), current - last, PRECISION);
@@ -276,10 +345,11 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
         return "mode=timestamp";
     }
 
-    /// @dev Settles rewards for both sides before any balance moves, then
-    ///      self-delegates a receiver that has not chosen a delegate, so
-    ///      staking alone is enough to vote.
+    /// @dev Accrues against the supply as it was, and settles rewards for both
+    ///      sides, before any balance moves; then self-delegates a receiver
+    ///      that has not chosen a delegate, so staking alone is enough to vote.
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+        _accrue();
         if (from != address(0)) _settle(from);
         if (to != address(0)) _settle(to);
         super._update(from, to, value);

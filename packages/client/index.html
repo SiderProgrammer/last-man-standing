@@ -52,16 +52,16 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>One-click play</h2>
+            <h2>Prompt-free login</h2>
             <span id="session-state" class="pill">off</span>
           </div>
           <p class="muted small">
-            Delegate your wallet once (EIP-7702) and this browser gets a scoped, expiring
-            key. It signs you back in after every reconnect without a wallet prompt, and
-            can only join matches and handle your avatar — never move your winnings.
+            Delegate your wallet once (EIP-7702) and this browser gets an expiring key.
+            It signs you back in after every reconnect without a wallet prompt, and does
+            nothing else: it cannot stake, spend or move your winnings.
           </p>
           <div class="row">
-            <button id="enable-session" class="primary" disabled>Enable one-click play</button>
+            <button id="enable-session" class="primary" disabled>Enable prompt-free login</button>
             <button id="revoke-session" class="ghost hidden">Revoke</button>
             <span id="session-status" class="muted small">Connect a wallet to set up.</span>
           </div>
@@ -111,6 +111,10 @@
             <button id="claim-rewards" class="primary hidden">Claim ETH</button>
           </div>
           <div class="row">
+            <span id="play-rewards" class="small"></span>
+            <button id="claim-play-rewards" class="primary hidden">Claim LMS</button>
+          </div>
+          <div class="row">
             <label for="staking-amount">Amount (LMS)</label>
             <input id="staking-amount" type="text" inputmode="decimal" placeholder="0.0" size="10" />
             <button id="staking-max" class="ghost">Max</button>
@@ -120,6 +124,13 @@
           <div class="row">
             <span id="unstake-status" class="small"></span>
             <button id="withdraw-unstaked" class="hidden">Withdraw</button>
+          </div>
+          <span id="delegation-status" class="small"></span>
+          <div class="row">
+            <label for="delegate-to">Delegate to</label>
+            <input id="delegate-to" type="text" placeholder="0x…" size="20" spellcheck="false" />
+            <button id="delegate-votes" class="ghost" disabled>Delegate</button>
+            <button id="undelegate-votes" class="ghost hidden">Back to me</button>
           </div>
           <span id="staking-status" class="muted small">Connect a wallet to see your stake.</span>
         </div>
@@ -131,7 +142,7 @@
           </div>
           <div class="row">
             <label for="stake">Stake (ETH)</label>
-            <input id="stake" type="text" value="0.001" size="8" />
+            <input id="stake" type="text" value="0.01" size="8" />
             <label for="seats">Seats</label>
             <select id="seats">
               <option value="4" selected>4</option>

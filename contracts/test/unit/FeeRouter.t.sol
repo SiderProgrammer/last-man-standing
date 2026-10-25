@@ -33,7 +33,7 @@ contract FeeRouterTest is Fixtures {
         staker = makeAddr("staker");
 
         lms = new LmsToken(address(this), 1_000_000e18);
-        vault = new StakedLms(lms, owner, 7 days);
+        vault = new StakedLms(lms, owner, 7 days, 7 days);
         router = new FeeRouter(escrow, vault, owner, safe, 5_000);
 
         lms.transfer(staker, 100e18);
@@ -64,11 +64,12 @@ contract FeeRouterTest is Fixtures {
     function test_harvest_thenTheStakerClaimsTheirShareInEth() public {
         _playOneMatch();
         router.harvest();
+        vm.warp(block.timestamp + vault.rewardDuration());
 
         vm.prank(staker);
         uint256 paid = vault.claimRewards(staker);
 
-        assertApproxEqAbs(paid, MATCH_FEE / 2, 1);
+        assertApproxEqAbs(paid, MATCH_FEE / 2, 10);
         assertEq(staker.balance, paid);
     }
 

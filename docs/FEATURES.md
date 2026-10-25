@@ -493,33 +493,42 @@ but unusable state that only the deploy script currently prevents.
 
 Staking LMS does three things at once: it gives you **votes**, it **earns** a
 share of protocol fees in ETH, and it **commits** you to the outcome of your vote.
+Playing earns LMS: half the supply is paid out to players, by the fees they
+paid, already staked.
 
 ```
 GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100% - stakerBps]
-                         |
-                         +--ETH--> StakedLms vault --claimRewards--> each staker, pro rata
-                                        ^
-LMS --deposit--> sLMS (1:1, ERC20Votes) +--votes--> LmsGovernor
+    |                    |
+    |                    +--ETH--> StakedLms vault --streamed over 7 days--> each staker, pro rata
+    |                                   ^
+    +--fees per player per week         | LMS --deposit--> sLMS (1:1, ERC20Votes) --votes--> LmsGovernor
+         |                              |
+         +--> RewardsDistributor --claim, as sLMS--> each player
 ```
 
 | Contract | Role |
 | --- | --- |
 | `LmsToken` | Plain fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
-| `StakedLms` | Staking vault whose shares (sLMS) are the voting token, always one per LMS. Collects the stakers' share of fees as ETH and splits it pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
-| `LmsGovernor` | Stock OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock. |
+| `StakedLms` | Staking vault whose shares (sLMS) are the voting token, always one per LMS. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
+| `LmsGovernor` | OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock, with a minimum quorum. |
 | `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
+| `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and pays each player their share of that week's LMS budget, deposited into `StakedLms` for them. |
 | `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
 
 Defaults, all overridable through the deploy environment:
 
 | Setting | Default | Env |
 | --- | --- | --- |
-| LMS supply | 100,000,000, minted to the Safe | `LMS_SUPPLY` |
+| LMS supply | 100,000,000, split as below | `LMS_SUPPLY` |
 | Unstake cooldown | 7 days | `STAKE_COOLDOWN` |
+| Staker reward payout | over 7 days | `REWARD_DURATION` |
 | Voting delay / period | 1 day / 5 days | `VOTING_DELAY`, `VOTING_PERIOD` |
 | Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
-| Quorum | 4% of staked supply | `QUORUM_PERCENT` |
-| Stakers' share of fees | 50% | `STAKER_FEE_BPS` |
+| Quorum | 4% of staked supply, but never under 1,000,000 sLMS | `QUORUM_PERCENT`, `QUORUM_FLOOR` |
+| Stakers' share of fees | 0% on Ethereum mainnet, 50% elsewhere | `STAKER_FEE_BPS` |
+| Play-mining cap | 100,000 LMS per ETH of fees | `MAX_REWARD_PER_ETH` |
+| First play-mining week | the first full week after the deploy | `REWARDS_FIRST_EPOCH` |
+| Team vesting beneficiary | required off a local node | `TEAM_BENEFICIARY` |
 
 ### Why
 
@@ -538,11 +547,26 @@ Defaults, all overridable through the deploy environment:
   the timing and a price floor, and still left a sandwich window open. Paying
   the ETH itself needs none of it. The cost is that stakers claim, and there is
   no buy pressure on LMS.
+- **Rewards are streamed, not paid at once.** Purpose: pay for time staked,
+  not for being staked at the right moment. Paid out the instant it arrived, a
+  harvest would go to whoever was staked *then*: anyone could stake, call the
+  permissionless `harvest` and claim a full share of every fee since the last
+  one in a single transaction, then leave — earning as much for a second as a
+  week-long staker did. Each deposit, plus whatever of the last one is still
+  unpaid, is spread over a fresh `rewardDuration` instead (Synthetix-style).
+  While nothing is staked the stream pauses, so nothing is lost.
 - **A reward-per-share accumulator.** Purpose: pay every staker exactly their
-  share without looping over stakers. `rewardPerShare` only grows; each account
-  is settled in `_update` before any balance moves, so a deposit, transfer or
-  unstake can never carry rewards earned by someone else. ETH that arrives while
-  nothing is staked waits in `queuedRewards` for the first stakers.
+  share without looping over stakers. `rewardPerShare` only grows; it is
+  brought up to date, and each account settled, in `_update` before any
+  balance moves, so a deposit, transfer or unstake can never carry rewards
+  earned by someone else.
+- **A minimum quorum.** Purpose: no vote passes on a sliver of the supply.
+  OpenZeppelin's quorum is a fraction of the *staked* supply, so with little
+  staked it is tiny — with 2M sLMS staked, 4% is 80k, under the proposal
+  threshold, and one proposer could pass anything alone. The governor takes
+  the larger of the fraction and `quorumFloor`. The floor is checkpointed like
+  the fraction, so changing it never affects a vote in progress, and capped at
+  10% of the LMS supply, so it cannot be raised out of everyone's reach.
 - **One sLMS is always one LMS.** Purpose: rule out the ERC-4626 donation
   ("inflation") attack without a locked seed deposit. `totalAssets` is the LMS
   actually staked, tracked by the vault, not its token balance, so LMS sent to
@@ -558,10 +582,60 @@ the escrow. Any funded key works: harvesting needs no role.
 
 ### Distributing the supply
 
-The whole supply goes to the Safe at deployment. There is no built-in way of
-handing it out: anyone who holds LMS can stake it, and how the Safe distributes
-the rest — sales, liquidity, grants — is a governance decision, not a contract.
-Until LMS is spread out, the Safe's own stake decides every vote.
+The deploy script splits the whole supply; the deployer keeps none.
+
+| Share | Bucket | Held by |
+| --- | --- | --- |
+| 50% | Play-mining | `RewardsDistributor`, paid to players over four years |
+| 25% | Treasury | The timelock: only a passed proposal can spend it |
+| 15% | Team | An OpenZeppelin `VestingWallet`: nothing for a year, then linear over three |
+| 5% | Liquidity | The Safe, to seed a pool |
+| 5% | Reserve | The timelock, with the treasury |
+
+None of the timelock's, the distributor's or the vesting wallet's tokens is
+staked, so none of them votes. Governance starts with the players, as
+play-mining pays them, rather than with the Safe. There is no token sale.
+
+### Play-mining
+
+`contracts/src/governance/RewardsDistributor.sol` · the fee totals in `GameEscrow`
+
+Players earn LMS in proportion to the **fees they paid**, entirely on-chain: no
+server computes anything and no Merkle root is posted.
+
+- **The escrow keeps two totals per week** (`FEE_EPOCH`, Unix weeks): what each
+  player paid in fees, `feesPaid[player][week]`, and what everyone paid,
+  `epochFees[week]`. They are written when a match **settles**, in the week it
+  settles in, because that is when the fee is actually paid. An expired lobby,
+  an aborted or vetoed match never pays one, so never counts. Counting at join
+  instead — the first version of this — let a player sit in a lobby that could
+  never fill, claim rewards on its fee once the week ended, then cancel for a
+  full refund.
+- **Who pays the gas.** Joins cost what they always did. `finalize` writes one
+  counter per seat, so it costs more: for a four-seat match, about 113k gas
+  more when it is those players' first settlement of the week, about 28k after.
+  The server's keeper is what calls `finalize`, so this is an operator cost.
+- **Each week has a budget**, falling by a quarter every year for four years,
+  and the budgets add up to the 50M funded. A player who paid 1% of a week's
+  fees gets 1% of its budget.
+- **Why fees, not wins.** Wins are zero-sum: one person running every wallet in
+  a lobby can decide who wins for nothing. Fees are a real cost, and they go to
+  stakers and the treasury. With a fixed budget split by fees, farming defeats
+  itself — every extra fee a farmer pays lowers what each fee earns.
+- **A cap per ETH of fees** (`maxRewardPerEth`). In a quiet week the split alone
+  would hand the whole budget to whoever paid the little there was. What the
+  cap leaves unpaid stays in the distributor; governance may sweep it only
+  after claims close, a year after the program ends.
+- **When.** A week can be claimed the moment it ends. A total only grows while
+  its week is the current one, so an ended week's totals — and every player's
+  share of it — never change again; a match still in play when the week ends
+  counts in the week it settles. The rate is fixed by the first claim, so a
+  later change to the cap cannot treat two claimants of one week differently,
+  and the claims of a week add up to at most its budget.
+- **Paid as sLMS.** The distributor deposits into `StakedLms` for the player, so
+  rewards vote at once and selling them takes the unstake cooldown first.
+  `claim(player, weeks[])` takes any number of weeks, so a player can claim
+  rarely, and anyone may claim for anyone — it can only pay the player.
 
 ### The staking panel
 
@@ -570,6 +644,9 @@ The lobby screen shows a **Stake LMS** panel whenever the server has
 
 - **Rewards.** ETH earned from fees, in the header, and a **Claim ETH** button
   once there is any.
+- **Play-mining**, when the server has `REWARDS_DISTRIBUTOR` set: the LMS
+  earned by playing and not yet claimed, and a **Claim LMS** button that claims
+  every week at once, as sLMS. With nothing waiting it says how play earns it.
 - **Position.** Staked LMS, votes and wallet balance.
 - **Stake** in one transaction: an EIP-2612 permit signature plus
   `depositWithPermit`, instead of an approval and a deposit. The permit is
@@ -577,6 +654,12 @@ The lobby screen shows a **Stake LMS** panel whenever the server has
   make the deposit fail.
 - **Unstake** an amount of LMS (converted to sLMS, rounded up so it covers the
   amount), then a countdown and a **Withdraw** button once the cooldown ends.
+- **Delegate** the stake's votes to another address, and **Back to me** to take
+  them back. On L1 every vote costs gas, so most small holders are better off
+  handing their votes to someone who votes anyway; the sLMS stays in the wallet
+  and keeps earning. sLMS received later — a play-mining claim, say — follows
+  the delegate already chosen. The zero address is refused, since delegating to
+  it would switch the votes off.
 
 ### The governance screen
 
@@ -617,24 +700,46 @@ A **Governance** button in the top bar opens every proposal made to
   says so: it would undo another parameter change that executes first.
 
 `npm run dev:fork` shortens voting to open in a minute and last thirty, lowers
-the proposal threshold to 1,000 sLMS, stakes 1,000 LMS for each dev player
-(enough to propose), harvests after every match,
-and makes a demo proposal to raise the stakers' fee share to 60%.
+the proposal threshold and the minimum quorum to 1,000 sLMS, streams staker
+rewards over an hour instead of a week, stakes 1,000 LMS for each dev player
+(enough to propose), harvests after every match, and makes a demo proposal to
+raise the stakers' fee share to 60%. The operator's stake comes from the Safe's
+liquidity share, since on a local node the operator is the Safe. A play-mining
+claim needs a match settled in a week that has ended, so it takes moving the
+fork's clock (`evm_increaseTime`) past the end of the week.
+
+### The Safe's veto: when it goes
+
+The veto is training wheels. The intended rule, to be carried out by a
+proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)`: once players hold
+more sLMS than the team's 15% allocation, or twelve months after launch,
+whichever comes first. Nothing enforces it on-chain; the governance form has a
+template for the proposal.
 
 ### What is missing
 
+- **A quiet start.** Nothing votes at launch: the treasury, reserve, team and
+  play-mining tokens are unstaked by design. No proposal can pass until players
+  hold enough sLMS to meet the 1M quorum floor. The cap is what usually
+  decides how long that takes: at 100,000 LMS per ETH, 1M LMS needs 10 ETH of
+  fees paid in settled matches — 200 ETH of stakes at the 5% fee. Only once a
+  week's fees pass about 3.5 ETH does the weekly budget bind instead, and even
+  then it takes three weeks. Until then the guardian can still pause the
+  escrow and veto results, but no parameter can change.
 - **Hub chain only.** Spokes take no fees today; if they ever do, each needs
-  its own route back to the hub's router.
+  its own route back to the hub's router. Play-mining already counts spoke
+  players, since their seats are taken on the hub.
 - **Regulatory.** A token that pays holders a share of a gambling protocol's
-  revenue may be a security, or a licensing issue, depending on jurisdiction.
-  Setting `STAKER_FEE_BPS=0` keeps staking for votes only.
+  revenue may be a security, or a licensing issue, depending on jurisdiction,
+  and paying LMS for play may be read as an inducement to gamble. The stakers'
+  share defaults to 0% on mainnet until there is advice; play-mining has no
+  such switch short of a cap of zero (`setMaxRewardPerEth(0)`).
 
 ---
 
 ## Account abstraction
 
-`contracts/src/SessionKeyDelegate.sol` · `packages/client/src/wallet/session.ts` ·
-`packages/server/src/chain/relayer.ts` · **Unit-tested**
+`contracts/src/SessionKeyDelegate.sol` · `packages/client/src/wallet/session.ts` · **Unit-tested**
 
 ### The problem
 
@@ -665,7 +770,10 @@ An EIP-7702 authorization keeps the exact same address and merely gives it code:
    code there.
 2. The browser generates and stores a session key locally.
 3. That key signs login nonces with no wallet prompt.
-4. A relayer submits calls the key authorised, paying the gas.
+
+That is all the client uses it for. Joins, mints and every other transaction
+are the player's own, through their wallet: see
+[Logins only, on L1](#logins-only-on-l1).
 
 Storage lives in the *delegating account*, not in the delegate: under 7702 the
 delegate's code runs with the EOA as `address(this)`. One deployment per chain
@@ -681,8 +789,10 @@ A session key that can do anything is just the account key with extra steps.
 | **Value** | Cumulative `spendCap` in native token | A leaked key cannot drain the account |
 | **Calls** | Explicit `(target, selector)` allowlist | A key scoped to joining matches cannot move the player's avatar NFT |
 
-The client grants `join`, `withdraw`, `mint` and `equip` — so the key cannot
-create lobbies and cannot transfer an avatar away.
+The client grants an empty allowlist and a spend cap of zero
+(`SESSION_GRANT` in `wallet/wallet.ts`): the key can call nothing and move
+nothing, so a leaked one can log in as the player until it expires, and do
+nothing else.
 
 ### ERC-1271: how the server accepts a session login
 
@@ -696,28 +806,35 @@ practice-only mode, an RPC-backed ERC-1271 check when an RPC exists. The server
 will not advertise a delegate it cannot verify against, because a session login
 the gateway would reject is worse than not offering one.
 
-### The relayer is untrusted
+### Logins only, on L1
 
-`executeWithSession` is permissionless to submit, so the game server can pay gas
-for calls players' session keys signed. It **cannot**:
+The delegate can do more than the client asks of it: `executeWithSession` lets
+anyone submit a call a session key signed, so a server could pay the gas for
+prompt-free joins. It is not used. The hub is Ethereum L1, and a sponsored call
+there is the operator paying L1 gas for it — a relayed join costs roughly
+120–150k gas, about what the fee on a minimum-stake match earns, and mints and
+withdrawals earn nothing at all. Most L1 protocols leave gas to the user; the
+ones that hide it (UniswapX, CoW Swap) take it back out of the transaction
+itself. So the server accepts no relayed calls, and players send their own.
 
-- alter a call — the signature covers target, value, calldata and nonce;
-- replay one — the delegate keeps a nonce per account, advanced before the
-  external call so a re-entering target cannot reuse the authorisation;
-- exceed the player's scope — the allowlist and spend cap are checked on-chain.
+The one thing the server still pays for is pushing a payout on request
+(`collect` → `GameEscrow.withdrawFor`, `chain/payouts.ts`), for a player who
+staked from a spoke and holds no gas on the hub. It is bounded: `withdrawFor`
+only ever pays the account itself, each credit can be pushed once, and a repeat
+fails simulation before costing anything.
 
-The worst it can do is refuse, and the client then falls back to a wallet
-transaction. It is an interface with a null default (`nullSessionRelayer`), the
-same shape as the messenger and the oracle, so a 4337 bundler or a dedicated
-relay service can replace it without the client noticing.
+If prompt-free joins come back, the shape that fits L1 is the one those
+protocols use: the player signs a join intent against their escrow balance, the
+keeper batches a match's intents into one transaction, and the gas comes out of
+the pot alongside the fee.
 
 ### Digest parity
 
 `sessionCallDigest` in `protocol/session.ts` mirrors the delegate's EIP-712
 hashing and is pinned to it by frozen vectors on **both** sides, exactly as the
-commit hashes are. A drift there would not corrupt a match, but every relayed
-call would silently stop recovering the session key and players would be sent
-back to their wallets with no explanation.
+commit hashes are. Nothing in the client signs calls today, but the delegate
+still accepts them, so the vectors stay: a drift would silently break any
+relayer added later.
 
 The verifying contract in the domain is the **account**, never the delegate:
 under 7702 the delegate's code runs as the account, so a digest naming the
@@ -726,8 +843,7 @@ to it.
 
 > **Status.** 22 Foundry tests cover real `vm.signAndAttachDelegation`
 > delegations. The browser half — viem's `signAuthorization` against a real
-> wallet, and the relay round trip — needs Anvil on `--hardfork prague` or a
-> Pectra testnet.
+> wallet — needs Anvil on `--hardfork prague` or a Pectra testnet.
 
 ---
 
@@ -867,7 +983,7 @@ Two supporting decisions:
 | `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
 | `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
-| `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
+| `chain/payouts.ts` | `PayoutPusher`: pushes a player's escrow balance to them through `withdrawFor`, on request |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
@@ -917,9 +1033,9 @@ Two supporting decisions:
 | `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
 | `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
 | **`wallet/`** | **The player's account** |
-| `wallet/flows.ts` | Connect, login, session keys, relayed calls, avatar and hub-chain panels |
+| `wallet/flows.ts` | Connect, login, session keys, avatar and hub-chain panels |
 | `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
-| `wallet/session.ts` | The browser's session key: load, grant, sign logins and relayed calls |
+| `wallet/session.ts` | The browser's login-only session key: load, grant, sign logins |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
@@ -1021,10 +1137,10 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | `WS_PORT` | `8787` | Gateway port |
 | `CHAIN_ID` | `11155111` | Hub chain |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
-| `RPC_URL` | — | Chain bridge, ERC-1271 logins, relaying |
+| `RPC_URL` | — | Chain bridge, ERC-1271 logins, pushed payouts |
 | `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
 | `ATTESTOR_PK` | — | Result signing and settlement relay |
-| `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, and session relaying |
+| `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, and pushed payouts |
 | `SESSION_DELEGATE` | zero | EIP-7702 session keys (needs `RPC_URL`) |
 | `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |

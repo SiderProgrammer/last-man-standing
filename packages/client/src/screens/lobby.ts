@@ -1,8 +1,6 @@
-import { encodeFunctionData } from 'viem';
 import {
   ZAP_DEADLINE_SECONDS,
   errorFirstLine,
-  gameEscrowAbi,
   sameAddress,
   type BotDifficulty,
   type LobbyInfo,
@@ -13,7 +11,6 @@ import { showMatchScreen, toast } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import { lobbySummary, payWithOptions, planTokenJoin, stakeButtonLabel } from '../ui/views.js';
-import { relayCall } from '../wallet/flows.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
 
@@ -125,20 +122,8 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.');
 
-  // The session key covers `join`, so a staked seat costs no prompt at all.
-  const relayed = await relayCall(
-    escrow,
-    BigInt(lobby.stake),
-    encodeFunctionData({ abi: gameEscrowAbi, functionName: 'join', args: [lobby.matchId] }),
-  );
-  if (relayed) {
-    // No `watch` yet: the relay is still in flight, and the room does not exist
-    // until the lobby fills and the oracle seeds it. The `relayed` reply
-    // refreshes the directory, and the row turns into an Enter button.
-    toast('Seat requested. The match starts when the lobby fills.');
-    return;
-  }
-
+  // Always the player's own transaction: on L1 a relayed join would be the
+  // server paying L1 gas for it. The session key only signs logins.
   try {
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
     await wallet.waitFor(hash);
@@ -162,9 +147,9 @@ function seated(lobby: LobbyInfo): void {
 // the player has seen that figure, because the wallet's own prompt for
 // `joinWithToken` shows a contract call, not a price.
 //
-// Never through the session key: its scope covers the escrow and the avatar
-// collection, not the zap, and a token approval is exactly the kind of call a
-// prompt-free key should not be able to make.
+// The player's own transactions, like every other join: the session key only
+// signs logins, and a token approval is exactly the kind of call a prompt-free
+// key should never be able to make anyway.
 
 function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): void {
   button.textContent = stakeButtonLabel(lobby.stake, token);

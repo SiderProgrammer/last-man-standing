@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { sharesForUnstake, type StakingInfo } from '@lms/protocol';
+import { getAddress } from 'viem';
+import { claimableEpochRange, sharesForUnstake, type StakingInfo } from '@lms/protocol';
 import {
   formatDuration,
   formatLms,
   httpOrigin,
+  parseDelegatee,
   parseLms,
   stakingPanel,
   type StakingPanelInput,
@@ -14,12 +16,17 @@ const E18 = 10n ** 18n;
 const NOW = 1_700_000_000;
 const INFO: StakingInfo = { vault: `0x${'5a'.repeat(20)}`, governor: null, feeRouter: null };
 
+const ME = `0x${'aa'.repeat(20)}` as const;
+const DELEGATE = `0x${'d1'.repeat(20)}` as const;
+
 function position(overrides: Partial<StakingPosition> = {}): StakingPosition {
   return {
     lmsBalance: 500n * E18,
     shares: 1_000n * E18,
     value: 1_000n * E18,
     votes: 1_000n * E18,
+    self: ME,
+    delegate: ME,
     earned: 0n,
     cooldown: 7 * 86_400,
     pending: { assets: 0n, unlockAt: 0 },
@@ -67,6 +74,56 @@ describe('stakingPanel', () => {
     const some = stakingPanel(input({ position: position({ earned: 1_234_567_000_000_000n }) }));
     expect(some.rewards).toBe('0.001234 ETH earned');
     expect(some.claimRewardsVisible).toBe(true);
+  });
+
+  describe('delegation', () => {
+    it('says the stake votes for itself, and offers a delegate', () => {
+      const view = stakingPanel(input());
+      expect(view.delegation).toMatch(/You vote with your own stake/);
+      expect(view.delegateDisabled).toBe(false);
+      expect(view.undelegateVisible).toBe(false);
+    });
+
+    it('names the delegate and offers the votes back', () => {
+      const view = stakingPanel(input({ position: position({ delegate: DELEGATE, votes: 0n }) }));
+      expect(view.delegation).toBe(`Your votes go to ${DELEGATE}. You keep the stake and its rewards.`);
+      expect(view.undelegateVisible).toBe(true);
+    });
+
+    it('tells the self-delegation apart from case alone', () => {
+      const upper = `0x${'AA'.repeat(20)}` as const;
+      expect(stakingPanel(input({ position: position({ delegate: upper }) })).undelegateVisible).toBe(false);
+    });
+
+    it('has nothing to delegate without a stake', () => {
+      const view = stakingPanel(input({ position: position({ shares: 0n, value: 0n, votes: 0n }) }));
+      expect(view.delegation).toBe('');
+      expect(view.delegateDisabled).toBe(true);
+    });
+  });
+
+  describe('play-mining', () => {
+    const WITH_REWARDS: StakingInfo = { ...INFO, rewards: `0x${'7e'.repeat(20)}` };
+
+    it('is hidden without a distributor', () => {
+      const view = stakingPanel(input({ playRewards: { claimable: 5n * E18, epochs: [1n] } }));
+      expect(view.playRewards).toBe('');
+      expect(view.claimPlayVisible).toBe(false);
+    });
+
+    it('explains how to earn when nothing is waiting', () => {
+      const view = stakingPanel(input({ info: WITH_REWARDS, playRewards: { claimable: 0n, epochs: [] } }));
+      expect(view.playRewards).toMatch(/Play staked matches to earn LMS/);
+      expect(view.claimPlayVisible).toBe(false);
+    });
+
+    it('offers to claim what is waiting, staked', () => {
+      const view = stakingPanel(
+        input({ info: WITH_REWARDS, playRewards: { claimable: 1_250n * E18, epochs: [3n, 4n] } }),
+      );
+      expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · claimed as staked LMS');
+      expect(view.claimPlayVisible).toBe(true);
+    });
   });
 
   it('only offers what the wallet can do', () => {
@@ -126,6 +183,38 @@ describe('formatting', () => {
   it('derives the server origin from its socket URL', () => {
     expect(httpOrigin('ws://localhost:8787')).toBe('http://localhost:8787');
     expect(httpOrigin('wss://play.example.com/socket')).toBe('https://play.example.com');
+  });
+});
+
+describe('parseDelegatee', () => {
+  it('takes an address, checksummed', () => {
+    expect(parseDelegatee(`  ${DELEGATE}  `)).toEqual({ ok: true, address: getAddress(DELEGATE) });
+  });
+
+  it('refuses something that is not an address', () => {
+    expect(parseDelegatee('vitalik.eth')).toEqual({ ok: false, error: 'Enter the address to delegate your votes to.' });
+  });
+
+  it('refuses the zero address, which would switch the votes off', () => {
+    const result = parseDelegatee(`0x${'00'.repeat(20)}`);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('claimableEpochRange', () => {
+  const WEEK = 604_800n;
+
+  it('is empty until the first epoch has ended', () => {
+    expect(claimableEpochRange(10n, WEEK, 208n, 10n * WEEK + 5n)).toBeNull();
+    expect(claimableEpochRange(10n, WEEK, 208n, 3n * WEEK)).toBeNull();
+  });
+
+  it('runs from the first epoch to the last that has ended', () => {
+    expect(claimableEpochRange(10n, WEEK, 208n, 13n * WEEK + 1n)).toEqual({ from: 10n, to: 12n });
+  });
+
+  it('stops at the end of the program', () => {
+    expect(claimableEpochRange(10n, WEEK, 208n, 900n * WEEK)).toEqual({ from: 10n, to: 217n });
   });
 });
 
