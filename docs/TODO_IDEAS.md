@@ -1,9 +1,9 @@
 use online database
-test game balance
 
 make sure there is UI for all the code, features
 what are bad design, architecture choices in this project? Fix them
 code refactor?
+test game with a few real players
 Fuzz Testing (/fizz)
 Invariant Testing (/fizz)
 use AI skills (pashov skill, openzeppelin skill)
