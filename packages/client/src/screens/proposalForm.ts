@@ -206,6 +206,7 @@ export function knownContracts(): Record<string, string> {
   name(app.staking?.vault, 'StakedLms');
   name(app.staking?.governor, 'LmsGovernor');
   name(app.staking?.feeRouter, 'FeeRouter');
+  name(app.staking?.rewards, 'RewardsDistributor');
   name(app.escrow, 'GameEscrow');
   name(context?.config, 'ProtocolConfig');
   name(context?.timelock, 'Timelock');

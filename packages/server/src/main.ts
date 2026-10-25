@@ -18,7 +18,7 @@ import { createStyleBook } from './lobby/styles.js';
 import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
-import { createSessionRelayer, nullSessionRelayer } from './chain/relayer.js';
+import { createPayoutPusher, nullPayoutPusher } from './chain/payouts.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
@@ -77,18 +77,18 @@ async function main(): Promise<void> {
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
 
-  // Pays gas for session-authorised calls and for pushing payouts. It holds no
-  // authority over any player account: the delegate checks the session
-  // signature on-chain, and `withdrawFor` only ever pays the account itself.
-  const sessionRelayer =
-    rpc && config.keeperPk && (config.sessionDelegate !== ZERO_ADDRESS || config.onChain)
-      ? createSessionRelayer({
+  // Pays gas for pushing payouts, and for nothing else: players send their own
+  // joins. It holds no authority over any player account — `withdrawFor` only
+  // ever pays the account itself.
+  const payouts =
+    rpc && config.keeperPk && config.onChain
+      ? createPayoutPusher({
           rpcUrl: config.rpcUrl,
           chainId: config.chainId,
-          relayerKey: config.keeperPk,
-          ...(config.onChain ? { escrow: config.escrow } : {}),
+          keeperKey: config.keeperPk,
+          escrow: config.escrow,
         })
-      : nullSessionRelayer;
+      : nullPayoutPusher;
 
   // Pays into the escrow, so it is only offered alongside one.
   const zap = config.onChain
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
-    relayer: sessionRelayer,
+    payouts,
     ...(analyst ? { analyst } : {}),
     zap,
     staking:
@@ -155,6 +155,7 @@ async function main(): Promise<void> {
             vault: config.stakedLms,
             governor: proposals ? config.governor : null,
             feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
+            rewards: config.rewardsDistributor !== ZERO_ADDRESS ? config.rewardsDistributor : null,
           }
         : null,
     limits: {
@@ -262,8 +263,8 @@ async function main(): Promise<void> {
       : '[server] no escrow configured: practice lobbies only',
   );
 
-  if (sessionRelayer.enabled) {
-    console.log(`[server] relaying session calls through ${config.sessionDelegate}`);
+  if (payouts.enabled) {
+    console.log('[server] pushing payouts on request with the keeper key');
   }
 
   if (zap) {

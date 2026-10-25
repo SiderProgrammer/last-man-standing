@@ -9,6 +9,18 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {Deploy} from "../../script/Deploy.s.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
+import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
+
+/// @dev Reaches the script's chain-dependent defaults without running it.
+contract DeployHarness is Deploy {
+    function defaultStakerBps() external view returns (uint256) {
+        return _defaultStakerBps();
+    }
+
+    function teamBeneficiary(address safe) external view returns (address) {
+        return _teamBeneficiary(safe);
+    }
+}
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
 ///      environment is process-wide and suites run in parallel, so every test
@@ -69,10 +81,62 @@ contract DeployTest is Test {
         assertEq(address(d.feeRouter.vault()), address(d.stakedLms));
     }
 
-    function test_wholeSupplyGoesToTheSafe() public view {
+    function test_supplyIsSplitAcrossTheFiveBuckets() public view {
         assertEq(d.lms.totalSupply(), 100_000_000e18);
-        assertEq(d.lms.balanceOf(safe), d.lms.totalSupply());
-        assertEq(d.stakedLms.totalSupply(), 0, "no seed needed: the rate is fixed at 1:1");
+        assertEq(d.lms.balanceOf(address(d.rewards)), 50_000_000e18, "play-mining");
+        assertEq(d.lms.balanceOf(address(d.timelock)), 30_000_000e18, "treasury and reserve");
+        assertEq(d.lms.balanceOf(address(d.teamVesting)), 15_000_000e18, "team");
+        assertEq(d.lms.balanceOf(safe), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(deployer), 0);
+        assertEq(d.stakedLms.totalSupply(), 0, "nobody votes until play-mining pays: no seed either");
+    }
+
+    function test_teamVestsNothingForAYear_thenLinearlyOverThree() public {
+        assertEq(d.teamVesting.owner(), safe, "the Safe stands in for the team on a local node");
+        // `_handOver` moves the dry run's clock from 1 to 2 after the wallet is made.
+        assertApproxEqAbs(d.teamVesting.start(), block.timestamp + 365 days, 1);
+        assertEq(d.teamVesting.duration(), 3 * 365 days);
+
+        address lms = address(d.lms);
+        uint256 start = d.teamVesting.start();
+        vm.warp(start);
+        assertEq(d.teamVesting.releasable(lms), 0);
+        vm.warp(start + (3 * 365 days) / 2);
+        assertEq(d.teamVesting.releasable(lms), 7_500_000e18);
+    }
+
+    function test_playMiningIsWiredToTheEscrowAndFundedForItsBudget() public view {
+        RewardsDistributor rewards = d.rewards;
+        assertEq(rewards.owner(), address(d.timelock));
+        assertEq(address(rewards.escrow()), address(d.escrow));
+        assertEq(address(rewards.vault()), address(d.stakedLms));
+        assertEq(rewards.firstEpoch(), block.timestamp / 7 days + 1, "the first full week after the deploy");
+        assertEq(rewards.maxRewardPerEth(), 100_000e18);
+
+        uint256 budget = rewards.totalBudget();
+        assertLe(budget, d.lms.balanceOf(address(rewards)));
+        assertApproxEqAbs(budget, 50_000_000e18, 1e6, "only rounding is left over");
+    }
+
+    function test_minimumStakeAndQuorumFloorSuitL1() public view {
+        assertEq(d.config.getParams().minStake, 0.01 ether);
+        assertEq(d.governor.quorumFloor(), 1_000_000e18);
+        assertEq(d.governor.quorum(block.timestamp - 1), 1_000_000e18, "nothing staked: the floor applies");
+    }
+
+    function test_mainnetStartsWithNoFeeShareForStakers() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.defaultStakerBps(), 5_000);
+        vm.chainId(1);
+        assertEq(harness.defaultStakerBps(), 0);
+    }
+
+    function test_offALocalChain_theTeamBeneficiaryIsRequired() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.teamBeneficiary(safe), safe);
+        vm.chainId(1);
+        vm.expectRevert(Deploy.TeamBeneficiaryRequired.selector);
+        harness.teamBeneficiary(safe);
     }
 
     function test_governorVotesWithStakedLms_andCooldownOutlastsExposure() public view {

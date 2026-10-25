@@ -54,9 +54,13 @@ Around that core:
   timelock that `LmsGovernor` proposes to. Votes come from staked LMS (sLMS),
   which also earns the stakers' share of protocol fees in ETH via `FeeRouter`.
   The Safe keeps a veto and can pause, but never unpause or trap funds.
+- **Play-mining** — half the LMS supply goes to players over four years, each
+  week shared out by the fees they paid and claimed as sLMS, entirely on-chain
+  through `RewardsDistributor`.
 - **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
-  session login with ERC-1271.
+  session login with ERC-1271. The key only signs logins: on an L1 hub every
+  join is the player's own transaction.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
 - **Match analyst** — after a match, Gemini writes a post-match analysis for
   the sidebar, with key moments checked against the published

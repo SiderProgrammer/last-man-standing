@@ -41,22 +41,6 @@ export type ClientMessage =
     } & MoveAim)
   | ({ type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` } & MoveAim)
   /**
-   * A call the player's session key authorised, for the server to submit and
-   * pay for. The signature is the whole authority — the server cannot alter
-   * the call without invalidating it, and the delegate enforces the session's
-   * scope on-chain regardless of what the server does with it.
-   */
-  | {
-      type: 'relay';
-      target: `0x${string}`;
-      /** Native value in wei, decimal string. */
-      value: string;
-      data: `0x${string}`;
-      /** The account's session nonce, decimal string. */
-      nonce: string;
-      signature: `0x${string}`;
-    }
-  /**
    * Asks the server to push the authenticated account's escrow balance to it,
    * paying the gas. `GameEscrow.withdrawFor` only ever pays the account
    * itself, so this needs no signature beyond the login.
@@ -159,7 +143,7 @@ export type ServerMessage =
    * Practice matches never settle and never get one.
    */
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
-  /** Transaction hash of a relayed session call. */
+  /** Transaction hash of a payout the server pushed in answer to `collect`. */
   | { type: 'relayed'; hash: `0x${string}` }
   /** What the analyst is doing now, e.g. "Reading round 4". Progress only; `analysis.done` carries the answer. */
   | { type: 'analysis.step'; matchId: `0x${string}`; step: string }

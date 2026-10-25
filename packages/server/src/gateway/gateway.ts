@@ -15,7 +15,7 @@ import {
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
-import type { SessionRelayer } from '../chain/relayer.js';
+import type { PayoutPusher } from '../chain/payouts.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
@@ -66,7 +66,7 @@ export interface Peer {
 
 const OPEN = 1;
 
-/** One `collect` per connection per window: each one can cost the relayer gas. */
+/** One `collect` per connection per window: each one can cost the keeper gas. */
 const COLLECT_COOLDOWN_MS = 30_000;
 
 /** Matches per `history` page. */
@@ -103,8 +103,8 @@ export interface GatewayOptions {
   zap?: ZapInfo | null;
   /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
-  /** Submits session-authorised calls on players' behalf. */
-  relayer?: SessionRelayer;
+  /** Pushes payouts on request. Omitted, players withdraw themselves. */
+  payouts?: PayoutPusher;
   /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
   archive?: MatchArchive;
   /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
@@ -143,7 +143,6 @@ export class Gateway {
   private readonly perIp = new Map<string, number>();
   private readonly connectsByIp: KeyedLimiter;
   private readonly loginsByIp: KeyedLimiter;
-  private readonly relaysByWallet: KeyedLimiter;
   /**
    * A room sends the same message object to every client at its table, so it
    * is serialised once, not once per socket. Weak, so a message is forgotten
@@ -156,7 +155,6 @@ export class Gateway {
     const l = this.limits;
     this.connectsByIp = new KeyedLimiter(l.connectRatePerIp, l.connectBurstPerIp);
     this.loginsByIp = new KeyedLimiter(l.loginRatePerIp, l.loginBurstPerIp);
-    this.relaysByWallet = new KeyedLimiter(l.relayRatePerWallet, l.relayBurstPerWallet);
   }
 
   get connections(): number {
@@ -204,7 +202,7 @@ export class Gateway {
       avatarCollections: this.options.avatarCollections ?? [],
       sessionDelegate: this.options.sessionDelegate ?? null,
       zap: this.options.zap ?? null,
-      collect: this.options.relayer?.canCollect ?? false,
+      collect: this.options.payouts?.enabled ?? false,
       staking: this.options.staking ?? null,
       analyst: this.options.analyst !== undefined,
     });
@@ -227,7 +225,6 @@ export class Gateway {
     }
     this.connectsByIp.sweep(now);
     this.loginsByIp.sweep(now);
-    this.relaysByWallet.sweep(now);
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */
@@ -307,38 +304,16 @@ export class Gateway {
         this.options.lobby.attach(message.matchId, session);
         return;
       }
-      case 'relay': {
-        const relayer = this.options.relayer;
-        if (!relayer?.enabled) throw new Error('session relaying is not enabled on this server');
-        // Per wallet, not per socket: opening more sockets buys no more gas.
-        if (!this.relaysByWallet.take(addressKey(address), now)) {
-          throw new Error('too many relayed calls from this account; try again shortly');
-        }
-
-        // Submitted for the authenticated address and no other: the signature
-        // proves the session key spoke, but only this socket's login proves
-        // which account is asking, and the two must be the same account.
-        const hash = await relayer.submit({
-          account: address,
-          target: message.target,
-          value: BigInt(message.value),
-          data: message.data,
-          nonce: BigInt(message.nonce),
-          signature: message.signature,
-        });
-        session.send({ type: 'relayed', hash });
-        return;
-      }
       case 'collect': {
-        const relayer = this.options.relayer;
-        if (!relayer?.canCollect) throw new Error('this server does not push payouts');
+        const payouts = this.options.payouts;
+        if (!payouts?.enabled) throw new Error('this server does not push payouts');
         if (now - session.lastCollectAt < COLLECT_COOLDOWN_MS) {
           throw new Error('a payout was just requested; give it a moment');
         }
         session.lastCollectAt = now;
         // Always the authenticated account: `withdrawFor` pays the account
         // itself, so there is nothing else a client could ask for here.
-        const hash = await relayer.collect(address);
+        const hash = await payouts.collect(address);
         session.send({ type: 'relayed', hash });
         return;
       }

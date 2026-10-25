@@ -137,12 +137,6 @@ export interface GatewayLimits {
   moveRate: number;
   moveBurst: number;
   /**
-   * Relayed calls per second per *wallet*, across every socket it logs in on.
-   * Each one spends the relayer's gas, so it is the tightest budget here.
-   */
-  relayRatePerWallet: number;
-  relayBurstPerWallet: number;
-  /**
    * Misbehaviour — malformed frames, rate-limited frames, failed logins —
    * drains this bucket; an empty one closes the socket. Refills slowly, so a
    * client with one bad frame a minute is never punished.
@@ -170,8 +164,6 @@ export const DEFAULT_GATEWAY_LIMITS: GatewayLimits = {
   messageBurst: 30,
   moveRate: 4,
   moveBurst: 12,
-  relayRatePerWallet: 0.2,
-  relayBurstPerWallet: 5,
   strikeRate: 0.1,
   strikeBurst: 20,
   maxBufferedBytes: 1024 * 1024,

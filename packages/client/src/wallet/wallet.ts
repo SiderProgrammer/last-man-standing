@@ -9,9 +9,6 @@ import {
   parseAbi,
   parseEther,
   parseSignature,
-  toFunctionSelector,
-  type Abi,
-  type AbiFunction,
   type Address,
   type Hex,
   type LocalAccount,
@@ -19,14 +16,16 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { StakingPosition } from '../ui/staking.js';
+import type { PlayRewards, StakingPosition } from '../ui/staking.js';
 import type { ProposalLive } from '../ui/governance.js';
 import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
 import {
   AUTH_PREFIX,
   ZERO_ADDRESS,
   ProposalState,
+  claimableEpochRange,
   descriptionHash,
+  rewardsDistributorAbi,
   gameEscrowAbi,
   lmsGovernorAbi,
   protocolConfigAbi,
@@ -44,21 +43,6 @@ import {
 } from '@lms/protocol';
 
 /**
- * Selector of a named function, taken from the ABI the rest of the file uses.
- *
- * The session scope used to hand-write the signatures a third time, next to
- * the ABIs that already describe them, which is one more place for them to
- * drift. `session-scope.test.ts` pins the resulting bytes4 values.
- */
-function selectorOf(abi: Abi, name: string): Hex {
-  const item = abi.find(
-    (entry): entry is AbiFunction => entry.type === 'function' && entry.name === name,
-  );
-  if (!item) throw new Error(`no function ${name} in ABI`);
-  return toFunctionSelector(item);
-}
-
-/**
  * `approve` with no return value.
  *
  * USDT and a handful of older tokens return nothing from `approve`, and a
@@ -72,24 +56,19 @@ const approveAbi = parseAbi(['function approve(address spender, uint256 amount)'
 const PERMIT_SECONDS = 10 * 60;
 
 /**
- * What a session key may call, and nothing else.
+ * What a session key is granted: logins, and nothing else.
  *
- * Deliberately narrow: join on the escrow, mint and equip on the avatar
- * collection. It cannot create lobbies and it cannot transfer the player's
- * avatar away.
- *
- * It cannot collect payouts either, on purpose. `withdraw(to)` moves no value
- * out of the account, so the spend cap never sees it, and it pays any `to` — a
- * leaked key could send the whole balance anywhere. Payouts go through
- * `withdrawFor(account)` instead, which anyone may call and which only ever
- * pays the account itself, so it needs no key at all.
+ * The hub is Ethereum L1. A call made through the key needs somebody else to
+ * submit it, and on L1 that means the server paying L1 gas for every join and
+ * mint. So players send their own transactions, and the key only signs the
+ * login nonce, which the gateway checks through ERC-1271 with no transaction
+ * at all. No call is allowed and no value may move: a leaked key can log in as
+ * the player until it expires, and do nothing else.
  */
-export const SESSION_SCOPE = {
-  escrow: [selectorOf(gameEscrowAbi as Abi, 'join')],
-  avatars: [
-    selectorOf(playerAvatarsAbi as Abi, 'mint'),
-    selectorOf(playerAvatarsAbi as Abi, 'equip'),
-  ],
+export const SESSION_GRANT = {
+  spendCap: 0n,
+  targets: [] as readonly Address[],
+  selectors: [] as readonly Hex[],
 } as const;
 
 interface Eip1193Provider {
@@ -378,10 +357,11 @@ export class Wallet {
   /** Everything the staking panel shows, read in one round trip. */
   async stakingPosition(vault: Address): Promise<StakingPosition> {
     const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
-    const [lmsBalance, shares, votes, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
+    const [lmsBalance, shares, votes, delegate, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
+      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'delegates', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'earned', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'cooldown' }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [this.address] }),
@@ -396,6 +376,8 @@ export class Wallet {
       shares,
       value,
       votes,
+      self: this.address,
+      delegate,
       earned,
       cooldown: Number(cooldown),
       pending: { assets: pendingAssets, unlockAt: Number(unlockAt) },
@@ -443,6 +425,21 @@ export class Wallet {
     return this.wallet.writeContract({ ...request, chain: null });
   }
 
+  /**
+   * Hands this wallet's votes to `delegatee`, or takes them back with its own
+   * address. The sLMS stays here and keeps earning; only the votes move.
+   */
+  async delegateVotes(vault: Address, delegatee: Address): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: vault,
+      abi: stakedLmsAbi,
+      functionName: 'delegate',
+      args: [delegatee],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
   /** Burns `shares` now and starts the cooldown on what they are worth. */
   async requestUnstake(vault: Address, shares: bigint): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
@@ -463,6 +460,40 @@ export class Wallet {
       abi: stakedLmsAbi,
       functionName: 'claim',
       args: [this.address],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
+   * Play-mining LMS this wallet can claim now, and the epochs it comes from.
+   * One `eth_call` over every epoch that has ended: the distributor loops.
+   */
+  async playRewards(distributor: Address): Promise<PlayRewards> {
+    const [firstEpoch, epochLength, programEpochs, block] = await Promise.all([
+      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'firstEpoch' }),
+      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'epochLength' }),
+      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'PROGRAM_EPOCHS' }),
+      this.rpc.getBlock(),
+    ]);
+    const range = claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp);
+    if (!range) return { claimable: 0n, epochs: [] };
+    const [claimable, epochs] = await this.rpc.readContract({
+      address: distributor,
+      abi: rewardsDistributorAbi,
+      functionName: 'claimable',
+      args: [this.address, range.from, range.to],
+    });
+    return { claimable, epochs: [...epochs] };
+  }
+
+  /** Claims play-mining rewards for `epochs`, paid to this wallet as sLMS. */
+  async claimPlayRewards(distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: distributor,
+      abi: rewardsDistributorAbi,
+      functionName: 'claim',
+      args: [this.address, [...epochs]],
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }
@@ -639,41 +670,18 @@ export class Wallet {
   }
 
   /**
-   * Delegates this EOA under EIP-7702 and grants a scoped session key, in one
-   * transaction.
+   * Delegates this EOA under EIP-7702 and grants a login-only session key, in
+   * one transaction.
    *
    * The authorization and the `grantSession` call travel together: the
    * transaction is addressed to the player's *own* address, which only has code
    * to call because the authorization in the same transaction put it there.
    * That is what makes this a one-time cost rather than a setup ritual.
    *
-   * The scope is deliberately narrow. The key may join a lobby and mint or
-   * equip an avatar — nothing else — and it may move at most `spendCapWei` in
-   * total. It cannot create lobbies, collect payouts, or transfer the player's
-   * avatar away; see `SESSION_SCOPE`.
+   * The key may call nothing and move nothing; see `SESSION_GRANT`.
    */
-  async grantSession(
-    delegate: Address,
-    sessionKey: Address,
-    validUntil: number,
-    spendCapWei: bigint,
-    contracts: { escrow: Address | null; avatars: Address | null },
-  ): Promise<Hex> {
-    const targets: Address[] = [];
-    const selectors: Hex[] = [];
-
-    if (contracts.escrow) {
-      for (const selector of SESSION_SCOPE.escrow) {
-        targets.push(contracts.escrow);
-        selectors.push(selector);
-      }
-    }
-    if (contracts.avatars) {
-      for (const selector of SESSION_SCOPE.avatars) {
-        targets.push(contracts.avatars);
-        selectors.push(selector);
-      }
-    }
+  async grantSession(delegate: Address, sessionKey: Address, validUntil: number): Promise<Hex> {
+    const { spendCap, targets, selectors } = SESSION_GRANT;
 
     const authorization = await this.wallet.signAuthorization({
       account: this.account,
@@ -691,7 +699,7 @@ export class Wallet {
       data: encodeFunctionData({
         abi: sessionKeyDelegateAbi,
         functionName: 'grantSession',
-        args: [sessionKey, validUntil, spendCapWei, targets, selectors],
+        args: [sessionKey, validUntil, spendCap, [...targets], [...selectors]],
       }),
     });
   }
@@ -707,15 +715,6 @@ export class Wallet {
         functionName: 'revokeSession',
         args: [sessionKey],
       }),
-    });
-  }
-
-  /** Next session-call nonce for this account, for signing a relayed call. */
-  async sessionNonce(): Promise<bigint> {
-    return this.rpc.readContract({
-      address: this.address,
-      abi: sessionKeyDelegateAbi,
-      functionName: 'sessionNonce',
     });
   }
 

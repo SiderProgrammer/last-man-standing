@@ -1,35 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { toHex } from 'viem';
-import { SESSION_SCOPE } from '../src/wallet/wallet.js';
+import { SESSION_GRANT } from '../src/wallet/wallet.js';
 import { centreOf, seatPosition, seatRingRadius, stormRing } from '../src/arena/layout.js';
 import { COLORS, hpColor } from '../src/arena/theme.js';
 
-describe('session scope', () => {
+describe('session grant', () => {
   /**
-   * These three selectors are what a session key is allowed to call. They are
-   * derived from the ABIs rather than from hand-written signature strings, so
-   * these expectations pin the values that derivation must keep producing: a
-   * change here would silently widen or narrow what a granted key can do.
+   * A session key only signs logins. Players send their own joins on L1, so a
+   * granted key must be able to call nothing and move nothing: anything more
+   * would widen what a leaked key can do for no use.
    */
-  it('scopes the escrow to join only', () => {
-    expect(SESSION_SCOPE.escrow).toEqual(['0xad677d0b']);
+  it('allows no call', () => {
+    expect(SESSION_GRANT.targets).toEqual([]);
+    expect(SESSION_GRANT.selectors).toEqual([]);
   });
 
-  /**
-   * `withdraw(address)` is `0x51cff8d9`. A key holding it could send the
-   * account's whole escrow balance to any address, and the spend cap would
-   * never notice, because the value leaves the escrow and not the account.
-   */
-  it('never grants a payout selector', () => {
-    expect(SESSION_SCOPE.escrow).not.toContain('0x51cff8d9');
-  });
-
-  it('scopes the avatar collection to mint and equip', () => {
-    expect(SESSION_SCOPE.avatars).toEqual(['0x1249c58b', '0xb85f8027']);
-  });
-
-  it('grants nothing else', () => {
-    expect(SESSION_SCOPE.escrow.length + SESSION_SCOPE.avatars.length).toBe(3);
+  it('moves no value', () => {
+    expect(SESSION_GRANT.spendCap).toBe(0n);
   });
 });
 
