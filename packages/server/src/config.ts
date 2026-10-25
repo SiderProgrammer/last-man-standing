@@ -99,6 +99,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     },
     /** `StakedLms` on the hub chain. Blank hides the staking panel. */
     stakedLms: (env.STAKED_LMS ?? ZERO_ADDRESS) as `0x${string}`,
+    /** `RewardsDistributor` on the hub chain. Blank hides the play-mining claim. */
+    rewardsDistributor: (env.REWARDS_DISTRIBUTOR ?? ZERO_ADDRESS) as `0x${string}`,
     /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
     governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
     /** First block to look for proposals in: the governor's deployment block. */

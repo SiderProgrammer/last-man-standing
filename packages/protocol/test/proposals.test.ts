@@ -17,6 +17,17 @@ describe('describeCall', () => {
     });
   });
 
+  it('recognises the quorum floor and the play-mining settings', () => {
+    const calls = [
+      encodeFunctionData({ abi: governableAbi, functionName: 'setQuorumFloor', args: [2_000_000n] }),
+      encodeFunctionData({ abi: governableAbi, functionName: 'setMaxRewardPerEth', args: [50_000n] }),
+      encodeFunctionData({ abi: governableAbi, functionName: 'sweep', args: [SAFE] }),
+    ];
+    for (const data of calls) {
+      expect(describeCall(ROUTER, 0n, data, {}).recognised).toBe(true);
+    }
+  });
+
   it('shows struct arguments field by field', () => {
     const data = encodeFunctionData({
       abi: governableAbi,

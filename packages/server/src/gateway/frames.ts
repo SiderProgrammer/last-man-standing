@@ -26,8 +26,6 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 /** Any even-length hex. Session-key and ERC-1271 signatures are not always 65 bytes. */
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
-/** A uint256 in decimal: at most 78 digits, no sign, no exponent. */
-const UINT_DECIMAL = /^(?:0|[1-9][0-9]{0,77})$/;
 /** Generous for any signature scheme, still far below the frame cap. */
 const MAX_SIGNATURE_HEX = 2 + 2 * 1024;
 
@@ -86,15 +84,6 @@ export function parseClientMessage(raw: string): ClientMessage {
         salt: bytes32(frame, 'salt'),
         ...aim(frame),
       };
-    case 'relay':
-      return {
-        type: 'relay',
-        target: address(frame, 'target'),
-        value: decimal(frame, 'value'),
-        data: hex(frame, 'data'),
-        nonce: decimal(frame, 'nonce'),
-        signature: signature(frame, 'signature'),
-      };
     default:
       throw new FrameError('unsupported message');
   }
@@ -135,12 +124,6 @@ function hex(frame: Record<string, unknown>, field: string): `0x${string}` {
 function signature(frame: Record<string, unknown>, field: string): `0x${string}` {
   const value = hex(frame, field);
   if (value.length < 4 || value.length > MAX_SIGNATURE_HEX) throw new FrameError(`${field} has an implausible length`);
-  return value;
-}
-
-function decimal(frame: Record<string, unknown>, field: string): string {
-  const value = string(frame, field);
-  if (!UINT_DECIMAL.test(value)) throw new FrameError(`${field} must be a non-negative decimal integer`);
   return value;
 }
 

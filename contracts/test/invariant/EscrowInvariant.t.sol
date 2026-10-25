@@ -43,10 +43,30 @@ contract EscrowHandler is Test {
         attestorPks = attestorPks_;
     }
 
+    /// @dev Every match the campaign opened, every fee epoch one settled in,
+    ///      and which epoch that was, plus one (zero: not settled).
+    bytes32[] public matchIds;
+    uint256[] public epochs;
+    mapping(uint256 epoch => bool) private seenEpoch;
+    mapping(bytes32 matchId => uint256) public settledInEpochPlusOne;
+
     function createMatch() public {
         address actor = actors[bound(uint256(uint160(msg.sender)), 0, actors.length - 1)];
         vm.prank(actor);
         current = escrow.createMatch(STAKE, 4);
+        matchIds.push(current);
+    }
+
+    function matchCount() external view returns (uint256) {
+        return matchIds.length;
+    }
+
+    function epochCount() external view returns (uint256) {
+        return epochs.length;
+    }
+
+    function actorCount() external view returns (uint256) {
+        return actors.length;
     }
 
     function join(uint256 who) public {
@@ -116,6 +136,13 @@ contract EscrowHandler is Test {
         vm.warp(block.timestamp + 2 hours);
         escrow.finalize(current, proposedRanking);
         ++finalized;
+
+        uint256 epoch = block.timestamp / escrow.FEE_EPOCH();
+        settledInEpochPlusOne[current] = epoch + 1;
+        if (!seenEpoch[epoch]) {
+            seenEpoch[epoch] = true;
+            epochs.push(epoch);
+        }
     }
 
     address public constant GUARDIAN = address(0x6A2D);
@@ -236,5 +263,46 @@ contract EscrowInvariantTest is StdInvariant, Test {
 
     function invariant_owedNeverExceedsBalance() public view {
         assertLe(escrow.totalOwed(), address(escrow).balance);
+    }
+
+    /// @dev Each epoch's total is the sum of its players' — through joins,
+    ///      refunds and settlements in any order. Every player in the campaign
+    ///      is an actor, cross-chain seats included.
+    function invariant_epochFeesAreTheSumOfPlayersFees() public view {
+        for (uint256 e = 0; e < handler.epochCount(); ++e) {
+            uint256 epoch = handler.epochs(e);
+            uint256 sum;
+            for (uint256 a = 0; a < handler.actorCount(); ++a) {
+                sum += escrow.feesPaid(handler.actors(a), epoch);
+            }
+            assertEq(escrow.epochFees(epoch), sum);
+        }
+    }
+
+    /// @dev And it counts exactly the seats of the matches that settled in it:
+    ///      nothing for a match still open, in play, refunded or vetoed.
+    function invariant_epochFeesCountOnlySettledMatches() public view {
+        uint256 seatFee = (uint256(handler.STAKE()) * 500) / 10_000;
+        uint256 expectedTotal;
+        for (uint256 e = 0; e < handler.epochCount(); ++e) {
+            uint256 epoch = handler.epochs(e);
+            uint256 expected;
+            for (uint256 m = 0; m < handler.matchCount(); ++m) {
+                bytes32 matchId = handler.matchIds(m);
+                if (handler.settledInEpochPlusOne(matchId) != epoch + 1) continue;
+                GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
+                assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Settled));
+                expected += seatFee * info.seatCount;
+            }
+            assertEq(escrow.epochFees(epoch), expected);
+            expectedTotal += expected;
+        }
+        // No settled match left out: every Settled one was recorded above.
+        uint256 settledSeats;
+        for (uint256 m = 0; m < handler.matchCount(); ++m) {
+            GameEscrow.MatchInfo memory info = escrow.getMatch(handler.matchIds(m));
+            if (info.status == GameEscrow.MatchStatus.Settled) settledSeats += info.seatCount;
+        }
+        assertEq(expectedTotal, seatFee * settledSeats);
     }
 }

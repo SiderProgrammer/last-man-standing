@@ -163,6 +163,11 @@ export const governableAbi = parseAbi([
   'function setVotingPeriod(uint32 votingPeriod)',
   'function setProposalThreshold(uint256 proposalThreshold)',
   'function updateQuorumNumerator(uint256 quorumNumerator)',
+  // LmsGovernor: the minimum quorum, in votes
+  'function setQuorumFloor(uint256 quorumFloor)',
+  // RewardsDistributor
+  'function setMaxRewardPerEth(uint256 maxRewardPerEth)',
+  'function sweep(address to)',
   // Ownable2Step, on any of them
   'function transferOwnership(address owner)',
   'function acceptOwnership()',

@@ -12,6 +12,9 @@ import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
 
 contract StakedLmsTest is Test {
     uint64 private constant COOLDOWN = 7 days;
+    uint64 private constant DURATION = 7 days;
+    /// @dev Wei lost to integer division across a whole reward period.
+    uint256 private constant DUST = 10;
     uint256 private constant CAROL_PK = 0xCA401;
 
     address private owner;
@@ -27,7 +30,7 @@ contract StakedLmsTest is Test {
         bob = makeAddr("bob");
 
         lms = new LmsToken(address(this), 1_000_000e18);
-        vault = new StakedLms(lms, owner, COOLDOWN);
+        vault = new StakedLms(lms, owner, COOLDOWN, DURATION);
 
         lms.transfer(alice, 1_000e18);
         lms.transfer(bob, 1_000e18);
@@ -132,47 +135,116 @@ contract StakedLmsTest is Test {
         vault.deposit(100e18, bob);
 
         vault.depositRewards{value: 4 ether}();
+        vm.warp(block.timestamp + DURATION);
 
-        assertApproxEqAbs(vault.earned(alice), 3 ether, 1);
-        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+        assertApproxEqAbs(vault.earned(alice), 3 ether, DUST);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, DUST);
     }
 
-    function test_rewards_onlyGoToWhoeverWasStakedWhenTheyArrived() public {
+    function test_rewards_arePaidOutEvenlyOverTheDuration() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
-        vault.depositRewards{value: 1 ether}();
+        vault.depositRewards{value: 7 ether}();
+
+        assertEq(vault.earned(alice), 0, "nothing at the moment of the deposit");
+        vm.warp(block.timestamp + DURATION / 7);
+        assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
+        vm.warp(block.timestamp + DURATION);
+        assertApproxEqAbs(vault.earned(alice), 7 ether, DUST, "and nothing more once the stream runs dry");
+    }
+
+    /// @dev The attack the stream exists for: stake, harvest and claim in one
+    ///      transaction, then leave. Paid out at once, the harvest would have
+    ///      split evenly between Bob and Alice, who had been staked all along.
+    function test_rewards_stakingRightBeforeAHarvestEarnsOnlyForTheTimeStaked() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vm.warp(block.timestamp + 30 days);
+        vm.deal(bob, 2 ether);
+
+        vm.startPrank(bob);
+        vault.deposit(100e18, bob);
+        vault.depositRewards{value: 2 ether}();
+        assertEq(vault.earned(bob), 0);
+        vault.requestUnstake(100e18);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DURATION);
+        assertEq(vault.earned(bob), 0);
+        assertApproxEqAbs(vault.earned(alice), 2 ether, DUST);
+    }
+
+    function test_rewards_aLateStakerSharesOnlyWhatIsLeft() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
         vm.prank(bob);
         vault.deposit(100e18, bob);
-        vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
-        assertApproxEqAbs(vault.earned(alice), 2 ether, 1);
-        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+        assertApproxEqAbs(vault.earned(alice), 1.5 ether, DUST);
+        assertApproxEqAbs(vault.earned(bob), 0.5 ether, DUST);
     }
 
-    function test_rewards_withNobodyStaked_waitForTheFirstStakers() public {
-        vault.depositRewards{value: 1 ether}();
-        assertEq(vault.queuedRewards(), 1 ether);
-
+    function test_rewards_aSecondDepositAddsToWhatIsStillUnpaid() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
         vault.depositRewards{value: 1 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
-        assertEq(vault.queuedRewards(), 0);
-        assertApproxEqAbs(vault.earned(alice), 2 ether, 1);
+        vault.depositRewards{value: 1 ether}();
+        assertEq(vault.periodFinish(), block.timestamp + DURATION, "the period restarts");
+        vm.warp(block.timestamp + DURATION / 2);
+        assertApproxEqAbs(vault.earned(alice), 0.5 ether + 0.75 ether, DUST);
+
+        vm.warp(block.timestamp + DURATION);
+        assertApproxEqAbs(vault.earned(alice), 2 ether, DUST);
+    }
+
+    function test_rewards_withNobodyStaked_theStreamPausesForTheFirstStakers() public {
+        vault.depositRewards{value: 1 ether}();
+        vm.warp(block.timestamp + 3 * DURATION);
+
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        assertEq(vault.periodFinish(), block.timestamp + DURATION, "none of it ran out while nobody was staked");
+
+        vm.warp(block.timestamp + DURATION);
+        assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
+    }
+
+    function test_rewards_pauseWhenEveryoneLeaves_andResumeForTheNextStaker() public {
+        vm.prank(alice);
+        vault.deposit(100e18, alice);
+        vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
+
+        vm.prank(alice);
+        vault.requestUnstake(100e18);
+        vm.warp(block.timestamp + 10 days);
+
+        vm.prank(bob);
+        vault.deposit(100e18, bob);
+        vm.warp(block.timestamp + DURATION);
+
+        assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, DUST);
     }
 
     function test_rewards_earnedBeforeATransferStayWithTheSender() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
-        vault.depositRewards{value: 1 ether}();
+        vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
         vm.prank(alice);
         vault.transfer(bob, 100e18);
-        vault.depositRewards{value: 1 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
-        assertApproxEqAbs(vault.earned(alice), 1 ether, 1);
-        assertApproxEqAbs(vault.earned(bob), 1 ether, 1);
+        assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
+        assertApproxEqAbs(vault.earned(bob), 1 ether, DUST);
     }
 
     function test_rewards_unstakingKeepsWhatWasEarned_andTheCooldownEarnsNothing() public {
@@ -181,25 +253,37 @@ contract StakedLmsTest is Test {
         vm.prank(bob);
         vault.deposit(100e18, bob);
         vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
         vm.prank(alice);
         vault.requestUnstake(100e18);
-        vault.depositRewards{value: 2 ether}();
+        vm.warp(block.timestamp + DURATION / 2);
 
-        assertApproxEqAbs(vault.earned(alice), 1 ether, 1);
-        assertApproxEqAbs(vault.earned(bob), 3 ether, 1);
+        assertApproxEqAbs(vault.earned(alice), 0.5 ether, DUST);
+        assertApproxEqAbs(vault.earned(bob), 1.5 ether, DUST);
+    }
+
+    function test_constructor_boundsTheRewardDuration() public {
+        uint64 tooShort = vault.MIN_REWARD_DURATION() - 1;
+        vm.expectRevert(abi.encodeWithSelector(StakedLms.RewardDurationOutOfRange.selector, tooShort));
+        new StakedLms(lms, owner, COOLDOWN, tooShort);
+
+        uint64 tooLong = vault.MAX_REWARD_DURATION() + 1;
+        vm.expectRevert(abi.encodeWithSelector(StakedLms.RewardDurationOutOfRange.selector, tooLong));
+        new StakedLms(lms, owner, COOLDOWN, tooLong);
     }
 
     function test_claimRewards_paysOnce() public {
         vm.prank(alice);
         vault.deposit(100e18, alice);
         vault.depositRewards{value: 1 ether}();
+        vm.warp(block.timestamp + DURATION);
         address to = makeAddr("to");
 
         vm.prank(alice);
         uint256 paid = vault.claimRewards(to);
 
-        assertApproxEqAbs(paid, 1 ether, 1);
+        assertApproxEqAbs(paid, 1 ether, DUST);
         assertEq(to.balance, paid);
         assertEq(vault.earned(alice), 0);
 
@@ -213,26 +297,38 @@ contract StakedLmsTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 256
-    function testFuzz_rewards_neverPayMoreThanArrived(uint96 a, uint96 b, uint96 r1, uint96 r2, uint96 moved)
-        public
-    {
+    function testFuzz_rewards_neverPayMoreThanArrived(
+        uint96 a,
+        uint96 b,
+        uint96 r1,
+        uint96 r2,
+        uint96 moved,
+        uint32 gap1,
+        uint32 gap2
+    ) public {
         a = uint96(bound(a, 1, 1_000e18));
         b = uint96(bound(b, 1, 1_000e18));
         r1 = uint96(bound(r1, 0, 10 ether));
         r2 = uint96(bound(r2, 0, 10 ether));
+        gap1 = uint32(bound(gap1, 0, 2 * DURATION));
+        gap2 = uint32(bound(gap2, 0, 2 * DURATION));
 
         vm.prank(alice);
         vault.deposit(a, alice);
         vm.prank(bob);
         vault.deposit(b, bob);
         vault.depositRewards{value: r1}();
+        vm.warp(block.timestamp + gap1);
         moved = uint96(bound(moved, 0, a));
         vm.prank(alice);
         vault.transfer(bob, moved);
         vault.depositRewards{value: r2}();
+        vm.warp(block.timestamp + gap2);
 
-        assertLe(vault.earned(alice) + vault.earned(bob), uint256(r1) + r2);
-        assertGe(vault.earned(alice) + vault.earned(bob) + 4, uint256(r1) + r2, "only rounding dust is lost");
+        assertLe(vault.earned(alice) + vault.earned(bob), uint256(r1) + r2, "never more than arrived");
+
+        vm.warp(block.timestamp + DURATION);
+        assertGe(vault.earned(alice) + vault.earned(bob) + DUST, uint256(r1) + r2, "only rounding dust is lost");
         assertEq(address(vault).balance, uint256(r1) + r2);
     }
 

@@ -204,7 +204,7 @@ describe('gateway', () => {
     expect(socket.sent.length).toBe(before);
   });
 
-  it('advertises the session delegate so the client can offer one-click play', () => {
+  it('advertises the session delegate so the client can offer prompt-free logins', () => {
     const delegate = `0x${'99'.repeat(20)}` as const;
     const { socket } = harness({ sessionDelegate: delegate });
     expect(socket.last('hello')?.sessionDelegate).toBe(delegate);

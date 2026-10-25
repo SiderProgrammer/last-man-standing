@@ -160,10 +160,8 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'relayed':
-      toast(`Sent without a wallet prompt · ${short(message.hash)}`);
-      net.send({ type: 'lobbies' });
-      void renderAvatarPanel();
-      // A pushed payout is a relayed transaction too; re-read once it lands.
+      // The only transaction the server sends for a player: a pushed payout.
+      toast(`Payout sent without a wallet prompt · ${short(message.hash)}`);
       void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
       break;
 
