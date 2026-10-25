@@ -1,16 +1,6 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
-import { Action, DEFAULT_RULES, commitMove, type Move, type Rules, type Seat } from '@lms/protocol';
-import {
-  Match,
-  Prng,
-  aggressorStrategy,
-  always,
-  randomStrategy,
-  readerStrategy,
-  smartStrategy,
-  type Strategy,
-  type StrategyName,
-} from '@lms/engine';
+import { DEFAULT_RULES, commitMove, type Move, type Rules, type Seat } from '@lms/protocol';
+import { Match, Prng, strategyByName, type Strategy, type StrategyName } from '@lms/engine';
 import type { ArchivedMatch } from '../lobby/store.js';
 
 /**
@@ -43,7 +33,7 @@ export function playReferenceMatch(options: {
     chainId: 0,
   }));
   const match = new Match({ matchId: label(`${base}:id`), seats, seed: label(`${base}:seed`), rules });
-  const players = options.strategies.map((name, seat) => strategyFor(name, new Prng(label(`${base}:${seat}`))));
+  const players = options.strategies.map((name, seat) => strategyByName(name, new Prng(label(`${base}:${seat}`))));
 
   while (!match.finished) {
     const round = match.round;
@@ -68,23 +58,4 @@ export function playReferenceMatch(options: {
     rules,
     strategies: [...options.strategies],
   };
-}
-
-function strategyFor(name: StrategyName, prng: Prng): Strategy {
-  switch (name) {
-    case 'turtle':
-      return always(Action.Defend);
-    case 'hider':
-      return always(Action.Hide);
-    case 'aggressor':
-      return aggressorStrategy(prng);
-    case 'random':
-      return randomStrategy(prng);
-    case 'reader':
-      return readerStrategy(prng);
-    case 'easy':
-    case 'normal':
-    case 'hard':
-      return smartStrategy(prng, name);
-  }
 }

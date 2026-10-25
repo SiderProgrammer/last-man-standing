@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @notice Source of the per-match seed that drives every evasion roll.
+/// @notice Source of the per-match seed that every roll in the match is drawn from.
 /// @dev Kept deliberately narrow so a Chainlink VRF v2.5 subscription, a
 ///      drand relay, or a test double can all sit behind it. The seed must be
 ///      unknowable to players and to the server until the match is locked,

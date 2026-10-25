@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { tallyStyles } from '@lms/protocol';
 import { MatchTools, MemoryStyleBook, TOOLS, playReferenceMatch, type SeatedMatch } from '@lms/server';
 
-const match = playReferenceMatch({ label: 'tools', strategies: ['reader', 'aggressor', 'turtle', 'hider'] }) as SeatedMatch;
+const match = playReferenceMatch({ label: 'tools', strategies: ['reader', 'striker', 'guarder', 'charger'] }) as SeatedMatch;
 
 describe('analyst tools', () => {
   it('are closed schemas in a fixed order', () => {
@@ -23,9 +23,9 @@ describe('analyst tools', () => {
     const { content, isError } = await tools.run('get_round', { round: 1 });
     expect(isError).toBe(false);
     expect(content).toContain('Round 1:');
-    // Seat 2 is the turtle.
-    expect(content).toContain('#2 defend');
-    expect(content).toMatch(/attacks: /);
+    // Seat 2 is the guarder.
+    expect(content).toContain('#2 guard');
+    expect(content).toMatch(/strikes: /);
   });
 
   it('explains a round that does not exist', async () => {
@@ -36,13 +36,13 @@ describe('analyst tools', () => {
 
   it('reads a seat the way the reads panel does', async () => {
     const tools = new MatchTools(match, 0);
-    const turtle = await tools.run('get_reads', { seat: 2 });
-    expect(turtle.content).toMatch(/0 attacks, \d+ defends, 0 hides/);
-    expect(turtle.content).toContain('Never attacked.');
-    expect(turtle.content).toMatch(/Attacked #0 \(the player this analysis is for\) 0 times/);
+    // The guarder guards whenever its cooldown allows and strikes otherwise; it never charges.
+    const guarder = await tools.run('get_reads', { seat: 2 });
+    expect(guarder.content).toMatch(/\d+ strikes, [1-9]\d* guards, 0 charges/);
+    expect(guarder.content).toMatch(/Struck #0 \(the player this analysis is for\) \d+ times/);
 
-    // From seat 0 the aggressor's habit reads as a grudge; to a spectator, as leader-hunting.
-    expect((await tools.run('get_reads', { seat: 1 })).content).toMatch(/Tell: has a grudge on you/);
+    // The striker kept coming after #2: from there that reads as a grudge; to a spectator, as leader-hunting.
+    expect((await new MatchTools(match, 2).run('get_reads', { seat: 1 })).content).toMatch(/Tell: has a grudge on you/);
     expect((await new MatchTools(match, null).run('get_reads', { seat: 1 })).content).toMatch(/Tell: hunts the leader\./);
   });
 

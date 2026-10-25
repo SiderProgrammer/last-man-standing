@@ -86,7 +86,7 @@ describe('engine invariants', () => {
     const roots = new Set<string>();
     for (let trial = 0; trial < 20; trial += 1) {
       const setup = setupFor(6, `seed-${trial}`);
-      const { match } = playMatch(setup, always(Action.Attack));
+      const { match } = playMatch(setup, always(Action.Strike));
       roots.add(match.historyRoot);
     }
     expect(roots.size).toBe(20);
@@ -97,7 +97,7 @@ describe('engine invariants', () => {
   // is what makes `verifyResult` an audit rather than a tautology. This test is
   // what pays for the duplication, so it covers every strategy: `reader`
   // concentrates fire and eliminates seats in a different order to `random`,
-  // and the house bot turtles until a hit would finish someone.
+  // and the house bot mixes all three actions around their cooldowns.
   it('lets an independent replay reproduce the signed result', () => {
     for (let trial = 0; trial < 45; trial += 1) {
       const setup = setupFor(4 + (trial % 5), `replay-${trial}`);
@@ -148,9 +148,9 @@ describe('engine invariants', () => {
     const { match, moveLog } = playMatch(setup, randomStrategy(new Prng(bytes32('tamper'))));
 
     const tampered = moveLog.map((round) => round.map((move) => ({ ...move })));
-    const victim = tampered[0]?.find((move) => move.action !== Action.Defend);
+    const victim = tampered[0]?.find((move) => move.action !== Action.Guard);
     expect(victim).toBeDefined();
-    (victim as { action: number }).action = Action.Defend;
+    (victim as { action: number }).action = Action.Guard;
 
     expect(verifyResult(setup, tampered, match.result())).toBe(false);
   });
@@ -158,11 +158,11 @@ describe('engine invariants', () => {
   it('survives a lobby where nobody ever reveals', () => {
     const setup = setupFor(8, 'all-silent');
     const silent = new Set([0, 1, 2, 3, 4, 5, 6, 7]);
-    const { match } = playMatch(setup, always(Action.Hide), silent);
+    const { match } = playMatch(setup, always(Action.Charge), silent);
 
     expect(match.finished).toBe(true);
     expect(match.alive).toHaveLength(1);
-    // Nobody hid, so everyone took full storm damage until the lobby collapsed.
+    // Nobody struck, so the stall penalty grew every round until the lobby collapsed.
     for (const seat of [0, 1, 2, 3, 4, 5, 6, 7]) {
       expect(match.playerState(seat).timeouts).toBeGreaterThan(0);
     }

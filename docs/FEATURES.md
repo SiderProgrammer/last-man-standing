@@ -142,9 +142,9 @@ Three details carry most of the weight:
 
 - **`matchId`, `round` and `seat` are inside the hash.** Purpose: a commitment
   cannot be replayed into a later round or claimed by another seat.
-- **`target` is forced to zero for non-attack actions.** Purpose: otherwise the
+- **`target` is forced to zero for every action but Strike.** Purpose: otherwise the
   number of plausible preimages would leak whether the player intended to
-  attack.
+  strike.
 - **The salt is per player per round**, persisted to `localStorage` before it is
   sent. Purpose: a refresh between commit and reveal would otherwise leave a
   commitment the player can no longer open, costing them the round.
@@ -210,7 +210,7 @@ keeping a second, Solidity copy of the kernel bit-for-bit identical.
 
 ### What it does
 
-Supplies the per-match seed that drives every evasion roll. The escrow requests
+Supplies the per-match seed that every roll in the match is drawn from. The escrow requests
 randomness when a lobby locks; the oracle answers; the escrow binds the answer
 to the match and goes `Live`:
 
@@ -929,18 +929,24 @@ fails on drift.
 The deterministic kernel that decides what happens in a round, with no I/O
 whatsoever.
 
-- **`kernel/resolve.ts`** — `resolveRound(rules, seed, round, states, moves)` is pure
-  and total. It does not read the clock, does not use floating point, and does
-  not depend on the order moves arrive in.
+- **`kernel/resolve.ts`** — `resolveRound(rules, seed, round, states, moves, quietRounds)`
+  is pure and total. It does not read the clock, does not use floating point, and
+  does not depend on the order moves arrive in. A move its player's cooldown rules
+  out is resolved as no move, the same way `Match` rejects it at reveal.
 - **`match/match.ts`** — the per-match state machine: commit → reveal → resolve, phase
-  guards, commitment verification, ranking, and the public snapshot.
+  guards, commitment verification, the cooldowns and the stall streak, ranking, and
+  the public snapshot (which shows every seat's loaded Charge and last action).
 - **`match/replay.ts`** — recomputes an entire match from the seed and published move
   log, and checks a claimed result against it.
-- **`bots/strategy.ts`** — seeded bots: `randomStrategy`, `readerStrategy`, and
-  the house bot `smartStrategy`. It reads each opponent's revealed moves, prices
-  every move by expected HP lost and dealt, and finishes off low seats. Easy and
-  normal play a random move 6 and 3 rounds in 10; hard never does. `npm run sim`
-  puts hard at about 1.9x its share of wins, ahead of every mindless strategy.
+- **`bots/strategy.ts`** — seeded bots: `always`, `randomStrategy`, `readerStrategy`,
+  and the house bot `smartStrategy`. Every one of them only ever picks a move its
+  cooldowns allow. The house bot reads each opponent's revealed moves and
+  cooldowns, samples plausible rounds, plays each of its legal moves against the
+  same samples, and keeps the one that comes out best on HP kept, HP dealt and
+  kills. Easy and normal play a random move 6 and 3 rounds in 10; hard never does.
+  `npm run sim` puts hard at about 2x its share of wins, ahead of every mindless
+  strategy, and fails the build if any mindless strategy wins its share or turns
+  a profit under the payout schedule.
 
 ### Why purity matters here
 
@@ -970,17 +976,17 @@ Two supporting decisions:
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
 | **`match/`** | **One live match** |
-| `match/room.ts` | Phases, the round clock, client fan-out |
+| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop) |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
-| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
 | `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
 | **`chain/`** | **Everything that talks to a chain** |
-| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
 | `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
 | `chain/payouts.ts` | `PayoutPusher`: pushes a player's escrow balance to them through `withdrawFor`, on request |
@@ -1041,12 +1047,12 @@ Two supporting decisions:
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, storm ring |
+| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, ⚡ on charged seats, the stall wall |
 | `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
-| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
+| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains and heals, shatters, the stall flare |
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
 | `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
-| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
 | `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |

@@ -89,11 +89,11 @@ part against the `RoundRecord`s, deterministically and without a model:
 
 | kind | holds when |
 | --- | --- |
-| `attack` | the seat revealed an attack on `target` that round |
-| `hit` | its attack on `target` has outcome `hit` |
-| `parry` | `target`'s attack on the seat has outcome `parried` |
-| `evade` | `target`'s attack on the seat has outcome `missed` |
-| `defend` / `hide` | the seat revealed that action |
+| `strike` | the seat revealed a strike on `target` that round |
+| `hit` | its strike on `target` has outcome `hit` |
+| `charged-hit` | its strike on `target` has outcome `hit` and spent a Charge |
+| `block` | `target`'s strike on the seat has outcome `guarded` |
+| `guard` / `charge` | the seat revealed that action |
 | `timeout` | the seat did not reveal |
 | `eliminated` | the seat is in that round's eliminations |
 

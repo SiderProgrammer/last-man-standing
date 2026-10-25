@@ -1,4 +1,5 @@
 import {
+  Action,
   chainHistory,
   hashRound,
   hashRules,
@@ -9,7 +10,7 @@ import {
   type Seat,
 } from '@lms/protocol';
 import type { MatchSetup } from './match.js';
-import { resolveRound, type DeclaredMove } from '../kernel/resolve.js';
+import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
 
 export interface ReplayResult {
   result: MatchResult;
@@ -42,24 +43,31 @@ export function replayMatch(setup: MatchSetup, moveLog: readonly (readonly Decla
     alive: true,
     eliminatedInRound: 0,
     timeouts: 0,
+    charged: false,
+    lastAction: Action.None,
   }));
 
   const rounds: RoundRecord[] = [];
   const eliminationSequence: number[] = [];
+  let quietRounds = 0;
 
   for (const [offset, moves] of moveLog.entries()) {
     const round = offset + 1;
-    const resolution = resolveRound(setup.rules, setup.seed, round, states, moves);
+    const resolution = resolveRound(setup.rules, setup.seed, round, states, moves, quietRounds);
     const hash = hashRound(round, states.length, resolution.record);
     rounds.push({ ...resolution.record, hash });
     root = chainHistory(root, hash);
     states = resolution.states;
+    quietRounds = resolution.quietRounds;
     eliminationSequence.push(...resolution.eliminationOrder);
   }
 
+  const last = rounds[rounds.length - 1];
+  const entropy = last ? entropyOf(setup.seed, states.length, last) : setup.seed;
+  const key = (seat: number) => tiebreakKey(entropy, seat);
   const survivors = states
     .filter((state) => state.alive)
-    .sort((a, b) => (b.hp !== a.hp ? b.hp - a.hp : a.index - b.index))
+    .sort((a, b) => b.hp - a.hp || (key(a.index) < key(b.index) ? -1 : 1))
     .map((state) => state.index);
 
   const ranking = [...survivors, ...[...eliminationSequence].reverse()];

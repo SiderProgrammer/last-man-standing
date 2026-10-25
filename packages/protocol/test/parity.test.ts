@@ -31,7 +31,7 @@ const SALTS = [keccak256(toHex('s0')), ZERO_SALT, keccak256(toHex('s2'))];
 describe('hash parity with the Solidity mirror', () => {
   it('pins the default rules digest', () => {
     expect(hashRules(DEFAULT_RULES)).toBe(
-      '0x51f49b7b1499dec3d067b46387f9a171346327f29942d32497e74e995181c334',
+      '0x07d102f371d483468baf28515199dc3b888d3604c16f48ae909ab07145044d93',
     );
   });
 
@@ -56,12 +56,12 @@ describe('hash parity with the Solidity mirror', () => {
     const record = {
       round: 3,
       moves: [
-        { index: 0, action: Action.Attack, target: 2, revealed: true, salt: SALTS[0] as `0x${string}` },
+        { index: 0, action: Action.Strike, target: 2, revealed: true, salt: SALTS[0] as `0x${string}` },
         { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
-        { index: 2, action: Action.Defend, target: 0, revealed: true, salt: SALTS[2] as `0x${string}` },
+        { index: 2, action: Action.Guard, target: 0, revealed: true, salt: SALTS[2] as `0x${string}` },
       ],
-      attacks: [],
-      stormDamage: 12,
+      strikes: [],
+      stallDamage: 12,
       eliminated: [1],
       hpAfter: [95, 0, 66],
     };
@@ -82,7 +82,7 @@ describe('hash parity with the Solidity mirror', () => {
 
   it('pins a commitment preimage', () => {
     const commitment = commitMove(keccak256(toHex('match')), 3, 2, {
-      action: Action.Attack,
+      action: Action.Strike,
       target: 5,
       salt: keccak256(toHex('salt')),
     });
@@ -94,8 +94,8 @@ describe('hash parity with the Solidity mirror', () => {
   it('ignores the target of a non-attack move', () => {
     const salt = keccak256(toHex('salt'));
     const matchId = keccak256(toHex('match'));
-    const hidden = commitMove(matchId, 1, 0, { action: Action.Hide, target: 7, salt });
-    const zeroed = commitMove(matchId, 1, 0, { action: Action.Hide, target: 0, salt });
+    const hidden = commitMove(matchId, 1, 0, { action: Action.Charge, target: 7, salt });
+    const zeroed = commitMove(matchId, 1, 0, { action: Action.Charge, target: 0, salt });
     expect(hidden).toBe(zeroed);
   });
 

@@ -23,13 +23,15 @@ export const COLORS = {
   attack: 0xe0575b,
   parried: 0x6fa8f5,
   missed: 0x5a6579,
+  /** A loaded Charge, on the seat that carries it. */
+  charged: 0xe6b455,
   storm: 0x3a2d4a,
   /** The arena floor: lit in the middle, falling off to the walls. */
   floorCentre: 0x131b2a,
   floorEdge: 0x05070b,
   /** Faint lines etched into the floor. */
   floorLine: 0x1d2737,
-  /** The fog the storm drags in from the walls. */
+  /** The fog the wall drags in as the table stalls. */
   stormFog: 0x6b4fc8,
   stormEdge: 0x9d84ff,
   /** The commit-phase aim: your reticle and the line to it. */
@@ -40,7 +42,7 @@ const FX_STROKE = 0x05070c;
 
 /**
  * Tints for the round replay. The textures are white with the shape in alpha,
- * so each of these comes out exactly as written. Hit, parry and miss reuse the
+ * so each of these comes out exactly as written. Hit, block and miss reuse the
  * arena's existing outcome colours so the replay reads the same as the history
  * feed does.
  */
@@ -49,6 +51,10 @@ export const FX = {
   hit: COLORS.attack,
   parry: COLORS.parried,
   miss: 0xaab4c6,
+  /** A Charge being loaded, and the hit it pays for. */
+  charge: COLORS.charged,
+  /** HP a landed strike draws back. */
+  heal: COLORS.hp,
   storm: 0xb49cff,
   kill: 0xf5a34b,
   noShow: COLORS.muted,
@@ -98,7 +104,7 @@ export const TITLE: TextStyleOptions = {
   letterSpacing: 8,
   stroke: { color: FX_STROKE, width: 6 },
 };
-/** The arena's corner readout: round number and the storm's next bite. */
+/** The arena's corner readout: round number and the stall penalty's next bite. */
 export const HUD: TextStyleOptions = {
   fill: COLORS.muted,
   fontFamily: FONT,

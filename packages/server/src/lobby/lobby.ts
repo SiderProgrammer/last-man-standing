@@ -66,7 +66,8 @@ export class Lobby {
    * with the previous process, so they are aborted and refunded rather than
    * resumed; a player reconnecting to one is told so.
    */
-  private readonly abandoned = new Set<string>();
+  /** Staked matches this server will not play, with the reason a reconnecting player is told. */
+  private readonly abandoned = new Map<string, string>();
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
   /**
@@ -162,13 +163,19 @@ export class Lobby {
   }
 
   /** Records a staked match this server will not play: see `abandoned`. */
-  markAbandoned(matchId: `0x${string}`): void {
-    this.abandoned.add(matchId.toLowerCase());
+  markAbandoned(matchId: `0x${string}`, reason = 'it was cancelled after a server restart'): void {
+    this.abandoned.set(matchId.toLowerCase(), reason);
   }
 
   tick(now: number = Date.now()): void {
     for (const [key, room] of this.rooms) {
-      room.tick(now);
+      // One room's failure must not stop the others' clocks, and this runs on
+      // a bare interval, where an escaping error takes the whole server down.
+      try {
+        room.tick(now);
+      } catch (error) {
+        console.error(`[lobby] room ${key} failed to advance:`, errorMessage(error));
+      }
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
       if (room.finished && now > room.deadline + 60_000) {
@@ -182,9 +189,8 @@ export class Lobby {
 
   attach(matchId: `0x${string}`, client: Client): Room {
     const room = this.get(matchId);
-    if (!room && this.abandoned.has(matchId.toLowerCase())) {
-      throw new Error('this match was cancelled after a server restart; every stake is being refunded');
-    }
+    const abandoned = room ? undefined : this.abandoned.get(matchId.toLowerCase());
+    if (abandoned) throw new Error(`this match will not be played: ${abandoned}; every stake is being refunded`);
     if (!room) throw new Error('unknown match');
     room.attach(client);
     return room;

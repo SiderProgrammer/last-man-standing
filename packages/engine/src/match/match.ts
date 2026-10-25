@@ -6,10 +6,12 @@ import {
   hashRound,
   hashRules,
   historySeed,
+  isLegalAction,
   MatchPhase,
   type ActionValue,
   type MatchPhaseValue,
   type MatchResult,
+  type Move,
   type PlayerState,
   type PublicMatchState,
   type RoundRecord,
@@ -18,7 +20,7 @@ import {
   type Seat,
   ZERO_SALT,
 } from '@lms/protocol';
-import { resolveRound, type DeclaredMove } from '../kernel/resolve.js';
+import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
 
 export type MatchErrorCode =
   | 'BAD_PHASE'
@@ -77,6 +79,8 @@ export class Match {
   private readonly reveals = new Map<number, DeclaredMove>();
   /** Seats in elimination order, worst-placed first. */
   private readonly eliminationSequence: number[] = [];
+  /** Rounds in a row without a hit, which drives the stall penalty. */
+  private quietRounds = 0;
 
   constructor(setup: MatchSetup) {
     assertValidRules(setup.rules);
@@ -107,6 +111,8 @@ export class Match {
       alive: true,
       eliminatedInRound: 0,
       timeouts: 0,
+      charged: false,
+      lastAction: Action.None,
     }));
   }
 
@@ -183,10 +189,22 @@ export class Match {
     this.reveals.set(seat, {
       index: seat,
       action: move.action,
-      target: move.action === Action.Attack ? move.target : 0,
+      target: move.action === Action.Strike ? move.target : 0,
       revealed: true,
       salt: move.salt,
     });
+  }
+
+  /**
+   * Throws exactly when `submitReveal` would reject `move` from `seat` for what
+   * it is rather than for whether it opens the commitment: a seat that is out,
+   * an action that is not playable, a Guard or Charge its cooldown rules out,
+   * a target that is not a living opponent. For callers that are handed a move
+   * before the reveal window, so it can be refused up front.
+   */
+  assertPlayable(seat: number, move: Move): void {
+    this.requireAlive(seat);
+    this.assertLegalMove(seat, move.action, move.target);
   }
 
   /**
@@ -216,11 +234,12 @@ export class Match {
         },
     );
 
-    const resolution = resolveRound(this.rules, this.seed, this.roundValue, this.states, moves);
+    const resolution = resolveRound(this.rules, this.seed, this.roundValue, this.states, moves, this.quietRounds);
     const hash = hashRound(this.roundValue, this.states.length, resolution.record);
     const record: RoundRecord = { ...resolution.record, hash };
 
     this.states = resolution.states;
+    this.quietRounds = resolution.quietRounds;
     this.eliminationSequence.push(...resolution.eliminationOrder);
     this.rounds.push(record);
     this.root = chainHistory(this.root, hash);
@@ -246,7 +265,9 @@ export class Match {
   /**
    * Final ranking, best-first. Survivors are ordered by remaining HP, then by
    * everyone else in reverse elimination order, so a player who lasted longer
-   * always outranks a player who fell earlier.
+   * always outranks a player who fell earlier. Survivors level on HP (only
+   * possible when the round cap ends the match) are split by the last round's
+   * tiebreak draw, never by seat.
    *
    * `replayMatch` re-derives this independently; see the note in `replay.ts`
    * for why the two are not shared, and `properties.test.ts` for the test that
@@ -255,9 +276,12 @@ export class Match {
   ranking(): number[] {
     if (!this.finished) throw new MatchError('BAD_PHASE', 'match has not finished');
 
+    const last = this.rounds[this.rounds.length - 1];
+    const entropy = last ? entropyOf(this.seed, this.states.length, last) : this.seed;
+    const key = (seat: number) => tiebreakKey(entropy, seat);
     const survivors = this.states
       .filter((state) => state.alive)
-      .sort((a, b) => (b.hp !== a.hp ? b.hp - a.hp : a.index - b.index))
+      .sort((a, b) => b.hp - a.hp || (key(a.index) < key(b.index) ? -1 : 1))
       .map((state) => state.index);
 
     return [...survivors, ...[...this.eliminationSequence].reverse()];
@@ -288,6 +312,8 @@ export class Match {
           chainId: seat.chainId,
           hp: state.hp,
           alive: state.alive,
+          charged: state.charged,
+          lastAction: state.lastAction,
         };
       }),
       // Which seats have acted, never what they did: a revealed salt would
@@ -300,11 +326,16 @@ export class Match {
   }
 
   private assertLegalMove(seat: number, action: ActionValue, target: number): void {
-    if (action !== Action.Attack && action !== Action.Defend && action !== Action.Hide) {
+    if (action !== Action.Strike && action !== Action.Guard && action !== Action.Charge) {
       throw new MatchError('INVALID_MOVE', `seat ${seat} revealed a non-playable action`);
     }
-    if (action !== Action.Attack) return;
-    if (target === seat) throw new MatchError('INVALID_MOVE', `seat ${seat} cannot attack itself`);
+    // A repeated Guard or Charge, or a Charge on top of a loaded one. The
+    // player could see the cooldown before committing, so the move is lost.
+    if (!isLegalAction(action, this.states[seat] as PlayerState)) {
+      throw new MatchError('INVALID_MOVE', `seat ${seat} cannot ${action === Action.Guard ? 'guard' : 'charge'} again yet`);
+    }
+    if (action !== Action.Strike) return;
+    if (target === seat) throw new MatchError('INVALID_MOVE', `seat ${seat} cannot strike itself`);
     const victim = this.states[target];
     if (victim === undefined) throw new MatchError('INVALID_MOVE', `seat ${seat} targeted nonexistent seat ${target}`);
     if (!victim.alive) throw new MatchError('INVALID_MOVE', `seat ${seat} targeted eliminated seat ${target}`);

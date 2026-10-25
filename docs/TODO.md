@@ -215,7 +215,7 @@ any of this is a deliberate, visible change rather than a silent one.
   match to a 4-seat one leaves orphan views at stale positions, and `destroy()` exists
   but is never called. A long session leaks views and Pixi textures.
 - **`reads.ts:tellFor` has an unreachable branch.** The outer guard admits
-  `attacks >= 3 || revealed >= 5`, then the inner one re-requires `attacks >= 3`, so
+  `strikes >= 3 || revealed >= 5`, then the inner one re-requires `strikes >= 3`, so
   `revealed >= 5` can never fire alone. Fixing it changes which tell is shown. Pinned by
   `packages/client/test/reads.test.ts`.
 - **`hpLeaders` is O(n²)** — `state.history.indexOf(record)` inside a loop over
@@ -339,13 +339,19 @@ reason as §1.1: no deployment has been driven end to end.
 These are open questions, not bugs:
 
 - **Lobby size.** The concept describes 10–50 players; `DEFAULT_RULES` caps a lobby at 8
-  and the storm curve is tuned for that. Large lobbies need a re-tuned storm and probably
-  multi-target rounds, plus a UI that stays readable at 50 seats. The arena already lays
-  seats out on a circle of any size, but the labels will collide past ~16.
-- **Balance.** No simulation harness exists to answer "is Hide too strong at 60%?".
-  The engine is pure and seeded, so a batch simulator over strategy pools is cheap to
-  build and would turn balance into data.
-- **Reads.** The tells in `packages/client/src/game/reads.ts` are hand-tuned thresholds
-  ("attacks ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
+  and Strike / Guard / Charge was validated at 4–8 seats only (the skill gap grows with
+  lobby size). Large lobbies need re-validated numbers and probably multi-target rounds,
+  plus a UI that stays readable at 50 seats. The arena already lays seats out on a circle
+  of any size, but the labels will collide past ~16.
+- **Skill versus luck.** With the current rules a hard bot wins about 2× its share
+  (`npm run sim`), well above the old rules. That suits a skill game, but in a staked one
+  new players lose to strong ones more often; worth deciding deliberately.
+- **Reads.** The tells in `packages/protocol/src/game/reads.ts` are hand-tuned thresholds
+  ("strikes ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
   against simulated play so the panel does not confidently mislabel a bot.
-- **Anti-collusion.** Nothing prevents two players from splitting a lobby.
+- **Anti-collusion.** Nothing prevents two players from splitting a lobby, and with the
+  current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
+  in validation (1.09× under the old storm rules). See "Known risk: collusion" in
+  `ARCHITECTURE.md`. Candidates: random matchmaking instead of lobbies joined by id,
+  flagging seat pairs that never strike each other from the public history, and a
+  payout schedule that pays a pact less.

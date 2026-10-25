@@ -66,17 +66,17 @@ describe('arena layout', () => {
     expect(y).toBeCloseTo(70);
   });
 
-  it('tightens the storm ring as the round number climbs', () => {
-    const early = stormRing(800, 600, 1);
-    const late = stormRing(800, 600, 12);
+  it('closes the arena wall in as the table stalls', () => {
+    const fighting = stormRing(800, 600, 0);
+    const stalling = stormRing(800, 600, 1);
 
-    expect(early.intensity).toBeCloseTo(1 / 12);
-    expect(late.intensity).toBe(1);
-    expect(late.radius).toBeLessThan(early.radius);
+    expect(fighting.intensity).toBe(0);
+    expect(stalling.intensity).toBe(1);
+    expect(stalling.radius).toBeLessThan(fighting.radius);
   });
 
-  it('caps the storm at full intensity', () => {
-    expect(stormRing(800, 600, 50).intensity).toBe(1);
+  it('caps the wall at full pressure', () => {
+    expect(stormRing(800, 600, 5).intensity).toBe(1);
   });
 });
 

@@ -9,7 +9,7 @@ export function short(value: string): string {
 
 /** How a chosen move reads back to the player before it is sealed. */
 export function describeDraft(draft: { action: ActionValue; target: number }): string {
-  return draft.action === Action.Attack ? `attack #${draft.target}` : ACTION_NAMES[draft.action];
+  return draft.action === Action.Strike ? `strike #${draft.target}` : ACTION_NAMES[draft.action];
 }
 
 /** Time left in the round, or `--` when no clock is running. */

@@ -223,12 +223,13 @@ contract Deploy is Script {
         rules.minPlayers = uint16(vm.parseJsonUint(json, ".minPlayers"));
         rules.maxPlayers = uint16(vm.parseJsonUint(json, ".maxPlayers"));
         rules.startingHp = uint32(vm.parseJsonUint(json, ".startingHp"));
-        rules.attackDamage = uint32(vm.parseJsonUint(json, ".attackDamage"));
-        rules.riposteDamage = uint32(vm.parseJsonUint(json, ".riposteDamage"));
-        rules.hideEvadeBps = uint16(vm.parseJsonUint(json, ".hideEvadeBps"));
-        rules.hideStormBps = uint16(vm.parseJsonUint(json, ".hideStormBps"));
-        rules.stormGraceRounds = uint16(vm.parseJsonUint(json, ".stormGraceRounds"));
-        rules.stormBaseDamage = uint32(vm.parseJsonUint(json, ".stormBaseDamage"));
+        rules.strikeDamage = uint32(vm.parseJsonUint(json, ".strikeDamage"));
+        rules.strikeHealBps = uint16(vm.parseJsonUint(json, ".strikeHealBps"));
+        rules.guardReflectDamage = uint32(vm.parseJsonUint(json, ".guardReflectDamage"));
+        rules.chargeBonusDamage = uint32(vm.parseJsonUint(json, ".chargeBonusDamage"));
+        rules.chargeExposureBps = uint16(vm.parseJsonUint(json, ".chargeExposureBps"));
+        rules.stallGraceRounds = uint16(vm.parseJsonUint(json, ".stallGraceRounds"));
+        rules.stallDamage = uint32(vm.parseJsonUint(json, ".stallDamage"));
         rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
     }
 

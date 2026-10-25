@@ -19,43 +19,69 @@ Each round every living player secretly picks one of three actions:
 
 | Action | Effect |
 | --- | --- |
-| **Attack** `#n` | Tries to take 34 HP off seat `#n` |
-| **Defend** | Parries one attacker, who takes 5 HP of riposte; any others connect |
-| **Hide** | Evades an attack 25% of the time, and takes three quarters of the storm |
+| **Strike** `#n` | Hits seat `#n` for 25 HP. A hit that lands heals the striker half of it (12 HP) |
+| **Guard** | Blocks one strike aimed at you and reflects 34 HP onto that striker; any others connect. Never two rounds running |
+| **Charge** | Loads your next Strike with +34 (59 in all). While charging you take 25% more from strikes. Never two rounds running, never while loaded |
 
-A player who fails to submit anything in time is recorded as `None`: every attack on
-them lands and they take the full storm. Not playing earns nothing.
+A player who fails to submit anything in time — or reveals a Guard or Charge its
+cooldown rules out — is recorded as `None`: every strike on them lands. Not playing
+earns nothing.
 
 ### Resolving a round
 
-1. **Attacks resolve simultaneously** against the state at the *start* of the round.
-   A player who dies this round still lands the attack they declared — there is no
+1. **Strikes resolve simultaneously** against the state at the *start* of the round.
+   A player who dies this round still lands the strike they declared — there is no
    initiative order and no advantage to acting "first", because nobody acts first.
-2. **Defend beats one Attack.** A defender parries one of the attackers that came
-   at it — picked by the round's entropy, not by seat — and that attacker deals
-   nothing and takes 5 HP of riposte. The rest connect, so focus fire is the answer
-   to a turtle.
-3. **Attack beats Hide, slowly.** A hider evades on a 25% roll, but chip damage adds
-   up and hiding never makes progress of its own.
-4. **Hide beats Defend.** Both are passive, but the storm hits a turtle harder.
-5. **The storm** is applied last, to everyone: `(round - 1) * 6` HP from round 2
-   onward, three quarters of it for hiders. The storm is the clock. Without it,
-   everyone defending forever would be a stable equilibrium.
+2. **Guard beats one Strike.** A guard blocks one of the strikers that came at it —
+   picked by the round's entropy, not by seat — and that striker deals nothing and
+   takes the full 34 back. The rest connect, so focus fire is the answer to a guard.
+3. **Strike beats Charge.** A charging player deals nothing this round and takes
+   25% more from every strike that reaches it.
+4. **Charge beats Guard.** The guard spent its turn; the charger loaded a hit worth
+   more than two ordinary ones, and everyone can see it is loaded.
+5. **Healing** from landed strikes is added before anything else is settled, and
+   can never lift a player above their starting HP. It is what makes fighting pay:
+   without it, damage dealt to one rival helps every other rival just as much.
+6. **The stall penalty** is applied last, to everyone, and only to a table that has
+   stopped fighting: once 2 rounds in a row pass without a single hit (a Guard's
+   reflection counts), everyone takes 8, then 16, 24 … until somebody lands one.
+   It replaces the old storm, which did most of the damage in every match and made
+   the final round a coin flip between whoever was left.
+7. **Elimination** takes everyone at or below 0 HP, ordered worst-first by HP and then
+   by the round's tiebreak draw — never by seat index, which is join order. If a
+   round would wipe the entire lobby, the player with the least overkill survives on
+   1 HP, so a match always produces exactly one winner.
 
-Every roll in a round — each hider's evade, each defender's parry pick — comes from
-`roundSeed(matchSeed, round, salts)`, where `salts` are the salts every player
-revealed that round. Nobody can compute a roll until every reveal is in, and the
-salts are published with the round so anyone can re-derive it.
+The cooldowns are the backbone. They stop a player from guarding forever, and since
+they are public they turn reads into certainties: a seat that guarded last round
+cannot guard now. Charging cannot stack either, so a loaded seat has to swing before
+it can load again.
 
-The numbers are not hand-picked: `npm run sim` plays thousands of bot matches and
-checks that no mindless strategy (always Defend, always Hide, always Attack) wins
-more than 1.5× the share a seat would get by chance.
-6. **Elimination** takes everyone at or below 0 HP, ordered worst-first by HP and then
-   by seat index. If a round would wipe the entire lobby, the player with the least
-   overkill survives on 1 HP, so a match always produces exactly one winner.
+Every roll in a round — each Guard's pick of which striker to block, each tiebreak —
+comes from `roundSeed(matchSeed, round, salts)`, where `salts` are the salts every
+player revealed that round. Nobody can compute a roll until every reveal is in, and
+the salts are published with the round so anyone can re-derive it.
+
+The numbers are not hand-picked. They came out of a search over action sets and
+rule values, then a validation pass (an exact game-theory solve of the 1v1 duel,
+a gauntlet of rule-based strategies, an exploiter search, per-lobby-size and
+per-seat checks). `npm run sim` re-checks the result on the real engine: every
+mindless strategy (always Strike, always Guard when it can, always Charge when it
+can) must win less than its share and lose money under the payout schedule.
+
+**Changing the rules** is a consensus change on both sides. `hashRules` and
+`HashLib.Rules` must match field for field (the parity tests pin one vector on each
+side), `contracts/config/rules.json` feeds the deploy script, and a deployment that is
+already live needs governance to call `ProtocolConfig.setRulesHash` with the new digest.
+Every match records the hash it was created under; the server refuses to lock or play a
+match whose hash is not the rule set it runs, so lobbies created before the switch are
+refunded rather than re-ruled. Archived matches from older rules can no longer be
+replayed by this engine.
 
 Final ranking is survivors by remaining HP, then everyone else in reverse elimination
-order — surviving longer always outranks falling earlier.
+order — surviving longer always outranks falling earlier. Survivors level on HP,
+which only happens when the round cap ends a match, are split by the last round's
+tiebreak draw.
 
 ### Information is the real game
 
@@ -63,18 +89,42 @@ Choices are hidden while they are being made and fully public afterwards. After 
 round the history feed shows exactly what happened:
 
 ```
-#7  → attacked #13
-#13 → attacked #7
-#4  → defended
-#9  → hid
+#7  → struck #13
+#13 → struck #7
+#4  → guarded
+#9  → charged
 #13 → eliminated
 ```
 
 After five rounds you are no longer playing the dice, you are playing the table.
-*"#7 always attacks the leader"* is actionable: bait the attack with a Defend and take
-20 HP off them for free. The server's bots (`smartStrategy`) play the same way — they
-read each opponent's revealed moves, price every move against the rules, and pounce
-when a hit would finish someone. Practice lets the player pick easy, normal or hard.
+*"#7 always strikes the leader"* is actionable: Guard when it comes for you and it
+eats 34. *"#9 is charged"* is a certainty, not a guess — it is on every seat, and
+the 59 it is carrying will land on somebody next time it swings. The server's bots
+(`smartStrategy`) play the same way — they read each opponent's revealed moves and
+cooldowns, sample plausible rounds, and play the move that comes out best.
+Practice lets the player pick easy, normal or hard.
+
+### Known risk: collusion
+
+Two seats that never strike each other and share their moves out of band have an edge
+no rule can see. In the validation runs, two colluding hard bots in a lobby of hard
+bots won 1.74× as often as two honest ones and made +0.46 stake per seat. Under the
+old storm rules the same pair got only 1.09× — not because those rules resisted
+collusion, but because the storm decided matches and play barely did. Any rule set
+where choices matter makes a non-aggression pact worth money.
+
+Commit-reveal does not help here: colluders simply tell each other what they will do.
+The mitigations are around the game rather than in it:
+
+- **Matchmaking instead of joinable lobbies.** Today a lobby is joined by id, so two
+  wallets controlled by one person can sit at the same table on purpose. Random
+  assignment into lobbies makes that much harder.
+- **Detection from the public history.** Every move is published, so a pair that
+  never strikes each other across many matches is visible after the fact. The
+  analyst and the play-style records are the natural place to flag it.
+- **The payout schedule.** How much a pact earns depends on how the pot is split.
+
+None of these exist yet.
 
 Hidden information is enforced cryptographically, not by trusting the operator. During
 the commit window a player publishes only
@@ -85,13 +135,13 @@ keccak256(abi.encode(matchId, round, seat, action, target, salt))
 
 The server physically cannot read a move until the reveal window opens. Because the
 match id, round number and seat are inside the hash, a commitment cannot be replayed in
-a later round or claimed by another seat, and the target is forced to zero for
-non-attack actions so the hash does not leak whether you intended to attack.
+a later round or claimed by another seat, and the target is forced to zero for every
+action but Strike so the hash does not leak whether you intended to strike.
 
-Every evasion roll comes from `keccak256(seed, round, attackerSeat) % 10000`, where the
-seed is delivered by a randomness oracle *after* the lobby locks. Neither the server nor
-a player can pick moves against known rolls, and anyone holding the seed can replay
-every roll in the match.
+The match seed is delivered by a randomness oracle *after* the lobby locks, and every
+roll also mixes in the round's revealed salts. Neither the server nor a player can pick
+moves against known rolls, and anyone holding the seed and the published salts can
+replay every roll in the match.
 
 ---
 
@@ -120,7 +170,7 @@ about rendering. Everything that decides who gets paid lives in `protocol` + `en
 | `wire.ts` | `ClientMessage` / `ServerMessage` union, `LobbyInfo`, login prefix |
 | **`game/`** | **The rules everybody agrees on** |
 | `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
-| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, storm curve |
+| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, the cooldowns (`isLegalAction`), strike, charge and stall arithmetic |
 | `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
 | **`chain/`** | **Everything tied to a chain or a contract** |
 | `chain/chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
@@ -154,8 +204,10 @@ instead of drifting silently.
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
   `properties.test.ts` replays 45 matches across three bot strategies to hold the two
   derivations to the same answer.
-- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG, `randomStrategy`,
-  `readerStrategy`, and the house bot `smartStrategy` with its three difficulties.
+- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG, `always`, `randomStrategy`,
+  `readerStrategy`, and the house bot `smartStrategy` with its three difficulties. All
+  of them pick only moves their cooldowns allow; `sim/simulate.ts` names them for
+  `npm run sim` and the analyst's reference matches.
 
 ### `packages/server` — authoritative, but not trusted
 
@@ -165,17 +217,17 @@ instead of drifting silently.
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
 | **`match/`** | **One live match** |
-| `match/room.ts` | Phases, the round clock, client fan-out |
+| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop) |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
-| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results |
+| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
 | `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
 | **`chain/`** | **Everything that talks to a chain** |
-| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded |
+| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
 | `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
 | `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
@@ -243,12 +295,12 @@ settlement deadline passes. Practice rooms are simply gone.
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle with address sigils or avatars, HP arcs with a lagging damage ghost, chain badges, the closing storm (fog and wall), your aim, a round HUD |
+| `arena/arena.ts` | Pixi scene: seats on a circle with address sigils or avatars, HP arcs with a lagging damage ghost, chain badges, the arena wall that closes in as the table stalls, a ⚡ on every charged seat, your aim, a round HUD |
 | `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
-| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains, shatters, the storm flare |
+| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains and heals, shatters, the stall flare |
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
 | `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
-| `arena/layout.ts` | *Pure.* Seat-ring and storm-ring geometry |
+| `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
 | `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |
@@ -282,9 +334,10 @@ Three things are worth calling out:
 
 ### The round replay
 
-A resolved round is played back rather than snapped into place: attackers lunge,
-projectiles travel, parries flash and bounce a riposte back, hiders sidestep, the storm
-strikes every survivor, and eliminated seats shatter with a short screen shake. The
+A resolved round is played back rather than snapped into place: strikers lunge,
+projectiles travel (gold when a Charge is behind them), guards flash and bounce a
+reflection back, landed hits draw a heal off the striker, charging seats crackle, the
+stall penalty bites from the arena wall, and eliminated seats shatter with a short screen shake. The
 winner is crowned after the final round.
 
 - **Choreography is pure; GSAP does the motion.** `choreograph(record, before)` turns
@@ -294,8 +347,8 @@ winner is crowned after the final round.
   timeline, so a projectile lands on exactly the frame its target's HP starts to drain.
   The arena computes no interpolation of its own; it only draws the tweened values.
   The schedule uses nothing but the published record, so the replay can never show
-  anything the history feed does not. HP moves between two waypoints and the client holds no rule constants:
-  `before − damage − riposte` is exact from the record, and the end is always the
+  anything the history feed does not. HP moves between two waypoints and the client holds no rule constants
+  beyond the HP cap: `before − damage − reflected + heal` is exact from the record, and the end is always the
   published `hpAfter`. That keeps it honest when the engine does something the client
   cannot reconstruct, such as reviving the least-overkilled seat on 1 HP.
 - **The arena shows less than it knows while replaying.** The server sends `round`

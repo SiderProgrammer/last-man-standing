@@ -15,8 +15,8 @@ import {
 import type { MatchAnalysis } from '@lms/protocol';
 import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
-const practice = playReferenceMatch({ label: 'prod', strategies: ['reader', 'aggressor', 'turtle', 'hider'] });
-const staked: ArchivedMatch = { ...playReferenceMatch({ label: 'prod-staked', strategies: ['random', 'turtle', 'aggressor', 'reader'] }), staked: true };
+const practice = playReferenceMatch({ label: 'prod', strategies: ['reader', 'striker', 'guarder', 'charger'] });
+const staked: ArchivedMatch = { ...playReferenceMatch({ label: 'prod-staked', strategies: ['random', 'guarder', 'striker', 'reader'] }), staked: true };
 const player = (match: ArchivedMatch, seat = 0) => match.seats?.[seat]?.address as `0x${string}`;
 const stranger = `0x${'77'.repeat(20)}` as const;
 
@@ -24,8 +24,8 @@ function output() {
   return {
     summary: 'A short story of the match.',
     decisiveRound: 1,
-    keyMoments: [{ round: 1, seat: 2, kind: 'defend', target: null, claim: 'Dug in.' }],
-    advice: ['Watch the turtle.'],
+    keyMoments: [{ round: 1, seat: 2, kind: 'guard', target: null, claim: 'Dug in.' }],
+    advice: ['Watch the guarder.'],
   };
 }
 
@@ -289,7 +289,7 @@ describe('analysis cost', () => {
     if ('reply' in turn) {
       const text = JSON.stringify({
         ...output(),
-        keyMoments: [...output().keyMoments, { round: 99, seat: 0, kind: 'defend', target: null, claim: 'never happened' }],
+        keyMoments: [...output().keyMoments, { round: 99, seat: 0, kind: 'guard', target: null, claim: 'never happened' }],
       });
       turn.reply.content = [{ type: 'text', text }];
     }

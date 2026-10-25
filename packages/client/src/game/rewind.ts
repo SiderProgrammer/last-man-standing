@@ -1,4 +1,4 @@
-import type { PublicMatchState } from '@lms/protocol';
+import { cooldownsFrom, type PublicMatchState } from '@lms/protocol';
 
 /**
  * The table as it stood when a round began, rebuilt from the published
@@ -27,6 +27,7 @@ export function stateBeforeRound(state: PublicMatchState, round: number): Public
       ...player,
       hp: previous ? Math.max(0, previous.hpAfter[player.index] ?? 0) : state.rules.startingHp,
       alive: !out.has(player.index),
+      ...cooldownsFrom(earlier, player.index),
     })),
   };
 }

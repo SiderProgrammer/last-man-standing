@@ -7,18 +7,18 @@ const A = '0x00000000000000000000000000000000000000a1' as const;
 const B = '0x00000000000000000000000000000000000000b2' as const;
 
 function record(moves: RoundRecord['moves']): RoundRecord {
-  return { round: 1, moves, attacks: [], stormDamage: 0, eliminated: [], hpAfter: [], hash: bytes32('r') };
+  return { round: 1, moves, strikes: [], stallDamage: 0, eliminated: [], hpAfter: [], hash: bytes32('r') };
 }
 
 describe('play styles', () => {
   it('tallies one match per seat, by wallet', () => {
     const history = [
       record([
-        { index: 0, action: Action.Attack, target: 1, revealed: true, salt: ZERO_SALT },
-        { index: 1, action: Action.Defend, target: 0, revealed: true, salt: ZERO_SALT },
+        { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT },
+        { index: 1, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT },
       ]),
       record([
-        { index: 0, action: Action.Hide, target: 0, revealed: true, salt: ZERO_SALT },
+        { index: 0, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT },
         { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
       ]),
     ];
@@ -27,9 +27,9 @@ describe('play styles', () => {
       history,
       [A, B],
     );
-    expect(styles.get(A.toLowerCase())).toEqual({ matches: 1, wins: 0, attacks: 1, defends: 0, hides: 1, noShows: 0 });
-    expect(styles.get(B.toLowerCase())).toEqual({ matches: 1, wins: 1, attacks: 0, defends: 1, hides: 0, noShows: 1 });
-    expect(describeStyle(styles.get(B.toLowerCase()))).toBe('1 match · 1 won · ⚔️0% 🛡️100% 🏃0% · 1 no-show');
+    expect(styles.get(A.toLowerCase())).toEqual({ matches: 1, wins: 0, strikes: 1, guards: 0, charges: 1, noShows: 0 });
+    expect(styles.get(B.toLowerCase())).toEqual({ matches: 1, wins: 1, strikes: 0, guards: 1, charges: 0, noShows: 1 });
+    expect(describeStyle(styles.get(B.toLowerCase()))).toBe('1 match · 1 won · ⚔️0% 🛡️100% ⚡0% · 1 no-show');
   });
 
   it('records a finished staked match and briefs the next table with it', async () => {
