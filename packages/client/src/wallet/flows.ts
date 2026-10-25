@@ -41,6 +41,9 @@ async function connectWallet(): Promise<void> {
   }
 }
 
+/** True from sending a session-key login until the server answers it. */
+let sessionLoginPending = false;
+
 export async function authenticate(): Promise<void> {
   const wallet = app.wallet;
   if (!wallet || !app.nonce) return;
@@ -52,20 +55,44 @@ export async function authenticate(): Promise<void> {
     const signature = app.session
       ? await app.session.signLogin(message)
       : await wallet.signLogin(app.nonce);
+    sessionLoginPending = app.session !== null;
     net.send({ type: 'auth', address: wallet.address, signature });
   } catch (error) {
     console.error('[auth]', error);
     if (app.session) {
-      // A key the chain no longer honours is worse than none: drop it and let
-      // the next attempt go through the wallet.
-      app.session = null;
-      Session.forget(wallet.address, wallet.chainId);
-      renderSessionPanel();
-      toast('Session key rejected — falling back to your wallet.');
+      dropSession();
       return;
     }
     toast(`Login signature failed: ${errorFirstLine(error)}`);
   }
+}
+
+export function onAuthed(): void {
+  sessionLoginPending = false;
+}
+
+/**
+ * Called with every server error. Before `authed` the only thing in flight is
+ * the login, so an error then is the server refusing the session key: the
+ * account was re-delegated, the key revoked, or the chain behind it reset (a
+ * redeployed fork puts the delegate at the same address, so `Session.load`
+ * cannot tell). Returns true when it handled the error by retrying with the wallet.
+ */
+export function onLoginRejected(): boolean {
+  if (!sessionLoginPending) return false;
+  sessionLoginPending = false;
+  dropSession();
+  void authenticate();
+  return true;
+}
+
+/** A key the chain no longer honours is worse than none: drop it so logins go through the wallet. */
+function dropSession(): void {
+  const wallet = app.wallet;
+  app.session = null;
+  if (wallet) Session.forget(wallet.address, wallet.chainId);
+  renderSessionPanel();
+  toast('Session key rejected — falling back to your wallet.');
 }
 
 /**
