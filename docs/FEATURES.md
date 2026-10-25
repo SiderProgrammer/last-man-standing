@@ -1151,7 +1151,7 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |
 | `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Avatar metadata resolution |
-| `DATABASE_URL` | — | Postgres match archive |
+| `DATABASE_URL` | — | Postgres (e.g. Neon): match archive, analysis cache, play styles |
 | `VITE_WS_URL` | host `:8787` | Server the browser connects to |
 | `VITE_DEV_KEY` | — | Dev-only burner wallet |
 

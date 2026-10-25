@@ -12,8 +12,8 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "start": "node dist/main.js",
-    "dev": "tsx watch src/main.ts"
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts"
   },
   "dependencies": {
     "@lms/engine": "0.1.0",
@@ -25,5 +25,8 @@
   "devDependencies": {
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2"
+  },
+  "optionalDependencies": {
+    "pg": "^8.23.1"
   }
 }
