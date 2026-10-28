@@ -42,10 +42,10 @@ The pieces exist and typecheck, but they have only run against mocks:
 
 The client plays a full match, but these are missing:
 
-- **Withdrawals.** `Wallet.withdraw` and `withdrawable` exist and are unused — there is no
-  UI for claiming a payout after settlement.
-- **Result screen.** A finished match prints one line into the history feed. It should
-  show the final ranking, the payout, and the settlement transaction hash.
+- ~~**Withdrawals.**~~ Done: the Winnings panel and the result screen collect, through the
+  server's `withdrawFor` push or the player's own `withdraw`.
+- ~~**Result screen.**~~ Done: `screens/result.ts` shows the ranking, the browser's replay
+  check, the settlement and the payout.
 - **Spectator discovery.** `watch` works, but live matches are only listed if they came
   from the chain directory; practice rooms are invisible to everyone but their player.
 - ~~**A relayed join can be double-submitted.**~~ Gone with relayed joins: the session
@@ -60,16 +60,31 @@ The client plays a full match, but these are missing:
 
 ### 2.1 LayerZero
 
-`LayerZeroMessenger` is written against a local minimal interface and exercised with
-`MockLayerZeroEndpoint`. Before a testnet run:
+Hub and spoke run end to end in `npm run dev:fork`: a second anvil as the spoke, mock
+endpoints on both, and a relayer that delivers each join a few seconds later. Done:
 
-- Vendor the real `@layerzerolabs` endpoint interfaces and reconcile the ABI.
-- Implement the native-drop options encoding — value-carrying joins currently assume
-  `defaultOptions` already encodes a drop equal to the stake, which is not enforced
-  anywhere. Add a quote-and-verify path so a join cannot be sent with insufficient drop.
-- Wire peer configuration on both ends and test hub↔spoke against two live testnets.
-- Handle delivery failure: a stake that leaves the spoke but never seats on the hub is
-  currently unrecoverable.
+- ~~Vendor the real `@layerzerolabs` endpoint interfaces and reconcile the ABI.~~ Checked
+  field by field against `lz-evm-protocol-v2` 3.0.168 and kept local; the messenger now
+  also calls `setDelegate`, as `OAppCore` does, so its owner can set DVNs and libraries.
+- ~~Native-drop options encoding.~~ Each message's `lzReceive` option carries exactly its
+  lobby's stake, and the mock endpoint charges and delivers what the options ask.
+- ~~Wire peer configuration on both ends.~~ `DeploySpoke.s.sol` wires the spoke side; the
+  hub side is a governance proposal ("Add a spoke chain"), since the hub's config and
+  messenger belong to the timelock by then.
+- ~~Handle delivery failure.~~ A delivery the hub refuses parks in the hub messenger and
+  is retried, permissionlessly and at no value, once the hub can take it; the server
+  retries on every poll. See `FEATURES.md`, "When the hub cannot take a delivery".
+
+Still open:
+
+- **Two live testnets.** Follow `docs/TESTNET.md`. Needs testnet ETH on both chains and
+  DVN configuration on both messengers; neither can be done from the repository.
+- **The executor's native cap.** Check `nativeCap` for each spoke→hub pathway: a lobby
+  whose stake exceeds it cannot be joined from that spoke (the quote fails, nothing is
+  lost). If it is low, cap `maxStake` or say so in the lobby list.
+- **A message LayerZero never verifies** (no DVN configured, a dead DVN) cannot be helped
+  on-chain. Set DVNs on both messengers before opening a spoke, and watch for
+  `PacketSent` with no delivery.
 
 ### 2.2 Chainlink VRF
 

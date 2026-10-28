@@ -29,6 +29,7 @@ export const gameEscrowAbi = parseAbi([
   'event MatchSettled(bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address indexed winner)',
   'event ResultProposed(bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address[] ranking, uint64 challengeDeadline)',
   'event ResultVetoed(bytes32 indexed matchId, address indexed by)',
+  'event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, uint8 reason)',
 ]);
 
 /** Mirrors `GameEscrow.MatchStatus`. */

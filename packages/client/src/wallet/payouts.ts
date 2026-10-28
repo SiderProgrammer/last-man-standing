@@ -1,6 +1,7 @@
-import { errorFirstLine } from '@lms/protocol';
+import { chainInfo, errorFirstLine } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
 import { toast } from '../ui/chrome.js';
+import { spokeFor } from '../ui/views.js';
 
 /**
  * Collecting winnings.
@@ -29,7 +30,21 @@ export async function renderWinnings(): Promise<void> {
 
   if (!wallet) return disable('Connect a wallet to check.');
   if (!escrow) return disable('This server runs practice only; there is nothing to collect.');
-  if (wallet.chainId !== app.chainId) return disable('Switch your wallet to the hub chain to see your balance.');
+  if (wallet.chainId !== app.chainId) {
+    // A player who staked from a spoke is paid on the hub, and may hold no
+    // gas there. The balance cannot be read from here, but the server can
+    // still push whatever there is, to the same address on the hub.
+    if (app.collect && spokeFor(app.spokes, wallet.chainId)) {
+      dom.winnings.textContent = '?';
+      dom.collect.disabled = false;
+      dom.resultCollect.classList.remove('hidden');
+      dom.collectStatus.textContent =
+        `Winnings and refunds are paid on ${chainInfo(app.chainId).name}. ` +
+        'The server can send yours there, paying the gas.';
+      return;
+    }
+    return disable('Switch your wallet to the hub chain to see your balance.');
+  }
 
   let owed: string;
   try {

@@ -69,6 +69,16 @@ export {
 } from './chain/avatars.js';
 export { parseZapTokens, zapInfo } from './chain/zap.js';
 export {
+  CrossChainWatcher,
+  decodeJoin,
+  parseSpokes,
+  viemCrossChain,
+  type CrossChainLog,
+  type CrossChainPort,
+  type CrossChainWatcherOptions,
+  type ParkedDelivery,
+} from './chain/crossChain.js';
+export {
   DEFAULT_FEE_KEEPER_POLICY,
   FeeKeeper,
   feeKeeperPolicy,

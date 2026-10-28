@@ -10,6 +10,7 @@ import {
   type MatchSummary,
   type MoveAim,
   type ServerMessage,
+  type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
@@ -101,6 +102,10 @@ export interface GatewayOptions {
   sessionDelegate?: `0x${string}` | null;
   /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
   zap?: ZapInfo | null;
+  /** Spoke chains a player may stake from. Omitted or empty is hub-only. */
+  spokes?: SpokeInfo[];
+  /** The hub `LayerZeroMessenger`, for proposals that register a spoke. */
+  hubMessenger?: `0x${string}` | null;
   /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
   /** Pushes payouts on request. Omitted, players withdraw themselves. */
@@ -205,6 +210,8 @@ export class Gateway {
       collect: this.options.payouts?.enabled ?? false,
       staking: this.options.staking ?? null,
       analyst: this.options.analyst !== undefined,
+      spokes: this.options.spokes ?? [],
+      hubMessenger: this.options.hubMessenger ?? null,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -225,6 +232,18 @@ export class Gateway {
     }
     this.connectsByIp.sweep(now);
     this.loginsByIp.sweep(now);
+  }
+
+  /**
+   * Sends a message to every socket logged in as `address`, and to nobody
+   * else. For news that belongs to one wallet, such as how its cross-chain
+   * join landed; a player who is not connected simply misses it.
+   */
+  notify(address: `0x${string}`, message: ServerMessage): void {
+    const key = addressKey(address);
+    for (const session of this.sessions.values()) {
+      if (session.address !== null && addressKey(session.address) === key) session.send(message);
+    }
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */

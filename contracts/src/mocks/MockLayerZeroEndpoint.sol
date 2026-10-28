@@ -18,12 +18,18 @@ contract MockLayerZeroEndpoint is ILayerZeroEndpoint {
 
     uint256 public fee;
     uint64 public nonce;
+    uint64 public delivered;
     Sent[] private sent;
+    mapping(address oapp => address delegate) public delegates;
 
     error Underpaid(uint256 sent, uint256 required);
 
     function setFee(uint256 fee_) external {
         fee = fee_;
+    }
+
+    function setDelegate(address delegate) external {
+        delegates[msg.sender] = delegate;
     }
 
     function sentCount() external view returns (uint256) {
@@ -55,12 +61,16 @@ contract MockLayerZeroEndpoint is ILayerZeroEndpoint {
     }
 
     /// @notice Plays the destination endpoint: calls `lzReceive` with `value`.
+    /// @dev Each delivery gets its own guid, as each real message does.
     function deliver(address target, uint32 srcEid, bytes32 srcSender, bytes calldata message, uint256 value)
         external
         payable
+        returns (bytes32 guid)
     {
+        delivered += 1;
+        guid = keccak256(abi.encode(srcEid, srcSender, target, message, delivered));
         ILayerZeroReceiver(target).lzReceive{value: value}(
-            Origin({srcEid: srcEid, sender: srcSender, nonce: nonce}), bytes32(0), message, msg.sender, ""
+            Origin({srcEid: srcEid, sender: srcSender, nonce: delivered}), guid, message, msg.sender, ""
         );
     }
 

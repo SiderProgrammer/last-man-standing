@@ -1,16 +1,31 @@
 import {
   ZAP_DEADLINE_SECONDS,
+  chainInfo,
   errorFirstLine,
+  errorMessage,
   sameAddress,
   type BotDifficulty,
+  type CrossChainEvent,
   type LobbyInfo,
+  type SpokeInfo,
   type ZapToken,
 } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
-import { lobbySummary, payWithOptions, planTokenJoin, stakeButtonLabel } from '../ui/views.js';
+import {
+  crossChainNotice,
+  lobbySummary,
+  payWithOptions,
+  planTokenJoin,
+  spokeFor,
+  spokeQuoteError,
+  spokeQuoteLabel,
+  spokeStakeLabel,
+  stakeButtonLabel,
+} from '../ui/views.js';
+import { renderWinnings } from '../wallet/payouts.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
 
@@ -20,6 +35,9 @@ import { lobbySummary, payWithOptions, planTokenJoin, stakeButtonLabel } from '.
  * they looked at minutes ago.
  */
 const QUOTE_TTL_MS = 30_000;
+
+/** A little over the chain bridge's poll interval: how stale the directory can be. */
+const DIRECTORY_LAG_MS = 5_000;
 
 /** Last directory the server sent, so changing the payment token can redraw it. */
 let shown: { open: LobbyInfo[]; live: LobbyInfo[] } = { open: [], live: [] };
@@ -38,10 +56,20 @@ export function wireLobbyControls(): void {
   dom.payWith.onchange = () => renderLobbies(shown.open, shown.live);
 }
 
-/** Shows the "Pay with" picker only when the server routes at least one token. */
+/**
+ * Shows the "Pay with" picker only when the server routes at least one token,
+ * and the wallet is on the hub, where the zap is. Also the right moment to
+ * say that lobbies are opened on the hub: a wallet on a spoke stakes into
+ * them but cannot create one.
+ */
 export function renderPayWith(): void {
+  const spoke = currentSpoke();
   fillSelect(dom.payWith, payWithOptions(app.zap));
-  dom.payWithRow.classList.toggle('hidden', !app.zap);
+  dom.payWithRow.classList.toggle('hidden', !app.zap || spoke !== null);
+  dom.createLobby.disabled = !app.escrow || spoke !== null;
+  dom.createLobby.title = spoke
+    ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
+    : '';
   renderLobbies(shown.open, shown.live);
 }
 
@@ -50,8 +78,20 @@ function payToken(): ZapToken | null {
   return app.zap?.tokens.find((token) => sameAddress(token.address, dom.payWith.value)) ?? null;
 }
 
+/** The spoke the wallet stakes from, or null when it is on the hub (or nowhere useful). */
+function currentSpoke(): SpokeInfo | null {
+  return app.wallet && app.escrow ? spokeFor(app.spokes, app.wallet.chainId) : null;
+}
+
 export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
   shown = { open, live };
+  // A seat in the directory is the surest sign a stake landed, even if the
+  // server's report of it was missed while the socket was down.
+  for (const lobby of [...open, ...live]) {
+    if (lobby.players.some((player) => sameAddress(player.address, app.wallet?.address))) {
+      app.inTransit.delete(lobby.matchId.toLowerCase());
+    }
+  }
   if (open.length === 0 && live.length === 0) {
     dom.lobbyList.innerHTML = app.escrow
       ? '<li class="muted small">No staked lobbies yet. Create one above.</li>'
@@ -81,12 +121,20 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
   const button = document.createElement('button');
   const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
 
+  const spoke = currentSpoke();
+
   if (seated || !joinable) {
     button.textContent = seated ? 'Enter' : 'Watch';
     button.onclick = () => {
       net.send({ type: 'watch', matchId: lobby.matchId });
       showMatchScreen();
     };
+  } else if (app.inTransit.has(lobby.matchId.toLowerCase())) {
+    button.textContent = 'In transit…';
+    button.disabled = true;
+    button.title = `Your stake is on its way to ${chainInfo(app.chainId).name}. You will be told when it lands.`;
+  } else if (spoke) {
+    idleSpokeButton(button, lobby, spoke);
   } else {
     const token = payToken();
     if (token) {
@@ -104,6 +152,7 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
 async function createLobby(): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.');
+  if (currentSpoke()) return toast(dom.createLobby.title);
   try {
     dom.createLobby.disabled = true;
     const hash = await wallet.createMatch(escrow, dom.stake.value, Number(dom.seats.value));
@@ -221,4 +270,84 @@ async function payTokenJoin(
   } finally {
     button.disabled = false;
   }
+}
+
+// -------------------------------------------------------------- spoke joins
+//
+// Two clicks, like token payment: the first asks the spoke what the join
+// costs — the stake plus LayerZero's fee — and the second pays it. The stake
+// then spends a few minutes in transit, during which the row says so; the
+// server reports how it landed on the hub.
+
+function idleSpokeButton(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo): void {
+  button.textContent = spokeStakeLabel(lobby.stake, spoke.chainId);
+  button.classList.remove('primary');
+  button.disabled = false;
+  button.title = `Staked on ${chainInfo(spoke.chainId).name}, carried to ${chainInfo(app.chainId).name} for the match.`;
+  button.onclick = () => void quoteSpokeJoin(button, lobby, spoke);
+}
+
+async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo): Promise<void> {
+  const { wallet } = app;
+  if (!wallet) return toast('Connect a wallet first.');
+
+  const stake = BigInt(lobby.stake);
+  button.disabled = true;
+  button.textContent = 'Quoting…';
+  try {
+    const total = await wallet.quoteSpokeJoin(spoke.escrow, lobby.matchId, stake);
+    button.textContent = spokeQuoteLabel(stake, total, spoke.chainId);
+    button.classList.add('primary');
+    const expiry = setTimeout(() => idleSpokeButton(button, lobby, spoke), QUOTE_TTL_MS);
+    button.onclick = () => {
+      clearTimeout(expiry);
+      void paySpokeJoin(button, lobby, spoke, total);
+    };
+    button.disabled = false;
+  } catch (error) {
+    toast(spokeQuoteError(errorMessage(error), spoke.chainId));
+    idleSpokeButton(button, lobby, spoke);
+  }
+}
+
+async function paySpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo, total: bigint): Promise<void> {
+  const { wallet } = app;
+  if (!wallet) return;
+
+  button.disabled = true;
+  try {
+    button.textContent = 'Confirm the join…';
+    const hash = await wallet.joinFromSpoke(spoke.escrow, lobby.matchId, BigInt(lobby.stake), total);
+    button.textContent = 'Sending…';
+    await wallet.waitFor(hash);
+    app.inTransit.add(lobby.matchId.toLowerCase());
+    renderLobbies(shown.open, shown.live);
+    toast(
+      `Stake sent from ${chainInfo(spoke.chainId).name}. It reaches ${chainInfo(app.chainId).name} in a few minutes; ` +
+        'you will be told when it is seated.',
+    );
+  } catch (error) {
+    toast(errorFirstLine(error));
+    idleSpokeButton(button, lobby, spoke);
+  }
+}
+
+/** The server's report of how one of this player's spoke joins landed on the hub. */
+export function onCrossChain(event: CrossChainEvent): void {
+  toast(crossChainNotice(event, app.chainId));
+  if (event.kind === 'seated') {
+    // The row stays locked until the seat shows in the directory, which can
+    // lag this report by one of the bridge's polls; otherwise it would offer
+    // to stake for a seat the player already holds. `renderLobbies` unlocks it.
+    // No `watch` yet: the room only exists once the lobby locks and the
+    // oracle seeds it, and asking sooner answers "unknown match" over this
+    // notice. The row's Enter button attaches the player then.
+    net.send({ type: 'lobbies' });
+    setTimeout(() => net.send({ type: 'lobbies' }), DIRECTORY_LAG_MS);
+  } else if (event.kind === 'refunded') {
+    app.inTransit.delete(event.matchId.toLowerCase());
+    void renderWinnings();
+  }
+  // A parked stake is still on its way to a seat: the row stays locked too.
+  renderLobbies(shown.open, shown.live);
 }

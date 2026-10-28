@@ -6,6 +6,7 @@ import {
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
+  type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
@@ -84,6 +85,7 @@ interface Extras {
   staking: StakingInfo | null;
   analyst: MatchAnalyst;
   archive: MemoryArchive;
+  spokes: SpokeInfo[];
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -103,6 +105,7 @@ function harness(extras: Partial<Extras> = {}) {
     sessionDelegate: extras.sessionDelegate ?? null,
     zap: extras.zap ?? null,
     staking: extras.staking ?? null,
+    ...(extras.spokes ? { spokes: extras.spokes } : {}),
     ...(extras.analyst ? { analyst: extras.analyst } : {}),
     ...(extras.archive ? { archive: extras.archive } : {}),
   });
@@ -166,6 +169,26 @@ describe('gateway', () => {
   it('advertises the escrow so the client knows where to stake', () => {
     const { socket } = harness({ escrow: ESCROW });
     expect(socket.last('hello')?.escrow).toBe(ESCROW);
+  });
+
+  it('advertises the spokes a player may stake from, and none by default', () => {
+    const spokes = [{ chainId: 31338, escrow: ESCROW }];
+    expect(harness({ spokes }).socket.last('hello')?.spokes).toEqual(spokes);
+    expect(harness().socket.last('hello')?.spokes).toEqual([]);
+  });
+
+  it('sends a wallet its own cross-chain news, and nobody else', async () => {
+    const { gateway, socket } = harness();
+    await login(socket);
+    const stranger = new FakeSocket();
+    gateway.accept(stranger);
+
+    const event = { kind: 'seated', matchId: `0x${'cd'.repeat(32)}`, chainId: 31338 } as const;
+    gateway.notify(account.address, { type: 'crossChain', event });
+    gateway.notify(`0x${'99'.repeat(20)}`, { type: 'crossChain', event });
+
+    expect(socket.sent.filter((m) => m.type === 'crossChain')).toEqual([{ type: 'crossChain', event }]);
+    expect(stranger.last('crossChain')).toBeUndefined();
   });
 
   it('reports practice-only mode when no escrow is configured', () => {

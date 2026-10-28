@@ -31,6 +31,8 @@ const CONTEXT: ProposalContext = {
   escrow: at(0xe5),
   config: at(0xc0),
   params: PARAMS,
+  hubMessenger: at(0x1a),
+  hubChainId: 1,
 };
 
 /** Builds an action and shows it the way a voter will read it. */
@@ -53,6 +55,44 @@ function error(template: string, values: Record<string, string>, context = CONTE
   if (result.ok) throw new Error('expected a validation error');
   return result.error;
 }
+
+describe('addSpoke', () => {
+  const SPOKE_ESCROW = at(0xb5);
+  const SPOKE_MESSENGER = at(0xb6);
+  const values = { chainId: '8453', eid: '30184', escrow: SPOKE_ESCROW, messenger: SPOKE_MESSENGER };
+  const labels = {
+    [CONTEXT.config!.toLowerCase()]: 'ProtocolConfig',
+    [CONTEXT.hubMessenger!.toLowerCase()]: 'Hub messenger',
+  };
+  const read = (action: { target: `0x${string}`; value: bigint; calldata: `0x${string}` }) => {
+    const { target, call } = describeCall(action.target, action.value, action.calldata, labels);
+    return `${target}.${call}`;
+  };
+
+  it('registers the route on the config and the peer on the hub messenger, as two calls', () => {
+    const result = buildAction('addSpoke', values, CONTEXT);
+    if (!result.ok) throw new Error(result.error);
+    const pad = (address: string) => `0x${address.slice(2).toLowerCase().padStart(64, '0')}`;
+    expect(read(result.action)).toBe(
+      `ProtocolConfig.setRemoteChain(8453, ${CONTEXT.hubMessenger}, ${pad(SPOKE_ESCROW)})`,
+    );
+    expect(result.also).toHaveLength(1);
+    expect(read(result.also![0]!)).toBe(`Hub messenger.setPeer(8453, 30184, ${pad(SPOKE_MESSENGER)})`);
+  });
+
+  it('refuses the hub itself, a wrong endpoint id for a known chain, and missing addresses', () => {
+    expect(error('addSpoke', { ...values, chainId: '1' })).toBe('That is the hub itself.');
+    expect(error('addSpoke', { ...values, eid: '30101' })).toBe('Base is LayerZero endpoint 30184, not 30101.');
+    expect(error('addSpoke', { ...values, messenger: '' })).toBe('Enter both spoke addresses.');
+    expect(error('addSpoke', { ...values, chainId: 'base' })).toBe('Enter the spoke chain id as a whole number.');
+  });
+
+  it('needs a hub messenger to point the peer at', () => {
+    expect(error('addSpoke', values, { ...CONTEXT, hubMessenger: null })).toBe(
+      'This server has no hub messenger configured.',
+    );
+  });
+});
 
 describe('buildAction', () => {
   it('encodes each template as the one call it describes', () => {

@@ -5,6 +5,7 @@ import type {
   AvatarEntry,
   PublicMatchState,
   ServerMessage,
+  SpokeInfo,
   StakingInfo,
   ZapInfo,
 } from '@lms/protocol';
@@ -36,6 +37,16 @@ export interface AppState {
   session: Session | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /** Spoke chains a wallet may stake from, each with its `SpokeEscrow`. */
+  spokes: SpokeInfo[];
+  /**
+   * Lobbies this browser has staked into from a spoke whose stake has not yet
+   * landed on the hub, by lowercased match id. Cleared by the server's
+   * `crossChain` report, or by the seat showing up in the directory.
+   */
+  inTransit: Set<string>;
+  /** The hub `LayerZeroMessenger`, for the "Add a spoke chain" proposal. */
+  hubMessenger: `0x${string}` | null;
   /** True when the server pays the gas to push payouts. */
   collect: boolean;
   /** The staking vault and governor, or null when the server offers neither. */
@@ -82,6 +93,9 @@ export const app: AppState = {
   sessionDelegate: null,
   session: null,
   zap: null,
+  spokes: [],
+  inTransit: new Set(),
+  hubMessenger: null,
   collect: false,
   staking: null,
   analyst: false,

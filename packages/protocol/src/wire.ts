@@ -1,5 +1,6 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
+import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
 import type { Rules } from './game/rules.js';
@@ -103,6 +104,16 @@ export type ServerMessage =
        * after the player has asked.
        */
       analyst?: boolean;
+      /**
+       * Spoke chains a player can stake from, each with its `SpokeEscrow`.
+       * Optional for older servers; absent or empty means hub-only.
+       */
+      spokes?: SpokeInfo[];
+      /**
+       * The hub `LayerZeroMessenger`, which a new spoke's messenger must be
+       * registered as a peer of. Optional; absent or null when there is none.
+       */
+      hubMessenger?: `0x${string}` | null;
     }
   | { type: 'authed'; address: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
@@ -145,6 +156,11 @@ export type ServerMessage =
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
   /** Transaction hash of a payout the server pushed in answer to `collect`. */
   | { type: 'relayed'; hash: `0x${string}` }
+  /**
+   * What became of one of this player's cross-chain joins on the hub: seated,
+   * refunded there, or parked to be retried. Sent only to that player.
+   */
+  | { type: 'crossChain'; event: CrossChainEvent }
   /** What the analyst is doing now, e.g. "Reading round 4". Progress only; `analysis.done` carries the answer. */
   | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */

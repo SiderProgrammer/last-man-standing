@@ -3,10 +3,13 @@ import {
   DEFAULT_ZAP_SLIPPAGE_BPS,
   chainCss,
   chainInfo,
+  joinFailureText,
   maxAmountInFor,
   type AvatarCollectionInfo,
+  type CrossChainEvent,
   type LobbySeat,
   type PublicMatchState,
+  type SpokeInfo,
   type ZapInfo,
   type ZapToken,
 } from '@lms/protocol';
@@ -101,17 +104,37 @@ export interface HubLabel {
  *
  * Worth surfacing because a player on the wrong network can read every lobby
  * while every stake they place reverts, and the wallet's own error for that is
- * unreadable.
+ * unreadable. A wallet on a spoke the server lists is not on the wrong
+ * network: it stakes from there, and the chip says where its stake will go.
  */
-export function hubLabel(hubChainId: number, walletChainId: number, hasEscrow: boolean): HubLabel {
+export function hubLabel(
+  hubChainId: number,
+  walletChainId: number,
+  hasEscrow: boolean,
+  spokes: readonly SpokeInfo[] = [],
+): HubLabel {
   const hub = chainInfo(hubChainId);
   const css = chainCss(hub.color);
-  const mismatch = walletChainId !== 0 && walletChainId !== hubChainId;
+  const elsewhere = walletChainId !== 0 && walletChainId !== hubChainId;
 
+  if (elsewhere && hasEscrow && spokeFor(spokes, walletChainId)) {
+    const spoke = chainInfo(walletChainId);
+    return {
+      text: `Staking from ${spoke.name} → ${hub.name} hub`,
+      title:
+        `Your stake is carried to ${hub.name}, where the match is held. ` +
+        `Winnings and refunds are paid there, not on ${spoke.name}.`,
+      mismatch: false,
+      css: chainCss(spoke.color),
+    };
+  }
+
+  const mismatch = elsewhere;
   if (mismatch) {
+    const where = spokes.length > 0 ? ` or a spoke (${spokes.map((s) => chainInfo(s.chainId).name).join(', ')})` : '';
     return {
       text: `${hub.name} hub · wallet on ${chainInfo(walletChainId).name}`,
-      title: 'Switch your wallet to the hub chain to stake directly, or join from a spoke.',
+      title: `Switch your wallet to the hub chain${where} to stake.`,
       mismatch,
       css,
     };
@@ -238,4 +261,70 @@ export function planTokenJoin(
   const allowed = maxAmountInFor(quote, slippageBps);
   const maxAmountIn = allowed < balance ? allowed : balance;
   return { ok: true, maxAmountIn, label: `Pay ≤ ${amount(maxAmountIn)}` };
+}
+
+// ------------------------------------------------------------- spoke joins
+
+/** The spoke the wallet is on, or null when it is on the hub or anywhere unlisted. */
+export function spokeFor(spokes: readonly SpokeInfo[], walletChainId: number): SpokeInfo | null {
+  return spokes.find((spoke) => spoke.chainId === walletChainId) ?? null;
+}
+
+/**
+ * An open lobby's join button on a spoke, before the transport fee is known.
+ * The stake is hub ETH; on a spoke that pays in another token, saying "ETH"
+ * keeps "0.01" from reading as 0.01 of that token.
+ */
+export function spokeStakeLabel(stakeWei: string, spokeChainId: number): string {
+  const unit = chainInfo(spokeChainId).native ? ' ETH' : '';
+  return `Stake ${formatEther(BigInt(stakeWei))}${unit} from ${chainInfo(spokeChainId).short}`;
+}
+
+/**
+ * The quoted join, as the button the player confirms. `total` is what
+ * `quoteJoin` asked for, in the spoke's own gas token.
+ *
+ * On an ETH spoke that is the stake plus the transport fee, so the two can be
+ * shown apart. On any other, the executor has priced the hub ETH it delivers
+ * in that token and folded the fee in: there is no separate fee to subtract,
+ * so the label shows the one figure the wallet will charge, rounded up.
+ */
+export function spokeQuoteLabel(stakeWei: bigint, total: bigint, spokeChainId: number): string {
+  const native = chainInfo(spokeChainId).native;
+  if (native) return `Pay ≤ ${formatTokenAmount(total, 18)} ${native}`;
+  const fee = total > stakeWei ? total - stakeWei : 0n;
+  return `Pay ${formatEther(stakeWei)} + ${formatEther(fee)} fee`;
+}
+
+/**
+ * Why `quoteJoin` refused, in words. The interesting case is LayerZero's cap
+ * on how much native value one message may carry: a stake above it cannot be
+ * sent from this chain at all, and the raw revert says nothing of the sort.
+ */
+export function spokeQuoteError(message: string, spokeChainId: number): string {
+  const spoke = chainInfo(spokeChainId).name;
+  if (/NativeAmountExceedsCap/.test(message)) {
+    return `This stake is more than LayerZero will carry from ${spoke} in one message. Join from the hub instead.`;
+  }
+  if (/UnknownChain/.test(message)) return `${spoke} has no route to the hub configured yet.`;
+  return `Could not price the join from ${spoke}: ${message.split('\n')[0]}`;
+}
+
+/** What to tell the player when the server reports how their join landed. */
+export function crossChainNotice(event: CrossChainEvent, hubChainId: number): string {
+  const hub = chainInfo(hubChainId).name;
+  switch (event.kind) {
+    case 'seated':
+      return `Your stake from ${chainInfo(event.chainId).name} arrived. Seat taken on ${hub}.`;
+    case 'refunded':
+      return (
+        `Not seated: ${joinFailureText(event.reason)}. ` +
+        `Your ${formatEther(BigInt(event.amount))} ETH is yours to collect on ${hub}.`
+      );
+    case 'parked':
+      return (
+        `Your ${formatEther(BigInt(event.amount))} ETH reached ${hub}, but the hub cannot take it yet. ` +
+        'It is held safely and will be retried once the route is fixed.'
+      );
+  }
 }

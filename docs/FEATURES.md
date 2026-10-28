@@ -249,7 +249,7 @@ It currently targets a minimal local coordinator interface and runs against
 
 `contracts/src/SpokeEscrow.sol` · `contracts/src/interfaces/ICrossChainMessenger.sol` ·
 `contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chain/chains.ts` ·
-**Mocked**
+**Live on the local fork; not yet on testnets**
 
 ### What it does
 
@@ -268,6 +268,57 @@ player on spoke → SpokeEscrow.join(matchId, stake)
 A stake that arrives for a seat that can no longer be taken is credited to the
 player on the hub, never reverted, so nothing is stranded in transit. Payouts
 stay on the hub, where `withdrawFor` lets a keeper push them to the player.
+
+### When the hub cannot take a delivery
+
+`LayerZeroMessenger.lzReceive` · `retry` · `packages/server/src/chain/crossChain.ts`
+
+The refund above only helps once `receiveMessage` runs. If the hub refuses the
+delivery outright — the spoke went live before governance registered it, a peer
+is registered wrong, the messenger has no app — the escrow reverts. LayerZero's
+executor then keeps the stake it was paid to deliver and only reports the
+failure; the message stays retryable, but whoever retries has to bring the
+stake again.
+
+So the hub messenger never lets that happen. Once a message is authenticated,
+it calls the escrow inside a `try`, with a reserve of gas held back; a refused
+delivery is **parked**: its hash is stored by guid, its value stays in the
+messenger, and `DeliveryParked` carries everything needed to retry it.
+`retry(guid, …)` is permissionless and needs no value: it hands the delivery to
+the escrow again, which authenticates it exactly as on arrival. Purpose: a
+configuration mistake costs players a wait, never their stake. The server's
+`CrossChainWatcher` retries parked deliveries on every poll, so the wait ends
+as soon as the fix executes.
+
+A call with less gas than a real join plus that reserve reverts rather than
+parks. Anyone may execute a verified LayerZero message, and gas estimation
+lands on the cheapest call that "succeeds" — which, with a `try`, is one that
+starves the escrow and parks. Refusing those leaves the message for a properly
+gassed execution. `receiveGas` is bounded below for the same reason.
+
+### Joining from a spoke, in the client
+
+`packages/client/src/screens/lobby.ts` · **Live on the local fork**
+
+The server lists each spoke's `SpokeEscrow` in `hello`. A wallet on one of
+them sees "Staking from Base → Ethereum hub" instead of a wrong-network
+warning, and each lobby offers **Stake from BASE**: the first click asks
+`quoteJoin` for the stake plus LayerZero's fee, the second pays it. The row
+then reads *In transit…* until the server reports how the join landed:
+seated, refunded on the hub (with the reason), or parked. Winnings and
+refunds are on the hub, so the payout panel offers the server-paid push
+instead of a balance it cannot read from the spoke.
+
+On a spoke whose gas token is not ETH (Polygon, BNB Chain, Avalanche), the
+join is paid in that token: the executor prices the hub ETH it delivers in it
+and folds its fee in. The button then reads "Stake 0.01 ETH from POL", and the
+quote shows the single figure the wallet will charge, "Pay ≤ 12.3457 POL",
+rather than a stake and fee in mismatched units. `ChainInfo.native` names the
+token; a chain without it is taken to pay in ETH.
+
+LayerZero's executor caps the native value one message may deliver
+(`nativeCap`, per destination). A stake above it fails `quoteJoin` on the
+spoke, before anything is sent; the client says so in words.
 
 ### Why
 
@@ -309,10 +360,12 @@ stakes from four chains should look like it. The warning exists because
 otherwise every stake from the wrong network reverts with an error the wallet
 renders unreadably.
 
-> **Status.** `LayerZeroMessenger` is written against a local minimal interface
-> and exercised with `MockLayerZeroEndpoint`. The native-drop options encoding
-> is not yet enforced, and a stake that leaves a spoke but fails to seat on the
-> hub is currently unrecoverable. See `TODO.md` §2.1.
+> **Status.** `LayerZeroMessenger`'s local interface has been checked against
+> `@layerzerolabs/lz-evm-protocol-v2` 3.0.168, each message carries exactly its
+> lobby's stake, and a refused delivery parks rather than strands. Hub and
+> spoke run together in `npm run dev:fork` over mock endpoints and a local
+> relayer, and `DeploySpoke.s.sol` deploys a real spoke. Not yet run between
+> two public testnets; see `TODO.md` §2.1 and `docs/TESTNET.md`.
 
 ---
 
@@ -477,9 +530,12 @@ How voting power is earned is described in
 ### What is missing
 
 The Safe's veto is meant to be temporary, and nothing removes it yet: a
-proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)` would. The other `Ownable` contracts — `SpokeEscrow`, `LayerZeroMessenger`,
-`ChainlinkVrfAdapter` — are not deployed by the script yet; each must be
-constructed with a timelock as its owner, one Safe and timelock per chain. The config
+proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)` would. The hub `LayerZeroMessenger` is deployed by `Deploy.s.sol` when
+`LZ_ENDPOINT` is set and handed to the timelock with the config;
+`SpokeEscrow` and its messenger by `DeploySpoke.s.sol`, which proposes the
+spoke's own timelock as their owner. `ChainlinkVrfAdapter` is still not
+deployed by a script; it must be constructed with the hub timelock as its
+owner. One Safe and timelock per chain. The config
 can also be deployed with a zero `rulesHash` and zero oracle — a valid-looking
 but unusable state that only the deploy script currently prevents.
 

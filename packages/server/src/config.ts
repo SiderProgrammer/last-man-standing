@@ -80,6 +80,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * offer; logins then always cost a wallet signature.
      */
     sessionDelegate: (env.SESSION_DELEGATE ?? ZERO_ADDRESS) as `0x${string}`,
+    /**
+     * Spoke chains players may stake from, as JSON:
+     * `[{"chainId":8453,"escrow":"0x…"}]`, one `SpokeEscrow` per chain. Blank
+     * offers hub-only staking. See `chain/crossChain.ts`.
+     */
+    spokes: env.SPOKES ?? '',
+    /**
+     * The hub `LayerZeroMessenger`. With it, the server reports deliveries the
+     * hub could not take, and retries them with `KEEPER_PK` once it can.
+     */
+    hubMessenger: (env.HUB_MESSENGER ?? ZERO_ADDRESS) as `0x${string}`,
+    /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
+    crossChainFromBlock: optionalBigInt(env.CROSS_CHAIN_FROM_BLOCK),
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */
     zapJoin: (env.ZAP_JOIN ?? ZERO_ADDRESS) as `0x${string}`,
     /** v4-periphery `V4Quoter` on the hub chain, which the client prices routes with. */
