@@ -20,6 +20,7 @@ import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { createPayoutPusher, nullPayoutPusher } from './chain/payouts.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
+import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { Analyst } from './analyst/analyst.js';
@@ -95,6 +96,9 @@ async function main(): Promise<void> {
     ? zapInfo(config.zapJoin, config.v4Quoter, parseZapTokens(config.zapTokens))
     : null;
 
+  // Spokes forward stakes into the hub escrow, so likewise.
+  const spokes = config.onChain ? parseSpokes(config.spokes, config.chainId) : [];
+
 
   // Proposals made to the governor, which cannot list its own.
   const proposals =
@@ -149,6 +153,8 @@ async function main(): Promise<void> {
     payouts,
     ...(analyst ? { analyst } : {}),
     zap,
+    spokes,
+    hubMessenger: config.onChain && config.hubMessenger !== ZERO_ADDRESS ? config.hubMessenger : null,
     staking:
       config.stakedLms !== ZERO_ADDRESS
         ? {
@@ -271,6 +277,29 @@ async function main(): Promise<void> {
     console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
   }
 
+  // Tells spoke players how their join landed on the hub, and retries any the
+  // hub could not take. Holds no authority: `retry` is open to anyone.
+  let crossChain: CrossChainWatcher | null = null;
+  if (config.onChain && (spokes.length > 0 || config.hubMessenger !== ZERO_ADDRESS)) {
+    crossChain = new CrossChainWatcher({
+      port: viemCrossChain({
+        rpcUrl: config.rpcUrl,
+        chainId: config.chainId,
+        escrow: config.escrow,
+        messenger: config.hubMessenger !== ZERO_ADDRESS ? config.hubMessenger : null,
+        ...(config.keeperPk ? { keeperKey: config.keeperPk } : {}),
+      }),
+      hubChainId: config.chainId,
+      notify: (player, event) => gateway.notify(player, { type: 'crossChain', event }),
+      ...(config.crossChainFromBlock !== undefined ? { fromBlock: config.crossChainFromBlock } : {}),
+    });
+    crossChain.start(4_000);
+    console.log(
+      `[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ') || 'none'}` +
+        (config.hubMessenger !== ZERO_ADDRESS ? `; watching messenger ${config.hubMessenger}` : ''),
+    );
+  }
+
   // Harvests fees on a timer so they reach stakers. Holds no authority:
   // `harvest` is open to anyone and pays only where the router already sends.
   let feeKeeper: FeeKeeper | null = null;
@@ -304,6 +333,7 @@ async function main(): Promise<void> {
   const shutdown = () => {
     bridge?.stop();
     feeKeeper?.stop();
+    crossChain?.stop();
     proposals?.stop();
     clearInterval(ticker);
     clearInterval(sweeper);

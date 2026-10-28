@@ -145,6 +145,11 @@ export const governableAbi = parseAbi([
   'function setAttestorThreshold(uint32 threshold)',
   'function setGuardian(address guardian)',
   'function setRemoteChain(uint32 chainId, address messenger, bytes32 peer)',
+  // LayerZeroMessenger
+  'function setPeer(uint32 chainId, uint32 eid, bytes32 peer)',
+  'function setApp(address app)',
+  'function setDelegate(address delegate)',
+  'function setReceiveGas(uint128 gas)',
   // GameEscrow
   'function pause()',
   'function unpause()',

@@ -3,7 +3,7 @@ import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
+import { onCrossChain, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
 import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
 import {
   governanceVisible,
@@ -95,6 +95,8 @@ function onServerMessage(message: ServerMessage): void {
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
       app.zap = message.zap;
+      app.spokes = message.spokes ?? [];
+      app.hubMessenger = message.hubMessenger ?? null;
       app.collect = message.collect;
       app.staking = message.staking;
       app.analyst = message.analyst ?? false;
@@ -104,7 +106,6 @@ function onServerMessage(message: ServerMessage): void {
       void renderAvatarPanel();
       void renderStakingPanel();
       renderGovernanceNav();
-      dom.createLobby.disabled = !message.escrow;
       break;
 
     case 'authed':
@@ -166,6 +167,10 @@ function onServerMessage(message: ServerMessage): void {
       // The only transaction the server sends for a player: a pushed payout.
       toast(`Payout sent without a wallet prompt · ${short(message.hash)}`);
       void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
+      break;
+
+    case 'crossChain':
+      onCrossChain(message.event);
       break;
 
     case 'analysis.step':

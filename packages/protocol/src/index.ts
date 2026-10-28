@@ -12,6 +12,7 @@ export * from './chain/escrow.js';
 export * from './chain/avatars.js';
 export * from './chain/session.js';
 export * from './chain/zap.js';
+export * from './chain/spokes.js';
 export * from './chain/governance.js';
 export * from './chain/proposals.js';
 

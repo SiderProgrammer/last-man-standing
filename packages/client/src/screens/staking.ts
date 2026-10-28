@@ -1,4 +1,4 @@
-import { errorFirstLine, sharesForUnstake } from '@lms/protocol';
+import { chainInfo, errorFirstLine, sharesForUnstake } from '@lms/protocol';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
@@ -33,7 +33,12 @@ export async function renderStakingPanel(): Promise<void> {
   const info = app.staking;
   let error: string | null = null;
 
-  if (wallet && info) {
+  if (wallet && info && wallet.chainId !== app.chainId) {
+    // The vault lives on the hub. A wallet on a spoke plays from there
+    // perfectly well, but stakes LMS on the hub.
+    position = null;
+    error = `Staking LMS happens on ${chainInfo(app.chainId).name}. Switch your wallet there to stake or vote.`;
+  } else if (wallet && info) {
     try {
       position = await wallet.stakingPosition(info.vault);
     } catch (err) {

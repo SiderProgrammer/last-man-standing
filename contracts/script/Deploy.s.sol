@@ -13,6 +13,9 @@ import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
+import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
+import {LayerZeroMessenger} from "../src/adapters/LayerZeroMessenger.sol";
+import {ILayerZeroEndpoint} from "../src/interfaces/ILayerZeroEndpoint.sol";
 import {LmsToken} from "../src/governance/LmsToken.sol";
 import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
@@ -42,11 +45,21 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
 ///      The mock oracle and messenger are deployed on a local node only; anywhere
-///      else pass `ORACLE` (a `ChainlinkVrfAdapter`) and, once spokes exist,
-///      `MESSENGER` (a `LayerZeroMessenger`). Both are `Ownable2Step`, and whoever
-///      owns them can choose seeds or forge cross-chain joins, so deploy them with
-///      the timelock as `owner_`, never an EOA. The same goes for `SpokeEscrow`
-///      on every spoke, each behind its own Safe and timelock.
+///      else pass `ORACLE` (a `ChainlinkVrfAdapter`). Cross-chain joins need a
+///      hub `LayerZeroMessenger`: pass `LZ_ENDPOINT` and this script deploys
+///      one, points it at the escrow and hands it to the timelock with the
+///      config — or pass `MESSENGER` for one deployed separately, which must
+///      then be owned by the timelock, never an EOA: whoever owns it can forge
+///      cross-chain joins. On a local node, `MOCK_LZ=true` puts the messenger
+///      over a `MockLayerZeroEndpoint`, which `npm run dev:fork` relays.
+///
+///      Spokes come after, each with `DeploySpoke.s.sol` on its own chain,
+///      behind its own Safe and timelock. The hub learns about each one by a
+///      governance proposal — `setRemoteChain` on the config and `setPeer` on
+///      the messenger, which the governance screen's "Add a spoke chain"
+///      template builds — because both are the timelock's by then. A join sent
+///      before that executes is not lost: the messenger parks it, and it is
+///      retried into the seat once the proposal lands.
 contract Deploy is Script {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
@@ -84,7 +97,14 @@ contract Deploy is Script {
         address safe;
         address oracle;
         address messenger;
+        /// @dev The hub messenger this script deployed, if any; it is also
+        ///      `messenger`. Zero when `MESSENGER` was passed or no endpoint was.
+        LayerZeroMessenger hubLz;
     }
+
+    /// @dev Gas the executor gives `lzReceive` on the far side: a hub join is
+    ///      about 120k, and the messenger keeps a reserve to park a failure.
+    uint256 private constant DEFAULT_RECEIVE_GAS = 350_000;
 
     error SafeRequired();
     error MockOffLocal();
@@ -110,10 +130,11 @@ contract Deploy is Script {
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
         deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
-        (deployment.oracle, deployment.messenger) = _transport();
+        (deployment.oracle, deployment.messenger, deployment.hubLz) = _transport(deployer);
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
+        _wireHubMessenger(deployment);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(
@@ -149,19 +170,50 @@ contract Deploy is Script {
     ///      chooses the seed of every match.
     ///
     ///      Elsewhere `ORACLE` is required — a `ChainlinkVrfAdapter` whose owner
-    ///      must then register the escrow with `setConsumer` — and `MESSENGER`
-    ///      is optional: unset means a hub with no spokes yet.
-    function _transport() private returns (address oracle, address messenger) {
+    ///      must then register the escrow with `setConsumer` — and a messenger
+    ///      is optional: neither `LZ_ENDPOINT` nor `MESSENGER` means a hub with
+    ///      no spokes yet.
+    function _transport(address deployer)
+        private
+        returns (address oracle, address messenger, LayerZeroMessenger hubLz)
+    {
         oracle = vm.envOr("ORACLE", address(0));
         messenger = vm.envOr("MESSENGER", address(0));
-        if (block.chainid != LOCAL_CHAIN_ID) {
-            if (oracle == address(0)) revert MockOffLocal();
-            return (oracle, messenger);
-        }
+        address endpoint = vm.envOr("LZ_ENDPOINT", address(0));
+        bool local = block.chainid == LOCAL_CHAIN_ID;
+
+        if (!local && oracle == address(0)) revert MockOffLocal();
         // Answers nothing on its own: something must call `fulfill` after each
         // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
         if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
-        if (messenger == address(0)) messenger = address(new MockMessenger());
+
+        if (messenger != address(0)) return (oracle, messenger, hubLz);
+        if (endpoint == address(0) && local && vm.envOr("MOCK_LZ", false)) {
+            endpoint = address(new MockLayerZeroEndpoint());
+        }
+        if (endpoint != address(0)) {
+            // Owned by the deployer only until `_handOver`, like the config.
+            hubLz = new LayerZeroMessenger(
+                deployer,
+                ILayerZeroEndpoint(endpoint),
+                address(0),
+                uint128(vm.envOr("RECEIVE_GAS", DEFAULT_RECEIVE_GAS))
+            );
+            messenger = address(hubLz);
+        } else if (local) {
+            messenger = address(new MockMessenger());
+        }
+    }
+
+    /// @dev Points the hub messenger at the escrow and makes the timelock its
+    ///      endpoint delegate, the one that sets its verifiers. Ownership
+    ///      follows in `_handOver`.
+    function _wireHubMessenger(Deployment memory deployment) private {
+        LayerZeroMessenger hubLz = deployment.hubLz;
+        if (address(hubLz) == address(0)) return;
+        hubLz.setApp(address(deployment.escrow));
+        hubLz.setDelegate(address(deployment.timelock));
+        hubLz.transferOwnership(address(deployment.timelock));
     }
 
     function _params(address safe) private view returns (ProtocolConfig.Params memory) {
@@ -378,13 +430,21 @@ contract Deploy is Script {
         uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
-        address[] memory targets = new address[](2);
+        // The hub messenger, if this script deployed one, is accepted in the
+        // same batch: like the config, never owned by a zero-delay timelock.
+        bool withLz = address(deployment.hubLz) != address(0);
+        uint256 calls = withLz ? 3 : 2;
+        address[] memory targets = new address[](calls);
+        uint256[] memory values = new uint256[](calls);
+        bytes[] memory payloads = new bytes[](calls);
         targets[0] = address(config);
-        targets[1] = address(timelock);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory payloads = new bytes[](2);
         payloads[0] = abi.encodeCall(config.acceptOwnership, ());
-        payloads[1] = abi.encodeCall(timelock.updateDelay, (delay));
+        if (withLz) {
+            targets[1] = address(deployment.hubLz);
+            payloads[1] = abi.encodeCall(deployment.hubLz.acceptOwnership, ());
+        }
+        targets[calls - 1] = address(timelock);
+        payloads[calls - 1] = abi.encodeCall(timelock.updateDelay, (delay));
         // The timelock marks executed operations with timestamp 1, so at the
         // in-memory dry run's starting timestamp of 1 a zero-delay operation
         // reads as already done. No real chain is there, and a cheatcode is
