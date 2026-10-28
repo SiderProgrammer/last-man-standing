@@ -34,6 +34,8 @@ import { short } from './ui/format.js';
 import { httpOrigin } from './ui/staking.js';
 import {
   authenticate,
+  onAuthed,
+  onLoginRejected,
   renderAvatarPanel,
   renderHubLabel,
   renderSessionPanel,
@@ -107,6 +109,7 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'authed':
+      onAuthed();
       dom.connect.textContent = short(message.address);
       dom.connect.disabled = true;
       net.flush();
@@ -183,6 +186,7 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'error':
+      if (onLoginRejected()) break;
       toast(message.message);
       break;
   }
