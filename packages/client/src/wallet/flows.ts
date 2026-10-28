@@ -7,6 +7,7 @@ import {
 import { app, dom, net } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
+import { renderPayWith } from '../screens/lobby.js';
 import { Session } from './session.js';
 import { Wallet } from './wallet.js';
 
@@ -29,9 +30,11 @@ async function connectWallet(): Promise<void> {
     app.wallet =
       Wallet.available() || !devKey
         ? await Wallet.connect()
-        : await Wallet.burner(devKey as `0x${string}`, import.meta.env.VITE_RPC_URL);
+        : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
     restoreSession();
     renderHubLabel();
+    // The lobby's buttons depend on which chain the wallet turned out to be on.
+    renderPayWith();
     renderSessionPanel();
     void renderAvatarPanel();
     await authenticate();
@@ -39,6 +42,16 @@ async function connectWallet(): Promise<void> {
     console.error('[wallet]', error);
     toast(errorFirstLine(error));
   }
+}
+
+/**
+ * The node the dev burner signs through. `?chain=spoke` puts it on the spoke
+ * that `npm run dev:fork` runs, so a join from a spoke can be tried without a
+ * wallet extension; anything else is the hub.
+ */
+function burnerRpc(): string | undefined {
+  const spoke = new URLSearchParams(location.search).get('chain') === 'spoke';
+  return spoke && import.meta.env.VITE_SPOKE_RPC_URL ? import.meta.env.VITE_SPOKE_RPC_URL : import.meta.env.VITE_RPC_URL;
 }
 
 export async function authenticate(): Promise<void> {
@@ -74,7 +87,7 @@ export async function authenticate(): Promise<void> {
  * try to place reverts, and the wallet's own error for that is unreadable.
  */
 export function renderHubLabel(): void {
-  const label = hubLabel(app.chainId, app.wallet?.chainId ?? 0, Boolean(app.escrow));
+  const label = hubLabel(app.chainId, app.wallet?.chainId ?? 0, Boolean(app.escrow), app.spokes);
 
   dom.chainLabel.style.setProperty('--chain', label.css);
   dom.chainLabel.classList.add('chain-chip');
@@ -168,6 +181,14 @@ export function renderSessionPanel(): void {
     dom.enableSession.disabled = true;
     dom.sessionStatus.textContent =
       'This server has no session delegate configured, so logins use your wallet.';
+    return;
+  }
+
+  // The server checks a session login against the hub, so the delegation has
+  // to live there: one granted on a spoke would never be honoured.
+  if (wallet.chainId !== app.chainId && !active) {
+    dom.enableSession.disabled = true;
+    dom.sessionStatus.textContent = `Session keys are set up on ${chainInfo(app.chainId).name}. Logins here use your wallet.`;
     return;
   }
 

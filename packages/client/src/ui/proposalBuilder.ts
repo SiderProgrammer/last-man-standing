@@ -1,5 +1,5 @@
-import { encodeFunctionData, isAddress, isHex, keccak256, parseEther, toBytes, type Address, type Hex } from 'viem';
-import { governableAbi, type ProtocolParams } from '@lms/protocol';
+import { encodeFunctionData, isAddress, isHex, keccak256, pad, parseEther, toBytes, type Address, type Hex } from 'viem';
+import { chainInfo, governableAbi, type ProtocolParams } from '@lms/protocol';
 
 /**
  * Builds proposal actions from plain inputs.
@@ -22,6 +22,10 @@ export interface ProposalContext {
   config: Address | null;
   /** The config's current parameters, which `setParams` must resend in full. */
   params: ProtocolParams | null;
+  /** The hub `LayerZeroMessenger`, which a new spoke's messenger must be a peer of. */
+  hubMessenger: Address | null;
+  /** The hub's own chain id, which can never be registered as a spoke. */
+  hubChainId: number;
 }
 
 export interface TemplateField {
@@ -44,7 +48,13 @@ export interface ProposalAction {
   calldata: Hex;
 }
 
-export type BuildResult = { ok: true; action: ProposalAction } | { ok: false; error: string };
+/**
+ * One template, one action — except where one change takes two calls that
+ * only make sense together, which come back as `action` and then `also`.
+ */
+export type BuildResult =
+  | { ok: true; action: ProposalAction; also?: ProposalAction[] }
+  | { ok: false; error: string };
 
 /** `ProtocolConfig.MAX_FEE_BPS`: the contract refuses anything higher. */
 const MAX_FEE_BPS = 1_000;
@@ -112,6 +122,21 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     fields: [address('account', 'Address to remove (the Safe)')],
   },
   {
+    id: 'addSpoke',
+    label: 'Add a spoke chain',
+    help:
+      'Lets players stake from another chain. Two calls: the config trusts the hub messenger to ' +
+      "carry joins from that chain's SpokeEscrow, and the hub messenger trusts the spoke's " +
+      'messenger. Both addresses come from DeploySpoke.s.sol, run on that chain. Joins sent ' +
+      'before this executes are held by the hub messenger and retried once it does.',
+    fields: [
+      { name: 'chainId', label: 'Spoke chain id', placeholder: '8453' },
+      { name: 'eid', label: 'Its LayerZero endpoint id', placeholder: '30184' },
+      address('escrow', 'SpokeEscrow on that chain'),
+      address('messenger', 'LayerZeroMessenger on that chain'),
+    ],
+  },
+  {
     id: 'custom',
     label: 'Custom call (advanced)',
     help: 'Any call at all. Voters will see it flagged if it is not a recognised governance call.',
@@ -170,6 +195,33 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       if (!isAddress(account)) return { ok: false, error: 'Enter a valid address.' };
       return call(context.timelock, 'No timelock.', encode('revokeRole', [CANCELLER_ROLE, account]));
     }
+    case 'addSpoke': {
+      const chainId = uint32(field('chainId'));
+      const eid = uint32(field('eid'));
+      const escrow = field('escrow');
+      const messenger = field('messenger');
+      if (chainId === null) return { ok: false, error: 'Enter the spoke chain id as a whole number.' };
+      if (chainId === context.hubChainId) return { ok: false, error: 'That is the hub itself.' };
+      if (eid === null) return { ok: false, error: 'Enter the LayerZero endpoint id as a whole number.' };
+      const known = chainInfo(chainId).eid;
+      if (known !== undefined && known !== eid) {
+        return { ok: false, error: `${chainInfo(chainId).name} is LayerZero endpoint ${known}, not ${eid}.` };
+      }
+      if (!isAddress(escrow) || !isAddress(messenger)) return { ok: false, error: 'Enter both spoke addresses.' };
+      if (!context.config) return { ok: false, error: 'Could not find the protocol config.' };
+      if (!context.hubMessenger) return { ok: false, error: 'This server has no hub messenger configured.' };
+      return {
+        ok: true,
+        action: {
+          target: context.config,
+          value: 0n,
+          calldata: encode('setRemoteChain', [chainId, context.hubMessenger, pad(escrow)]),
+        },
+        also: [
+          { target: context.hubMessenger, value: 0n, calldata: encode('setPeer', [chainId, eid, pad(messenger)]) },
+        ],
+      };
+    }
     case 'custom': {
       const target = field('target');
       const calldata = field('calldata') || '0x';
@@ -213,6 +265,13 @@ function percentToBps(text: string, maxBps: number): number | string {
   const bps = Math.round(Number(text) * 100);
   if (bps > maxBps) return `At most ${maxBps / 100}%.`;
   return bps;
+}
+
+/** A positive whole number that fits a `uint32`, or null. */
+function uint32(text: string): number | null {
+  if (!/^\d+$/.test(text)) return null;
+  const value = Number(text);
+  return value > 0 && value <= 0xffff_ffff ? value : null;
 }
 
 function wholeDays(text: string, min: number, max: number): number | string {

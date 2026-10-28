@@ -30,12 +30,39 @@ import {ZeroAddress} from "../Errors.sol";
 ///      `lzReceive`, and the amount is set by the message's executor options.
 ///      Options are built per message from `deliverValue`, so every lobby's
 ///      stake arrives exactly — a fixed default would deliver the wrong amount
-///      for every stake but one.
+///      for every stake but one. The executor caps that value per destination
+///      (`nativeCap`); a stake above the cap fails `quote` on the spoke, before
+///      anything is sent.
+///
+///      **When delivery fails.** If `lzReceive` reverts, LayerZero's executor
+///      keeps the value it was paid to deliver and only reports the failure;
+///      the message stays retryable, but whoever retries has to bring the
+///      stake again. So once a message is authenticated, this never reverts:
+///      a delivery the app refuses — the hub's remote-chain config not set
+///      yet, a peer registered wrong, an app not set — is *parked* here with
+///      its value, and `retry` hands it to the app again, at no cost but gas,
+///      once the config is fixed. The app makes every decision; parking only
+///      keeps the money on the right chain while it cannot.
 contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroReceiver {
     /// @dev `OptionsBuilder` constants from `@layerzerolabs/oapp-evm`.
     uint16 private constant OPTIONS_TYPE_3 = 3;
     uint8 private constant EXECUTOR_WORKER_ID = 1;
     uint8 private constant OPTION_TYPE_LZRECEIVE = 1;
+
+    /// @notice Gas held back from the app's call, to park the delivery if the
+    ///         call fails: one storage write and an event.
+    uint256 public constant PARK_GAS = 80_000;
+    /// @notice The least gas the app's call is given: a hub join is about
+    ///         120k for the first seat in a lobby.
+    /// @dev Without a floor, a delivery executed with too little gas would
+    ///      fail inside the app and park, though it would have seated with
+    ///      enough. Anyone may execute a verified message, and gas estimation
+    ///      lands on exactly that cheapest "success", so short-gassed calls
+    ///      revert instead and leave the message to be executed properly.
+    uint256 public constant APP_GAS = 140_000;
+    /// @notice The least `receiveGas` may be: the app's floor and the park
+    ///         reserve, plus what the endpoint spends before calling here.
+    uint128 public constant MIN_RECEIVE_GAS = 300_000;
 
     ILayerZeroEndpoint public immutable endpoint;
     /// @notice The one local contract this messenger sends for and delivers to.
@@ -51,22 +78,44 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
     mapping(uint32 chainId => uint32 eid) public eidOf;
     mapping(uint32 eid => uint32 chainId) public chainIdOf;
 
+    /// @notice Deliveries the app refused, by LayerZero guid: a hash of what
+    ///         `retry` must be given. The full delivery is in `DeliveryParked`.
+    mapping(bytes32 guid => bytes32 delivery) public parked;
+    /// @notice Value held for parked deliveries. Nothing else is ever held.
+    uint256 public totalParked;
+
     event AppSet(address indexed app);
     event PeerSet(uint32 indexed chainId, uint32 indexed eid, bytes32 peer);
     event ReceiveGasSet(uint128 gas);
+    event DeliveryParked(
+        bytes32 indexed guid, uint32 srcChainId, bytes32 srcApp, bytes payload, uint256 value, bytes reason
+    );
+    event DeliveryRetried(bytes32 indexed guid);
 
     error NotApp(address caller);
     error NotEndpoint(address caller);
     error UnknownChain(uint32 chainId);
     error UntrustedPeer(uint32 eid, bytes32 sender);
-    error WrongReceiver(bytes32 receiver);
+    error NotParked(bytes32 guid);
+    error ReceiveGasTooLow(uint128 gas);
+    error NotEnoughGas(uint256 available, uint256 needed);
 
+    /// @dev `owner_` is also made the endpoint delegate, as `OAppCore` does,
+    ///      so the owner can set this OApp's verifiers and libraries.
     constructor(address owner_, ILayerZeroEndpoint endpoint_, address app_, uint128 receiveGas_) Ownable(owner_) {
         if (address(endpoint_) == address(0)) revert ZeroAddress();
+        if (receiveGas_ < MIN_RECEIVE_GAS) revert ReceiveGasTooLow(receiveGas_);
         endpoint = endpoint_;
         app = app_;
         receiveGas = receiveGas_;
+        endpoint_.setDelegate(owner_);
         emit AppSet(app_);
+    }
+
+    /// @notice Who may configure this OApp on the endpoint. Hand it over with
+    ///         ownership: the owner's timelock should hold both.
+    function setDelegate(address delegate) external onlyOwner {
+        endpoint.setDelegate(delegate);
     }
 
     function setApp(address app_) external onlyOwner {
@@ -85,6 +134,7 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
     }
 
     function setReceiveGas(uint128 gas) external onlyOwner {
+        if (gas < MIN_RECEIVE_GAS) revert ReceiveGasTooLow(gas);
         receiveGas = gas;
         emit ReceiveGasSet(gas);
     }
@@ -153,7 +203,13 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
     }
 
     /// @inheritdoc ILayerZeroReceiver
-    function lzReceive(Origin calldata origin, bytes32, bytes calldata message, address, bytes calldata)
+    /// @dev Reverts only on a message that is not from a trusted peer — the
+    ///      endpoint never opens such a path, so no value can be riding on
+    ///      one — or on a call with less gas than `APP_GAS` plus `PARK_GAS`,
+    ///      which the executor never makes: it gives `receiveGas`, which is
+    ///      at least `MIN_RECEIVE_GAS`. Anything else reaches the app or is
+    ///      parked.
+    function lzReceive(Origin calldata origin, bytes32 guid, bytes calldata message, address, bytes calldata)
         external
         payable
     {
@@ -161,10 +217,55 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
         if (origin.sender == bytes32(0) || peers[origin.srcEid] != origin.sender) {
             revert UntrustedPeer(origin.srcEid, origin.sender);
         }
+        if (gasleft() < APP_GAS + PARK_GAS) revert NotEnoughGas(gasleft(), APP_GAS + PARK_GAS);
 
         (bytes32 srcApp, bytes32 receiver, bytes memory payload) = abi.decode(message, (bytes32, bytes32, bytes));
-        if (app == address(0) || receiver != bytes32(uint256(uint160(app)))) revert WrongReceiver(receiver);
+        uint32 srcChainId = chainIdOf[origin.srcEid];
 
-        ICrossChainReceiver(app).receiveMessage{value: msg.value}(chainIdOf[origin.srcEid], srcApp, payload);
+        address target = app;
+        if (target == address(0) || receiver != bytes32(uint256(uint160(target)))) {
+            _park(guid, srcChainId, srcApp, payload, msg.value, "wrong receiver");
+            return;
+        }
+        try ICrossChainReceiver(target).receiveMessage{value: msg.value, gas: gasleft() - PARK_GAS}(
+            srcChainId, srcApp, payload
+        ) {} catch (bytes memory reason) {
+            _park(guid, srcChainId, srcApp, payload, msg.value, reason);
+        }
+    }
+
+    /// @notice Hands a parked delivery to the app again. Anyone may call it,
+    ///         and it costs no value: the stake is already here.
+    /// @dev Reverts, and stays parked, if the app still refuses it. The app
+    ///      authenticates the delivery exactly as it would have on arrival.
+    function retry(bytes32 guid, uint32 srcChainId, bytes32 srcApp, bytes calldata payload, uint256 value)
+        external
+    {
+        if (parked[guid] != _deliveryHash(srcChainId, srcApp, payload, value)) revert NotParked(guid);
+        delete parked[guid];
+        totalParked -= value;
+        ICrossChainReceiver(app).receiveMessage{value: value}(srcChainId, srcApp, payload);
+        emit DeliveryRetried(guid);
+    }
+
+    function _park(
+        bytes32 guid,
+        uint32 srcChainId,
+        bytes32 srcApp,
+        bytes memory payload,
+        uint256 value,
+        bytes memory reason
+    ) private {
+        parked[guid] = _deliveryHash(srcChainId, srcApp, payload, value);
+        totalParked += value;
+        emit DeliveryParked(guid, srcChainId, srcApp, payload, value, reason);
+    }
+
+    function _deliveryHash(uint32 srcChainId, bytes32 srcApp, bytes memory payload, uint256 value)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(srcChainId, srcApp, payload, value));
     }
 }

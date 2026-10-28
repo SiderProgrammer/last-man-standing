@@ -161,8 +161,10 @@ configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
 until that collection exists.
 
 The LayerZero and Chainlink VRF adapters have so far only run against local
-mocks; see [docs/TODO.md](docs/TODO.md) for what a live two-chain run still
-needs.
+mocks. `npm run dev:fork` runs a hub and a spoke together, with a local relayer
+between them; open the client with `?chain=spoke` to stake from the spoke.
+[docs/TESTNET.md](docs/TESTNET.md) walks through the same thing on two public
+testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.
 
 ## Tests
 

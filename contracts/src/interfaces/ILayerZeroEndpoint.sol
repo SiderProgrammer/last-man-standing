@@ -3,9 +3,10 @@ pragma solidity 0.8.28;
 
 /// @notice The slice of LayerZero v2's `EndpointV2` the messenger adapter uses.
 /// @dev Shapes follow `ILayerZeroEndpointV2` and `ILayerZeroReceiver` from
-///      `@layerzerolabs/lz-evm-protocol-v2`. Kept local rather than vendored so
-///      the build has no extra dependency; check them against that package
-///      before the first testnet deployment (`docs/TODO.md` §2.1).
+///      `@layerzerolabs/lz-evm-protocol-v2`, checked field by field against
+///      version 3.0.168: the structs, `send`, `quote`, `setDelegate` and the
+///      receiver's three functions are identical. Kept local rather than
+///      vendored so the build has no extra dependency; re-check on an upgrade.
 struct Origin {
     uint32 srcEid;
     bytes32 sender;
@@ -38,6 +39,11 @@ interface ILayerZeroEndpoint {
         returns (MessagingReceipt memory);
 
     function quote(MessagingParams calldata params, address sender) external view returns (MessagingFee memory);
+
+    /// @dev The address allowed to configure this OApp's libraries and
+    ///      verifiers (DVNs) on the endpoint. Without one, only the OApp itself
+    ///      could, and it has no function for it.
+    function setDelegate(address delegate) external;
 }
 
 /// @notice LayerZero v2 receive path, implemented by an OApp.
