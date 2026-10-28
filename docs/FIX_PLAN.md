@@ -1,0 +1,280 @@
+# Fix plan: review findings and design answers
+
+This plan covers every finding from the architecture review (C1–C4, H1–H13, N1–N9, M1–M27,
+L1–L4, and the test gaps). It also builds in the design answers given on 2026-10-28. A
+coverage table at the end maps each finding to its step.
+
+Nothing in this plan has been implemented yet.
+
+---
+
+## 0. Decisions this plan is built on
+
+| # | Decision |
+|---|---|
+| Q0 | Portfolio piece, but built to the bar of a real product that holds money. |
+| Q1–Q3 | **Verifiable, not enforced:**<ul><li>players sign commits and reveals;</li><li>the browser checks everything it can from chain data;</li><li>any seated player can dispute a result during the challenge window, and the guardian decides;</li><li>`hold` stays.</li></ul> |
+| Q4–Q7 | **Play-mining stays, to distribute the token:**<ul><li>no market price inside the protocol;</li><li>rewards vest linearly over 6 months and give no votes while vesting;</li><li>votes need vested LMS staked in `StakedLms`;</li><li>a per-ETH cap plus a per-wallet cap per epoch;</li><li>liquid LMS can buy up to 50% off the match fee at a governance-set rate, and that LMS is burned;</li><li>the emission schedule can change.</li></ul> |
+| Q8–Q12 | **Multisig phase:**<ul><li>a 2-of-3 Safe, with all three keys held by the owner on separate devices;</li><li>guardian, treasury and Safe are separate addresses;</li><li>the Safe's veto and powers end on a fixed date written into the contract;</li><li>a guardian pause expires after 7 days unless governance extends it;</li><li>vesting rewards can't vote;</li><li>every role is documented in the README.</li></ul> |
+| Q13 | Hub on **Base**, minimum stake 0.001 ETH. |
+| Q14 | **Mixed-chain matches over a real value bridge.** No LayerZero executor value. |
+| Q17 | The Safe owns the VRF subscription. |
+| Q20 | **Sessions:**<ul><li>login is an off-chain EIP-712 session grant, checked by the server;</li><li>`SessionKeyDelegate` stays, without the session-key branch in `isValidSignature`;</li><li>`executeWithSession` becomes the real one-click `join`/`withdrawFor` feature, with caps and relayer-paid gas;</li><li>burner and embedded wallets get one-click play, and injected wallets keep the normal flow.</li></ul> |
+| Q22–Q24 | Wire protocol, storage layout and database schema can all break. The "behaviour-preserving" rule is dropped. One server instance. |
+
+### Defaults I picked where no answer was given (change any of them)
+
+| Topic | Default |
+|---|---|
+| Q15 spoke chains | **Arbitrum, Optimism and Ethereum L1** (Arbitrum Sepolia, OP Sepolia and Sepolia on testnet). All three use ETH for gas, so there is no price risk on stakes. L1 is where most ETH is held, and a join from L1 is one transaction, so the high L1 gas is paid once per join. |
+| Q16 stake asset | **Native ETH only.** |
+| VRF payment | **Native ETH** (VRF v2.5 `nativePayment: true`), so nobody has to keep LINK topped up. |
+| Q21 migration | Nothing is deployed with real users, so there's no migration path. Fresh deploys only. |
+| Treasury | The **timelock**, so spending fees always goes through governance. During the multisig phase that means the Safe proposing through the timelock. |
+| Guardian | A **separate hardware-wallet EOA**, not the Safe. |
+| Dispute when the guardian is silent | The dispute extends finalisation by 48 h. If the guardian neither vetoes nor dismisses by then, the result finalises. This is the liveness assumption, and the README states it. |
+| Guardian re-pause | After a pause ends, the guardian can't pause again for 7 days. Only governance can. This stops a pause being renewed forever. |
+| M22 (`Match` / `replay` duplication) | Keep two implementations, but pin both with frozen golden transcripts. TODO §3.4 argues for keeping them on purpose; the transcripts make that cheaper to live with. |
+
+---
+
+## 1. Problems in the answers to resolve first
+
+1. **The per-wallet cap doesn't stop sybils.** A farmer just uses more wallets. The real bound
+   is the per-ETH cap, together with:
+   - mining only in public, matchmade games (H7 below);
+   - vesting.
+
+   The README should say so plainly. **Suggestion:** lower `maxRewardPerEth` from 100k to
+   about 10k LMS/ETH. That raises farming break-even from 1e‑5 to 1e‑4 ETH per LMS.
+
+2. **"Real product" vs. "one person holds all 3 Safe keys".** That's fine on testnet. The
+   README must say that mainnet needs independent signers. Real-money gambling also needs a
+   licence, which is out of scope; the README should mention that in one line.
+
+3. **The Safe's 5M liquidity LMS after the phase ends.** If the Safe stakes it, it can still
+   clear the 1M quorum alone. **Suggestion:** keep it in a `LiquidityReserve` contract that:
+   - can't stake or delegate;
+   - can only send LMS to an address the timelock approves (the future pool).
+
+4. **Bridge: Across (decided).** Across lists SpokePools on Base Sepolia, Arbitrum Sepolia, OP
+   Sepolia and Sepolia. Stargate v2 has no Base Sepolia deployment, so it can't reach the hub.
+   Across's own docs describe testnet as unreliable:
+   - fills take about a minute;
+   - relayers have no incentives;
+   - unfilled deposits are **not** refunded.
+
+   So the main testnet flow uses a mock bridge, and the real integration is proven with fork
+   tests against the mainnet SpokePools. A real Across testnet join is an optional demo with
+   small amounts.
+
+5. **Relayer-paid gas is a subsidy someone can drain**, just like M11. Session calls need a
+   per-wallet daily quota and a minimum amount on `withdrawFor`.
+
+6. **Embedded wallets and 7702.** One-click play assumes the embedded wallet provider can
+   sign a 7702 authorisation for *our* delegate. Check this in step 5.1 before relying on it.
+   If it can't, embedded wallets fall back to the normal flow, like injected ones.
+
+---
+
+## Phase 1: Foundations and cleanup (do first; everything else builds on it)
+
+Mechanical work, so later diffs stay readable.
+
+| Step | Work | Findings |
+|---|---|---|
+| 1.1 | Add `forge-std` as a submodule and stop ignoring `contracts/lib/` for submodules. A fresh clone must pass `forge test`. | M27 |
+| 1.2 | **GitHub Actions CI:**<ul><li>`npm ci`, typecheck, lint, vitest;</li><li>`forge build`, `forge test`, `forge fmt --check`;</li><li>coverage report;</li><li>Slither with a triaged baseline file, so only new findings fail the build;</li><li>Aderyn (optional).</li></ul> | M27 |
+| 1.3 | Run `forge fmt` once. Replace the deprecated `deny_warnings`. Rename tests to one convention (`test_snake_case`). | M24, M27 |
+| 1.4 | **Remove the TODO §3.4 known bugs:**<ul><li>one `Errors.sol` with one signature each for `UntrustedMessenger`, `UnknownRequest`, `UntrustedPeer` and `UnknownMatch`;</li><li>one `BPS_DENOMINATOR` constant;</li><li>pin the selector in the five bare `vm.expectRevert()` calls;</li><li>`EscrowInvariant` uses the shared `Fixtures`;</li><li>seed the invariant campaign;</li><li>fix `tellFor`, `hpLeaders` O(n²), the `data-action` check, `net.ts off()` and connect re-entrancy;</li><li>put the port number in one config.</li></ul>Then delete §3.4 from the TODO. | M24, L4 (part) |
+| 1.5 | **Reorder `MatchStatus`:** Open, Pending, Live, Proposed, Settled, Cancelled. | M15 |
+| 1.6 | **Generate ABIs from `contracts/out`** (wagmi CLI or an abitype build step). Delete the hand-written `parseAbi` mirrors. | M14 |
+| 1.7 | **One zod schema for the whole server config**, checked at boot. The server refuses to start on `NaN` values, bad addresses or a missing `DATABASE_URL` in production. Reuse zod for frame parsing. | M9, M24 |
+| 1.8 | **Delete the backward-compat shims:**<ul><li>optional `MoveAim`;</li><li>`analyst?`;</li><li>`normaliseOriginChainId`;</li><li>nullable archive columns.</li></ul> | M26 |
+| 1.9 | **Error codes end to end:**<ul><li>forward `MatchError.code` over the wire;</li><li>the client switches on the code;</li><li>tests assert on codes, not message text.</li></ul> | L4 |
+| 1.10 | **Deployment registry:**<ul><li>`deployments/<chainId>.json` with every address and its deploy block, written by the deploy script;</li><li>the server, client and indexer read it;</li><li>verify contracts on Basescan;</li><li>an env switch between mocks and real VRF and bridge.</li></ul> | M17, M27, TODO §3.4 deploy items |
+
+---
+
+## Phase 2: Core contracts on Base
+
+| Step | Work | Findings |
+|---|---|---|
+| 2.1 | **Retarget the deploy to Base and Base Sepolia:**<ul><li>min stake 0.001 ETH;</li><li>windows suited to 2 s blocks;</li><li>drop the "fee doesn't cover L1 gas" comment.</li></ul> | H3 |
+| 2.2 | **L2 sequencer uptime check:** `finalize` reverts if the Base sequencer came back up less than a grace period ago. Read this from the Chainlink sequencer uptime feed. Otherwise an outage could quietly shorten the challenge or dispute window. | new (from H3) |
+| 2.3 | **Real VRF v2.5:**<ul><li>vendor `IVRFCoordinatorV2Plus` and `VRFV2PlusClient`;</li><li>build the request struct with `extraArgs({nativePayment: true})`;</li><li>the fulfil callback must never revert (store the result, then process);</li><li>the Safe owns the subscription and the adapter is a consumer;</li><li>add a Base Sepolia fork test.</li></ul> | H5 |
+| 2.4 | **Snapshot trust parameters per match:**<ul><li>`ProtocolConfig` keeps versioned attestor sets (`attestorSetVersion`, plus `isAttestor` and `threshold` by version);</li><li>the match stores the version and the oracle address at `lockMatch`;</li><li>`settle`, `abortMatch` and `fulfillRandomness` use the snapshot. That also fixes "callback after an oracle change reverts".</li></ul>`_setParams` enforces `timelock.getMinDelay() > joinWindow + settleWindow + disputeExtension` on-chain. | H2, L2 |
+| 2.5 | **Threshold sanity:** `isComplete()` requires `attestorThreshold > 0`. The setter requires `1 ≤ threshold ≤ attestorCount`, and `_checkQuorum` reverts on 0. | N5 |
+| 2.6 | **Cancel race:**<ul><li>an Open lobby past `joinDeadline` can be cancelled only if `seatCount < minSeats`, or once `joinDeadline + LOCK_GRACE` has passed;</li><li>a Pending lobby can be cancelled after the VRF timeout.</li></ul> | N4 |
+| 2.7 | **CEI in `lockMatch`:** write `randomnessRequest` before the oracle call. Each oracle request carries the matchId, so this needs no extra storage. | L2 |
+| 2.8 | **Expiring pause** (`ExpiringPause` abstract, OZ-style events):<ul><li>`pausedUntil`;</li><li>a guardian pause lasts 7 days;</li><li>the guardian has a 7-day cooldown before pausing again;</li><li>governance `extendPause(until)` and `unpause()`;</li><li>the guardian can also unpause early.</li></ul>`finalize`, `veto`, cancel and withdrawals stay unpausable. Replaces the hand-rolled pause. | H1, Q11, M24 |
+| 2.9 | **Storage:**<ul><li>terms (fee, payout schedule, windows) go into an immutable `termsId` record shared by every lobby with the same terms;</li><li>`MatchInfo` packs into fewer slots.</li></ul>Gas snapshots before and after. | M16 |
+| 2.10 | **Drop hand-written Yul:**<ul><li>use OZ `ECDSA` and `MessageHashUtils`, and a plain loop for the seat set;</li><li>delete unused `HashLib` Yul (`chainHistory`, `draw`);</li><li>record the gas difference.</li></ul>Attestors stay EOA-only, and the README says so. | M12, H6 |
+| 2.11 | **Payouts are pull-only:**<ul><li>no server push;</li><li>gasless withdrawal moves to `withdrawFor` via a session (step 5.3) or an EIP-712 signed withdrawal (step 6.4);</li><li>a minimum withdrawal amount.</li></ul> | M11 |
+| 2.12 | **`PlayerAvatars`:** `Ownable2Step` owned by the timelock. The README states the "one free mint per wallet" limit, or minting requires one finished match. | L2 |
+
+---
+
+## Phase 3: Governance and token (H1, C4)
+
+| Step | Work | Findings |
+|---|---|---|
+| 3.1 | **`MultisigPhase` contract**, holding the Safe's timelock powers until `PHASE_END`, a fixed constructor timestamp:<ul><li>it holds PROPOSER and CANCELLER on the timelock, and forwards `schedule`/`cancel` only from the Safe and only before `PHASE_END`;</li><li>after `PHASE_END`, anyone calls `retire()`, which renounces both roles.</li></ul>The Safe never holds timelock roles directly. The veto therefore ends on a date in code, and the Safe can't cancel its own removal. | H1, N7, Q9, Q10 |
+| 3.2 | **Separate roles in `Deploy.s.sol`:**<ul><li>Safe (2-of-3): proposes and cancels through `MultisigPhase`, owns the VRF subscription;</li><li>guardian: an EOA that can pause, veto and dismiss disputes;</li><li>treasury: the timelock;</li><li>owner of the avatar and fee router: the timelock.</li></ul>The deploy script asserts that no address holds two roles. | H1, Q8 |
+| 3.3 | **`LiquidityReserve` for the Safe's 5M LMS:** can't stake or delegate, and pays out only to addresses the timelock approves. Pending your answer to problem 3. | H1 |
+| 3.4 | **Reshape `StakedLms`:** drop ERC‑4626 and use an `ERC20Wrapper`-style 1:1 stake + `ERC20Votes` + cooldown + streamed ETH rewards. Plain `deposit` / `requestUnstake` / `claim`, with no misleading 4626 surface. | M13 |
+| 3.5 | **`RewardVesting`:**<ul><li>`RewardsDistributor.claim` no longer deposits sLMS; it adds the epoch's reward as a tranche;</li><li>each tranche vests linearly over 6 months from that epoch's `claimableFrom`;</li><li>`release(epochs[])` pays out liquid LMS, and the player stakes it to vote;</li><li>tranches are per epoch, so gas stays bounded (at most about 208 epochs).</li></ul> | C4, Q12 |
+| 3.6 | **Caps:**<ul><li>keep `maxRewardPerEth`, and consider lowering it (problem 1);</li><li>add `maxRewardPerWalletPerEpoch`, set by governance;</li><li>mining counts only **net fees from public, matchmade lobbies** (step 7.9). Private join-by-id lobbies earn nothing.</li></ul> | C4, H7 |
+| 3.7 | **LMS fee discount:**<ul><li>`LmsToken` becomes `ERC20Burnable`;</li><li>`ProtocolConfig.lmsPerEthDiscount` is set by governance, with `MAX_DISCOUNT_BPS = 5000`;</li><li>`join(matchId, lmsIn)` pulls LMS (permit supported) and **holds it in escrow**;</li><li>at `finalize` it is burned, and on cancel, veto or abort it is refunded with the stake;</li><li>the seat's fee drops by the discount;</li><li>mining uses the net fee.</li></ul> | Q5 |
+| 3.8 | **Invariant suites for `StakedLms` and `RewardsDistributor`/`RewardVesting`:**<ul><li>votes ≤ staked supply;</li><li>ETH rewards stay solvent;</li><li>Σ vested ≤ Σ granted ≤ budget;</li><li>nothing votes before it vests.</li></ul> | Tests |
+
+---
+
+## Phase 4: Verifiability (C3, H6)
+
+| Step | Work | Findings |
+|---|---|---|
+| 4.1 | **Signed moves:**<ul><li>commits are signed by the player's session key as EIP-712 `Commit{matchId, round, seat, commitment}`;</li><li>reveals are signed as `Reveal{matchId, round, seat, move, salt}`;</li><li>the session grant (step 5.1) links the key to the wallet, and the server checks both.</li></ul> | C3 |
+| 4.2 | **Commit receipts:**<ul><li>the server answers each commit with a signed receipt `{matchId, round, seat, commitment, receivedAt}`;</li><li>at commit close it broadcasts the full commitment set, not just seat numbers.</li></ul>A dropped reveal for a receipted commit is then provable. | C3 |
+| 4.3 | **`RoundRecord`** now holds every signed commitment, every reveal and the receipt hashes. `hashRound` covers the commitments. Update the frozen vectors in both TS and Solidity. | C3 |
+| 4.4 | **No entropy grinding:**<ul><li>round entropy is `roundSeed(seed, round, hash(sorted commitment set))`, fixed when the commit phase closes;</li><li>censoring a reveal can no longer change the dice;</li><li>`hold` seats are the one case where the server knows a move at commit time. The README says so.</li></ul> | C3, Q3 |
+| 4.5 | **Archive first:**<ul><li>the full transcript goes to Postgres, and optionally an IPFS pin, *before* `settle`;</li><li>`settle` carries `transcriptHash`, stored and emitted;</li><li>a failed archive write means no settle.</li></ul> | C3, H12 |
+| 4.6 | **On-chain dispute:**<ul><li>`dispute(matchId, evidenceHash)` can be called by any seated player, once each, inside the challenge window;</li><li>it pushes `finalize` back by `DISPUTE_EXTENSION` (48 h);</li><li>the guardian calls `veto` or `dismissDispute`;</li><li>if the guardian stays silent, the match finalises after the extension.</li></ul> | Q2 |
+| 4.7 | **Browser verification from chain:**<ul><li>seed from the `MatchStarted` event, `rulesHash` from the match, seats from `getSeats`;</li><li>replay the transcript fetched by `transcriptHash`;</li><li>check every signature;</li><li>check *own* moves against `localStorage`;</li><li>`forgetMatch` only after verification;</li><li>on mismatch, a one-click "Dispute" builds the evidence bundle and sends `dispute`.</li></ul> | C3 |
+| 4.8 | **Golden transcripts:** frozen full-match transcripts replayed by `Match`, by `replay` and by a Solidity test. One cross-language EIP‑712 `MatchResult` digest vector. | M22, Tests |
+| 4.9 | **Honest docs:**<ul><li>trust model: single operator + guardian, verifiable but not enforced;</li><li>`abortMatch` lets the operator refund any live match;</li><li>attestors are not yet independent.</li></ul> | H6, M25 |
+
+---
+
+## Phase 5: Sessions (C1, C2, M7)
+
+| Step | Work | Findings |
+|---|---|---|
+| 5.1 | **Login:**<ul><li>an EIP-712 `SessionGrant{wallet, sessionKey, domain, uri, chainId, issuedAt, expiresAt, nonce}`, shaped like SIWE so wallets bind it to the origin;</li><li>the server checks it with ecrecover, or ERC‑1271 *from the root wallet* for contract wallets;</li><li>the server then accepts nonces signed by the session key;</li><li>`ALLOWED_ORIGINS` must be set in production.</li></ul> | C1, C2, M7 |
+| 5.2 | **`SessionKeyDelegate.isValidSignature`** accepts only root-key signatures. The session-key branch is deleted. ERC‑7739 nested typed data is a stretch goal. | C1 |
+| 5.3 | **`executeWithSession`, the real feature:**<ul><li>`join` and `withdrawFor` on the escrow only;</li><li>a per-call value cap, a total spend cap, argument checks (escrow address, selector, `player == account`), expiry and nonce;</li><li>a relayer submits and pays gas, with a per-wallet daily quota (problem 5).</li></ul>Sign the authorisation with `toAccount`-style local accounts (burner or embedded). | C2, Q20 |
+| 5.4 | **Key storage and CSP:**<ul><li>a strict Content-Security-Policy;</li><li>no `innerHTML` with dynamic data;</li><li>the session key in IndexedDB as a non-extractable WebCrypto key where possible (stretch goal: P‑256 via RIP‑7212). Otherwise a short-lived secp256k1 key with a capped spend, as limited by step 5.3.</li></ul> | C1, M19 |
+| 5.5 | **README wallet matrix:** burner and embedded wallets get one-click play; injected wallets use the normal flow. Stretch goal: ERC‑4337 `validateUserOp`. | C2 |
+
+---
+
+## Phase 6: Cross-chain over a value bridge (H4, N2, N6)
+
+| Step | Work | Findings |
+|---|---|---|
+| 6.1 | **Across setup (short spike):**<ul><li>copy the full SpokePool addresses (testnet and mainnet) into the deployment registry from the Across docs or the `across-protocol/contracts` repo;</li><li>pin the Across contracts dependency;</li><li>make one small testnet deposit with a message, to confirm whether a contract recipient gets WETH or native ETH (I believe WETH, which the receiver would unwrap), and to measure fill time and fees through the `testnet.across.to/api` quote;</li><li>write down what happens to a fill whose handler reverts.</li></ul> | H4 |
+| 6.2 | **Delete:**<ul><li>`SpokeEscrow`;</li><li>`LayerZeroMessenger`, `MockMessenger` and `IMessenger`;</li><li>`receiveMessage` and the messenger-based `withdrawToChain`.</li></ul>No custom OApp remains, so N2 goes away. If a message-only OApp is ever added back, it must call `endpoint.setDelegate(timelock)`. | H4, N2, L2, TODO §3.4 |
+| 6.3 | **`SpokeRouter`** (no custody):<ul><li>quotes the fee (from the Across API, passed in by the client) and calls the Across SpokePool deposit with `stake + buffer`, an expiry and a message with `{matchId or queue ticket, hubRecipient}`;</li><li>`hubRecipient` is required when the caller has code, unless that code is a 7702 delegation designator (`0xef0100…`), because those are EOAs with the same address on every chain.</li></ul> | N6 |
+| 6.4 | **`BridgeJoinReceiver`** on the hub, implementing `handleV3AcrossMessage`:<ul><li>accepts calls only from the Base SpokePool, and trusts the token and amount it passes;</li><li>unwraps WETH if needed;</li><li>never reverts, and decodes inside try;</li><li>checks the amount it received ≥ stake;</li><li>tries to join, and credits any extra or a failed join to the recipient's pull balance on the hub;</li><li>`withdrawToChainFor(player, sig)`: an EIP-712 signed withdrawal that a relayer submits, with the bridge fee taken from the balance. Players with no Base gas can still get winnings and refunds back to their spoke.</li></ul> | H4 |
+| 6.5 | **Tests:** fork tests against the mainnet Across SpokePools (Base, Arbitrum, Optimism), a `MockAcrossSpokePool` for local and testnet runs, plus unit tests for every failure branch (amount too small, lobby full, deadline passed, bad payload). | Tests |
+
+---
+
+## Phase 7: Server
+
+| Step | Work | Findings |
+|---|---|---|
+| 7.1 | **Crash safety:**<ul><li>`finalise` is awaited inside a try/catch with a retry queue;</li><li>a process-level `unhandledRejection` handler logs instead of crashing;</li><li>`createArchive` never falls back silently (memory only with an explicit `ARCHIVE=memory`).</li></ul> | N3, H12 |
+| 7.2 | **Archive:** lower-case matchIds on save and load. Use a migration tool such as node-pg-migrate, one pool, and a repository layer. | N9, M10 |
+| 7.3 | **One `TxSender` per key:**<ul><li>viem `nonceManager`;</li><li>an in-flight set keyed by (action, matchId);</li><li>wait for receipts;</li><li>replace a stuck transaction with a higher fee.</li></ul> | H11 |
+| 7.4 | **Separate keys:** attestor, keeper/`TxSender`, session relayer and matchmaker ticket signer. Signing goes through a `Signer` interface, ready for KMS. The attestor signer runs as a separate small process that replays the transcript before it signs. The analyst moves to its own worker. | M1, M23 |
+| 7.5 | **Keeper:**<ul><li>cancels expired Open lobbies with too few players, and Pending lobbies past the VRF timeout;</li><li>prunes `tracked`;</li><li>the client gets a cancel button.</li></ul> | H8 |
+| 7.6 | **Restart handling:** take a snapshot of matches that are Live at startup and abandon only those. Do nothing until the first poll succeeds. | H9 |
+| 7.7 | **Logs:**<ul><li>the ranking comes from the archive;</li><li>if a log fallback is needed, it starts at the deploy block from the registry;</li><li>one chunked `getLogs` helper shared with `proposals.ts`;</li><li>multicall for match reads;</li><li>a confirmations depth for reorgs;</li><li>lobbies under other rules are hidden.</li></ul> | H10, M8 |
+| 7.8 | **Practice matches** never touch the relayer or the attestor key. | H13 |
+| 7.9 | **Matchmaking:**<ul><li>a queue per (stake, seats) tier;</li><li>the server assigns lobbies and signs a `JoinTicket{matchId, player, expiry}` that the escrow checks for public lobbies;</li><li>private lobbies (`isPrivate`) keep join-by-id and earn no play-mining.</li></ul>The README notes that players who queue together can still collude. | H7, C4 |
+| 7.10 | **Match start:**<ul><li>a ready phase: round 1 starts when every seat is connected or after N seconds;</li><li>push a "match live" event to seated players;</li><li>`watch` retries until the room exists.</li></ul> | M4 |
+| 7.11 | **Resumable rooms:** persist each round's commit/reveal log, so a restart resumes at the last resolved round instead of refunding. | M2 |
+| 7.12 | **Wire:** send deltas instead of the whole `publicState()`, and `msRemaining` instead of an absolute deadline. | M5, M6 |
+| 7.13 | **Proxy IP:** a `TRUSTED_PROXY_HOPS` setting picks the right-most untrusted `X-Forwarded-For` entry. XFF is ignored by default. | N8 |
+| 7.14 | **Rooms:** index rooms by matchId and socket. `watch` detaches from the previous room. | L1 |
+| 7.15 | **One instance (Q24):** documented as a limit. Rate limits and rooms stay local. | M3 |
+
+---
+
+## Phase 8: Client
+
+| Step | Work | Findings |
+|---|---|---|
+| 8.1 | **Chain guard:**<ul><li>the wallet client gets the hub chain;</li><li>`writeContract` no longer passes `chain: null`;</li><li>before `join` or `createMatch`, switch the chain or refuse.</li></ul> | N1, M19 |
+| 8.2 | **Small reactive store** (Preact Signals or a typed store with subscriptions). Rendering never sends anything: reveal sends move into actions. | M18 |
+| 8.3 | **Code-split** the arena, governance, staking and zap screens. Stop re-exporting `sim` and bots from `@lms/engine` into the browser. | M20 |
+| 8.4 | **Arena:** remove seats, call `destroy()` and free textures between matches. | L3 |
+| 8.5 | **UI for the new features:**<ul><li>verification result and Dispute button;</li><li>vesting view;</li><li>discount toggle;</li><li>matchmaking queue;</li><li>bridge join and withdraw-to-chain.</li></ul> | C3, C4, H4, H7 |
+
+---
+
+## Phase 9: Packages and docs
+
+| Step | Work | Findings |
+|---|---|---|
+| 9.1 | **Split `@lms/protocol`:**<ul><li>`@lms/consensus`: hashing, rules, EIP‑712, frozen vectors;</li><li>`@lms/contracts`: generated ABIs and the registry;</li><li>`@lms/api`: wire types and DTOs.</li></ul>UI analytics move to the client. | M21 |
+| 9.2 | **Analyst:** a single structured-output call in its own worker. | M23 |
+| 9.3 | **Docs pass:**<ul><li>remove history-narrating comments;</li><li>fix the stale counts and the `relayer.ts` reference;</li><li>cut `FEATURES.md` down;</li><li>add short ADRs for each decision above.</li></ul> | M25 |
+| 9.4 | **README:**<ul><li>threat model;</li><li>trust model;</li><li>roles table: Safe, guardian, treasury, timelock, `MultisigPhase` end date, VRF subscription owner, and who holds each key;</li><li>wallet matrix;</li><li>wash-trading economics;</li><li>"testnet only; mainnet needs independent signers and a licence".</li></ul> | H1, H6, C4, Q8 |
+
+---
+
+## Phase 10: Test bar before calling it done
+
+- Branch coverage ≥ 90% on every contract that moves value. Today it's 44% on config, 43% on LayerZero (now deleted), 33% on VRF and 61% on RewardsDistributor.
+- Escrow invariant handler:
+  - several concurrent matches;
+  - bounded preconditions, so lock, veto, withdraw and withdrawFor revert well under 20% of the time (today it's about 80%);
+  - a seeded campaign.
+- New invariants: dispute and pause expiry (a pause never outlives `pausedUntil` without governance), fee discount (escrowed LMS = Σ pending discounts), vesting, `StakedLms`.
+- Fork tests: VRF v2.5 on Base Sepolia, the chosen bridge, the sequencer feed.
+- Golden transcripts and an EIP‑712 vector in both languages.
+- A Slither baseline in CI with zero new findings.
+
+---
+
+## Order and dependencies
+
+```
+Phase 1 ─┬─> Phase 2 ─┬─> Phase 3 (governance/token)
+         │            ├─> Phase 4 (verifiability) ──> needs 5.1 for session-signed moves
+         │            └─> Phase 6 (Across, after the 6.1 setup)
+         └─> Phase 7 (server bugs N3, N8, H8–H13 can start right after Phase 1)
+Phase 5.1 (login grant) early: Phase 4 depends on it
+Phase 8 alongside the phase each UI change belongs to; 8.1 (N1) right away
+Phase 9 and 10 last, but tests land with every step
+```
+
+**Quick wins** (small and independent, can start as soon as Phase 1 is in): N1, N3, N4, N5, N8, N9, H8, H9, H11, H13, 2.7.
+
+---
+
+## Coverage: every finding mapped to a step
+
+| Finding | Step(s) | Finding | Step(s) |
+|---|---|---|---|
+| C1 | 5.1, 5.2, 5.4 | M5 / M6 | 7.12 |
+| C2 | 5.1, 5.3, 5.5 | M7 | 5.1 |
+| C3 | 4.1–4.7, 4.9 | M8 | 7.7 |
+| C4 | 3.5, 3.6, 7.9, 9.4 | M9 | 1.7 |
+| N1 | 8.1 | M10 | 7.2 |
+| N2 | 6.2 | M11 | 2.11, 5.3 |
+| N3 | 7.1 | M12 | 2.10 |
+| N4 | 2.6 | M13 | 3.4 |
+| N5 | 2.5 | M14 | 1.6 |
+| N6 | 6.3 | M15 | 1.5 |
+| N7 | 3.1 | M16 | 2.9 |
+| N8 | 7.13 | M17 | 1.10 |
+| N9 | 7.2 | M18 | 8.2 |
+| H1 | 2.8, 3.1–3.3, 9.4 | M19 | 5.4, 8.1 |
+| H2 | 2.4 | M20 | 8.3 |
+| H3 | 2.1, 2.2 | M21 | 9.1 |
+| H4 | 6.1–6.5 | M22 | 4.8 (kept, pinned) |
+| H5 | 2.3 | M23 | 7.4, 9.2 |
+| H6 | 2.10, 4.9 | M24 | 1.3, 1.4, 1.7, 2.8 |
+| H7 | 7.9, 3.6 | M25 | 4.9, 9.3 |
+| H8 | 7.5 | M26 | 1.8 |
+| H9 | 7.6 | M27 | 1.1, 1.2, 1.3, 1.10 |
+| H10 | 7.7 | L1 | 7.14 |
+| H11 | 7.3 | L2 | 2.4, 2.7, 2.12, 6.2 |
+| H12 | 4.5, 7.1 | L3 | 8.4 |
+| H13 | 7.8 | L4 | 1.4, 1.9 |
+| M1 | 7.4 | Test gaps | 3.8, 4.8, 6.5, Phase 10 |
+| M2 / M3 | 7.11 / 7.15 | Predictable practice bots | documented in 9.4, no change |
+| M4 | 7.10 | | |
