@@ -5,7 +5,8 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
-import {ZeroAddress} from "./Errors.sol";
+import {BPS_DENOMINATOR} from "./Constants.sol";
+import {UnknownMatch, UnknownRequest, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
@@ -100,7 +101,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         WrongStake
     }
 
-    uint16 private constant BPS_DENOMINATOR = 10_000;
     /// @notice Length of a fee epoch. Epoch `n` is `[n * FEE_EPOCH, (n + 1) * FEE_EPOCH)`.
     uint256 public constant FEE_EPOCH = 7 days;
 
@@ -159,7 +159,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error Paused();
     error NotGovernance();
     error NotGuardian();
-    error UnknownMatch(bytes32 matchId);
     error WrongStatus(bytes32 matchId, MatchStatus expected, MatchStatus actual);
     error StakeOutOfRange(uint128 stake);
     error SeatsOutOfRange(uint16 maxSeats);
@@ -170,9 +169,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error NotEnoughPlayers(uint16 seatCount, uint16 minSeats);
     error LobbyNotReady(bytes32 matchId);
     error NotOracle(address caller);
-    error UnknownRequest(bytes32 requestId);
-    error UntrustedMessenger(uint32 srcChainId, address caller);
-    error UntrustedPeer(uint32 srcChainId, bytes32 peer);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);

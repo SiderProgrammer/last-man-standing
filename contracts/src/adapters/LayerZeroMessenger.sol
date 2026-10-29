@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 
 import {ICrossChainMessenger, ICrossChainReceiver} from "../interfaces/ICrossChainMessenger.sol";
 import {ILayerZeroEndpoint, ILayerZeroReceiver, Origin} from "../interfaces/ILayerZeroEndpoint.sol";
-import {ZeroAddress} from "../Errors.sol";
+import {UntrustedPeer, ZeroAddress} from "../Errors.sol";
 
 /// @title LayerZeroMessenger
 /// @notice Adapts LayerZero v2 to the protocol's messenger interface, as an
@@ -95,7 +95,6 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
     error NotApp(address caller);
     error NotEndpoint(address caller);
     error UnknownChain(uint32 chainId);
-    error UntrustedPeer(uint32 eid, bytes32 sender);
     error NotParked(bytes32 guid);
     error ReceiveGasTooLow(uint128 gas);
     error NotEnoughGas(uint256 available, uint256 needed);

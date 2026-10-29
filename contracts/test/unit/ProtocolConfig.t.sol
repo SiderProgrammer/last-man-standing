@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 
@@ -49,10 +50,12 @@ contract ProtocolConfigTest is Fixtures {
     }
 
     function test_onlyOwnerCanMutate() public {
-        vm.expectRevert();
+        bytes memory notOwner =
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this));
+        vm.expectRevert(notOwner);
         config.setRulesHash(bytes32(uint256(1)));
 
-        vm.expectRevert();
+        vm.expectRevert(notOwner);
         config.setGuardian(address(this));
     }
 

@@ -2,14 +2,14 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {StdInvariant} from "forge-std/StdInvariant.sol";
 
-import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {BPS_DENOMINATOR} from "../../src/Constants.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
+import {Fixtures} from "../helpers/Fixtures.sol";
 
 /// @dev Actor that drives GameEscrow through random sequences of public calls.
 contract EscrowHandler is Test {
@@ -191,73 +191,26 @@ contract EscrowHandler is Test {
     }
 }
 
-contract EscrowInvariantTest is StdInvariant, Test {
-    GameEscrow internal escrow;
+/// @dev Runs on the shared `Fixtures`: the deployment every unit test sees,
+///      with its eight players as the actors and two of its three attestors
+///      signing.
+contract EscrowInvariantTest is Fixtures {
     EscrowHandler internal handler;
-    address internal treasury;
 
-    uint256 internal constant PK_A = 0xA11CE;
-    uint256 internal constant PK_B = 0xB0B;
+    function setUp() public override {
+        super.setUp();
 
-    function setUp() public {
-        address owner = makeAddr("owner");
-        treasury = makeAddr("treasury");
-
-        MockRandomnessOracle oracle = new MockRandomnessOracle();
-        SettlementHarness harness = new SettlementHarness();
-        ProtocolConfig config = _config(owner, address(oracle), harness.hashRulesDefault());
-        escrow = new GameEscrow(config);
-
-        address[] memory actors = new address[](6);
-        for (uint256 i = 0; i < actors.length; ++i) {
-            actors[i] = makeAddr(string.concat("p", vm.toString(i)));
-            vm.deal(actors[i], 1_000 ether);
+        address[] memory actors = new address[](players.length);
+        for (uint256 i = 0; i < players.length; ++i) {
+            actors[i] = players[i];
         }
 
-        uint256[] memory pks = new uint256[](2);
-        pks[0] = PK_A;
-        pks[1] = PK_B;
-
-        handler = new EscrowHandler(escrow, oracle, harness, actors, pks);
-        MockMessenger messenger = new MockMessenger();
+        handler = new EscrowHandler(escrow, oracle, harness, actors, _twoAttestors());
         handler.setMessenger(messenger);
         address guardian = handler.GUARDIAN();
-        uint32 remoteChain = handler.REMOTE_CHAIN();
-        bytes32 remotePeer = handler.REMOTE_PEER();
-        vm.startPrank(owner);
+        vm.prank(owner);
         config.setGuardian(guardian);
-        config.setRemoteChain(remoteChain, address(messenger), remotePeer);
-        vm.stopPrank();
         targetContract(address(handler));
-    }
-
-    /// @dev Split out of `setUp` only to keep its stack within the legacy pipeline's limit.
-    function _config(address owner, address oracle, bytes32 rulesHash)
-        private
-        returns (ProtocolConfig config)
-    {
-        ProtocolConfig.Params memory params = ProtocolConfig.Params({
-            feeBps: 500,
-            minSeats: 4,
-            maxSeats: 8,
-            joinWindow: 1 hours,
-            settleWindow: 1 hours,
-            minStake: 0.01 ether,
-            maxStake: 10 ether,
-            treasury: treasury
-        });
-        uint16[] memory payout = new uint16[](1);
-        payout[0] = 10_000;
-
-        vm.startPrank(owner);
-        config = new ProtocolConfig(owner, params, payout);
-        config.setRandomnessOracle(oracle);
-        config.setAttestor(vm.addr(PK_A), true);
-        config.setAttestor(vm.addr(PK_B), true);
-        config.setAttestorThreshold(2);
-        config.setChallengeWindow(1 hours);
-        config.setRulesHash(rulesHash);
-        vm.stopPrank();
     }
 
     function invariant_solvency() public view {
@@ -285,7 +238,7 @@ contract EscrowInvariantTest is StdInvariant, Test {
     /// @dev And it counts exactly the seats of the matches that settled in it:
     ///      nothing for a match still open, in play, refunded or vetoed.
     function invariant_epochFeesCountOnlySettledMatches() public view {
-        uint256 seatFee = (uint256(handler.STAKE()) * 500) / 10_000;
+        uint256 seatFee = (uint256(handler.STAKE()) * config.feeBps()) / BPS_DENOMINATOR;
         uint256 expectedTotal;
         for (uint256 e = 0; e < handler.epochCount(); ++e) {
             uint256 epoch = handler.epochs(e);

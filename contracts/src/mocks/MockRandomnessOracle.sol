@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IRandomnessOracle, IRandomnessConsumer} from "../interfaces/IRandomnessOracle.sol";
+import {UnknownRequest} from "../Errors.sol";
 
 /// @notice Test double for the randomness oracle.
 /// @dev Fulfilment is always a separate call, as with Chainlink VRF: request
@@ -28,7 +29,6 @@ contract MockRandomnessOracle is IRandomnessOracle {
 
     event RandomnessRequested(bytes32 indexed requestId, address indexed consumer, bytes32 context);
 
-    error UnknownRequest(bytes32 requestId);
     error AlreadyFulfilled(bytes32 requestId);
 
     /// @inheritdoc IRandomnessOracle

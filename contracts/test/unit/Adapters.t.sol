@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
 import {MockVrfCoordinator} from "../../src/mocks/MockVrfCoordinator.sol";
@@ -9,6 +10,7 @@ import {LayerZeroMessenger} from "../../src/adapters/LayerZeroMessenger.sol";
 import {MockLayerZeroEndpoint} from "../../src/mocks/MockLayerZeroEndpoint.sol";
 import {Origin} from "../../src/interfaces/ILayerZeroEndpoint.sol";
 import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
+import {UnknownRequest, UntrustedMessenger, UntrustedPeer} from "../../src/Errors.sol";
 
 contract AdapterTest is Fixtures {
     function test_vrfAdapterDeliversSeedToEscrow() public {
@@ -60,7 +62,7 @@ contract AdapterTest is Fixtures {
         uint256[] memory words = new uint256[](1);
         words[0] = 2;
         vm.prank(address(coordinator));
-        vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.UnknownRequest.selector, vrfId));
+        vm.expectRevert(abi.encodeWithSelector(UnknownRequest.selector, bytes32(vrfId)));
         adapter.rawFulfillRandomWords(vrfId, words);
     }
 
@@ -169,9 +171,7 @@ contract AdapterTest is Fixtures {
             abi.encode(_b32(address(b.spoke)), _b32(address(escrow)), abi.encode(bytes32(0), players[5]));
 
         vm.deal(address(b.endpoint), STAKE);
-        vm.expectRevert(
-            abi.encodeWithSelector(LayerZeroMessenger.UntrustedPeer.selector, SPOKE_EID, _b32(address(rogue)))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedPeer.selector, SPOKE_EID, _b32(address(rogue))));
         b.endpoint.deliver(address(b.hubLz), SPOKE_EID, _b32(address(rogue)), message, STAKE);
         assertFalse(b.hubLz.allowInitializePath(Origin(SPOKE_EID, _b32(address(rogue)), 0)));
         assertTrue(b.hubLz.allowInitializePath(Origin(SPOKE_EID, _b32(address(b.spokeLz)), 0)));
@@ -194,9 +194,7 @@ contract AdapterTest is Fixtures {
 
         assertFalse(escrow.hasSeat(matchId, players[6]));
         assertEq(b.hubLz.totalParked(), STAKE);
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, SPOKE_CHAIN, _b32(players[6]))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedPeer.selector, SPOKE_CHAIN, _b32(players[6])));
         b.hubLz.retry(guid, SPOKE_CHAIN, _b32(players[6]), payload, STAKE);
     }
 
@@ -243,9 +241,7 @@ contract AdapterTest is Fixtures {
         );
 
         // Still refused: the retry reverts and the delivery stays parked.
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.UntrustedMessenger.selector, SPOKE_CHAIN, address(b.hubLz))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedMessenger.selector, SPOKE_CHAIN, address(b.hubLz)));
         b.hubLz.retry(guid, SPOKE_CHAIN, _b32(address(b.spoke)), payload, STAKE);
         assertEq(b.hubLz.totalParked(), STAKE);
 
@@ -373,7 +369,7 @@ contract AdapterTest is Fixtures {
         assertEq(b.endpoint.delegates(address(b.hubLz)), timelock);
 
         vm.prank(players[0]);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, players[0]));
         b.hubLz.setDelegate(players[0]);
     }
 

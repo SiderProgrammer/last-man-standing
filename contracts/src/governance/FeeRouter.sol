@@ -5,6 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {PullPayable} from "../PullPayable.sol";
+import {BPS_DENOMINATOR} from "../Constants.sol";
 import {TransferFailed, ZeroAddress} from "../Errors.sol";
 import {StakedLms} from "./StakedLms.sol";
 
@@ -23,8 +24,6 @@ import {StakedLms} from "./StakedLms.sol";
 ///      Holds no ETH between transactions. It arrives only from the escrow, and
 ///      leaves in the same call.
 contract FeeRouter is Ownable2Step, ReentrancyGuardTransient {
-    uint16 public constant BPS_DENOMINATOR = 10_000;
-
     PullPayable public immutable escrow;
     StakedLms public immutable vault;
 

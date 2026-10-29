@@ -8,10 +8,8 @@ pragma solidity 0.8.28;
 ///      declared, so hoisting these changes no ABI and no revert data — every
 ///      caller and every off-chain decoder sees exactly what it saw before.
 ///
-///      Only errors that were already byte-identical live here. Ones that share
-///      a name but differ in arguments — `UntrustedMessenger`, `UnknownRequest`
-///      — are deliberately left alone, because unifying those *would* change
-///      selectors. They are recorded in `docs/TODO.md` §3.4.
+///      Every error that more than one contract raises lives here, with one
+///      signature, so a name always means the same selector.
 
 /// @notice A zero address was supplied where a real one is required.
 error ZeroAddress();
@@ -21,3 +19,16 @@ error TransferFailed(address to, uint256 amount);
 
 /// @notice Withdrawal attempted with an empty balance.
 error NothingToWithdraw();
+
+/// @notice No match exists with this id.
+error UnknownMatch(bytes32 matchId);
+
+/// @notice A randomness callback named a request that is not pending. VRF
+///         request ids are `uint256`; they are passed as `bytes32(id)`.
+error UnknownRequest(bytes32 requestId);
+
+/// @notice A cross-chain delivery came from a messenger not registered for its chain.
+error UntrustedMessenger(uint32 srcChainId, address caller);
+
+/// @notice A cross-chain delivery came from an unregistered sender on its chain.
+error UntrustedPeer(uint32 srcChainId, bytes32 peer);

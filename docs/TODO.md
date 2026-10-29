@@ -281,9 +281,9 @@ any of this is a deliberate, visible change rather than a silent one.
 
 - **CI:** `.github/workflows/ci.yml` runs typecheck, vitest and a 500-match `sim` on
   the TypeScript side, and `forge fmt --check`, `forge build` and `forge test` on the
-  Solidity side, plus a coverage report and Slither. Still open: no linter for the
-  TypeScript, `sol:snapshot:check` (waits on a seeded invariant campaign) and the deep
-  fuzz profile on a schedule.
+  Solidity side, plus a coverage report and Slither. It also runs
+  `sol:snapshot:check`, which is deterministic now that the fuzz seed is fixed. Still
+  open: no linter for the TypeScript, and the deep fuzz profile on a schedule.
 - **Static analysis:** Slither runs in CI against `contracts/slither-baseline.json`.
   Every accepted finding carries a triage note, and
   `scripts/slither-baseline.mjs` fails on a new finding or one without a note.

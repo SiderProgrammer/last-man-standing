@@ -5,7 +5,8 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
+import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
+import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -189,7 +190,7 @@ contract GameEscrowTest is Fixtures {
         stranger[1] = ATTESTOR_PK_A;
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, vm.addr(0xDEAD)));
         escrow.settle(matchId, 3, historyRoot, ranking, bad);
 
         address[] memory shuffled = new address[](4);
@@ -198,7 +199,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[2] = ranking[2];
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
-        vm.expectRevert();
+        vm.expectRevert(SeatSetLib.NotAPermutation.selector);
         escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
     }
 
@@ -352,15 +353,11 @@ contract GameEscrowTest is Fixtures {
         vm.deal(address(this), STAKE * 2);
         vm.deal(address(messenger), STAKE * 2);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.UntrustedMessenger.selector, uint32(421_614), address(this))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedMessenger.selector, uint32(421_614), address(this)));
         escrow.receiveMessage{value: STAKE}(421_614, peer, payload);
 
         vm.prank(address(messenger));
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1)))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1))));
         escrow.receiveMessage{value: STAKE}(421_614, bytes32(uint256(1)), payload);
     }
 

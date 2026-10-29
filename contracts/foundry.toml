@@ -22,6 +22,9 @@ ignore = ["test/**/*.sol", "script/**/*.sol"]
 exclude_lints = ["incorrect-shift"]
 
 [profile.default.fuzz]
+# Fixed, so fuzz and invariant campaigns (and their .gas-snapshot lines) are
+# reproducible. For a campaign on fresh randomness, pass `--fuzz-seed`.
+seed = "0x4c4d53"
 runs = 512
 max_test_rejects = 200_000
 

@@ -45,6 +45,8 @@ jobs:
       - run: forge fmt --check
       - run: forge build --sizes
       - run: forge test -vv
+      # The fuzz seed is fixed in foundry.toml, so this is deterministic.
+      - run: forge snapshot --snap .gas-snapshot --check
 
   coverage:
     name: Solidity coverage

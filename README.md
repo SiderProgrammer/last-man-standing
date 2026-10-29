@@ -182,7 +182,7 @@ npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of the above except the snapshot check, plus
+CI (`.github/workflows/ci.yml`) runs all of the above, plus
 `forge fmt --check`, a coverage report and Slither. Slither fails only on findings
 missing from `contracts/slither-baseline.json`, where every accepted finding has a
 triage note. To add one, run Slither with `--json contracts/slither.json`, then

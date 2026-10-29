@@ -296,7 +296,13 @@ contract SessionKeyDelegateTest is Test {
         bytes memory data = abi.encodeCall(Target.boom, ());
         bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SessionKeyDelegate.CallFailed.selector,
+                address(target),
+                abi.encodeWithSignature("Error(string)", "nope")
+            )
+        );
         SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
     }
 
