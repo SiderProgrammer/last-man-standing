@@ -7,11 +7,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
 import {ExpiringPause} from "./ExpiringPause.sol";
-import {BPS_DENOMINATOR, LOCK_GRACE, RANDOMNESS_TIMEOUT} from "./Constants.sol";
+import {BPS_DENOMINATOR, LOCK_GRACE, RANDOMNESS_TIMEOUT, SEQUENCER_GRACE_PERIOD} from "./Constants.sol";
 import {UnknownMatch, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
+import {ISequencerUptimeFeed} from "./interfaces/ISequencerUptimeFeed.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
 
@@ -204,6 +205,8 @@ contract GameEscrow is
     error ChallengeWindowClosed(uint40 deadline);
     error RankingMismatch();
     error NotAPermutation();
+    error SequencerDown();
+    error SequencerGracePeriod(uint256 until);
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -435,6 +438,10 @@ contract GameEscrow is
     /// @notice Pays out a proposed result once its challenge window has closed unvetoed.
     /// @dev Permissionless, and deliberately not paused: a pause must never
     ///      hold a result that has already survived its challenge window.
+    ///
+    ///      Not while the L2 sequencer is down, nor for `SEQUENCER_GRACE_PERIOD`
+    ///      after it comes back: nobody could veto during the outage, so
+    ///      without this it would quietly shorten the challenge window.
     /// @param ranking The ranking from `ResultProposed`.
     function finalize(bytes32 matchId, address[] calldata ranking) external nonReentrant {
         MatchInfo storage info = matchInfo[matchId];
@@ -443,6 +450,7 @@ contract GameEscrow is
         }
         if (block.timestamp < info.deadline) revert ChallengeWindowOpen(info.deadline);
         if (keccak256(abi.encode(ranking)) != info.rankingHash) revert RankingMismatch();
+        _checkSequencer();
 
         info.status = MatchStatus.Settled;
         totalEscrowed -= uint256(info.stake) * info.seatCount;
@@ -451,6 +459,15 @@ contract GameEscrow is
         _recordFees(info.stake, matchTerms.feeBps, ranking);
 
         emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
+    }
+
+    function _checkSequencer() private view {
+        address feed = config.sequencerUptimeFeed();
+        if (feed == address(0)) return;
+        (, int256 answer, uint256 startedAt,,) = ISequencerUptimeFeed(feed).latestRoundData();
+        if (answer != 0) revert SequencerDown();
+        uint256 until = startedAt + SEQUENCER_GRACE_PERIOD;
+        if (block.timestamp < until) revert SequencerGracePeriod(until);
     }
 
     /// @dev Adds every seat's fee to this epoch's totals, now that it is paid.

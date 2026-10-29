@@ -83,6 +83,12 @@ contract ProtocolConfig is Ownable2Step {
     /// @dev Longest a payout may be held for review.
     uint64 public constant MAX_CHALLENGE_WINDOW = 7 days;
 
+    /// @notice Chainlink's L2 sequencer uptime feed for this chain. Zero turns
+    ///         the check off, for a chain with no feed (Base Sepolia, a local node).
+    /// @dev While the sequencer is down nobody can veto, so its downtime would
+    ///      otherwise come out of the challenge window. See `GameEscrow.finalize`.
+    address public sequencerUptimeFeed;
+
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
     /// @notice Trusted peer contract per remote chain.
@@ -96,6 +102,7 @@ contract ProtocolConfig is Ownable2Step {
     event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
     event GuardianUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
+    event SequencerUptimeFeedUpdated(address indexed previous, address indexed current);
 
     error FeeTooHigh(uint16 feeBps);
     error InvalidSeatRange(uint16 minSeats, uint16 maxSeats);
@@ -228,6 +235,11 @@ contract ProtocolConfig is Ownable2Step {
         emit ChallengeWindowUpdated(challengeWindow, window);
         challengeWindow = window;
         _checkDelay();
+    }
+
+    function setSequencerUptimeFeed(address feed) external onlyOwner {
+        emit SequencerUptimeFeedUpdated(sequencerUptimeFeed, feed);
+        sequencerUptimeFeed = feed;
     }
 
     /// @notice True once everything a lobby needs from the config is set.
