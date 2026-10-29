@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ZERO_ADDRESS } from '@lms/protocol';
-import { loadConfig, relayerFrom, nullRelayer } from '@lms/server';
+import { ConfigError, loadConfig, relayerFrom, nullRelayer } from '@lms/server';
 
-/**
- * Characterisation tests for configuration parsing.
- *
- * Several of these assert that something plainly wrong happens. That is the
- * point: `loadConfig` validates nothing, and these pin the current behaviour so
- * that fixing it is a deliberate, visible change rather than a silent one. Each
- * is cross-referenced from `docs/TODO.md` §3.4.
- */
 describe('server configuration', () => {
   it('falls back to working defaults on an empty environment', () => {
     const config = loadConfig({});
@@ -31,21 +23,43 @@ describe('server configuration', () => {
     expect(config.rpcUrl).toBe('http://localhost:8545');
   });
 
-  it('turns a non-numeric duration into NaN rather than rejecting it', () => {
-    // Known wrong. A NaN commitMs makes Room's `now < deadlineAt` false
-    // forever, so every round resolves on the first tick and the match ends
-    // immediately, with nothing logged anywhere.
-    expect(loadConfig({ COMMIT_MS: 'twenty' }).commitMs).toBeNaN();
-    expect(loadConfig({ WS_PORT: '' }).port).toBe(0);
+  it('refuses a non-numeric duration instead of running on NaN', () => {
+    // A NaN commitMs would make Room's `now < deadlineAt` false forever, so
+    // every round would resolve on the first tick.
+    expect(() => loadConfig({ COMMIT_MS: 'twenty' })).toThrow(/COMMIT_MS must be a whole number/);
+    expect(() => loadConfig({ COMMIT_MS: '0' })).toThrow(/COMMIT_MS must be at least 1/);
+    expect(() => loadConfig({ WS_PORT: '-1' })).toThrow(ConfigError);
   });
 
-  it('accepts an escrow address that is not an address', () => {
-    // Known wrong: the field is a cast, not a check, so a typo in .env reaches
-    // viem instead of failing at boot.
-    const config = loadConfig({ ESCROW_ADDRESS: 'oops', RPC_URL: 'http://localhost:8545' });
+  it('treats a blank variable as unset', () => {
+    expect(loadConfig({ WS_PORT: '', ESCROW_ADDRESS: '', COMMIT_MS: '' })).toMatchObject({
+      port: 8787,
+      escrow: ZERO_ADDRESS,
+      commitMs: 20_000,
+    });
+  });
 
-    expect(config.escrow).toBe('oops');
-    expect(config.onChain).toBe(true);
+  it('refuses an address, key or URL that is not one', () => {
+    expect(() => loadConfig({ ESCROW_ADDRESS: 'oops' })).toThrow(/ESCROW_ADDRESS must be a 20-byte hex address/);
+    expect(() => loadConfig({ ATTESTOR_PK: '0x1234' })).toThrow(/ATTESTOR_PK must be a 32-byte hex private key/);
+    expect(() => loadConfig({ RPC_URL: 'localhost:8545 typo' })).toThrow(/RPC_URL must be an http\(s\) or ws\(s\) URL/);
+    expect(() => loadConfig({ TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY must be true or false/);
+    expect(() => loadConfig({ GATEWAY_LIMITS: '{nope' })).toThrow(/GATEWAY_LIMITS must be valid JSON/);
+  });
+
+  it('lists every problem at once', () => {
+    expect(() => loadConfig({ COMMIT_MS: 'x', REVEAL_MS: 'y', ESCROW_ADDRESS: 'z' })).toThrow(
+      /COMMIT_MS[\s\S]*REVEAL_MS[\s\S]*ESCROW_ADDRESS/,
+    );
+  });
+
+  it('refuses to run in production without a database unless told to keep memory', () => {
+    expect(() => loadConfig({ NODE_ENV: 'production' })).toThrow(/DATABASE_URL is required in production/);
+    expect(loadConfig({ NODE_ENV: 'production', ARCHIVE: 'memory' }).databaseUrl).toBe('');
+    expect(loadConfig({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://u:p@db/lms' }).databaseUrl).toBe(
+      'postgresql://u:p@db/lms',
+    );
+    expect(() => loadConfig({ ARCHIVE: 'postgres' })).toThrow(/ARCHIVE=postgres needs DATABASE_URL/);
   });
 
   it('reads the gateway limits, defaulting to permissive-but-bounded values', () => {
@@ -83,6 +97,7 @@ describe('server configuration', () => {
   it('silently reuses the attestor key as the keeper key', () => {
     // Known wrong: one key quietly takes three roles — result attestor, lobby
     // keeper, and (via index.ts) session relayer — with nothing logged.
+    // Separated in docs/FIX_PLAN.md step 7.4.
     const pk = `0x${'22'.repeat(32)}`;
     expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBe(pk);
     expect(loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: `0x${'33'.repeat(32)}` }).keeperPk).toBe(

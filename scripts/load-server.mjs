@@ -13,6 +13,8 @@ const UNLIMITED = 1_000_000;
 const defaults = {
   WS_PORT: '8789',
   NODE_ENV: 'production',
+  // A load test keeps nothing; production otherwise requires DATABASE_URL.
+  ARCHIVE: 'memory',
   MAX_CONNECTIONS: String(UNLIMITED),
   MAX_CONNECTIONS_PER_IP: String(UNLIMITED),
   MAX_PRACTICE_ROOMS: String(UNLIMITED),
