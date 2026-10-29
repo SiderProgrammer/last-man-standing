@@ -5,7 +5,7 @@ L1–L4, and the test gaps). It also builds in the design answers given on 2026-
 2026-10-29. A
 coverage table at the end maps each finding to its step.
 
-Nothing in this plan has been implemented yet.
+Phase 1 is implemented on the `design-rework-phase-1-foundations` branch. Nothing after it is.
 
 ---
 
@@ -87,6 +87,16 @@ Nothing in this plan has been implemented yet.
 ## Phase 1: Foundations and cleanup (do first; everything else builds on it)
 
 Mechanical work, so later diffs stay readable.
+
+**Done**, one commit per step (1.4 in two). Where it differs from the table:
+- 1.2 has no TypeScript linter yet; typecheck is the gate. CI also checks the gas
+  snapshot (deterministic now that 1.4 fixed the fuzz seed) and the generated ABIs.
+- 1.3: the convention is `test_camelCase`, which most tests already used.
+- 1.7: production without `DATABASE_URL` is refused unless `ARCHIVE=memory`, the switch 7.1
+  asks for.
+- 1.8 also made `hello.spokes` required, and removed `MatchSummary.reviewable`.
+- 1.10 writes `contracts/deployments/<chainId>.json`; the client gets addresses through
+  the server's `hello`, so the server is the only reader.
 
 | Step | Work | Findings |
 |---|---|---|
