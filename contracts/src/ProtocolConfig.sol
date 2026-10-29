@@ -194,7 +194,8 @@ contract ProtocolConfig is Ownable2Step {
 
     /// @notice True once everything a lobby needs from the config is set.
     function isComplete() external view returns (bool) {
-        return rulesHash != bytes32(0) && randomnessOracle != address(0) && challengeWindow != 0;
+        return rulesHash != bytes32(0) && randomnessOracle != address(0) && challengeWindow != 0
+            && attestorThreshold != 0;
     }
 
     /// @notice Registers, or with zero arguments removes, a remote chain.

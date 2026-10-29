@@ -90,7 +90,30 @@ contract ProtocolConfigTest is Fixtures {
 
         vm.prank(owner);
         fresh.setChallengeWindow(CHALLENGE_WINDOW);
+        // Nor is a window: with no quorum no result could ever settle.
+        vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
         unusable.createMatch(STAKE, 4);
+
+        vm.startPrank(owner);
+        fresh.setAttestor(attestorA, true);
+        fresh.setAttestorThreshold(1);
+        vm.stopPrank();
+        unusable.createMatch(STAKE, 4);
+    }
+
+    function test_thresholdMustBeBetweenOneAndTheAttestorCount() public {
+        vm.startPrank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(0), uint32(3))
+        );
+        config.setAttestorThreshold(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(4), uint32(3))
+        );
+        config.setAttestorThreshold(4);
+        config.setAttestorThreshold(3);
+        vm.stopPrank();
+        assertEq(config.attestorThreshold(), 3);
     }
 
     function test_challengeWindowIsBounded() public {

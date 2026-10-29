@@ -371,7 +371,8 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     function _checkQuorum(bytes32 digest, bytes calldata signatures) private view {
         address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
         uint32 threshold = config.attestorThreshold();
-        if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
+        // A zero threshold would accept an empty signature blob.
+        if (threshold == 0 || signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
         for (uint256 i = 0; i < signers.length; ++i) {
             if (!config.isAttestor(signers[i])) revert NotAnAttestor(signers[i]);
         }
