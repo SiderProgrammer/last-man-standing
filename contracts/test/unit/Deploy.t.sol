@@ -296,7 +296,8 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
-        assertFalse(vm.exists(string.concat(vm.projectRoot(), "/deployments/31337.json")));
+        // Relative to the project root, so the gas does not depend on where it is checked out.
+        assertFalse(vm.exists("deployments/31337.json"));
     }
 
     function test_guardianPausesAtOnce_butCannotUnpause() public {
