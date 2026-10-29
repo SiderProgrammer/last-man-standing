@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {BPS_DENOMINATOR} from "./Constants.sol";
 import {ZeroAddress} from "./Errors.sol";
 
@@ -12,7 +13,13 @@ import {ZeroAddress} from "./Errors.sol";
 ///      effect. The one thing that cannot wait out the delay is an emergency
 ///      stop, which is why the `guardian` exists alongside the owner.
 ///      `GameEscrow` reads this contract but never writes to it, and it
-///      snapshots the values that must not move underneath a running match.
+///      snapshots the values that must not move underneath a running match:
+///      the terms when a lobby opens, the oracle and attestor set when it locks.
+///
+///      A change queued in the timelock must not reach a match that was already
+///      open when it was queued, so the owner's delay has to outlast a whole
+///      match. That is checked here whenever the windows or the owner change;
+///      see `matchLifetime`.
 contract ProtocolConfig is Ownable2Step {
     /// @notice Economic and lobby parameters.
     struct Params {
@@ -49,11 +56,14 @@ contract ProtocolConfig is Ownable2Step {
     /// @notice Seed source for new matches.
     address public randomnessOracle;
 
-    /// @notice Addresses allowed to co-sign match results.
-    mapping(address attestor => bool allowed) public isAttestor;
-    uint32 public attestorCount;
-    /// @notice Signatures required to settle a match.
-    uint32 public attestorThreshold;
+    /// @notice The attestor set new matches lock under. Every change makes a
+    ///         new version; a match keeps the one it locked under.
+    /// @dev Zero means no set yet.
+    uint32 public attestorSetVersion;
+    mapping(uint32 version => address[]) private attestorsOf;
+    mapping(uint32 version => mapping(address attestor => bool)) private attestorIn;
+    /// @notice Signatures from `version`'s set required to settle a match.
+    mapping(uint32 version => uint32) public thresholdOf;
 
     /// @notice May pause the escrow, and veto a proposed result, immediately,
     ///         without the timelock delay.
@@ -71,6 +81,14 @@ contract ProtocolConfig is Ownable2Step {
     /// @dev Longest a payout may be held for review.
     uint64 public constant MAX_CHALLENGE_WINDOW = 7 days;
 
+    /// @notice How long after its join deadline a quorate lobby can only be
+    ///         locked, not cancelled.
+    uint64 public constant LOCK_GRACE = 10 minutes;
+    /// @notice How long a locked lobby waits for its seed before it may be cancelled.
+    uint64 public constant RANDOMNESS_TIMEOUT = 1 hours;
+    /// @notice How long a dispute holds back a result's payout.
+    uint64 public constant DISPUTE_EXTENSION = 48 hours;
+
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
     /// @notice Trusted peer contract per remote chain.
@@ -80,8 +98,7 @@ contract ProtocolConfig is Ownable2Step {
     event RulesHashUpdated(bytes32 indexed previous, bytes32 indexed current);
     event PayoutScheduleUpdated(uint16[] payoutBps);
     event RandomnessOracleUpdated(address indexed previous, address indexed current);
-    event AttestorUpdated(address indexed attestor, bool allowed);
-    event AttestorThresholdUpdated(uint32 previous, uint32 current);
+    event AttestorSetUpdated(uint32 indexed version, address[] attestors, uint32 threshold);
     event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
     event GuardianUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
@@ -93,7 +110,9 @@ contract ProtocolConfig is Ownable2Step {
     error PayoutScheduleEmpty();
     error PayoutScheduleTooLong(uint256 length, uint16 minSeats);
     error PayoutScheduleNotExact(uint256 totalBps);
-    error ThresholdOutOfRange(uint32 threshold, uint32 attestors);
+    error ThresholdOutOfRange(uint32 threshold, uint256 attestors);
+    error DuplicateAttestor(address attestor);
+    error DelayTooShort(uint256 delay, uint256 matchLifetime);
     error InvalidRulesHash();
     error InvalidChallengeWindow(uint64 window);
 
@@ -120,6 +139,32 @@ contract ProtocolConfig is Ownable2Step {
 
     function treasury() external view returns (address) {
         return params.treasury;
+    }
+
+    /// @notice Whether `account` is in the current attestor set.
+    function isAttestor(address account) external view returns (bool) {
+        return attestorIn[attestorSetVersion][account];
+    }
+
+    /// @notice Signatures the current attestor set requires.
+    function attestorThreshold() external view returns (uint32) {
+        return thresholdOf[attestorSetVersion];
+    }
+
+    function isAttestorAt(uint32 version, address account) external view returns (bool) {
+        return attestorIn[version][account];
+    }
+
+    function getAttestors(uint32 version) external view returns (address[] memory) {
+        return attestorsOf[version];
+    }
+
+    /// @notice The longest a match can take from its lobby opening to its
+    ///         payout: joining, the lock grace, waiting on the seed, playing,
+    ///         the challenge window and a dispute.
+    function matchLifetime() public view returns (uint256) {
+        return uint256(params.joinWindow) + LOCK_GRACE + RANDOMNESS_TIMEOUT + params.settleWindow
+            + challengeWindow + DISPUTE_EXTENSION;
     }
 
     /// @notice Total basis points actually paid out to players.
@@ -154,27 +199,25 @@ contract ProtocolConfig is Ownable2Step {
         randomnessOracle = oracle;
     }
 
-    /// @dev The threshold is re-validated on every membership change so the
-    ///      attestor set can never be shrunk below its own quorum.
-    function setAttestor(address attestor, bool allowed) external onlyOwner {
-        if (attestor == address(0)) revert ZeroAddress();
-        if (isAttestor[attestor] == allowed) return;
-
-        isAttestor[attestor] = allowed;
-        attestorCount = allowed ? attestorCount + 1 : attestorCount - 1;
-
-        if (attestorThreshold > attestorCount) {
-            revert ThresholdOutOfRange(attestorThreshold, attestorCount);
+    /// @notice Replaces the attestor set with a new version.
+    /// @dev Matches already locked keep the version they locked under, so a
+    ///      key removed here can still settle those. That is what the timelock
+    ///      delay covers: every such match ends before the change executes.
+    function setAttestorSet(address[] calldata attestors, uint32 threshold) external onlyOwner {
+        if (threshold == 0 || threshold > attestors.length) {
+            revert ThresholdOutOfRange(threshold, attestors.length);
         }
-        emit AttestorUpdated(attestor, allowed);
-    }
-
-    function setAttestorThreshold(uint32 threshold) external onlyOwner {
-        if (threshold == 0 || threshold > attestorCount) {
-            revert ThresholdOutOfRange(threshold, attestorCount);
+        uint32 version = attestorSetVersion + 1;
+        for (uint256 i = 0; i < attestors.length; ++i) {
+            address attestor = attestors[i];
+            if (attestor == address(0)) revert ZeroAddress();
+            if (attestorIn[version][attestor]) revert DuplicateAttestor(attestor);
+            attestorIn[version][attestor] = true;
         }
-        emit AttestorThresholdUpdated(attestorThreshold, threshold);
-        attestorThreshold = threshold;
+        attestorsOf[version] = attestors;
+        thresholdOf[version] = threshold;
+        attestorSetVersion = version;
+        emit AttestorSetUpdated(version, attestors, threshold);
     }
 
     /// @notice Sets the emergency pauser. The zero address removes it.
@@ -190,12 +233,13 @@ contract ProtocolConfig is Ownable2Step {
         if (window == 0 || window > MAX_CHALLENGE_WINDOW) revert InvalidChallengeWindow(window);
         emit ChallengeWindowUpdated(challengeWindow, window);
         challengeWindow = window;
+        _checkDelay();
     }
 
     /// @notice True once everything a lobby needs from the config is set.
     function isComplete() external view returns (bool) {
         return rulesHash != bytes32(0) && randomnessOracle != address(0) && challengeWindow != 0
-            && attestorThreshold != 0;
+            && attestorSetVersion != 0;
     }
 
     /// @notice Registers, or with zero arguments removes, a remote chain.
@@ -229,6 +273,26 @@ contract ProtocolConfig is Ownable2Step {
 
         params = newParams;
         emit ParamsUpdated(newParams);
+        _checkDelay();
+    }
+
+    /// @dev Also runs when ownership moves, so the config can never be handed
+    ///      to a timelock whose delay is too short.
+    function _transferOwnership(address newOwner) internal override {
+        super._transferOwnership(newOwner);
+        _checkDelay();
+    }
+
+    /// @dev The owner's delay must outlast a match, or a change queued while a
+    ///      match is open could execute before it ends. An owner with no code
+    ///      has no delay to read: that is a development deployment, or the
+    ///      deploy script before it hands the config over.
+    function _checkDelay() private view {
+        address currentOwner = owner();
+        if (currentOwner.code.length == 0) return;
+        uint256 delay = TimelockController(payable(currentOwner)).getMinDelay();
+        uint256 lifetime = matchLifetime();
+        if (delay <= lifetime) revert DelayTooShort(delay, lifetime);
     }
 
     function _setPayoutSchedule(uint16[] memory newSchedule) private {

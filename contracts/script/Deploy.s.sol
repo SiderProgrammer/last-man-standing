@@ -284,11 +284,8 @@ contract Deploy is Registry {
         config.setRandomnessOracle(oracle);
 
         address[] memory attestors = _attestors(deployer);
-        for (uint256 i = 0; i < attestors.length; ++i) {
-            config.setAttestor(attestors[i], true);
-        }
         // Majority by default: 1 of 1, 2 of 3, 3 of 5.
-        config.setAttestorThreshold(uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
+        config.setAttestorSet(attestors, uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
 
         config.setRulesHash(HashLib.hashRules(_rules()));
         config.setGuardian(safe);
@@ -343,7 +340,7 @@ contract Deploy is Registry {
         // A voter must still be staked when the proposal they voted for
         // executes: a vote counts from the snapshot, so an unstake requested
         // right after it has to outlast the voting period and the delay.
-        uint256 cooldown = vm.envOr("STAKE_COOLDOWN", uint256(7 days));
+        uint256 cooldown = vm.envOr("STAKE_COOLDOWN", uint256(10 days));
         uint256 votingPeriod = vm.envOr("VOTING_PERIOD", uint256(5 days));
         uint256 exposure = votingPeriod + _timelockDelay();
         if (cooldown <= exposure) revert CooldownTooShort(cooldown, exposure);
@@ -449,11 +446,11 @@ contract Deploy is Registry {
     }
 
     /// @dev A queued change must not be able to land on a match that was
-    ///      already open when it was queued: the oracle and attestor set are
-    ///      read live, not snapshotted, so players need time to see it coming.
-    ///      Checked against the match lifetime in `_handOver`.
+    ///      already open when it was queued, so the delay must outlast a whole
+    ///      match, dispute included. `ProtocolConfig` enforces it; `_handOver`
+    ///      checks first, for a clearer error.
     function _timelockDelay() private view returns (uint256) {
-        return vm.envOr("TIMELOCK_DELAY", uint256(1 days));
+        return vm.envOr("TIMELOCK_DELAY", uint256(3 days));
     }
 
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
@@ -467,25 +464,26 @@ contract Deploy is Registry {
         address safe = deployment.safe;
 
         uint256 delay = _timelockDelay();
-        ProtocolConfig.Params memory params = config.getParams();
-        uint256 matchLifetime = uint256(params.joinWindow) + params.settleWindow;
+        uint256 matchLifetime = config.matchLifetime();
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
-        // The hub messenger, if this script deployed one, is accepted in the
-        // same batch: like the config, never owned by a zero-delay timelock.
+        // The delay is raised first: the config refuses an owner whose delay
+        // is shorter than a match. The hub messenger, if this script deployed
+        // one, is accepted in the same batch: like the config, never owned by
+        // a zero-delay timelock.
         bool withLz = address(deployment.hubLz) != address(0);
         uint256 calls = withLz ? 3 : 2;
         address[] memory targets = new address[](calls);
         uint256[] memory values = new uint256[](calls);
         bytes[] memory payloads = new bytes[](calls);
-        targets[0] = address(config);
-        payloads[0] = abi.encodeCall(config.acceptOwnership, ());
+        targets[0] = address(timelock);
+        payloads[0] = abi.encodeCall(timelock.updateDelay, (delay));
+        targets[1] = address(config);
+        payloads[1] = abi.encodeCall(config.acceptOwnership, ());
         if (withLz) {
-            targets[1] = address(deployment.hubLz);
-            payloads[1] = abi.encodeCall(deployment.hubLz.acceptOwnership, ());
+            targets[2] = address(deployment.hubLz);
+            payloads[2] = abi.encodeCall(deployment.hubLz.acceptOwnership, ());
         }
-        targets[calls - 1] = address(timelock);
-        payloads[calls - 1] = abi.encodeCall(timelock.updateDelay, (delay));
         // The timelock marks executed operations with timestamp 1, so at the
         // in-memory dry run's starting timestamp of 1 a zero-delay operation
         // reads as already done. No real chain is there, and a cheatcode is

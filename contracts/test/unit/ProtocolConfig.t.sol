@@ -5,6 +5,8 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ZeroAddress} from "../../src/Errors.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 contract ProtocolConfigTest is Fixtures {
     function test_rejectsFeeAboveCap() public {
@@ -38,15 +40,31 @@ contract ProtocolConfigTest is Fixtures {
         config.setPayoutSchedule(tooLong);
     }
 
-    function test_cannotDropAttestorsBelowThreshold() public {
+    function test_everyAttestorChangeIsANewVersion_andOldVersionsStay() public {
+        uint32 first = config.attestorSetVersion();
+        address d = makeAddr("d");
         vm.prank(owner);
-        config.setAttestor(attestorC, false);
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(2), uint32(1))
-        );
-        config.setAttestor(attestorB, false);
-        assertEq(config.attestorCount(), 2);
+        config.setAttestorSet(_attestors(attestorA, attestorB, d), 3);
+
+        uint32 second = config.attestorSetVersion();
+        assertEq(second, first + 1);
+        assertTrue(config.isAttestor(d));
+        assertFalse(config.isAttestor(attestorC));
+        assertEq(config.attestorThreshold(), 3);
+
+        assertTrue(config.isAttestorAt(first, attestorC));
+        assertFalse(config.isAttestorAt(first, d));
+        assertEq(config.thresholdOf(first), 2);
+        assertEq(config.getAttestors(first)[2], attestorC);
+    }
+
+    function test_anAttestorSetHasNoDuplicatesOrZeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.DuplicateAttestor.selector, attestorA));
+        config.setAttestorSet(_attestors(attestorA, attestorB, attestorA), 2);
+        vm.expectRevert(ZeroAddress.selector);
+        config.setAttestorSet(_attestors(attestorA, attestorB, address(0)), 2);
+        vm.stopPrank();
     }
 
     function test_onlyOwnerCanMutate() public {
@@ -94,26 +112,72 @@ contract ProtocolConfigTest is Fixtures {
         vm.expectRevert(GameEscrow.ConfigIncomplete.selector);
         unusable.createMatch(STAKE, 4);
 
-        vm.startPrank(owner);
-        fresh.setAttestor(attestorA, true);
-        fresh.setAttestorThreshold(1);
-        vm.stopPrank();
+        vm.prank(owner);
+        fresh.setAttestorSet(_attestors(attestorA, attestorB, attestorC), 1);
         unusable.createMatch(STAKE, 4);
     }
 
     function test_thresholdMustBeBetweenOneAndTheAttestorCount() public {
+        address[] memory set = _attestors(attestorA, attestorB, attestorC);
         vm.startPrank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(0), uint32(3))
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(0), uint256(3))
         );
-        config.setAttestorThreshold(0);
+        config.setAttestorSet(set, 0);
         vm.expectRevert(
-            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(4), uint32(3))
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(4), uint256(3))
         );
-        config.setAttestorThreshold(4);
-        config.setAttestorThreshold(3);
+        config.setAttestorSet(set, 4);
+        config.setAttestorSet(set, 3);
         vm.stopPrank();
         assertEq(config.attestorThreshold(), 3);
+    }
+
+    /// @dev Owned by a timelock, the config refuses windows that would let a
+    ///      queued change land on a match that was open when it was queued.
+    function test_theOwnersDelayMustOutlastAMatch() public {
+        uint256 delay = config.matchLifetime() + 1;
+        TimelockController timelock = _timelock(delay);
+        vm.prank(owner);
+        config.transferOwnership(address(timelock));
+        vm.prank(address(timelock));
+        config.acceptOwnership();
+
+        bytes memory tooShort = abi.encodeWithSelector(ProtocolConfig.DelayTooShort.selector, delay, delay);
+        ProtocolConfig.Params memory params = config.getParams();
+        params.joinWindow += 1;
+        vm.prank(address(timelock));
+        vm.expectRevert(tooShort);
+        config.setParams(params);
+
+        vm.prank(address(timelock));
+        vm.expectRevert(tooShort);
+        config.setChallengeWindow(CHALLENGE_WINDOW + 1);
+    }
+
+    function test_theConfigCannotBeHandedToATimelockWithAShortDelay() public {
+        uint256 lifetime = config.matchLifetime();
+        TimelockController timelock = _timelock(lifetime);
+        vm.prank(owner);
+        config.transferOwnership(address(timelock));
+
+        vm.prank(address(timelock));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.DelayTooShort.selector, lifetime, lifetime));
+        config.acceptOwnership();
+    }
+
+    function test_matchLifetimeCoversEveryPhase() public view {
+        ProtocolConfig.Params memory params = config.getParams();
+        assertEq(
+            config.matchLifetime(),
+            uint256(params.joinWindow) + 10 minutes + 1 hours + params.settleWindow + CHALLENGE_WINDOW
+                + 48 hours
+        );
+    }
+
+    function _timelock(uint256 delay) private returns (TimelockController) {
+        address[] memory none = new address[](0);
+        return new TimelockController(delay, none, none, address(this));
     }
 
     function test_challengeWindowIsBounded() public {

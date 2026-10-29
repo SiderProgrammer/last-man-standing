@@ -67,7 +67,7 @@ contract DeployTest is Test {
         assertEq(d.config.pendingOwner(), address(0));
         assertEq(d.stakedLms.owner(), address(d.timelock));
         assertEq(d.feeRouter.owner(), address(d.timelock));
-        assertEq(d.timelock.getMinDelay(), 1 days);
+        assertEq(d.timelock.getMinDelay(), 3 days);
     }
 
     function test_governorProposes_safeOnlyCancels_deployerHoldsNothing() public view {

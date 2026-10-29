@@ -93,6 +93,10 @@ contract GameEscrow is
         /// @dev The ranking of a proposed result, by hash: it is in
         ///      `ResultProposed`, and whoever finalises passes it back.
         bytes32 rankingHash;
+        /// @dev Snapshotted at lock: the oracle asked for the seed, and the
+        ///      attestor set that signs the result.
+        address oracle;
+        uint32 attestorSetVersion;
     }
 
     /// @notice Why a seat could not be taken. `None` means it could.
@@ -218,7 +222,9 @@ contract GameEscrow is
             challengeWindow: config.challengeWindow(),
             challengeDeadline: 0,
             rounds: 0,
-            rankingHash: bytes32(0)
+            rankingHash: bytes32(0),
+            oracle: address(0),
+            attestorSetVersion: 0
         });
         matchPayoutBps[matchId] = config.getPayoutSchedule();
 
@@ -290,8 +296,11 @@ contract GameEscrow is
 
         // Every write before the call: the oracle answers with the match id,
         // so nothing about the request has to be recorded after it returns.
+        address oracle = config.randomnessOracle();
         info.status = MatchStatus.Pending;
-        requestId = IRandomnessOracle(config.randomnessOracle()).requestRandomness(matchId);
+        info.oracle = oracle;
+        info.attestorSetVersion = config.attestorSetVersion();
+        requestId = IRandomnessOracle(oracle).requestRandomness(matchId);
 
         emit MatchLocked(matchId, requestId, info.seatCount);
     }
@@ -299,10 +308,12 @@ contract GameEscrow is
     /// @inheritdoc IRandomnessConsumer
     /// @dev Only a Pending match takes a seed, so a second answer, or a late
     ///      one for a match already cancelled, reverts.
+    ///      The oracle is the one the match asked, not the current one: an
+    ///      oracle change must not strand a match already waiting on a seed.
     function fulfillRandomness(bytes32 matchId, bytes32 randomness) external {
-        if (msg.sender != config.randomnessOracle()) revert NotOracle(msg.sender);
-
         MatchInfo storage info = matchInfo[matchId];
+        if (msg.sender != info.oracle || msg.sender == address(0)) revert NotOracle(msg.sender);
+
         if (info.status != MatchStatus.Pending) {
             revert WrongStatus(matchId, MatchStatus.Pending, info.status);
         }
@@ -340,7 +351,9 @@ contract GameEscrow is
         if (rounds == 0) revert RoundsOutOfRange(rounds);
 
         _checkQuorum(
-            _hashTypedDataV4(SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)), signatures
+            info.attestorSetVersion,
+            _hashTypedDataV4(SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)),
+            signatures
         );
         _assertSeatSet(matchId, info.seatCount, ranking);
 
@@ -355,14 +368,14 @@ contract GameEscrow is
     }
 
     /// @dev Reverts unless `signatures` over `digest` come from a quorum of
-    ///      allowlisted attestors.
-    function _checkQuorum(bytes32 digest, bytes calldata signatures) private view {
+    ///      the attestor set the match locked under.
+    function _checkQuorum(uint32 version, bytes32 digest, bytes calldata signatures) private view {
         address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
-        uint32 threshold = config.attestorThreshold();
+        uint32 threshold = config.thresholdOf(version);
         // A zero threshold would accept an empty signature blob.
         if (threshold == 0 || signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
         for (uint256 i = 0; i < signers.length; ++i) {
-            if (!config.isAttestor(signers[i])) revert NotAnAttestor(signers[i]);
+            if (!config.isAttestorAt(version, signers[i])) revert NotAnAttestor(signers[i]);
         }
     }
 
@@ -484,7 +497,11 @@ contract GameEscrow is
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
-        _checkQuorum(_hashTypedDataV4(keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))), signatures);
+        _checkQuorum(
+            info.attestorSetVersion,
+            _hashTypedDataV4(keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))),
+            signatures
+        );
         _refundAll(matchId, info);
         emit MatchCancelled(matchId, "aborted by attestors");
     }

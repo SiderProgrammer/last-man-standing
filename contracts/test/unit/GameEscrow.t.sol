@@ -409,6 +409,25 @@ contract GameEscrowTest is Fixtures {
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
     }
 
+    /// @dev The oracle a match asked is the one that answers it, even after
+    ///      governance points new matches at another.
+    function test_fulfillRandomness_comesFromTheOracleTheMatchAsked() public {
+        bytes32 matchId = _createAndFill(4);
+        bytes32 requestId = escrow.lockMatch(matchId);
+
+        InstantOracle replacement = new InstantOracle();
+        vm.prank(owner);
+        config.setRandomnessOracle(address(replacement));
+
+        vm.prank(address(replacement));
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotOracle.selector, address(replacement)));
+        escrow.fulfillRandomness(matchId, bytes32(uint256(1)));
+
+        oracle.fulfill(requestId, bytes32(uint256(1)));
+        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
+        assertEq(escrow.getMatch(matchId).oracle, address(oracle));
+    }
+
     function test_fulfillRandomness_rejectsASecondAnswer() public {
         bytes32 matchId = _createAndFill(4);
         bytes32 requestId = escrow.lockMatch(matchId);

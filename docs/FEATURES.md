@@ -572,7 +572,7 @@ Defaults, all overridable through the deploy environment:
 | Setting | Default | Env |
 | --- | --- | --- |
 | LMS supply | 100,000,000, split as below | `LMS_SUPPLY` |
-| Unstake cooldown | 7 days | `STAKE_COOLDOWN` |
+| Unstake cooldown | 10 days | `STAKE_COOLDOWN` |
 | Staker reward payout | over 7 days | `REWARD_DURATION` |
 | Voting delay / period | 1 day / 5 days | `VOTING_DELAY`, `VOTING_PERIOD` |
 | Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
