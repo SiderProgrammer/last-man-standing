@@ -5,7 +5,6 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
 import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
@@ -199,7 +198,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[2] = ranking[2];
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
-        vm.expectRevert(SeatSetLib.NotAPermutation.selector);
+        vm.expectRevert(GameEscrow.NotAPermutation.selector);
         escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
     }
 

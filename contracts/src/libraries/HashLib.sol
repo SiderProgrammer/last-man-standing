@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {BPS_DENOMINATOR} from "../Constants.sol";
-
 /// @title HashLib
 /// @notice Byte-identical Solidity mirror of `@lms/protocol` hashing.
-/// @dev Every function uses `abi.encode` (or equivalent Yul) so a verifier
+/// @dev Every function uses `abi.encode` so a verifier
 ///      can recompute a history root independently of the TypeScript engine.
 ///      Changing the encodings here is a consensus break and must be mirrored
 ///      in `packages/protocol/src/game/hash.ts`.
@@ -55,34 +53,9 @@ library HashLib {
         return keccak256(abi.encode(matchId, rulesHash, seed));
     }
 
-    /// @dev Tiny hot path: two words, no ABI encoder.
-    function chainHistory(bytes32 previous, bytes32 roundHash) internal pure returns (bytes32 digest) {
-        assembly ("memory-safe") {
-            let buffer := mload(0x40)
-            mstore(buffer, previous)
-            mstore(add(buffer, 0x20), roundHash)
-            digest := keccak256(buffer, 0x40)
-        }
-    }
-
     /// @dev Entropy for one round's rolls. Same encoding as `roundSeed` in TS.
     function roundSeed(bytes32 seed, uint32 round, bytes32[] memory salts) internal pure returns (bytes32) {
         return keccak256(abi.encode(seed, round, salts));
-    }
-
-    /// @dev 256-bit draw from a round seed. Same encoding as `draw` in TS.
-    function draw(bytes32 seedOfRound, uint32 nonce) internal pure returns (uint256 value) {
-        assembly ("memory-safe") {
-            let buffer := mload(0x40)
-            mstore(buffer, seedOfRound)
-            mstore(add(buffer, 0x20), and(nonce, 0xffffffff))
-            value := keccak256(buffer, 0x40)
-        }
-    }
-
-    /// @dev Draw in `[0, 10000)`. Same encoding as `drawBps` in TS.
-    function drawBps(bytes32 seedOfRound, uint32 nonce) internal pure returns (uint256) {
-        return draw(seedOfRound, nonce) % BPS_DENOMINATOR;
     }
 
     function deriveMatchId(uint256 chainId, address escrow, uint256 nonce) internal pure returns (bytes32) {

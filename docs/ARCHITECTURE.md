@@ -154,7 +154,7 @@ packages/protocol   shared types, rules, hashing, EIP-712, wire format   (no I/O
 packages/engine     pure resolution kernel + match state machine + replay
 packages/server     WebSocket gateway, rooms, chain bridge, attestor, archive
 packages/client     PixiJS arena, wallet session, history and reads panels
-contracts/          escrow, config, Yul libraries, adapters
+contracts/          escrow, config, libraries, adapters
 ```
 
 The dependency direction is strictly one-way: `contracts` and `protocol` know nothing
@@ -426,12 +426,12 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
 
 - *Solvency.* `address(this).balance == totalOwed + totalEscrowed` — asserted as a
   Foundry invariant across random call sequences.
-- *The ranking must be exactly the seat set.* `SeatSetLib.assertPermutation` rejects an
-  omitted, repeated or foreign address, so a compromised quorum cannot redirect the pool.
+- *The ranking must be exactly the seat set.* `settle` rejects an omitted, repeated or
+  foreign address, so a compromised quorum cannot redirect the pool.
 - *Quorum without duplicates.* `SignatureLib.recoverAscending` requires strictly
   ascending signer addresses — one rule that rejects duplicates, canonicalises the set,
-  and costs one comparison per signature. `s` is bounded to the lower half-order and `v`
-  to {27, 28}, so a signature cannot be replayed in malleable form.
+  and costs one comparison per signature. Recovery is OpenZeppelin's `ECDSA`, which
+  rejects a malleable `s`. Attestors must therefore be EOAs.
 - *Terms are snapshotted.* A governance change cannot alter the deal a player already
   staked into.
 - *Pausing cannot trap funds.* `cancelMatch` and `withdraw` are deliberately not gated,
@@ -444,17 +444,10 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
 - *Both ends of a bridge are authenticated.* A trusted transport still relays messages
   from untrusted senders, so the messenger **and** the origin peer are checked.
 
-**Where Yul is used, and why**
-
-| Library | Technique | Reason |
-| --- | --- | --- |
-| `SettlementLib` | Hashes the ranking straight out of calldata into scratch memory | Settlement is the only path that moves value and hashes a variable-length array on every call; the ABI-encoder version copies the ranking twice |
-| `SignatureLib` | One reusable `ecrecover` frame for the whole batch | Runs `threshold` times per settlement |
-| `SeatSetLib` | EIP-1153 transient storage as a scratch set | Turns the permutation check from quadratic to linear, which matters at the 256-seat ceiling |
-| `HashLib` | Hand-rolled `chainHistory` / `drawBps` | Two-word and three-word hashes with no ABI encoder overhead |
-
-Every Yul routine has a Solidity reference implementation next to it and a differential
-fuzz test proving they agree, including with dirty high bits in calldata addresses.
+**No hand-written assembly.** Settlement hashing, signature recovery and the seat-set
+check are plain Solidity over OpenZeppelin's `EIP712` and `ECDSA`. The Yul versions
+saved about 1k gas on a four-seat settlement (0.1%), which did not pay for the review
+burden.
 
 ### Avatars
 

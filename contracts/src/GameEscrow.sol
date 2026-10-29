@@ -12,7 +12,6 @@ import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
-import {SeatSetLib} from "./libraries/SeatSetLib.sol";
 
 /// @title GameEscrow
 /// @notice Holds match stakes and pays out against an attested off-chain result.
@@ -111,7 +110,8 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     mapping(bytes32 matchId => address[]) private matchSeats;
     /// @notice Payout schedule snapshotted at lobby creation, in basis points.
     mapping(bytes32 matchId => uint16[]) private matchPayoutBps;
-    mapping(bytes32 matchId => mapping(address player => bool)) public hasSeat;
+    /// @dev A seat's position in `matchSeats`, plus one. Zero means no seat.
+    mapping(bytes32 matchId => mapping(address player => uint256)) private seatNumber;
     /// @notice Chain a seat originated from. Zero means this chain.
     mapping(bytes32 matchId => mapping(address player => uint32)) public seatOrigin;
     /// @notice Oracle request handle back to the match it belongs to.
@@ -176,6 +176,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error ChallengeWindowOpen(uint64 deadline);
     error ChallengeWindowClosed(uint64 deadline);
     error RankingMismatch();
+    error NotAPermutation();
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -351,15 +352,9 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (rounds == 0) revert RoundsOutOfRange(rounds);
 
         _checkQuorum(
-            SettlementLib.toTypedDataHash(
-                _domainSeparatorV4(), SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)
-            ),
-            signatures
+            _hashTypedDataV4(SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)), signatures
         );
-
-        // Reject any ranking that is not exactly the seat set: without this a
-        // quorum could redirect the pool to addresses that never staked.
-        SeatSetLib.assertPermutation(matchSeats[matchId], ranking);
+        _assertSeatSet(matchId, info.seatCount, ranking);
 
         uint64 deadline = uint64(block.timestamp) + info.challengeWindow;
         info.status = MatchStatus.Proposed;
@@ -379,6 +374,22 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
         for (uint256 i = 0; i < signers.length; ++i) {
             if (!config.isAttestor(signers[i])) revert NotAnAttestor(signers[i]);
+        }
+    }
+
+    /// @dev Reverts unless `ranking` is exactly the match's seats, each once:
+    ///      without this a quorum could redirect the pool to addresses that
+    ///      never staked. Seat numbers run from 1 to at most 256, so one word
+    ///      marks every seat seen.
+    function _assertSeatSet(bytes32 matchId, uint256 seatCount, address[] calldata ranking) private view {
+        if (ranking.length != seatCount) revert NotAPermutation();
+        uint256 seen;
+        for (uint256 i = 0; i < ranking.length; ++i) {
+            uint256 number = seatNumber[matchId][ranking[i]];
+            if (number == 0) revert NotAPermutation();
+            uint256 bit = 1 << (number - 1);
+            if (seen & bit != 0) revert NotAPermutation();
+            seen |= bit;
         }
     }
 
@@ -484,12 +495,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
-        _checkQuorum(
-            SettlementLib.toTypedDataHash(
-                _domainSeparatorV4(), keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))
-            ),
-            signatures
-        );
+        _checkQuorum(_hashTypedDataV4(keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))), signatures);
         _refundAll(matchId, info);
         emit MatchCancelled(matchId, "aborted by attestors");
     }
@@ -556,6 +562,10 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Views -------------------------------------------------------------
 
+    function hasSeat(bytes32 matchId, address player) public view returns (bool) {
+        return seatNumber[matchId][player] != 0;
+    }
+
     function getMatch(bytes32 matchId) external view returns (MatchInfo memory) {
         return matchInfo[matchId];
     }
@@ -594,7 +604,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         if (info.status != MatchStatus.Open) return JoinFailure.NotOpen;
         if (block.timestamp >= info.joinDeadline) return JoinFailure.WindowClosed;
         if (info.seatCount >= info.maxSeats) return JoinFailure.LobbyFull;
-        if (hasSeat[matchId][player]) return JoinFailure.AlreadyJoined;
+        if (hasSeat(matchId, player)) return JoinFailure.AlreadyJoined;
         if (value != info.stake) return JoinFailure.WrongStake;
         return JoinFailure.None;
     }
@@ -602,12 +612,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId) private {
         if (block.timestamp >= info.joinDeadline) revert JoinWindowClosed(matchId);
         if (info.seatCount >= info.maxSeats) revert LobbyFull(matchId);
-        if (hasSeat[matchId][player]) revert AlreadyJoined(matchId, player);
-
-        hasSeat[matchId][player] = true;
-        if (originChainId != 0) seatOrigin[matchId][player] = originChainId;
+        if (hasSeat(matchId, player)) revert AlreadyJoined(matchId, player);
 
         uint16 seat = info.seatCount;
+        seatNumber[matchId][player] = uint256(seat) + 1;
+        if (originChainId != 0) seatOrigin[matchId][player] = originChainId;
+
         matchSeats[matchId].push(player);
         info.seatCount = seat + 1;
         totalEscrowed += info.stake;

@@ -68,7 +68,7 @@ Around that core:
   the result is signed and can never touch a match. See
   [Match analyst](#match-analyst) below.
 
-For the full design — game rules, trust model, hashing, Yul optimisations,
+For the full design — game rules, trust model, hashing,
 cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
 see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
