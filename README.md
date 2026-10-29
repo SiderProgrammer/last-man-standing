@@ -94,9 +94,14 @@ which is what makes a match replayable by a third party.
 ## Running it locally
 
 ```bash
+git clone --recurse-submodules https://github.com/SiderProgrammer/gambling-project
 npm install
 cp .env.example .env
 ```
+
+The Solidity dependencies (`forge-std`, OpenZeppelin) are git submodules under
+`contracts/lib/`. In a clone made without `--recurse-submodules`, run
+`git submodule update --init` before `forge build`.
 
 The server's `dev` and `start` scripts read this root `.env`; variables already set
 in the shell win. Practice mode needs no chain at all. In two terminals:
