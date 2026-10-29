@@ -280,11 +280,13 @@ contract DeployTest is Test {
         script.run();
     }
 
-    /// @dev What the server reads. A test run never writes the file itself.
+    /// @dev What the server reads; `setUp`'s run never wrote the file itself.
+    ///      Built from that run rather than a fresh one, which would read
+    ///      `config/rules.json` by absolute path and so cost gas that depends
+    ///      on where the repository is checked out.
     function test_registryNamesEveryContract() public {
-        Deploy script = new Deploy();
-        Deploy.Deployment memory deployment = script.run();
-        string memory json = script.registry(deployment);
+        Deploy.Deployment memory deployment = d;
+        string memory json = new Deploy().registry(deployment);
 
         assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
         assertEq(vm.parseJsonUint(json, ".deployBlock"), block.number);
@@ -296,7 +298,6 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
-        // Relative to the project root, so the gas does not depend on where it is checked out.
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
