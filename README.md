@@ -53,14 +53,14 @@ Around that core:
 - **Governance** — every parameter lives in `ProtocolConfig`, owned by a
   timelock that `LmsGovernor` proposes to. Votes come from staked LMS (sLMS),
   which also earns the stakers' share of protocol fees in ETH via `FeeRouter`.
-  The Safe keeps a veto and can pause, but never unpause or trap funds.
+  The Safe keeps a veto and can pause for up to a week, but never trap funds.
 - **Play-mining** — half the LMS supply goes to players over four years, each
   week shared out by the fees they paid and claimed as sLMS, entirely on-chain
   through `RewardsDistributor`.
 - **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
-  session login with ERC-1271. The key only signs logins: on an L1 hub every
-  join is the player's own transaction.
+  session login with ERC-1271. The key only signs logins: every join is the
+  player's own transaction.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
 - **Match analyst** — after a match, Gemini writes a post-match analysis for
   the sidebar, with key moments checked against the published
@@ -142,15 +142,20 @@ sessions, since a pruned node eventually stops serving the fork block's state.
 
 ### With a chain
 
-Set `DEPLOYER_PK` in `.env`. On anything but a local node the script also
-requires `SAFE` (the governance multisig) and `ORACLE` (a `ChainlinkVrfAdapter`,
-whose owner must then register the escrow with `setConsumer`); the mocks it
-falls back to are for chain 31337 only. `MESSENGER` is optional — unset means a
-hub with no spokes yet. Then:
+The hub runs on Base (Base Sepolia for testnet). Set `DEPLOYER_PK` in `.env`.
+On anything but a local node the script also requires `SAFE` (the governance
+multisig) and `VRF_SUBSCRIPTION_ID`, a Chainlink VRF v2.5 subscription the Safe
+owns and funds with ETH. The script deploys the VRF adapter, makes the escrow
+its consumer and hands it to the timelock; the Safe then adds the adapter to
+the subscription. The mocks it falls back to are for chain 31337 only.
+`MESSENGER` is optional — unset means a hub with no spokes yet. Then:
 
 ```bash
 forge script script/Deploy.s.sol --root contracts --rpc-url $RPC_URL --broadcast
 ```
+
+On Base mainnet the config also reads Chainlink's sequencer uptime feed, so a
+result cannot be finalised during an outage or within an hour after it.
 
 Point the server at the deployment with `RPC_URL`, `ESCROW_ADDRESS` and
 `ATTESTOR_PK`, and restart it. It watches the escrow, locks lobbies once they
@@ -166,8 +171,9 @@ gather signatures from other attestors. The escrow enforces whatever quorum is
 configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
 until that collection exists.
 
-The LayerZero and Chainlink VRF adapters have so far only run against local
-mocks. `npm run dev:fork` runs a hub and a spoke together, with a local relayer
+The VRF adapter has a fork test against the Base Sepolia coordinator
+(`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`); the LayerZero
+adapter has so far only run against local mocks. `npm run dev:fork` runs a hub and a spoke together, with a local relayer
 between them; open the client with `?chain=spoke` to stake from the spoke.
 [docs/TESTNET.md](docs/TESTNET.md) walks through the same thing on two public
 testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.

@@ -12,6 +12,8 @@ import {ZapJoin} from "../src/periphery/ZapJoin.sol";
 import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
+import {ChainlinkVrfAdapter} from "../src/oracles/ChainlinkVrfAdapter.sol";
+import {IVRFCoordinatorV2Plus} from "../src/vendor/chainlink/IVRFCoordinatorV2Plus.sol";
 import {MockMessenger} from "../src/mocks/MockMessenger.sol";
 import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
 import {LayerZeroMessenger} from "../src/adapters/LayerZeroMessenger.sol";
@@ -23,7 +25,8 @@ import {FeeRouter} from "../src/governance/FeeRouter.sol";
 import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
-/// @notice Hub deploy: token-governed config, randomness oracle, attestors, hub escrow.
+/// @notice Hub deploy, on Base or Base Sepolia: token-governed config,
+///         randomness oracle, attestors, hub escrow.
 /// @dev Governance ends up as:
 ///
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
@@ -45,8 +48,14 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
 ///      `MOCKS` picks the mock oracle and messenger or real ones. It defaults
-///      to true on a local node and must be false anywhere else; with it false
-///      pass `ORACLE` (a `ChainlinkVrfAdapter`). Cross-chain joins need a
+///      to true on a local node and must be false anywhere else. With it false
+///      the oracle is Chainlink VRF v2.5: pass `VRF_SUBSCRIPTION_ID`, a native-
+///      funded subscription the Safe owns, and this script deploys a
+///      `ChainlinkVrfAdapter` for it, makes the escrow its consumer and hands
+///      it to the timelock. The Safe then adds the adapter to the subscription.
+///      The coordinator and key hash default to Chainlink's on Base and Base
+///      Sepolia (`VRF_COORDINATOR`, `VRF_KEY_HASH` override them). `ORACLE`
+///      passes an adapter deployed separately instead. Cross-chain joins need a
 ///      hub `LayerZeroMessenger`: pass `LZ_ENDPOINT` and this script deploys
 ///      one, points it at the escrow and hands it to the timelock with the
 ///      config — or pass `MESSENGER` for one deployed separately, which must
@@ -68,8 +77,24 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 contract Deploy is Registry {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
-    /// @dev The hub's home: Ethereum L1.
-    uint256 private constant MAINNET_CHAIN_ID = 1;
+    /// @dev The hub's home.
+    uint256 private constant BASE_CHAIN_ID = 8453;
+    uint256 private constant BASE_SEPOLIA_CHAIN_ID = 84_532;
+
+    /// @dev Chainlink VRF v2.5 on Base: the coordinator and the 2 gwei lane.
+    address private constant BASE_VRF_COORDINATOR = 0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634;
+    bytes32 private constant BASE_VRF_KEY_HASH =
+        0x00b81b5a830cb0a4009fbd8904de511e28631e62ce5ad231373d3cdad373ccab;
+    /// @dev On Base Sepolia, whose only lane is 30 gwei.
+    address private constant BASE_SEPOLIA_VRF_COORDINATOR = 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE;
+    bytes32 private constant BASE_SEPOLIA_VRF_KEY_HASH =
+        0x9e1344a1247c8a1785d0a4681a27152bffdb43666ae5bf7d14d24a5efd44bf71;
+    /// @dev Chainlink's L2 sequencer uptime feed on Base. Base Sepolia has none.
+    address private constant BASE_SEQUENCER_FEED = 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433;
+    /// @dev Blocks before the VRF node answers: 6 s on Base.
+    uint256 private constant DEFAULT_VRF_CONFIRMATIONS = 3;
+    /// @dev The escrow's `fulfillRandomness` costs about 50k; the rest is headroom.
+    uint256 private constant DEFAULT_VRF_CALLBACK_GAS = 200_000;
 
     /// @dev The LMS supply's split, in basis points. The timelock takes the
     ///      treasury and reserve shares, plus any rounding: see `_distribute`.
@@ -105,6 +130,9 @@ contract Deploy is Registry {
         /// @dev The hub messenger this script deployed, if any; it is also
         ///      `messenger`. Zero when `MESSENGER` was passed or no endpoint was.
         LayerZeroMessenger hubLz;
+        /// @dev The VRF adapter this script deployed, if any; it is also
+        ///      `oracle`. Zero with the mocks, or when `ORACLE` was passed.
+        ChainlinkVrfAdapter vrf;
         /// @dev The head when the script started: no contract here is older.
         uint256 deployBlock;
     }
@@ -139,11 +167,12 @@ contract Deploy is Registry {
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
         deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
-        (deployment.oracle, deployment.messenger, deployment.hubLz) = _transport(deployer);
+        _transport(deployment, deployer);
         _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
         _wireHubMessenger(deployment);
+        _wireVrf(deployment);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(
@@ -199,28 +228,32 @@ contract Deploy is Registry {
     ///      is open to anyone, so on any other chain whoever calls it first
     ///      chooses the seed of every match.
     ///
-    ///      Without mocks `ORACLE` is required — a `ChainlinkVrfAdapter` whose
-    ///      owner must then register the escrow with `setConsumer` — and a
+    ///      Without mocks the oracle is VRF (see the contract notes) and a
     ///      messenger is optional: neither `LZ_ENDPOINT` nor `MESSENGER` means a
-    ///      hub with no spokes yet. `MOCKS=false` on a local node is a fork
-    ///      run against the real ones.
-    function _transport(address deployer)
-        private
-        returns (address oracle, address messenger, LayerZeroMessenger hubLz)
-    {
-        oracle = vm.envOr("ORACLE", address(0));
-        messenger = vm.envOr("MESSENGER", address(0));
+    ///      hub with no spokes yet. `MOCKS=false` on a local node is a fork run
+    ///      against the real ones.
+    function _transport(Deployment memory deployment, address deployer) private {
+        address oracle = vm.envOr("ORACLE", address(0));
+        address messenger = vm.envOr("MESSENGER", address(0));
         address endpoint = vm.envOr("LZ_ENDPOINT", address(0));
         bool local = block.chainid == LOCAL_CHAIN_ID;
         bool mocks = _mocks(local);
 
         if (mocks && !local) revert MockOffLocal();
-        if (!mocks && oracle == address(0)) revert OracleRequired();
+        if (!mocks && oracle == address(0)) {
+            deployment.vrf = _vrfAdapter(deployer);
+            oracle = address(deployment.vrf);
+        }
         // Answers nothing on its own: something must call `fulfill` after each
         // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
         if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
+        deployment.oracle = oracle;
 
-        if (messenger != address(0)) return (oracle, messenger, hubLz);
+        if (messenger != address(0)) {
+            deployment.messenger = messenger;
+            return;
+        }
+        LayerZeroMessenger hubLz;
         if (endpoint == address(0) && mocks && vm.envOr("MOCK_LZ", false)) {
             endpoint = address(new MockLayerZeroEndpoint());
         }
@@ -236,6 +269,49 @@ contract Deploy is Registry {
         } else if (mocks) {
             messenger = address(new MockMessenger());
         }
+        deployment.messenger = messenger;
+        deployment.hubLz = hubLz;
+    }
+
+    /// @dev Owned by the deployer only until `_handOver`, like the config.
+    function _vrfAdapter(address deployer) private returns (ChainlinkVrfAdapter) {
+        uint256 subId = _vrfSubscription();
+        (address coordinator, bytes32 keyHash) = _vrfLane();
+        if (subId == 0 || coordinator == address(0)) revert OracleRequired();
+        return new ChainlinkVrfAdapter(
+            deployer,
+            IVRFCoordinatorV2Plus(coordinator),
+            keyHash,
+            subId,
+            uint16(vm.envOr("VRF_CONFIRMATIONS", DEFAULT_VRF_CONFIRMATIONS)),
+            uint32(vm.envOr("VRF_CALLBACK_GAS", DEFAULT_VRF_CALLBACK_GAS))
+        );
+    }
+
+    /// @dev `VRF_SUBSCRIPTION_ID`. Virtual so a test can set it without
+    ///      `vm.setEnv`, which every test in the process would see.
+    function _vrfSubscription() internal view virtual returns (uint256) {
+        return vm.envOr("VRF_SUBSCRIPTION_ID", uint256(0));
+    }
+
+    function _vrfLane() private view returns (address coordinator, bytes32 keyHash) {
+        if (block.chainid == BASE_CHAIN_ID) {
+            (coordinator, keyHash) = (BASE_VRF_COORDINATOR, BASE_VRF_KEY_HASH);
+        }
+        if (block.chainid == BASE_SEPOLIA_CHAIN_ID) {
+            (coordinator, keyHash) = (BASE_SEPOLIA_VRF_COORDINATOR, BASE_SEPOLIA_VRF_KEY_HASH);
+        }
+        coordinator = vm.envOr("VRF_COORDINATOR", coordinator);
+        keyHash = vm.envOr("VRF_KEY_HASH", keyHash);
+    }
+
+    /// @dev The escrow is the adapter's one consumer. Ownership follows in
+    ///      `_handOver`.
+    function _wireVrf(Deployment memory deployment) private {
+        ChainlinkVrfAdapter vrf = deployment.vrf;
+        if (address(vrf) == address(0)) return;
+        vrf.setConsumer(address(deployment.escrow), true);
+        vrf.transferOwnership(address(deployment.timelock));
     }
 
     /// @dev `MOCKS`, defaulting to whether this is a local node. Virtual so a
@@ -261,11 +337,11 @@ contract Deploy is Registry {
             feeBps: 500,
             minSeats: 4,
             maxSeats: 8,
-            joinWindow: 15 minutes,
-            settleWindow: 2 hours,
-            // The hub is Ethereum L1, where a join costs real gas. Below about
-            // 0.01 ETH the 5% fee is smaller than the gas of the join paying it.
-            minStake: 0.01 ether,
+            // Base confirms in about 2 s, so a lobby fills and a match settles
+            // in minutes; the windows only have to cover a slow server.
+            joinWindow: 10 minutes,
+            settleWindow: 1 hours,
+            minStake: 0.001 ether,
             maxStake: 1 ether,
             treasury: vm.envOr("TREASURY", safe)
         });
@@ -291,6 +367,9 @@ contract Deploy is Registry {
         config.setGuardian(safe);
         // How long the Safe has to replay a disputed match and veto it.
         config.setChallengeWindow(uint64(vm.envOr("CHALLENGE_WINDOW", uint256(1 hours))));
+        config.setSequencerUptimeFeed(
+            vm.envOr("SEQUENCER_FEED", block.chainid == BASE_CHAIN_ID ? BASE_SEQUENCER_FEED : address(0))
+        );
     }
 
     /// @dev The quorum is a multisig over results: independent attestor keys,
@@ -376,12 +455,12 @@ contract Deploy is Registry {
         deployment.config.setParams(params);
     }
 
-    /// @dev Nothing on Ethereum mainnet until there is legal advice on paying
+    /// @dev Nothing on Base mainnet until there is legal advice on paying
     ///      holders a share of a gambling protocol's revenue; governance can
     ///      raise it with one proposal. Half everywhere else, to show the
     ///      mechanism working.
     function _defaultStakerBps() internal view returns (uint256) {
-        return block.chainid == MAINNET_CHAIN_ID ? 0 : 5_000;
+        return block.chainid == BASE_CHAIN_ID ? 0 : 5_000;
     }
 
     /// @dev Hands out the whole supply, so the deployer ends with none of its
@@ -438,7 +517,7 @@ contract Deploy is Registry {
 
     /// @dev Required everywhere but a local node, like the Safe, so a missing
     ///      variable cannot quietly vest the team's tokens to the Safe.
-    function _teamBeneficiary(address safe) internal view returns (address team) {
+    function _teamBeneficiary(address safe) internal view virtual returns (address team) {
         team = vm.envOr("TEAM_BENEFICIARY", address(0));
         if (team != address(0)) return team;
         if (block.chainid != LOCAL_CHAIN_ID) revert TeamBeneficiaryRequired();
@@ -468,11 +547,12 @@ contract Deploy is Registry {
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
         // The delay is raised first: the config refuses an owner whose delay
-        // is shorter than a match. The hub messenger, if this script deployed
-        // one, is accepted in the same batch: like the config, never owned by
-        // a zero-delay timelock.
+        // is shorter than a match. The hub messenger and the VRF adapter, if
+        // this script deployed them, are accepted in the same batch: like the
+        // config, never owned by a zero-delay timelock.
         bool withLz = address(deployment.hubLz) != address(0);
-        uint256 calls = withLz ? 3 : 2;
+        bool withVrf = address(deployment.vrf) != address(0);
+        uint256 calls = 2 + (withLz ? 1 : 0) + (withVrf ? 1 : 0);
         address[] memory targets = new address[](calls);
         uint256[] memory values = new uint256[](calls);
         bytes[] memory payloads = new bytes[](calls);
@@ -483,6 +563,10 @@ contract Deploy is Registry {
         if (withLz) {
             targets[2] = address(deployment.hubLz);
             payloads[2] = abi.encodeCall(deployment.hubLz.acceptOwnership, ());
+        }
+        if (withVrf) {
+            targets[calls - 1] = address(deployment.vrf);
+            payloads[calls - 1] = abi.encodeCall(deployment.vrf.acceptOwnership, ());
         }
         // The timelock marks executed operations with timestamp 1, so at the
         // in-memory dry run's starting timestamp of 1 a zero-delay operation
