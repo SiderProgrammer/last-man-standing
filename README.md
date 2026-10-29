@@ -179,6 +179,7 @@ npm test                    # TypeScript: protocol, engine, server, client — i
 npm run typecheck           # whole monorepo, strict — including every test file
 npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
+npm run abis                # regenerate packages/protocol/src/chain/abis.ts after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 ```
 

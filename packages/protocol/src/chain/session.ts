@@ -1,11 +1,11 @@
 import {
   encodeAbiParameters,
   keccak256,
-  parseAbi,
   stringToHex,
   type Address,
   type Hex,
 } from 'viem';
+import { sessionKeyDelegateAbi } from './abis.js';
 
 /**
  * The `SessionKeyDelegate` surface, shared by the server and the client.
@@ -15,19 +15,7 @@ import {
  * every one of these functions reads and writes state belonging to the account
  * that delegated.
  */
-export const sessionKeyDelegateAbi = parseAbi([
-  'function grantSession(address sessionKey, uint48 validUntil, uint128 spendCap, address[] targets, bytes4[] selectors)',
-  'function revokeSession(address sessionKey)',
-  'function sessionActive(address sessionKey) view returns (bool)',
-  'function sessions(address sessionKey) view returns (uint48 validUntil, uint128 spendCap, uint128 spent)',
-  'function sessionNonce() view returns (uint256)',
-  'function permitted(address sessionKey, address target, bytes4 selector) view returns (bool)',
-  'function callDigest(address target, uint256 value, bytes data, uint256 nonce) view returns (bytes32)',
-  'function executeWithSession(address target, uint256 value, bytes data, uint256 nonce, bytes signature) payable returns (bytes)',
-  'function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)',
-  'event SessionGranted(address indexed sessionKey, uint48 validUntil, uint128 spendCap)',
-  'event SessionRevoked(address indexed sessionKey)',
-]);
+export { sessionKeyDelegateAbi };
 
 
 const DOMAIN_TYPEHASH = keccak256(

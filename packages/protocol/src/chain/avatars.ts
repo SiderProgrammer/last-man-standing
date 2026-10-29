@@ -1,4 +1,4 @@
-import { parseAbi } from 'viem';
+import { playerAvatarsAbi } from './abis.js';
 
 /**
  * The `PlayerAvatars` surface, shared by the server and the browser client.
@@ -7,19 +7,7 @@ import { parseAbi } from 'viem';
  * mints where they already play. Which deployment applies to a seat is decided
  * by the chain that seat staked from.
  */
-export const playerAvatarsAbi = parseAbi([
-  'function avatarOf(address player) view returns (uint256 tokenId, string uri)',
-  'function equipped(address owner) view returns (uint256)',
-  'function hasMinted(address minter) view returns (bool)',
-  'function totalMinted() view returns (uint256)',
-  'function maxSupply() view returns (uint256)',
-  'function tokenURI(uint256 tokenId) view returns (string)',
-  'function mint() returns (uint256)',
-  'function equip(uint256 tokenId)',
-  'function unequip()',
-  'event Minted(address indexed to, uint256 indexed tokenId)',
-  'event Equipped(address indexed owner, uint256 indexed tokenId)',
-]);
+export { playerAvatarsAbi };
 
 /**
  * The avatar a seat is wearing.
