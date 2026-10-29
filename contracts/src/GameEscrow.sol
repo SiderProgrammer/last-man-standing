@@ -5,6 +5,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
+import {ExpiringPause} from "./ExpiringPause.sol";
 import {BPS_DENOMINATOR} from "./Constants.sol";
 import {UnknownMatch, UnknownRequest, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
@@ -45,7 +46,14 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      ends. The escrow does nothing with them; they exist so a rewards
 ///      contract can pay players in proportion to the fees they paid, entirely
 ///      on-chain.
-contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainReceiver, IFeeLedger {
+contract GameEscrow is
+    EIP712,
+    PullPayable,
+    ExpiringPause,
+    IRandomnessConsumer,
+    ICrossChainReceiver,
+    IFeeLedger
+{
     enum MatchStatus {
         None,
         /// @dev Accepting joins.
@@ -128,8 +136,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     ///      `address(this).balance == totalOwed + totalEscrowed`.
     uint256 public totalEscrowed;
 
-    bool public paused;
-
     event MatchCreated(
         bytes32 indexed matchId, address indexed creator, uint128 stake, uint16 maxSeats, bytes32 rulesHash
     );
@@ -153,11 +159,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     /// @notice A cross-chain stake arrived for a seat that could no longer be
     ///         taken, and was credited back to the player here instead.
     event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
-    event PausedSet(bool paused);
 
-    error Paused();
-    error NotGovernance();
-    error NotGuardian();
     error WrongStatus(bytes32 matchId, MatchStatus expected, MatchStatus actual);
     error StakeOutOfRange(uint128 stake);
     error SeatsOutOfRange(uint16 maxSeats);
@@ -180,16 +182,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
-    }
-
-    modifier onlyGovernance() {
-        if (msg.sender != config.owner()) revert NotGovernance();
-        _;
-    }
-
-    modifier whenNotPaused() {
-        if (paused) revert Paused();
-        _;
     }
 
     // --- Lobby -------------------------------------------------------------
@@ -542,23 +534,17 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
     // --- Governance --------------------------------------------------------
 
-    /// @notice Halts new lobbies, joins, and settlement. Refunds stay open.
-    /// @dev Open to the guardian, which skips the timelock delay, and to
-    ///      governance, so a pause is still possible with no guardian set.
-    ///      `cancelMatch` and `withdraw` are deliberately not gated: pausing
-    ///      must never trap player funds.
-    function pause() external {
-        if (msg.sender != config.guardian() && msg.sender != config.owner()) revert NotGuardian();
-        paused = true;
-        emit PausedSet(true);
+    /// @dev The guardian pauses at once, for a week at most; see
+    ///      `ExpiringPause`. A pause halts new lobbies, joins, locking and
+    ///      settlement. `finalize`, `veto`, `cancelMatch` and withdrawals are
+    ///      never paused: a pause must never trap player funds or hold a result
+    ///      that has survived its challenge window.
+    function _isGuardian(address account) internal view override returns (bool) {
+        return account == config.guardian();
     }
 
-    /// @notice Resumes play. Governance only, so it always waits out the timelock.
-    /// @dev Deliberately not open to the guardian: lifting a pause that was put
-    ///      in place to stop an exploit re-opens it. See `ProtocolConfig.guardian`.
-    function unpause() external onlyGovernance {
-        paused = false;
-        emit PausedSet(false);
+    function _isGovernance(address account) internal view override returns (bool) {
+        return account == config.owner();
     }
 
     // --- Views -------------------------------------------------------------
@@ -600,7 +586,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         view
         returns (JoinFailure)
     {
-        if (paused) return JoinFailure.Paused;
+        if (paused()) return JoinFailure.Paused;
         if (info.status == MatchStatus.None) return JoinFailure.UnknownMatch;
         if (info.status != MatchStatus.Open) return JoinFailure.NotOpen;
         if (block.timestamp >= info.joinDeadline) return JoinFailure.WindowClosed;

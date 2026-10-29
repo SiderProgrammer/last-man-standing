@@ -436,8 +436,9 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
   staked into.
 - *Pausing cannot trap funds.* `cancelMatch` and `withdraw` are deliberately not gated,
   and cancellation is permissionless once the relevant deadline passes.
-- *Pausing is fast, resuming is slow.* The guardian Safe can `pause()` without the
-  timelock; only governance can `unpause()`, so lifting a pause waits out the delay.
+- *A guardian pause expires.* The guardian can `pause()` without the timelock, but only
+  for 7 days, and not again until 7 days after a pause ends. Only governance can
+  `extendPause(until)`, through the timelock. Either can `unpause()`.
 - *A veto can only refund.* `veto` voids a proposed result and credits every seat its
   stake back; it cannot redirect a payout. It is not paused, so it is always available
   inside the window.

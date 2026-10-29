@@ -301,14 +301,13 @@ contract DeployTest is Test {
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
-    function test_guardianPausesAtOnce_butCannotUnpause() public {
+    function test_guardianPausesAtOnce_forAWeek() public {
         vm.prank(safe);
         d.escrow.pause();
         assertTrue(d.escrow.paused());
 
-        vm.prank(safe);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        d.escrow.unpause();
+        vm.warp(block.timestamp + d.escrow.GUARDIAN_PAUSE());
+        assertFalse(d.escrow.paused());
     }
 
     /// @dev The Safe stakes enough of its supply to clear the threshold and

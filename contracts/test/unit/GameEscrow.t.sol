@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
@@ -91,9 +92,8 @@ contract GameEscrowTest is Fixtures {
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.IncorrectStake.selector, STAKE / 2, STAKE));
         escrow.joinFor{value: STAKE / 2}(matchId, players[1]);
 
-        vm.prank(owner);
-        escrow.pause();
-        vm.expectRevert(GameEscrow.Paused.selector);
+        _pause();
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
         escrow.joinFor{value: STAKE}(matchId, players[1]);
     }
 
@@ -312,8 +312,7 @@ contract GameEscrowTest is Fixtures {
     function test_crossChainJoin_refundsWhilePaused() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        vm.prank(owner);
-        escrow.pause();
+        _pause();
         _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.Paused);
 
         // The refund is an ordinary balance: withdrawable even while paused.
@@ -365,50 +364,15 @@ contract GameEscrowTest is Fixtures {
         _lockAndSeed(matchId, bytes32(uint256(6)));
         address[] memory ranking = _settleAndFinalize(matchId);
 
-        vm.prank(owner);
-        escrow.pause();
+        _pause();
 
         vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.Paused.selector);
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
         escrow.createMatch(STAKE, 4);
 
         vm.prank(ranking[0]);
         escrow.withdraw(ranking[0]);
         assertEq(escrow.withdrawable(ranking[0]), 0);
-    }
-
-    function test_pause_guardianCanPauseButOnlyGovernanceUnpauses() public {
-        address guardian = makeAddr("guardian");
-        vm.prank(owner);
-        config.setGuardian(guardian);
-
-        vm.prank(guardian);
-        escrow.pause();
-        assertTrue(escrow.paused());
-
-        vm.prank(guardian);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        escrow.unpause();
-
-        vm.prank(owner);
-        escrow.unpause();
-        assertFalse(escrow.paused());
-
-        vm.prank(owner);
-        escrow.pause();
-        assertTrue(escrow.paused());
-    }
-
-    function test_pause_rejectsEveryoneElse() public {
-        vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.NotGuardian.selector);
-        escrow.pause();
-
-        vm.prank(owner);
-        escrow.pause();
-        vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        escrow.unpause();
     }
 
     function test_cancel_liveMatchAfterDeadline() public {

@@ -105,6 +105,12 @@ contract Fixtures is Test {
         escrow.finalize(matchId, ranking);
     }
 
+    /// @dev Pauses the escrow the way governance does, for a day.
+    function _pause() internal {
+        vm.prank(owner);
+        escrow.extendPause(uint64(block.timestamp + 1 days));
+    }
+
     function _createAndFill(uint16 seats) internal returns (bytes32 matchId) {
         vm.prank(players[0]);
         matchId = escrow.createMatch(STAKE, seats);

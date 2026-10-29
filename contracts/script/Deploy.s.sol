@@ -30,7 +30,7 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///                                                           ^  (anyone may execute     StakedLms
 ///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
 ///         |                                                     has passed)
-///         +- guardian: may pause GameEscrow at once, never unpause;
+///         +- guardian: may pause GameEscrow at once, for a week at most;
 ///         |            may veto a proposed result, which refunds every stake
 ///         +- receives the liquidity share of LMS, to seed a pool
 ///         +- treasury: receives the non-staker share of fees
