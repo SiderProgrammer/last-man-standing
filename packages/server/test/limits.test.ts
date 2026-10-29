@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import { AUTH_PREFIX, type ClientMessage, type ServerMessage } from '@lms/protocol';
+import { MatchError } from '@lms/engine';
 import {
   CloseCode,
+  FrameError,
   Gateway,
   Heartbeat,
   KeyedLimiter,
   Lobby,
   MemoryArchive,
+  RequestError,
   TokenBucket,
+  errorFrame,
   nullRelayer,
   parseClientMessage,
   peerFrom,
@@ -63,7 +67,7 @@ class FakeSocket implements Socket {
   }
 
   lastError(): string | undefined {
-    return lastOfType(this.sent, 'error')?.message;
+    return lastOfType(this.sent, 'error')?.code;
   }
 }
 
@@ -200,6 +204,13 @@ describe('frame validation', () => {
   it('rejects an unknown message type', () => {
     expect(parse({ type: 'nope' })).toThrow(/unsupported/);
   });
+
+  it('puts the cause of a refusal in the error frame as a code', () => {
+    expect(errorFrame(new MatchError('BAD_PHASE', 'expected phase reveal')).code).toBe('BAD_PHASE');
+    expect(errorFrame(new RequestError('NOT_SEATED', 'you are not seated')).code).toBe('NOT_SEATED');
+    expect(errorFrame(new FrameError('payload is not valid JSON')).code).toBe('MALFORMED_FRAME');
+    expect(errorFrame(new Error('rpc timed out'))).toEqual({ type: 'error', code: 'INTERNAL', message: 'rpc timed out' });
+  });
 });
 
 describe('admission', () => {
@@ -305,7 +316,7 @@ describe('message limits', () => {
     await login(socket);
     await socket.deliver({ type: 'practice', bots: 3 });
     for (let i = 0; i < 5; i += 1) await socket.deliver({ type: 'lobbies' });
-    expect(socket.lastError()).toMatch(/slow down/);
+    expect(socket.lastError()).toBe('RATE_LIMITED');
 
     // The general bucket is empty; a commit still reaches the room.
     const errors = socket.sent.filter((message) => message.type === 'error').length;

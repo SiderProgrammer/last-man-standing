@@ -186,8 +186,17 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'error':
-      if (onLoginRejected()) break;
-      toast(message.message);
+      onError(message);
       break;
+  }
+}
+
+function onError(message: Extract<ServerMessage, { type: 'error' }>): void {
+  switch (message.code) {
+    case 'BAD_SIGNATURE':
+      if (!onLoginRejected()) toast(message.message);
+      return;
+    default:
+      toast(message.message);
   }
 }

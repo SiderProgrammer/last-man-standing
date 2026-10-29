@@ -44,6 +44,7 @@ export {
   type Relayer,
 } from './chain/attestor.js';
 export { BotDriver } from './bots/bots.js';
+export { RequestError } from './errors.js';
 export { FrameError, errorFrame, parseClientMessage } from './gateway/frames.js';
 export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
 export {

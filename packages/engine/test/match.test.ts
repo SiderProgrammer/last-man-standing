@@ -39,7 +39,7 @@ describe('commit / reveal lifecycle', () => {
     // A commitment computed for round 2 must not be revealable in round 1.
     match.submitCommit(0, commitMove(setup.matchId, 2, 0, move));
     match.openRevealPhase();
-    expect(() => match.submitReveal(0, move)).toThrow(/does not match its commitment/);
+    expect(() => match.submitReveal(0, move)).toThrow(expect.objectContaining({ code: 'COMMITMENT_MISMATCH', message: expect.stringMatching(/does not match its commitment/) }));
   });
 
   it('binds a commitment to its seat so it cannot be claimed by another player', () => {
@@ -49,7 +49,7 @@ describe('commit / reveal lifecycle', () => {
 
     match.submitCommit(1, commitMove(setup.matchId, 1, 0, move));
     match.openRevealPhase();
-    expect(() => match.submitReveal(1, move)).toThrow(/does not match its commitment/);
+    expect(() => match.submitReveal(1, move)).toThrow(expect.objectContaining({ code: 'COMMITMENT_MISMATCH', message: expect.stringMatching(/does not match its commitment/) }));
   });
 
   it('refuses a second commitment from the same seat in one round', () => {
@@ -58,13 +58,13 @@ describe('commit / reveal lifecycle', () => {
     const commitment = commitMove(setup.matchId, 1, 0, sealed(Action.Guard, 0, 'salt'));
 
     match.submitCommit(0, commitment);
-    expect(() => match.submitCommit(0, commitment)).toThrow(/already committed/);
+    expect(() => match.submitCommit(0, commitment)).toThrow(expect.objectContaining({ code: 'ALREADY_COMMITTED', message: expect.stringMatching(/already committed/) }));
   });
 
   it('refuses a reveal from a seat that never committed', () => {
     const match = new Match(setupFor(4));
     match.openRevealPhase();
-    expect(() => match.submitReveal(2, sealed(Action.Charge, 0, 'salt'))).toThrow(/did not commit/);
+    expect(() => match.submitReveal(2, sealed(Action.Charge, 0, 'salt'))).toThrow(expect.objectContaining({ code: 'NO_COMMITMENT', message: expect.stringMatching(/did not commit/) }));
   });
 
   it('rejects illegal targets at reveal time', () => {
@@ -72,7 +72,7 @@ describe('commit / reveal lifecycle', () => {
     const match = new Match(setup);
     match.submitCommit(0, commitMove(setup.matchId, 1, 0, sealed(Action.Strike, 0, 'salt')));
     match.openRevealPhase();
-    expect(() => match.submitReveal(0, sealed(Action.Strike, 0, 'salt'))).toThrow(/cannot strike itself/);
+    expect(() => match.submitReveal(0, sealed(Action.Strike, 0, 'salt'))).toThrow(expect.objectContaining({ code: 'INVALID_MOVE', message: expect.stringMatching(/cannot strike itself/) }));
   });
 
   it('rejects a Guard or Charge its cooldown rules out, and shows the cooldown publicly', () => {
@@ -93,8 +93,8 @@ describe('commit / reveal lifecycle', () => {
     match.submitCommit(0, commitMove(setup.matchId, 2, 0, again));
     match.submitCommit(1, commitMove(setup.matchId, 2, 1, stack));
     match.openRevealPhase();
-    expect(() => match.submitReveal(0, again)).toThrow(/cannot guard again yet/);
-    expect(() => match.submitReveal(1, stack)).toThrow(/cannot charge again yet/);
+    expect(() => match.submitReveal(0, again)).toThrow(expect.objectContaining({ code: 'INVALID_MOVE', message: expect.stringMatching(/cannot guard again yet/) }));
+    expect(() => match.submitReveal(1, stack)).toThrow(expect.objectContaining({ code: 'INVALID_MOVE', message: expect.stringMatching(/cannot charge again yet/) }));
 
     // The lost moves count as no-shows: no Guard, and every strike lands.
     const record = match.resolve();
@@ -104,9 +104,9 @@ describe('commit / reveal lifecycle', () => {
   it('enforces phase ordering', () => {
     const setup = setupFor(4);
     const match = new Match(setup);
-    expect(() => match.submitReveal(0, sealed(Action.Charge, 0, 'salt'))).toThrow(/expected phase reveal/);
+    expect(() => match.submitReveal(0, sealed(Action.Charge, 0, 'salt'))).toThrow(expect.objectContaining({ code: 'BAD_PHASE', message: expect.stringMatching(/expected phase reveal/) }));
     match.openRevealPhase();
-    expect(() => match.submitCommit(0, bytes32('x'))).toThrow(/expected phase commit/);
+    expect(() => match.submitCommit(0, bytes32('x'))).toThrow(expect.objectContaining({ code: 'BAD_PHASE', message: expect.stringMatching(/expected phase commit/) }));
   });
 
   it('reports when the commit and reveal windows can close early', () => {
@@ -219,7 +219,7 @@ describe('match completion', () => {
 
   it('refuses to rank a match that is still running', () => {
     const match = new Match(setupFor(4));
-    expect(() => match.ranking()).toThrow(/has not finished/);
+    expect(() => match.ranking()).toThrow(expect.objectContaining({ code: 'BAD_PHASE', message: expect.stringMatching(/has not finished/) }));
   });
 
   it('resolves a lobby where some players never reveal', () => {

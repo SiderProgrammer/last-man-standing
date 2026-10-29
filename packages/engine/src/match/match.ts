@@ -9,6 +9,7 @@ import {
   isLegalAction,
   MatchPhase,
   type ActionValue,
+  type MatchErrorCode,
   type MatchPhaseValue,
   type MatchResult,
   type Move,
@@ -21,16 +22,6 @@ import {
   ZERO_SALT,
 } from '@lms/protocol';
 import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
-
-export type MatchErrorCode =
-  | 'BAD_PHASE'
-  | 'UNKNOWN_SEAT'
-  | 'SEAT_ELIMINATED'
-  | 'ALREADY_COMMITTED'
-  | 'NO_COMMITMENT'
-  | 'COMMITMENT_MISMATCH'
-  | 'ALREADY_REVEALED'
-  | 'INVALID_MOVE';
 
 export class MatchError extends Error {
   constructor(

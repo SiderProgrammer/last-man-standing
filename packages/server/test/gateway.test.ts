@@ -139,13 +139,13 @@ describe('gateway', () => {
     await socket.deliver({ type: 'auth', address: account.address, signature });
 
     expect(socket.last('authed')).toBeUndefined();
-    expect(socket.last('error')?.message).toMatch(/does not match the nonce/);
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
   });
 
   it('refuses to act before authentication', async () => {
     const { socket } = harness();
     await socket.deliver({ type: 'practice', bots: 3 });
-    expect(socket.last('error')?.message).toMatch(/authenticate/);
+    expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
   });
 
   it('seats the caller in a practice lobby', async () => {
@@ -163,7 +163,7 @@ describe('gateway', () => {
     await login(socket);
     socket.deliver({} as ClientMessage);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(socket.last('error')?.code).toBe('REJECTED');
+    expect(socket.last('error')?.code).toBe('MALFORMED_FRAME');
   });
 
   it('advertises the escrow so the client knows where to stake', () => {
@@ -315,7 +315,7 @@ describe('gateway', () => {
     await socket.deliver({ type: 'auth', address: account.address, signature });
 
     expect(socket.last('authed')).toBeUndefined();
-    expect(socket.last('error')?.code).toBe('REJECTED');
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
   });
 });
 
@@ -363,7 +363,7 @@ describe('gateway analysis frames', () => {
   it('requires a login', async () => {
     const { socket } = harness({ analyst: new ManualAnalyst() });
     await socket.deliver({ type: 'analyze', matchId: MATCH });
-    expect(socket.last('error')?.message).toMatch(/authenticate/);
+    expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
   });
 
   it('refuses a malformed match id at the boundary', async () => {
@@ -372,7 +372,7 @@ describe('gateway analysis frames', () => {
     await login(socket);
     socket.deliverRaw({ type: 'analyze', matchId: 'nope' });
     await new Promise((resolve) => setImmediate(resolve));
-    expect(socket.last('error')?.message).toMatch(/matchId/);
+    expect(socket.last('error')).toMatchObject({ code: 'MALFORMED_FRAME', message: expect.stringMatching(/matchId/) });
     expect(analyst.requests).toHaveLength(0);
   });
 
@@ -474,7 +474,7 @@ describe('gateway match history', () => {
     const { socket } = harness({ archive: new MemoryArchive() });
     await socket.deliver({ type: 'history' });
     expect(socket.last('history')).toBeUndefined();
-    expect(socket.last('error')?.message).toMatch(/authenticate/);
+    expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
   });
 
   it("lists only the caller's own matches, newest first, from their seat", async () => {
@@ -542,7 +542,7 @@ describe('gateway match history', () => {
 
     await socket.deliver({ type: 'review', matchId: practice.result.matchId });
     expect(socket.last('review')).toBeUndefined();
-    expect(socket.last('error')?.message).toMatch(/only the players/);
+    expect(socket.last('error')?.code).toBe('FORBIDDEN');
 
     await socket.deliver({ type: 'review', matchId: staked.result.matchId });
     expect(socket.last('review')?.match.result.matchId).toBe(staked.result.matchId);
@@ -552,6 +552,6 @@ describe('gateway match history', () => {
     const { socket } = harness();
     await login(socket);
     await socket.deliver({ type: 'history' });
-    expect(socket.last('error')?.message).toMatch(/not kept/);
+    expect(socket.last('error')?.code).toBe('UNAVAILABLE');
   });
 });

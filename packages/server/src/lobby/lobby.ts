@@ -19,6 +19,7 @@ import type { AvatarRegistry } from '../chain/avatars.js';
 import type { MatchArchive } from './store.js';
 import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
+import { RequestError } from '../errors.js';
 
 export interface LobbyOptions {
   archive: MatchArchive;
@@ -125,7 +126,7 @@ export class Lobby {
     }
     const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
     if (this.practiceOf.size >= ceiling) {
-      throw new Error('the server is at its practice-room limit; try again shortly');
+      throw new RequestError('BUSY', 'the server is at its practice-room limit; try again shortly');
     }
 
     const rules = this.options.rules ?? DEFAULT_RULES;
@@ -190,8 +191,10 @@ export class Lobby {
   attach(matchId: `0x${string}`, client: Client): Room {
     const room = this.get(matchId);
     const abandoned = room ? undefined : this.abandoned.get(matchId.toLowerCase());
-    if (abandoned) throw new Error(`this match will not be played: ${abandoned}; every stake is being refunded`);
-    if (!room) throw new Error('unknown match');
+    if (abandoned) {
+      throw new RequestError('MATCH_ABANDONED', `this match will not be played: ${abandoned}; every stake is being refunded`);
+    }
+    if (!room) throw new RequestError('NOT_FOUND', 'unknown match');
     room.attach(client);
     return room;
   }

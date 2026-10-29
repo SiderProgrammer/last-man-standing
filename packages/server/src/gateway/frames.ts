@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { MatchError } from '@lms/engine';
 import {
   BOT_DIFFICULTIES,
   errorMessage,
@@ -7,6 +8,7 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from '@lms/protocol';
+import { RequestError } from '../errors.js';
 
 /**
  * Socket frame decoding, and the error frame that goes back when it fails.
@@ -19,7 +21,12 @@ import {
  */
 
 /** A frame that is not a well-formed `ClientMessage`. */
-export class FrameError extends Error {}
+export class FrameError extends RequestError {
+  constructor(message: string) {
+    super('MALFORMED_FRAME', message);
+    this.name = 'FrameError';
+  }
+}
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -100,15 +107,11 @@ export function parseClientMessage(raw: string): ClientMessage {
 }
 
 /**
- * The error frame for a rejected request.
- *
- * `code` is machine-readable in the wire format but constant in practice:
- * every failure goes out as `REJECTED`, and the client never reads the field.
- * The engine's `MatchError` already carries a real code that is discarded
- * here. Funnelled through one function so that changing it later — either to
- * forward `MatchError.code` or to drop the field — is a single edit rather
- * than a hunt. Forwarding it is `docs/FIX_PLAN.md` step 1.9.
+ * The error frame for a rejected request. A `RequestError` or the engine's
+ * `MatchError` brings its own code; anything else is `INTERNAL`, with its
+ * message kept so the cause is still visible.
  */
 export function errorFrame(error: unknown): Extract<ServerMessage, { type: 'error' }> {
-  return { type: 'error', code: 'REJECTED', message: errorMessage(error) };
+  const code = error instanceof RequestError || error instanceof MatchError ? error.code : 'INTERNAL';
+  return { type: 'error', code, message: errorMessage(error) };
 }

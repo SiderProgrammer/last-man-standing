@@ -22,6 +22,46 @@ export interface MoveAim {
   round: number;
 }
 
+/** A move that breaks the match rules, as the engine's `MatchError` names it. */
+export type MatchErrorCode =
+  | 'BAD_PHASE'
+  | 'UNKNOWN_SEAT'
+  | 'SEAT_ELIMINATED'
+  | 'ALREADY_COMMITTED'
+  | 'NO_COMMITMENT'
+  | 'COMMITMENT_MISMATCH'
+  | 'ALREADY_REVEALED'
+  | 'INVALID_MOVE';
+
+/** A request the server refused for a reason of its own. */
+export type RequestErrorCode =
+  /** The frame is not a well-formed message, or is too large. */
+  | 'MALFORMED_FRAME'
+  /** Too many messages, logins or payout requests: try again shortly. */
+  | 'RATE_LIMITED'
+  /** Anything but `auth` before the socket has logged in. */
+  | 'NOT_AUTHENTICATED'
+  /** The login signature does not recover to the claimed address. */
+  | 'BAD_SIGNATURE'
+  | 'NOT_FOUND'
+  /** The caller may not see this match. */
+  | 'FORBIDDEN'
+  /** This server does not offer the feature asked for. */
+  | 'UNAVAILABLE'
+  /** At a capacity limit, such as practice rooms. */
+  | 'BUSY'
+  /** The caller has no seat in the live match the request is for. */
+  | 'NOT_SEATED'
+  /** A move made for another match or another round. */
+  | 'STALE_MOVE'
+  /** A lobby that will not be played; its stakes are being refunded. */
+  | 'MATCH_ABANDONED'
+  /** A failure with no specific code. The message says what happened. */
+  | 'INTERNAL';
+
+/** Every `code` an `error` frame can carry, so the client can switch on it. */
+export type ErrorCode = MatchErrorCode | RequestErrorCode;
+
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =
   | { type: 'auth'; address: `0x${string}`; signature: `0x${string}` }
@@ -164,7 +204,7 @@ export type ServerMessage =
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
   | { type: 'review'; match: ReviewedMatch }
-  | { type: 'error'; code: string; message: string };
+  | { type: 'error'; code: ErrorCode; message: string };
 
 /** One finished match in a player's history, as seen from their seat. */
 export interface MatchSummary {
