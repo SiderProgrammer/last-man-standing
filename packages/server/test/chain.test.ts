@@ -28,8 +28,7 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     joinDeadline: 9_999_999_999n,
     rulesHash: hashRules(DEFAULT_RULES),
     seed: bytes32('seed'),
-    settleDeadline: 0n,
-    challengeDeadline: 0n,
+    deadline: 0n,
     ...overrides,
   };
 }
@@ -288,7 +287,7 @@ describe('chain bridge adoption', () => {
     const reader = new FakeEscrow();
     const id = bytes32('proposed');
     reader.created = [id];
-    reader.matches.set(id, match({ status: MatchStatus.Proposed, challengeDeadline: 2_000n }));
+    reader.matches.set(id, match({ status: MatchStatus.Proposed, deadline: 2_000n }));
     reader.ranking.set(id, [seat(2), seat(1), seat(3), seat(0)]);
 
     let nowMs = 1_000_000; // 1 000 s: inside the window
@@ -344,7 +343,7 @@ describe('chain bridge after a restart', () => {
     const reader = new FakeEscrow();
     const id = bytes32('live-before-restart');
     reader.created = [id];
-    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4, settleDeadline: 5_000n }));
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4, deadline: 5_000n }));
     reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
     return { reader, id };
   }

@@ -2,11 +2,12 @@
 pragma solidity 0.8.28;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
 import {ExpiringPause} from "./ExpiringPause.sol";
-import {BPS_DENOMINATOR} from "./Constants.sol";
+import {BPS_DENOMINATOR, LOCK_GRACE, RANDOMNESS_TIMEOUT} from "./Constants.sol";
 import {UnknownMatch, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
@@ -62,7 +63,7 @@ contract GameEscrow is
         Pending,
         /// @dev Seed delivered; the server is running the match.
         Live,
-        /// @dev Result signed and open to a veto until `challengeDeadline`.
+        /// @dev Result signed and open to a veto until `deadline`.
         Proposed,
         /// @dev Result final and payouts credited.
         Settled,
@@ -70,33 +71,46 @@ contract GameEscrow is
         Cancelled
     }
 
-    /// @dev Terms are snapshotted when the lobby is created, so a governance
-    ///      change cannot alter the deal a player already staked into.
-    struct MatchInfo {
-        uint128 stake;
+    /// @notice The deal a lobby is opened on, fixed from the config at that
+    ///         moment so a governance change cannot alter it for a player who
+    ///         already staked.
+    /// @dev Stored once under a `termsId` and shared by every lobby opened on
+    ///      the same terms, which in practice is every lobby between two
+    ///      governance changes. Never modified once stored.
+    struct Terms {
+        /// @dev Digest of the off-chain rule set; see `ProtocolConfig.rulesHash`.
+        bytes32 rulesHash;
+        address treasury;
         uint16 feeBps;
         uint16 minSeats;
+        uint64 joinWindow;
+        uint64 settleWindow;
+        uint64 challengeWindow;
+        /// @dev Share of the pool per finishing position, in basis points.
+        uint16[] payoutBps;
+    }
+
+    /// @dev Five slots. The first two are packed; `deadline` is the deadline
+    ///      of the current phase: the seed's while Pending, the result's while
+    ///      Live, the challenge window's while Proposed.
+    struct MatchInfo {
+        uint128 stake;
+        uint32 termsId;
         uint16 maxSeats;
         uint16 seatCount;
         MatchStatus status;
-        uint64 joinDeadline;
-        uint64 settleDeadline;
-        uint64 settleWindow;
-        address treasury;
-        bytes32 rulesHash;
-        bytes32 seed;
-        bytes32 historyRoot;
-        /// @dev Snapshotted at creation, like the rest of the terms.
-        uint64 challengeWindow;
-        uint64 challengeDeadline;
-        uint32 rounds;
-        /// @dev The ranking of a proposed result, by hash: it is in
-        ///      `ResultProposed`, and whoever finalises passes it back.
-        bytes32 rankingHash;
+        uint40 joinDeadline;
         /// @dev Snapshotted at lock: the oracle asked for the seed, and the
         ///      attestor set that signs the result.
         address oracle;
         uint32 attestorSetVersion;
+        uint40 deadline;
+        uint16 rounds;
+        bytes32 seed;
+        bytes32 historyRoot;
+        /// @dev The ranking of a proposed result, by hash: it is in
+        ///      `ResultProposed`, and whoever finalises passes it back.
+        bytes32 rankingHash;
     }
 
     /// @notice Why a seat could not be taken. `None` means it could.
@@ -118,10 +132,13 @@ contract GameEscrow is
 
     uint256 public matchNonce;
 
+    /// @notice Terms stored so far. Also the latest `termsId`, since ids start at 1.
+    uint32 public termsCount;
+    mapping(uint32 termsId => Terms) private terms;
+    mapping(bytes32 termsHash => uint32 termsId) private termsIdOf;
+
     mapping(bytes32 matchId => MatchInfo) private matchInfo;
     mapping(bytes32 matchId => address[]) private matchSeats;
-    /// @notice Payout schedule snapshotted at lobby creation, in basis points.
-    mapping(bytes32 matchId => uint16[]) private matchPayoutBps;
     /// @dev A seat's position in `matchSeats`, plus one. Zero means no seat.
     mapping(bytes32 matchId => mapping(address player => uint256)) private seatNumber;
     /// @notice Chain a seat originated from. Zero means this chain.
@@ -138,18 +155,24 @@ contract GameEscrow is
     ///      `address(this).balance == totalOwed + totalEscrowed`.
     uint256 public totalEscrowed;
 
+    event TermsStored(uint32 indexed termsId, Terms terms);
     event MatchCreated(
-        bytes32 indexed matchId, address indexed creator, uint128 stake, uint16 maxSeats, bytes32 rulesHash
+        bytes32 indexed matchId,
+        address indexed creator,
+        uint128 stake,
+        uint16 maxSeats,
+        uint32 indexed termsId,
+        bytes32 rulesHash
     );
     event PlayerJoined(bytes32 indexed matchId, address indexed player, uint16 seat, uint32 originChainId);
     event MatchLocked(bytes32 indexed matchId, bytes32 indexed requestId, uint16 seatCount);
-    event MatchStarted(bytes32 indexed matchId, bytes32 seed, uint64 settleDeadline);
+    event MatchStarted(bytes32 indexed matchId, bytes32 seed, uint40 settleDeadline);
     event ResultProposed(
         bytes32 indexed matchId,
         bytes32 indexed historyRoot,
         uint32 rounds,
         address[] ranking,
-        uint64 challengeDeadline
+        uint40 challengeDeadline
     );
     event MatchSettled(
         bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address indexed winner
@@ -177,8 +200,8 @@ contract GameEscrow is
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
     error ConfigIncomplete();
-    error ChallengeWindowOpen(uint64 deadline);
-    error ChallengeWindowClosed(uint64 deadline);
+    error ChallengeWindowOpen(uint40 deadline);
+    error ChallengeWindowClosed(uint40 deadline);
     error RankingMismatch();
     error NotAPermutation();
 
@@ -192,43 +215,53 @@ contract GameEscrow is
     /// @param stake Per-seat stake in wei.
     /// @param maxSeats Seats in the lobby.
     function createMatch(uint128 stake, uint16 maxSeats) external whenNotPaused returns (bytes32 matchId) {
-        ProtocolConfig.Params memory params = config.getParams();
-
         // A config deploys with none of these set. A lobby opened against it
         // could never be seeded, would snapshot a rule set nobody plays
         // under, or could never settle.
         if (!config.isComplete()) revert ConfigIncomplete();
-        bytes32 rulesHash = config.rulesHash();
 
+        ProtocolConfig.Params memory params = config.getParams();
         if (stake < params.minStake || stake > params.maxStake) revert StakeOutOfRange(stake);
         if (maxSeats < params.minSeats || maxSeats > params.maxSeats) revert SeatsOutOfRange(maxSeats);
 
+        (uint32 termsId, bytes32 rulesHash) = _currentTerms(params);
         matchId = keccak256(abi.encode(block.chainid, address(this), matchNonce++));
 
-        matchInfo[matchId] = MatchInfo({
-            stake: stake,
+        MatchInfo storage info = matchInfo[matchId];
+        info.stake = stake;
+        info.termsId = termsId;
+        info.maxSeats = maxSeats;
+        info.status = MatchStatus.Open;
+        info.joinDeadline = SafeCast.toUint40(block.timestamp + params.joinWindow);
+
+        emit MatchCreated(matchId, msg.sender, stake, maxSeats, termsId, rulesHash);
+    }
+
+    /// @dev The id of the current terms, storing them first if no lobby has
+    ///      been opened on them yet.
+    function _currentTerms(ProtocolConfig.Params memory params)
+        private
+        returns (uint32 termsId, bytes32 rulesHash)
+    {
+        rulesHash = config.rulesHash();
+        Terms memory current = Terms({
+            rulesHash: rulesHash,
+            treasury: params.treasury,
             feeBps: params.feeBps,
             minSeats: params.minSeats,
-            maxSeats: maxSeats,
-            seatCount: 0,
-            status: MatchStatus.Open,
-            joinDeadline: uint64(block.timestamp) + params.joinWindow,
-            settleDeadline: 0,
+            joinWindow: params.joinWindow,
             settleWindow: params.settleWindow,
-            treasury: params.treasury,
-            rulesHash: rulesHash,
-            seed: bytes32(0),
-            historyRoot: bytes32(0),
             challengeWindow: config.challengeWindow(),
-            challengeDeadline: 0,
-            rounds: 0,
-            rankingHash: bytes32(0),
-            oracle: address(0),
-            attestorSetVersion: 0
+            payoutBps: config.getPayoutSchedule()
         });
-        matchPayoutBps[matchId] = config.getPayoutSchedule();
+        bytes32 termsHash = keccak256(abi.encode(current));
+        termsId = termsIdOf[termsHash];
+        if (termsId != 0) return (termsId, rulesHash);
 
-        emit MatchCreated(matchId, msg.sender, stake, maxSeats, matchInfo[matchId].rulesHash);
+        termsId = ++termsCount;
+        terms[termsId] = current;
+        termsIdOf[termsHash] = termsId;
+        emit TermsStored(termsId, current);
     }
 
     /// @notice Takes a seat by staking on this chain.
@@ -292,7 +325,8 @@ contract GameEscrow is
         bool full = info.seatCount == info.maxSeats;
         bool expired = block.timestamp >= info.joinDeadline;
         if (!full && !expired) revert LobbyNotReady(matchId);
-        if (info.seatCount < info.minSeats) revert NotEnoughPlayers(info.seatCount, info.minSeats);
+        uint16 minSeats = terms[info.termsId].minSeats;
+        if (info.seatCount < minSeats) revert NotEnoughPlayers(info.seatCount, minSeats);
 
         // Every write before the call: the oracle answers with the match id,
         // so nothing about the request has to be recorded after it returns.
@@ -300,6 +334,7 @@ contract GameEscrow is
         info.status = MatchStatus.Pending;
         info.oracle = oracle;
         info.attestorSetVersion = config.attestorSetVersion();
+        info.deadline = SafeCast.toUint40(block.timestamp + RANDOMNESS_TIMEOUT);
         requestId = IRandomnessOracle(oracle).requestRandomness(matchId);
 
         emit MatchLocked(matchId, requestId, info.seatCount);
@@ -321,10 +356,10 @@ contract GameEscrow is
         // Bind the seed to the match so one oracle response cannot seed two
         // matches, and so a zero response is still a usable seed.
         bytes32 seed = keccak256(abi.encode(randomness, matchId));
-        uint64 settleDeadline = uint64(block.timestamp) + info.settleWindow;
+        uint40 settleDeadline = SafeCast.toUint40(block.timestamp + terms[info.termsId].settleWindow);
 
         info.seed = seed;
-        info.settleDeadline = settleDeadline;
+        info.deadline = settleDeadline;
         info.status = MatchStatus.Live;
 
         emit MatchStarted(matchId, seed, settleDeadline);
@@ -348,7 +383,7 @@ contract GameEscrow is
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
-        if (rounds == 0) revert RoundsOutOfRange(rounds);
+        if (rounds == 0 || rounds > type(uint16).max) revert RoundsOutOfRange(rounds);
 
         _checkQuorum(
             info.attestorSetVersion,
@@ -357,11 +392,13 @@ contract GameEscrow is
         );
         _assertSeatSet(matchId, info.seatCount, ranking);
 
-        uint64 deadline = uint64(block.timestamp) + info.challengeWindow;
+        uint40 deadline = SafeCast.toUint40(block.timestamp + terms[info.termsId].challengeWindow);
         info.status = MatchStatus.Proposed;
         info.historyRoot = historyRoot;
-        info.rounds = rounds;
-        info.challengeDeadline = deadline;
+        // Checked against the uint16 range above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        info.rounds = uint16(rounds);
+        info.deadline = deadline;
         info.rankingHash = keccak256(abi.encode(ranking));
 
         emit ResultProposed(matchId, historyRoot, rounds, ranking, deadline);
@@ -404,13 +441,14 @@ contract GameEscrow is
         if (info.status != MatchStatus.Proposed) {
             revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
         }
-        if (block.timestamp < info.challengeDeadline) revert ChallengeWindowOpen(info.challengeDeadline);
+        if (block.timestamp < info.deadline) revert ChallengeWindowOpen(info.deadline);
         if (keccak256(abi.encode(ranking)) != info.rankingHash) revert RankingMismatch();
 
         info.status = MatchStatus.Settled;
         totalEscrowed -= uint256(info.stake) * info.seatCount;
-        _distribute(matchId, info, ranking);
-        _recordFees(info, ranking);
+        Terms storage matchTerms = terms[info.termsId];
+        _distribute(matchId, info, matchTerms, ranking);
+        _recordFees(info.stake, matchTerms.feeBps, ranking);
 
         emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
     }
@@ -418,8 +456,8 @@ contract GameEscrow is
     /// @dev Adds every seat's fee to this epoch's totals, now that it is paid.
     ///      `ranking` was checked against the seat set when it was proposed,
     ///      and again by hash above, so it is exactly the seats.
-    function _recordFees(MatchInfo storage info, address[] calldata ranking) private {
-        uint256 fee = (uint256(info.stake) * info.feeBps) / BPS_DENOMINATOR;
+    function _recordFees(uint128 stake, uint16 feeBps, address[] calldata ranking) private {
+        uint256 fee = (uint256(stake) * feeBps) / BPS_DENOMINATOR;
         if (fee == 0) return;
         uint256 epoch = block.timestamp / FEE_EPOCH;
         for (uint256 i = 0; i < ranking.length; ++i) {
@@ -443,18 +481,23 @@ contract GameEscrow is
         if (info.status != MatchStatus.Proposed) {
             revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
         }
-        if (block.timestamp >= info.challengeDeadline) revert ChallengeWindowClosed(info.challengeDeadline);
+        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
 
         _refundAll(matchId, info);
         emit ResultVetoed(matchId, msg.sender);
         emit MatchCancelled(matchId, "result vetoed");
     }
 
-    function _distribute(bytes32 matchId, MatchInfo storage info, address[] calldata ranking) private {
+    function _distribute(
+        bytes32 matchId,
+        MatchInfo storage info,
+        Terms storage matchTerms,
+        address[] calldata ranking
+    ) private {
         uint256 pool = uint256(info.stake) * info.seatCount;
-        uint256 distributable = pool - (pool * info.feeBps) / BPS_DENOMINATOR;
+        uint256 distributable = pool - (pool * matchTerms.feeBps) / BPS_DENOMINATOR;
 
-        uint16[] memory schedule = matchPayoutBps[matchId];
+        uint16[] memory schedule = matchTerms.payoutBps;
         uint256 paid;
 
         for (uint256 i = 0; i < schedule.length; ++i) {
@@ -472,8 +515,9 @@ contract GameEscrow is
         // so the pool is always fully assigned and nothing can be stranded.
         uint256 remainder = pool - paid;
         if (remainder > 0) {
-            _credit(info.treasury, remainder);
-            emit FeeCredited(matchId, info.treasury, remainder);
+            address treasury = matchTerms.treasury;
+            _credit(treasury, remainder);
+            emit FeeCredited(matchId, treasury, remainder);
         }
     }
 
@@ -486,7 +530,7 @@ contract GameEscrow is
     ///         word of a quorum of attestors.
     /// @dev For when the server lost the match — a restart drops a room's
     ///      state, and a half-played match cannot be resumed honestly. Without
-    ///      this the players would wait out `settleDeadline` for the same
+    ///      this the players would wait out the settle deadline for the same
     ///      refund `cancelMatch` gives them then.
     ///
     ///      It gives the quorum no power it lacked: by refusing to sign a
@@ -509,21 +553,27 @@ contract GameEscrow is
     /// @notice Refunds every stake in a match that can no longer complete.
     /// @dev Permissionless once the relevant deadline has passed, so players
     ///      are never dependent on the operator to recover their stake.
+    ///
+    ///      A lobby that reached `minSeats` is one that should start, so past
+    ///      its join deadline it can only be locked for `LOCK_GRACE`. Without
+    ///      that, a seated player who expects to lose could cancel it in the
+    ///      same block as the lock and race it.
     function cancelMatch(bytes32 matchId) external nonReentrant {
         MatchInfo storage info = matchInfo[matchId];
         string memory reason;
 
         if (info.status == MatchStatus.Open) {
-            // An under-filled lobby that expired can never reach `minSeats`.
-            if (block.timestamp < info.joinDeadline) revert CannotCancelYet(matchId);
+            uint256 cancellableAt = info.joinDeadline;
+            if (info.seatCount >= terms[info.termsId].minSeats) cancellableAt += LOCK_GRACE;
+            if (block.timestamp < cancellableAt) revert CannotCancelYet(matchId);
             reason = "join window expired";
         } else if (info.status == MatchStatus.Pending) {
             // The oracle never answered.
-            if (block.timestamp < info.joinDeadline + info.settleWindow) revert CannotCancelYet(matchId);
+            if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
             reason = "randomness not delivered";
         } else if (info.status == MatchStatus.Live) {
             // No quorum produced a result in time.
-            if (block.timestamp < info.settleDeadline) revert CannotCancelYet(matchId);
+            if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
             reason = "settlement deadline passed";
         } else {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
@@ -570,12 +620,21 @@ contract GameEscrow is
         return matchInfo[matchId];
     }
 
+    function getTerms(uint32 termsId) external view returns (Terms memory) {
+        return terms[termsId];
+    }
+
+    /// @notice The terms a match was opened on.
+    function getMatchTerms(bytes32 matchId) external view returns (Terms memory) {
+        return terms[matchInfo[matchId].termsId];
+    }
+
     function getSeats(bytes32 matchId) external view returns (address[] memory) {
         return matchSeats[matchId];
     }
 
     function getPayoutSchedule(bytes32 matchId) external view returns (uint16[] memory) {
-        return matchPayoutBps[matchId];
+        return terms[matchInfo[matchId].termsId].payoutBps;
     }
 
     function domainSeparator() external view returns (bytes32) {

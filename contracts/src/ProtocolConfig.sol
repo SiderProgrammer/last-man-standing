@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {BPS_DENOMINATOR} from "./Constants.sol";
+import {BPS_DENOMINATOR, DISPUTE_EXTENSION, LOCK_GRACE, RANDOMNESS_TIMEOUT} from "./Constants.sol";
 import {ZeroAddress} from "./Errors.sol";
 
 /// @title ProtocolConfig
@@ -78,16 +78,10 @@ contract ProtocolConfig is Ownable2Step {
     /// @dev Snapshotted into each lobby at creation, like the other terms.
     uint64 public challengeWindow;
 
+    /// @dev Longest a lobby may stay open, or a match run.
+    uint64 public constant MAX_WINDOW = 30 days;
     /// @dev Longest a payout may be held for review.
     uint64 public constant MAX_CHALLENGE_WINDOW = 7 days;
-
-    /// @notice How long after its join deadline a quorate lobby can only be
-    ///         locked, not cancelled.
-    uint64 public constant LOCK_GRACE = 10 minutes;
-    /// @notice How long a locked lobby waits for its seed before it may be cancelled.
-    uint64 public constant RANDOMNESS_TIMEOUT = 1 hours;
-    /// @notice How long a dispute holds back a result's payout.
-    uint64 public constant DISPUTE_EXTENSION = 48 hours;
 
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
@@ -262,7 +256,10 @@ contract ProtocolConfig is Ownable2Step {
         if (newParams.minStake == 0 || newParams.maxStake < newParams.minStake) {
             revert InvalidStakeRange(newParams.minStake, newParams.maxStake);
         }
-        if (newParams.joinWindow == 0 || newParams.settleWindow == 0) revert InvalidWindow();
+        if (
+            newParams.joinWindow == 0 || newParams.settleWindow == 0 || newParams.joinWindow > MAX_WINDOW
+                || newParams.settleWindow > MAX_WINDOW
+        ) revert InvalidWindow();
         if (newParams.treasury == address(0)) revert ZeroAddress();
 
         // A schedule that was valid for a bigger lobby must not survive a

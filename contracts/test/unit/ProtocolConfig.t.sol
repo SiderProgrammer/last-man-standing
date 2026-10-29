@@ -180,6 +180,20 @@ contract ProtocolConfigTest is Fixtures {
         return new TimelockController(delay, none, none, address(this));
     }
 
+    function test_joinAndSettleWindowsAreBounded() public {
+        ProtocolConfig.Params memory params = config.getParams();
+        params.settleWindow = 30 days + 1;
+        vm.prank(owner);
+        vm.expectRevert(ProtocolConfig.InvalidWindow.selector);
+        config.setParams(params);
+
+        params.settleWindow = 1 hours;
+        params.joinWindow = 30 days + 1;
+        vm.prank(owner);
+        vm.expectRevert(ProtocolConfig.InvalidWindow.selector);
+        config.setParams(params);
+    }
+
     function test_challengeWindowIsBounded() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(0)));

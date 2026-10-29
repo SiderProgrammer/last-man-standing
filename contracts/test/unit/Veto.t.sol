@@ -81,7 +81,7 @@ contract VetoTest is Fixtures {
 
     function test_theWindowClosesTheVeto() public {
         (bytes32 matchId, address[] memory ranking) = _proposed();
-        uint64 deadline = escrow.getMatch(matchId).challengeDeadline;
+        uint40 deadline = escrow.getMatch(matchId).deadline;
         vm.warp(deadline);
 
         vm.prank(guardian);
