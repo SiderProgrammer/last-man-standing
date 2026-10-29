@@ -32,7 +32,7 @@ contract AdapterTest is Fixtures {
         assertTrue(escrow.getMatch(matchId).seed != bytes32(0));
         // A fulfilled request leaves nothing behind.
         assertEq(adapter.vrfIdOf(requestId), 0);
-        (address consumer,) = adapter.pending(vrfId);
+        (address consumer,,) = adapter.pending(vrfId);
         assertEq(consumer, address(0));
     }
 

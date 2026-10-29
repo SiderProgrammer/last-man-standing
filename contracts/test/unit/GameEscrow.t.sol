@@ -6,6 +6,7 @@ import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {IRandomnessOracle, IRandomnessConsumer} from "../../src/interfaces/IRandomnessOracle.sol";
 import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
@@ -391,9 +392,38 @@ contract GameEscrowTest is Fixtures {
 
     function test_fulfillRandomness_rejectsNonOracle() public {
         bytes32 matchId = _createAndFill(4);
-        bytes32 requestId = escrow.lockMatch(matchId);
+        escrow.lockMatch(matchId);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotOracle.selector, address(this)));
-        escrow.fulfillRandomness(requestId, bytes32(uint256(1)));
+        escrow.fulfillRandomness(matchId, bytes32(uint256(1)));
+    }
+
+    /// @dev The request is complete before the oracle is called, so an oracle
+    ///      that answers inside `requestRandomness` seeds the match.
+    function test_lockMatch_acceptsAnAnswerInsideTheRequest() public {
+        bytes32 matchId = _createAndFill(4);
+        InstantOracle instant = new InstantOracle();
+        vm.prank(owner);
+        config.setRandomnessOracle(address(instant));
+
+        escrow.lockMatch(matchId);
+        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
+    }
+
+    function test_fulfillRandomness_rejectsASecondAnswer() public {
+        bytes32 matchId = _createAndFill(4);
+        bytes32 requestId = escrow.lockMatch(matchId);
+        oracle.fulfill(requestId, bytes32(uint256(1)));
+
+        vm.prank(address(oracle));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GameEscrow.WrongStatus.selector,
+                matchId,
+                GameEscrow.MatchStatus.Pending,
+                GameEscrow.MatchStatus.Live
+            )
+        );
+        escrow.fulfillRandomness(matchId, bytes32(uint256(2)));
     }
 
     function test_governanceParamsChange_doesNotAffectOpenMatch() public {
@@ -406,5 +436,13 @@ contract GameEscrowTest is Fixtures {
         config.setParams(next);
 
         assertEq(escrow.getMatch(matchId).feeBps, 500);
+    }
+}
+
+/// @dev Answers inside `requestRandomness`, before the caller sees a request id.
+contract InstantOracle is IRandomnessOracle {
+    function requestRandomness(bytes32 context) external returns (bytes32) {
+        IRandomnessConsumer(msg.sender).fulfillRandomness(context, keccak256("instant"));
+        return context;
     }
 }

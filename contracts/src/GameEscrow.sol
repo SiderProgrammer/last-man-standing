@@ -7,7 +7,7 @@ import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
 import {ExpiringPause} from "./ExpiringPause.sol";
 import {BPS_DENOMINATOR} from "./Constants.sol";
-import {UnknownMatch, UnknownRequest, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
+import {UnknownMatch, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
@@ -122,8 +122,6 @@ contract GameEscrow is
     mapping(bytes32 matchId => mapping(address player => uint256)) private seatNumber;
     /// @notice Chain a seat originated from. Zero means this chain.
     mapping(bytes32 matchId => mapping(address player => uint32)) public seatOrigin;
-    /// @notice Oracle request handle back to the match it belongs to.
-    mapping(bytes32 requestId => bytes32 matchId) public randomnessRequest;
 
     /// @notice Fees `player` paid in matches that settled during `epoch`.
     mapping(address player => mapping(uint256 epoch => uint256)) public feesPaid;
@@ -290,21 +288,19 @@ contract GameEscrow is
         if (!full && !expired) revert LobbyNotReady(matchId);
         if (info.seatCount < info.minSeats) revert NotEnoughPlayers(info.seatCount, info.minSeats);
 
+        // Every write before the call: the oracle answers with the match id,
+        // so nothing about the request has to be recorded after it returns.
         info.status = MatchStatus.Pending;
-
         requestId = IRandomnessOracle(config.randomnessOracle()).requestRandomness(matchId);
-        randomnessRequest[requestId] = matchId;
 
         emit MatchLocked(matchId, requestId, info.seatCount);
     }
 
     /// @inheritdoc IRandomnessConsumer
-    function fulfillRandomness(bytes32 requestId, bytes32 randomness) external {
+    /// @dev Only a Pending match takes a seed, so a second answer, or a late
+    ///      one for a match already cancelled, reverts.
+    function fulfillRandomness(bytes32 matchId, bytes32 randomness) external {
         if (msg.sender != config.randomnessOracle()) revert NotOracle(msg.sender);
-
-        bytes32 matchId = randomnessRequest[requestId];
-        if (matchId == bytes32(0)) revert UnknownRequest(requestId);
-        delete randomnessRequest[requestId];
 
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Pending) {

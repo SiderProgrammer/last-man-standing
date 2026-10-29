@@ -19,6 +19,7 @@ contract ChainlinkVrfAdapter is Ownable2Step, IRandomnessOracle, IVrfConsumer {
     struct Pending {
         address consumer;
         bytes32 ourId;
+        bytes32 context;
     }
 
     IVrfCoordinator public coordinator;
@@ -75,7 +76,7 @@ contract ChainlinkVrfAdapter is Ownable2Step, IRandomnessOracle, IVrfConsumer {
 
         uint256 vrfId = coordinator.requestRandomWords(keyHash, subId, confirmations, callbackGasLimit, 1);
         requestId = keccak256(abi.encode(address(this), context, localNonce++));
-        pending[vrfId] = Pending({consumer: msg.sender, ourId: requestId});
+        pending[vrfId] = Pending({consumer: msg.sender, ourId: requestId, context: context});
         vrfIdOf[requestId] = vrfId;
         emit RandomnessRequested(requestId, vrfId, msg.sender);
     }
@@ -92,7 +93,7 @@ contract ChainlinkVrfAdapter is Ownable2Step, IRandomnessOracle, IVrfConsumer {
         // a cleared entry already reads as unknown to a second callback.
         delete pending[requestId];
         delete vrfIdOf[item.ourId];
-        IRandomnessConsumer(item.consumer).fulfillRandomness(item.ourId, bytes32(randomWords[0]));
+        IRandomnessConsumer(item.consumer).fulfillRandomness(item.context, bytes32(randomWords[0]));
     }
 
     function _setCoordinator(
