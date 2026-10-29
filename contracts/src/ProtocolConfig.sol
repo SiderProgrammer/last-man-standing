@@ -281,13 +281,15 @@ contract ProtocolConfig is Ownable2Step {
     }
 
     /// @dev The owner's delay must outlast a match, or a change queued while a
-    ///      match is open could execute before it ends. An owner with no code
-    ///      has no delay to read: that is a development deployment, or the
-    ///      deploy script before it hands the config over.
+    ///      match is open could execute before it ends. An owner that does not
+    ///      answer `getMinDelay` is not a timelock and has no delay to read: an
+    ///      account in a development deployment, or the deploy script before it
+    ///      hands the config over. Asking rather than checking for code also
+    ///      treats an EOA with an EIP-7702 delegation as the account it is.
     function _checkDelay() private view {
-        address currentOwner = owner();
-        if (currentOwner.code.length == 0) return;
-        uint256 delay = TimelockController(payable(currentOwner)).getMinDelay();
+        (bool ok, bytes memory data) = owner().staticcall(abi.encodeCall(TimelockController.getMinDelay, ()));
+        if (!ok || data.length != 32) return;
+        uint256 delay = abi.decode(data, (uint256));
         uint256 lifetime = matchLifetime();
         if (delay <= lifetime) revert DelayTooShort(delay, lifetime);
     }

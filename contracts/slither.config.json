@@ -1,5 +1,5 @@
 {
-  "filter_paths": "(lib|test|script|mocks)[\\\\/]",
+  "filter_paths": "(lib|test|script|mocks|vendor)[\\\\/]",
   "exclude_informational": false,
   "exclude_optimization": false
 }
