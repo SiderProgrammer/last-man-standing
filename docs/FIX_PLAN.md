@@ -1,7 +1,8 @@
 # Fix plan: review findings and design answers
 
 This plan covers every finding from the architecture review (C1–C4, H1–H13, N1–N9, M1–M27,
-L1–L4, and the test gaps). It also builds in the design answers given on 2026-10-28. A
+L1–L4, and the test gaps). It also builds in the design answers given on 2026-10-28 and
+2026-10-29. A
 coverage table at the end maps each finding to its step.
 
 Nothing in this plan has been implemented yet.
@@ -20,9 +21,10 @@ Nothing in this plan has been implemented yet.
 | Q14 | **Mixed-chain matches over a real value bridge.** No LayerZero executor value. |
 | Q17 | The Safe owns the VRF subscription. |
 | Q20 | **Sessions:**<ul><li>login is an off-chain EIP-712 session grant, checked by the server;</li><li>`SessionKeyDelegate` stays, without the session-key branch in `isValidSignature`;</li><li>`executeWithSession` becomes the real one-click `join`/`withdrawFor` feature, with caps and relayer-paid gas;</li><li>burner and embedded wallets get one-click play, and injected wallets keep the normal flow.</li></ul> |
+| Wallets | **Privy as the embedded wallet** (decided 2026-10-29):<ul><li>one EVM wallet, the same address on Base, Arbitrum, Optimism and L1;</li><li>injected wallets and Coinbase Smart Wallet can also connect, using the normal flow;</li><li>one-click play on Base only; spoke joins stay normal transactions through `SpokeRouter`;</li><li>Turnkey is the fallback if Privy can't sign a 7702 authorisation for our delegate.</li></ul> |
 | Q22–Q24 | Wire protocol, storage layout and database schema can all break. The "behaviour-preserving" rule is dropped. One server instance. |
 
-### Defaults I picked where no answer was given (change any of them)
+### Defaults where no answer was given (accepted on 2026-10-29)
 
 | Topic | Default |
 |---|---|
@@ -45,15 +47,16 @@ Nothing in this plan has been implemented yet.
    - mining only in public, matchmade games (H7 below);
    - vesting.
 
-   The README should say so plainly. **Suggestion:** lower `maxRewardPerEth` from 100k to
-   about 10k LMS/ETH. That raises farming break-even from 1e‑5 to 1e‑4 ETH per LMS.
+   The README should say so plainly. **Decided:** lower `maxRewardPerEth` from 100k to
+   10k LMS/ETH. That raises farming break-even from 1e‑5 to 1e‑4 ETH per LMS. Honest players
+   earn 10× less per match, and governance can raise the cap later.
 
 2. **"Real product" vs. "one person holds all 3 Safe keys".** That's fine on testnet. The
    README must say that mainnet needs independent signers. Real-money gambling also needs a
    licence, which is out of scope; the README should mention that in one line.
 
 3. **The Safe's 5M liquidity LMS after the phase ends.** If the Safe stakes it, it can still
-   clear the 1M quorum alone. **Suggestion:** keep it in a `LiquidityReserve` contract that:
+   clear the 1M quorum alone. **Decided:** keep it in a `LiquidityReserve` contract that:
    - can't stake or delegate;
    - can only send LMS to an address the timelock approves (the future pool).
 
@@ -71,9 +74,13 @@ Nothing in this plan has been implemented yet.
 5. **Relayer-paid gas is a subsidy someone can drain**, just like M11. Session calls need a
    per-wallet daily quota and a minimum amount on `withdrawFor`.
 
-6. **Embedded wallets and 7702.** One-click play assumes the embedded wallet provider can
-   sign a 7702 authorisation for *our* delegate. Check this in step 5.1 before relying on it.
-   If it can't, embedded wallets fall back to the normal flow, like injected ones.
+6. **Embedded wallets and 7702.** One-click play assumes Privy can sign a 7702
+   authorisation for *our* delegate, not only for its own account. Check this in step 5.1
+   before relying on it. If Privy can't, try Turnkey; if neither works, embedded wallets fall
+   back to the normal flow, like injected ones. The contracts don't change either way.
+
+   One-click play on spokes (a `chainId = 0` authorisation, the delegate at the same address
+   on every chain, and a relayer per spoke) is out of scope for now.
 
 ---
 
@@ -121,10 +128,10 @@ Mechanical work, so later diffs stay readable.
 |---|---|---|
 | 3.1 | **`MultisigPhase` contract**, holding the Safe's timelock powers until `PHASE_END`, a fixed constructor timestamp:<ul><li>it holds PROPOSER and CANCELLER on the timelock, and forwards `schedule`/`cancel` only from the Safe and only before `PHASE_END`;</li><li>after `PHASE_END`, anyone calls `retire()`, which renounces both roles.</li></ul>The Safe never holds timelock roles directly. The veto therefore ends on a date in code, and the Safe can't cancel its own removal. | H1, N7, Q9, Q10 |
 | 3.2 | **Separate roles in `Deploy.s.sol`:**<ul><li>Safe (2-of-3): proposes and cancels through `MultisigPhase`, owns the VRF subscription;</li><li>guardian: an EOA that can pause, veto and dismiss disputes;</li><li>treasury: the timelock;</li><li>owner of the avatar and fee router: the timelock.</li></ul>The deploy script asserts that no address holds two roles. | H1, Q8 |
-| 3.3 | **`LiquidityReserve` for the Safe's 5M LMS:** can't stake or delegate, and pays out only to addresses the timelock approves. Pending your answer to problem 3. | H1 |
+| 3.3 | **`LiquidityReserve` for the Safe's 5M LMS:** can't stake or delegate, and pays out only to addresses the timelock approves (problem 3). | H1 |
 | 3.4 | **Reshape `StakedLms`:** drop ERC‑4626 and use an `ERC20Wrapper`-style 1:1 stake + `ERC20Votes` + cooldown + streamed ETH rewards. Plain `deposit` / `requestUnstake` / `claim`, with no misleading 4626 surface. | M13 |
 | 3.5 | **`RewardVesting`:**<ul><li>`RewardsDistributor.claim` no longer deposits sLMS; it adds the epoch's reward as a tranche;</li><li>each tranche vests linearly over 6 months from that epoch's `claimableFrom`;</li><li>`release(epochs[])` pays out liquid LMS, and the player stakes it to vote;</li><li>tranches are per epoch, so gas stays bounded (at most about 208 epochs).</li></ul> | C4, Q12 |
-| 3.6 | **Caps:**<ul><li>keep `maxRewardPerEth`, and consider lowering it (problem 1);</li><li>add `maxRewardPerWalletPerEpoch`, set by governance;</li><li>mining counts only **net fees from public, matchmade lobbies** (step 7.9). Private join-by-id lobbies earn nothing.</li></ul> | C4, H7 |
+| 3.6 | **Caps:**<ul><li>keep `maxRewardPerEth`, lowered from 100k to 10k LMS/ETH (problem 1);</li><li>add `maxRewardPerWalletPerEpoch`, set by governance;</li><li>mining counts only **net fees from public, matchmade lobbies** (step 7.9). Private join-by-id lobbies earn nothing.</li></ul> | C4, H7 |
 | 3.7 | **LMS fee discount:**<ul><li>`LmsToken` becomes `ERC20Burnable`;</li><li>`ProtocolConfig.lmsPerEthDiscount` is set by governance, with `MAX_DISCOUNT_BPS = 5000`;</li><li>`join(matchId, lmsIn)` pulls LMS (permit supported) and **holds it in escrow**;</li><li>at `finalize` it is burned, and on cancel, veto or abort it is refunded with the stake;</li><li>the seat's fee drops by the discount;</li><li>mining uses the net fee.</li></ul> | Q5 |
 | 3.8 | **Invariant suites for `StakedLms` and `RewardsDistributor`/`RewardVesting`:**<ul><li>votes ≤ staked supply;</li><li>ETH rewards stay solvent;</li><li>Σ vested ≤ Σ granted ≤ budget;</li><li>nothing votes before it vests.</li></ul> | Tests |
 
@@ -150,11 +157,11 @@ Mechanical work, so later diffs stay readable.
 
 | Step | Work | Findings |
 |---|---|---|
-| 5.1 | **Login:**<ul><li>an EIP-712 `SessionGrant{wallet, sessionKey, domain, uri, chainId, issuedAt, expiresAt, nonce}`, shaped like SIWE so wallets bind it to the origin;</li><li>the server checks it with ecrecover, or ERC‑1271 *from the root wallet* for contract wallets;</li><li>the server then accepts nonces signed by the session key;</li><li>`ALLOWED_ORIGINS` must be set in production.</li></ul> | C1, C2, M7 |
+| 5.1 | **Login:**<ul><li>an EIP-712 `SessionGrant{wallet, sessionKey, domain, uri, chainId, issuedAt, expiresAt, nonce}`, shaped like SIWE so wallets bind it to the origin;</li><li>the server checks it with ecrecover, or ERC‑1271 *from the root wallet* for contract wallets;</li><li>the server then accepts nonces signed by the session key;</li><li>`ALLOWED_ORIGINS` must be set in production.</li></ul>**Privy check on Base Sepolia** (problem 6):<ul><li>Privy signs a 7702 authorisation for `SessionKeyDelegate`;</li><li>the relayer submits `join`;</li><li>the caps are enforced;</li><li>a revoked session fails.</li></ul>Privy is configured for Base, Arbitrum, Optimism and Ethereum. | C1, C2, M7 |
 | 5.2 | **`SessionKeyDelegate.isValidSignature`** accepts only root-key signatures. The session-key branch is deleted. ERC‑7739 nested typed data is a stretch goal. | C1 |
 | 5.3 | **`executeWithSession`, the real feature:**<ul><li>`join` and `withdrawFor` on the escrow only;</li><li>a per-call value cap, a total spend cap, argument checks (escrow address, selector, `player == account`), expiry and nonce;</li><li>a relayer submits and pays gas, with a per-wallet daily quota (problem 5).</li></ul>Sign the authorisation with `toAccount`-style local accounts (burner or embedded). | C2, Q20 |
 | 5.4 | **Key storage and CSP:**<ul><li>a strict Content-Security-Policy;</li><li>no `innerHTML` with dynamic data;</li><li>the session key in IndexedDB as a non-extractable WebCrypto key where possible (stretch goal: P‑256 via RIP‑7212). Otherwise a short-lived secp256k1 key with a capped spend, as limited by step 5.3.</li></ul> | C1, M19 |
-| 5.5 | **README wallet matrix:** burner and embedded wallets get one-click play; injected wallets use the normal flow. Stretch goal: ERC‑4337 `validateUserOp`. | C2 |
+| 5.5 | **README wallet matrix:**<ul><li>burner and Privy wallets get one-click play on Base (Privy only if the step 5.1 check passes);</li><li>injected wallets and Coinbase Smart Wallet use the normal flow;</li><li>joins from spokes are normal transactions for every wallet.</li></ul>Stretch goal: ERC‑4337 `validateUserOp`. | C2 |
 
 ---
 
