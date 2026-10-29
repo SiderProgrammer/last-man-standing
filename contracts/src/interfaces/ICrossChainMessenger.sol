@@ -38,7 +38,5 @@ interface ICrossChainReceiver {
     ///      some other contract on the remote chain fails the peer check.
     ///      Payable because a value-carrying transport delivers the bridged
     ///      stake together with the message.
-    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
-        external
-        payable;
+    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload) external payable;
 }

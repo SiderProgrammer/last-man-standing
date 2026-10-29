@@ -201,11 +201,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     /// @notice Opens a lobby with terms fixed from the current configuration.
     /// @param stake Per-seat stake in wei.
     /// @param maxSeats Seats in the lobby.
-    function createMatch(uint128 stake, uint16 maxSeats)
-        external
-        whenNotPaused
-        returns (bytes32 matchId)
-    {
+    function createMatch(uint128 stake, uint16 maxSeats) external whenNotPaused returns (bytes32 matchId) {
         ProtocolConfig.Params memory params = config.getParams();
 
         // A config deploys with none of these set. A lobby opened against it
@@ -275,10 +271,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     ///      message was in flight, the stake was wrong, the escrow is paused —
     ///      the value is credited to the player on this chain instead, to
     ///      withdraw like any other refund.
-    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
-        external
-        payable
-    {
+    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload) external payable {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
         }
@@ -611,9 +604,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         return JoinFailure.None;
     }
 
-    function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId)
-        private
-    {
+    function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId) private {
         if (block.timestamp >= info.joinDeadline) revert JoinWindowClosed(matchId);
         if (info.seatCount >= info.maxSeats) revert LobbyFull(matchId);
         if (hasSeat[matchId][player]) revert AlreadyJoined(matchId, player);
@@ -628,5 +619,4 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
         emit PlayerJoined(matchId, player, seat, originChainId);
     }
-
 }

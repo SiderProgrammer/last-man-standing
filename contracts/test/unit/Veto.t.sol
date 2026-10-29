@@ -97,7 +97,10 @@ contract VetoTest is Fixtures {
         vm.prank(guardian);
         vm.expectRevert(
             abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector, matchId, GameEscrow.MatchStatus.Proposed, GameEscrow.MatchStatus.Live
+                GameEscrow.WrongStatus.selector,
+                matchId,
+                GameEscrow.MatchStatus.Proposed,
+                GameEscrow.MatchStatus.Live
             )
         );
         escrow.veto(matchId);

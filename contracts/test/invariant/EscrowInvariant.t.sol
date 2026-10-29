@@ -232,7 +232,10 @@ contract EscrowInvariantTest is StdInvariant, Test {
     }
 
     /// @dev Split out of `setUp` only to keep its stack within the legacy pipeline's limit.
-    function _config(address owner, address oracle, bytes32 rulesHash) private returns (ProtocolConfig config) {
+    function _config(address owner, address oracle, bytes32 rulesHash)
+        private
+        returns (ProtocolConfig config)
+    {
         ProtocolConfig.Params memory params = ProtocolConfig.Params({
             feeBps: 500,
             minSeats: 4,

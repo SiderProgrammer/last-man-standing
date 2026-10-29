@@ -31,7 +31,9 @@ contract ProtocolConfigTest is Fixtures {
         tooLong[3] = 2000;
         tooLong[4] = 2000;
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.PayoutScheduleTooLong.selector, uint256(5), uint16(4)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.PayoutScheduleTooLong.selector, uint256(5), uint16(4))
+        );
         config.setPayoutSchedule(tooLong);
     }
 
@@ -39,7 +41,9 @@ contract ProtocolConfigTest is Fixtures {
         vm.prank(owner);
         config.setAttestor(attestorC, false);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(2), uint32(1)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(2), uint32(1))
+        );
         config.setAttestor(attestorB, false);
         assertEq(config.attestorCount(), 2);
     }
@@ -90,7 +94,9 @@ contract ProtocolConfigTest is Fixtures {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(0)));
         config.setChallengeWindow(0);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days))
+        );
         config.setChallengeWindow(8 days);
         vm.stopPrank();
     }

@@ -28,14 +28,11 @@ library HashLib {
         uint16 maxRounds;
     }
 
-    function commitMove(
-        bytes32 matchId,
-        uint32 round,
-        uint8 seat,
-        uint8 action,
-        uint8 target,
-        bytes32 salt
-    ) internal pure returns (bytes32) {
+    function commitMove(bytes32 matchId, uint32 round, uint8 seat, uint8 action, uint8 target, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
         if (action != ACTION_STRIKE) target = 0;
         return keccak256(abi.encode(matchId, round, seat, action, target, salt));
     }

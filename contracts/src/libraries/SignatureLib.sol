@@ -67,7 +67,7 @@ library SignatureLib {
             let source := signatures.offset
             let previous := 0
 
-            for {let i := 0} lt(i, count) {i := add(i, 1)} {
+            for { let i := 0 } lt(i, count) { i := add(i, 1) } {
                 let r := calldataload(source)
                 let s := calldataload(add(source, 0x20))
                 let v := byte(0, calldataload(add(source, 0x40)))

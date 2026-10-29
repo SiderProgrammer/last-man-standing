@@ -20,7 +20,7 @@ contract PlayerAvatarsTest is Test {
         avatars = new PlayerAvatars(OWNER, "LMS Avatars", "LMSA", 3, BASE);
     }
 
-    function test_MintAssignsSequentialIdsAndEquips() public {
+    function test_mintAssignsSequentialIdsAndEquips() public {
         vm.prank(ALICE);
         uint256 tokenId = avatars.mint();
 
@@ -33,7 +33,7 @@ contract PlayerAvatarsTest is Test {
         assertEq(avatars.mint(), 2);
     }
 
-    function test_AvatarOfReturnsTokenAndUri() public {
+    function test_avatarOfReturnsTokenAndUri() public {
         vm.prank(ALICE);
         avatars.mint();
 
@@ -43,13 +43,13 @@ contract PlayerAvatarsTest is Test {
     }
 
     /// @dev Every consumer has to handle "no avatar", so it must not revert.
-    function test_AvatarOfIsEmptyForAWalletWithoutOne() public view {
+    function test_avatarOfIsEmptyForAWalletWithoutOne() public view {
         (uint256 tokenId, string memory uri) = avatars.avatarOf(BOB);
         assertEq(tokenId, 0);
         assertEq(bytes(uri).length, 0);
     }
 
-    function test_MintIsOncePerWallet() public {
+    function test_mintIsOncePerWallet() public {
         vm.startPrank(ALICE);
         avatars.mint();
         vm.expectRevert(abi.encodeWithSelector(PlayerAvatars.AlreadyMinted.selector, ALICE));
@@ -57,7 +57,7 @@ contract PlayerAvatarsTest is Test {
         vm.stopPrank();
     }
 
-    function test_MintStopsAtMaxSupply() public {
+    function test_mintStopsAtMaxSupply() public {
         vm.prank(address(0x1));
         avatars.mint();
         vm.prank(address(0x2));
@@ -70,7 +70,7 @@ contract PlayerAvatarsTest is Test {
         avatars.mint();
     }
 
-    function test_EquipRequiresOwnership() public {
+    function test_equipRequiresOwnership() public {
         vm.prank(ALICE);
         avatars.mint();
 
@@ -79,7 +79,7 @@ contract PlayerAvatarsTest is Test {
         avatars.equip(1);
     }
 
-    function test_EquipChoosesBetweenOwnedAvatars() public {
+    function test_equipChoosesBetweenOwnedAvatars() public {
         vm.prank(ALICE);
         avatars.mint();
         vm.prank(BOB);
@@ -97,7 +97,7 @@ contract PlayerAvatarsTest is Test {
 
     /// @dev The whole point of clearing on transfer: `avatarOf` must never name
     ///      a token the wallet has sold.
-    function test_TransferClearsTheSendersEquippedSlot() public {
+    function test_transferClearsTheSendersEquippedSlot() public {
         vm.prank(ALICE);
         avatars.mint();
         assertEq(avatars.equipped(ALICE), 1);
@@ -117,7 +117,7 @@ contract PlayerAvatarsTest is Test {
 
     /// @dev Regression: a transfer used to auto-equip, so anyone could put an
     ///      avatar on someone else's seat by sending it to them.
-    function test_ASentAvatarIsNotWornWithoutConsent() public {
+    function test_aSentAvatarIsNotWornWithoutConsent() public {
         vm.prank(ALICE);
         avatars.mint();
         vm.prank(ALICE);
@@ -126,7 +126,7 @@ contract PlayerAvatarsTest is Test {
         assertEq(tokenId, 0);
     }
 
-    function test_UnequipKeepsTheToken() public {
+    function test_unequipKeepsTheToken() public {
         vm.startPrank(ALICE);
         avatars.mint();
         avatars.unequip();
@@ -136,7 +136,7 @@ contract PlayerAvatarsTest is Test {
         assertEq(avatars.ownerOf(1), ALICE);
     }
 
-    function test_TokenUriFollowsTheBaseUri() public {
+    function test_tokenUriFollowsTheBaseUri() public {
         vm.prank(ALICE);
         avatars.mint();
 
@@ -145,12 +145,12 @@ contract PlayerAvatarsTest is Test {
         assertEq(avatars.tokenURI(1), "ipfs://bafyreal/1");
     }
 
-    function test_TokenUriRevertsForAnUnmintedToken() public {
+    function test_tokenUriRevertsForAnUnmintedToken() public {
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 99));
         avatars.tokenURI(99);
     }
 
-    function test_OnlyOwnerSetsTheBaseUri() public {
+    function test_onlyOwnerSetsTheBaseUri() public {
         vm.prank(ALICE);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, ALICE));
         avatars.setBaseUri("ipfs://hijack/");

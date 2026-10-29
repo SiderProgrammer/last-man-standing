@@ -34,7 +34,8 @@ contract SignatureLibTest is Test {
     function test_rejectsUnsortedAndDuplicates() public {
         address a = vm.addr(pkA);
         address b = vm.addr(pkB);
-        bytes memory unsorted = a < b ? bytes.concat(_sig(pkB), _sig(pkA)) : bytes.concat(_sig(pkA), _sig(pkB));
+        bytes memory unsorted =
+            a < b ? bytes.concat(_sig(pkB), _sig(pkA)) : bytes.concat(_sig(pkA), _sig(pkB));
         vm.expectRevert(SignatureLib.UnsortedSigners.selector);
         harness.recover(digest, unsorted);
 

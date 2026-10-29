@@ -10,8 +10,8 @@ optimizer = true
 optimizer_runs = 20_000
 via_ir = false
 bytecode_hash = "none"
-# The settlement libraries are hand-written Yul; keep the compiler honest about it.
-deny_warnings = false
+# Compiler warnings fail the build.
+deny = "warnings"
 # `Deploy` reads the rule set from `config/rules.json`.
 fs_permissions = [{ access = "read", path = "./config" }]
 

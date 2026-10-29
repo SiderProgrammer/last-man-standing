@@ -17,7 +17,7 @@ library Attest {
     Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     /// @notice Sorts private keys in place by the address they recover to.
-    function sortByAddress(uint256[] memory pks) internal view {
+    function sortByAddress(uint256[] memory pks) internal pure {
         for (uint256 i = 0; i < pks.length; ++i) {
             for (uint256 j = i + 1; j < pks.length; ++j) {
                 if (VM.addr(pks[j]) < VM.addr(pks[i])) {
@@ -30,7 +30,7 @@ library Attest {
     /// @notice Signs `digest` with every key, packed in ascending signer order.
     function signAscending(uint256[] memory pks, bytes32 digest)
         internal
-        view
+        pure
         returns (bytes memory signatures)
     {
         sortByAddress(pks);

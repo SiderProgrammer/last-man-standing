@@ -154,7 +154,9 @@ contract GameEscrowTest is Fixtures {
         // Nothing is paid while the result can still be vetoed.
         assertEq(escrow.withdrawable(ranking[0]), 0);
 
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline));
+        vm.expectRevert(
+            abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline)
+        );
         escrow.finalize(matchId, ranking);
         vm.warp(info.challengeDeadline);
         escrow.finalize(matchId, ranking);
@@ -329,7 +331,9 @@ contract GameEscrowTest is Fixtures {
 
         address remotePlayer = makeAddr("remote");
         bytes32 peer = config.peerFor(421_614);
-        messenger.deliver{value: STAKE}(address(escrow), 421_614, peer, abi.encode(matchId, remotePlayer), STAKE);
+        messenger.deliver{value: STAKE}(
+            address(escrow), 421_614, peer, abi.encode(matchId, remotePlayer), STAKE
+        );
 
         assertTrue(escrow.hasSeat(matchId, remotePlayer));
         assertEq(escrow.seatOrigin(matchId, remotePlayer), 421_614);
@@ -354,7 +358,9 @@ contract GameEscrowTest is Fixtures {
         escrow.receiveMessage{value: STAKE}(421_614, peer, payload);
 
         vm.prank(address(messenger));
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1))));
+        vm.expectRevert(
+            abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1)))
+        );
         escrow.receiveMessage{value: STAKE}(421_614, bytes32(uint256(1)), payload);
     }
 

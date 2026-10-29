@@ -31,9 +31,7 @@ contract SpokeEscrow is Ownable2Step, ReentrancyGuardTransient {
 
     error InsufficientValue(uint256 sent, uint256 required);
 
-    constructor(address owner_, address messenger_, uint32 hubChainId_, address hubEscrow_)
-        Ownable(owner_)
-    {
+    constructor(address owner_, address messenger_, uint32 hubChainId_, address hubEscrow_) Ownable(owner_) {
         _setHub(messenger_, hubChainId_, hubEscrow_);
     }
 
@@ -44,7 +42,9 @@ contract SpokeEscrow is Ownable2Step, ReentrancyGuardTransient {
     /// @notice What `join` costs for a given stake: the stake itself, delivered
     ///         on the hub, plus the transport fee.
     function quoteJoin(bytes32 matchId, uint128 stake) public view returns (uint256) {
-        return ICrossChainMessenger(messenger).quote(hubChainId, hubEscrow, abi.encode(matchId, msg.sender), stake);
+        return
+            ICrossChainMessenger(messenger)
+                .quote(hubChainId, hubEscrow, abi.encode(matchId, msg.sender), stake);
     }
 
     /// @notice Stakes into a hub match. `msg.value` must cover `quoteJoin`;

@@ -20,7 +20,10 @@ contract HashLibTest is Test {
         bytes32 seed = HashLib.historySeed(bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
         bytes32 a = keccak256("round-a");
         bytes32 b = keccak256("round-b");
-        assertTrue(HashLib.chainHistory(HashLib.chainHistory(seed, a), b) != HashLib.chainHistory(HashLib.chainHistory(seed, b), a));
+        assertTrue(
+            HashLib.chainHistory(HashLib.chainHistory(seed, a), b)
+                != HashLib.chainHistory(HashLib.chainHistory(seed, b), a)
+        );
     }
 
     function test_drawBpsInRangeAndDeterministic() public pure {
@@ -45,9 +48,8 @@ contract HashLibTest is Test {
     }
 
     function test_commitMoveMatchesTypeScript() public pure {
-        bytes32 commitment = HashLib.commitMove(
-            keccak256("match"), 3, 2, HashLib.ACTION_STRIKE, 5, keccak256("salt")
-        );
+        bytes32 commitment =
+            HashLib.commitMove(keccak256("match"), 3, 2, HashLib.ACTION_STRIKE, 5, keccak256("salt"));
         assertEq(commitment, 0xfdceee9c106ff31a867d56723ef84165171e63afe5797667d11127ede92df028);
     }
 
@@ -55,7 +57,9 @@ contract HashLibTest is Test {
         bytes32 roundSeed = HashLib.roundSeed(keccak256("seed"), 3, _salts());
         assertEq(roundSeed, 0x7e4cede4cdb60ef627f7567fdd7c76c76994dedca72d33a26b4e24a27ac577e2);
         assertEq(HashLib.drawBps(roundSeed, 1), 91);
-        assertEq(HashLib.draw(roundSeed, 258), 0x35488afc3fef29f5171659d3e19c131674225566a149e03f8284036d4406df15);
+        assertEq(
+            HashLib.draw(roundSeed, 258), 0x35488afc3fef29f5171659d3e19c131674225566a149e03f8284036d4406df15
+        );
     }
 
     function test_hashRoundMatchesTypeScript() public pure {

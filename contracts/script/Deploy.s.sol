@@ -372,7 +372,8 @@ contract Deploy is Script {
         if (budget > play) revert RewardsUnderfunded(budget, play);
 
         uint64 vestingStart = uint64(block.timestamp + TEAM_CLIFF);
-        deployment.teamVesting = new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
+        deployment.teamVesting =
+            new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
         uint256 team = (supply * TEAM_BPS) / BPS;
         lms.transfer(address(deployment.teamVesting), team);
 

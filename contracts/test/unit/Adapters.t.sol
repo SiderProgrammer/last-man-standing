@@ -13,9 +13,8 @@ import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
 contract AdapterTest is Fixtures {
     function test_vrfAdapterDeliversSeedToEscrow() public {
         MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter = new ChainlinkVrfAdapter(
-            owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
-        );
+        ChainlinkVrfAdapter adapter =
+            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
 
         vm.startPrank(owner);
         config.setRandomnessOracle(address(adapter));
@@ -37,9 +36,8 @@ contract AdapterTest is Fixtures {
 
     function test_vrfAdapterRefusesUnregisteredConsumers() public {
         MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter = new ChainlinkVrfAdapter(
-            owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
-        );
+        ChainlinkVrfAdapter adapter =
+            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
 
         vm.prank(players[0]);
         vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.NotConsumer.selector, players[0]));
@@ -48,9 +46,8 @@ contract AdapterTest is Fixtures {
 
     function test_vrfAdapterRejectsASecondCallback() public {
         MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter = new ChainlinkVrfAdapter(
-            owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000
-        );
+        ChainlinkVrfAdapter adapter =
+            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
         vm.startPrank(owner);
         config.setRandomnessOracle(address(adapter));
         adapter.setConsumer(address(escrow), true);
@@ -168,10 +165,13 @@ contract AdapterTest is Fixtures {
         Bridge memory b = _bridge();
         // A rogue messenger on the spoke chain, wired to an app of its own.
         LayerZeroMessenger rogue = new LayerZeroMessenger(owner, b.endpoint, players[5], RECEIVE_GAS);
-        bytes memory message = abi.encode(_b32(address(b.spoke)), _b32(address(escrow)), abi.encode(bytes32(0), players[5]));
+        bytes memory message =
+            abi.encode(_b32(address(b.spoke)), _b32(address(escrow)), abi.encode(bytes32(0), players[5]));
 
         vm.deal(address(b.endpoint), STAKE);
-        vm.expectRevert(abi.encodeWithSelector(LayerZeroMessenger.UntrustedPeer.selector, SPOKE_EID, _b32(address(rogue))));
+        vm.expectRevert(
+            abi.encodeWithSelector(LayerZeroMessenger.UntrustedPeer.selector, SPOKE_EID, _b32(address(rogue)))
+        );
         b.endpoint.deliver(address(b.hubLz), SPOKE_EID, _b32(address(rogue)), message, STAKE);
         assertFalse(b.hubLz.allowInitializePath(Origin(SPOKE_EID, _b32(address(rogue)), 0)));
         assertTrue(b.hubLz.allowInitializePath(Origin(SPOKE_EID, _b32(address(b.spokeLz)), 0)));
@@ -189,11 +189,14 @@ contract AdapterTest is Fixtures {
         bytes memory message = abi.encode(_b32(players[6]), _b32(address(escrow)), payload);
 
         vm.deal(address(b.endpoint), STAKE);
-        bytes32 guid = b.endpoint.deliver(address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE);
+        bytes32 guid =
+            b.endpoint.deliver(address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE);
 
         assertFalse(escrow.hasSeat(matchId, players[6]));
         assertEq(b.hubLz.totalParked(), STAKE);
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, SPOKE_CHAIN, _b32(players[6])));
+        vm.expectRevert(
+            abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, SPOKE_CHAIN, _b32(players[6]))
+        );
         b.hubLz.retry(guid, SPOKE_CHAIN, _b32(players[6]), payload, STAKE);
     }
 
@@ -208,7 +211,8 @@ contract AdapterTest is Fixtures {
 
         MockLayerZeroEndpoint.Sent memory sent = b.endpoint.getSent(b.endpoint.sentCount() - 1);
         vm.deal(address(b.endpoint), sent.value);
-        guid = b.endpoint.deliver(address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), sent.message, sent.value);
+        guid = b.endpoint
+            .deliver(address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), sent.message, sent.value);
     }
 
     /// @dev The case that used to strand a stake: the spoke went live before
@@ -233,7 +237,10 @@ contract AdapterTest is Fixtures {
         assertEq(address(b.hubLz).balance, STAKE);
         assertEq(b.hubLz.totalParked(), STAKE);
         bytes memory payload = abi.encode(matchId, remote);
-        assertEq(b.hubLz.parked(guid), keccak256(abi.encode(SPOKE_CHAIN, _b32(address(b.spoke)), payload, uint256(STAKE))));
+        assertEq(
+            b.hubLz.parked(guid),
+            keccak256(abi.encode(SPOKE_CHAIN, _b32(address(b.spoke)), payload, uint256(STAKE)))
+        );
 
         // Still refused: the retry reverts and the delivery stays parked.
         vm.expectRevert(
@@ -312,12 +319,14 @@ contract AdapterTest is Fixtures {
         vm.prank(owner);
         lz.setPeer(SPOKE_CHAIN, SPOKE_EID, _b32(address(b.spokeLz)));
 
-        bytes memory message = abi.encode(_b32(address(b.spoke)), _b32(address(burner)), abi.encode(bytes32(0), players[6]));
+        bytes memory message =
+            abi.encode(_b32(address(b.spoke)), _b32(address(burner)), abi.encode(bytes32(0), players[6]));
         vm.deal(address(b.endpoint), STAKE);
         // The executor gives `lzReceive` exactly the gas the options asked for.
         (bool ok,) = address(b.endpoint).call{gas: RECEIVE_GAS + 30_000}(
             abi.encodeCall(
-                MockLayerZeroEndpoint.deliver, (address(lz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE)
+                MockLayerZeroEndpoint.deliver,
+                (address(lz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE)
             )
         );
         assertTrue(ok);
@@ -333,12 +342,14 @@ contract AdapterTest is Fixtures {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
         address remote = makeAddr("remote");
-        bytes memory message = abi.encode(_b32(address(b.spoke)), _b32(address(escrow)), abi.encode(matchId, remote));
+        bytes memory message =
+            abi.encode(_b32(address(b.spoke)), _b32(address(escrow)), abi.encode(matchId, remote));
 
         vm.deal(address(b.endpoint), STAKE);
         (bool ok,) = address(b.endpoint).call{gas: 200_000}(
             abi.encodeCall(
-                MockLayerZeroEndpoint.deliver, (address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE)
+                MockLayerZeroEndpoint.deliver,
+                (address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE)
             )
         );
         assertFalse(ok);
@@ -346,7 +357,9 @@ contract AdapterTest is Fixtures {
         assertFalse(escrow.hasSeat(matchId, remote));
 
         // The same message with the gas the executor is told to give seats.
-        b.endpoint.deliver{gas: RECEIVE_GAS}(address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE);
+        b.endpoint.deliver{gas: RECEIVE_GAS}(
+            address(b.hubLz), SPOKE_EID, _b32(address(b.spokeLz)), message, STAKE
+        );
         assertTrue(escrow.hasSeat(matchId, remote));
     }
 

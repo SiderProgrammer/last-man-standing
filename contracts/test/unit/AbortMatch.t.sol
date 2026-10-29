@@ -79,7 +79,10 @@ contract AbortMatchTest is Fixtures {
         bytes memory openSigs = _abortSignatures(_twoAttestors(), open);
         vm.expectRevert(
             abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector, open, GameEscrow.MatchStatus.Live, GameEscrow.MatchStatus.Open
+                GameEscrow.WrongStatus.selector,
+                open,
+                GameEscrow.MatchStatus.Live,
+                GameEscrow.MatchStatus.Open
             )
         );
         escrow.abortMatch(open, openSigs);
@@ -90,7 +93,10 @@ contract AbortMatchTest is Fixtures {
         bytes memory settledSigs = _abortSignatures(_twoAttestors(), settled);
         vm.expectRevert(
             abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector, settled, GameEscrow.MatchStatus.Live, GameEscrow.MatchStatus.Settled
+                GameEscrow.WrongStatus.selector,
+                settled,
+                GameEscrow.MatchStatus.Live,
+                GameEscrow.MatchStatus.Settled
             )
         );
         escrow.abortMatch(settled, settledSigs);

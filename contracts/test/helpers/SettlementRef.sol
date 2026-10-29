@@ -23,12 +23,11 @@ library SettlementRef {
         }
     }
 
-    function hashMatchResult(
-        bytes32 matchId,
-        uint32 rounds,
-        bytes32 historyRoot,
-        address[] memory ranking
-    ) internal pure returns (bytes32) {
+    function hashMatchResult(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] memory ranking)
+        internal
+        pure
+        returns (bytes32)
+    {
         return keccak256(
             abi.encode(
                 SettlementLib.MATCH_RESULT_TYPEHASH, matchId, rounds, historyRoot, hashRanking(ranking)

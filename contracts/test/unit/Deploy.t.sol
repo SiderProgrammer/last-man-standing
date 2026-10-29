@@ -55,7 +55,10 @@ contract DeployTest is Test {
         assertEq(d.hubLz.app(), address(d.escrow));
         assertEq(d.hubLz.owner(), address(d.timelock));
         assertEq(d.hubLz.pendingOwner(), address(0));
-        assertEq(MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)), address(d.timelock));
+        assertEq(
+            MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)),
+            address(d.timelock)
+        );
         assertEq(d.hubLz.receiveGas(), 350_000);
     }
 

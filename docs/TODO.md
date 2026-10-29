@@ -274,13 +274,6 @@ any of this is a deliberate, visible change rather than a silent one.
   consecutive runs of identical code gave 8099, 8064 and 7975. Those `.gas-snapshot`
   lines cannot be used to detect a changed revert surface. Seeding the campaign would
   make them meaningful.
-- **`forge fmt --check` does not pass, and did not before this work.** Fifteen files
-  under `contracts/src` disagree with the configured formatting. Running `forge fmt`
-  would fix it in one mechanical, behaviour-preserving commit — deliberately not done
-  here, because it would have buried the review diff of every contract stage.
-- **Two Foundry naming conventions coexist:** `test_snake_camel` everywhere except
-  `PlayerAvatars.t.sol` and `SessionKeyDelegate.t.sol`, which use
-  `test_PascalCaseSentence`. Renaming changes `.gas-snapshot` keys.
 
 ---
 
