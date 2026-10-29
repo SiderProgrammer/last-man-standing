@@ -94,7 +94,7 @@ export {
   viemProposalReader,
   type ProposalReader,
 } from './chain/proposals.js';
-export { ConfigError, config, loadConfig, type ServerConfig } from './config.js';
+export { ConfigError, config, loadConfig, readDeployment, type Deployment, type ServerConfig } from './config.js';
 export {
   Analyst,
   AnalystError,

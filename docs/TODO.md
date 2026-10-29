@@ -207,7 +207,8 @@ invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
   around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
   reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
   and a run from separate generator hosts at 10k.
-- **Deployment record:** no addresses file, no verification step in `Deploy.s.sol`.
+- **Deployment record:** done. Both deploy scripts write `contracts/deployments/<chainId>.json`
+  on a broadcast, the server reads it for defaults, and `--verify` verifies on the explorer.
 - **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
   Fine for a testnet demo, worth code-splitting before anything public.
 

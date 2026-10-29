@@ -12,8 +12,15 @@ via_ir = false
 bytecode_hash = "none"
 # Compiler warnings fail the build.
 deny = "warnings"
-# `Deploy` reads the rule set from `config/rules.json`.
-fs_permissions = [{ access = "read", path = "./config" }]
+# `Deploy` reads the rule set from `config/rules.json`, and on a broadcast
+# writes the deployment registry to `deployments/<chainId>.json`.
+fs_permissions = [{ access = "read", path = "./config" }, { access = "read-write", path = "./deployments" }]
+
+# `forge script ... --broadcast --verify` verifies on the explorer. Etherscan's
+# v2 API takes one key for every chain it covers, Basescan included.
+[etherscan]
+base = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
 
 [lint]
 # Lint only what ships. Slither runs on the same sources in CI.

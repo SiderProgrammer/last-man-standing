@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import * as z from 'zod/v4';
 import { DEFAULT_SERVER_PORT, ZERO_ADDRESS } from '@lms/protocol';
@@ -31,13 +32,13 @@ const bigint = variable(
     .optional(),
 );
 
-const address = variable(
-  z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
-    .default(ZERO_ADDRESS)
-    .transform((value) => value as `0x${string}`),
-);
+const hexAddress = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+  .transform((value) => value as `0x${string}`);
+
+/** Unset falls back to the deployment registry, then to the zero address. */
+const address = variable(hexAddress.optional());
 
 const privateKey = variable(
   z
@@ -158,7 +159,10 @@ const ENV = z.object({
  * Taking `env` as an argument rather than reaching for `process.env` directly
  * is what makes this testable.
  */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  deployments: (chainId: number) => Deployment | null = () => null,
+) {
   const result = ENV.safeParse(env);
   if (!result.success) {
     throw new ConfigError(
@@ -166,6 +170,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     );
   }
   const e = result.data;
+  const deployment = deployments(e.CHAIN_ID);
+  const deployed = (name: string): `0x${string}` => deployment?.contracts[name] ?? ZERO_ADDRESS;
+  const fromBlock = deployment ? BigInt(deployment.deployBlock) : undefined;
   if (e.NODE_ENV === 'production' && !e.DATABASE_URL && e.ARCHIVE !== 'memory') {
     throw new ConfigError(
       'invalid server configuration:\n  DATABASE_URL is required in production; set ARCHIVE=memory to run without one',
@@ -183,7 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     /** Hold after each round so clients can replay it before the next clock starts. */
     replayMs: e.REPLAY_MS,
     rpcUrl: e.RPC_URL ?? '',
-    escrow: e.ESCROW_ADDRESS,
+    escrow: e.ESCROW_ADDRESS ?? deployed('escrow'),
     attestorPk: e.ATTESTOR_PK,
     /** Optional key that pays for the permissionless `lockMatch` call. */
     keeperPk: e.KEEPER_PK ?? e.ATTESTOR_PK,
@@ -239,7 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * instead of prompting the wallet on every reconnect. Blank disables the
      * offer; logins then always cost a wallet signature.
      */
-    sessionDelegate: e.SESSION_DELEGATE,
+    sessionDelegate: e.SESSION_DELEGATE ?? deployed('sessionDelegate'),
     /**
      * Spoke chains players may stake from, as JSON:
      * `[{"chainId":8453,"escrow":"0x…"}]`, one `SpokeEscrow` per chain. Blank
@@ -250,13 +257,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * The hub `LayerZeroMessenger`. With it, the server reports deliveries the
      * hub could not take, and retries them with `KEEPER_PK` once it can.
      */
-    hubMessenger: e.HUB_MESSENGER,
+    hubMessenger: e.HUB_MESSENGER ?? deployed('messenger'),
     /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
-    crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK,
+    crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK ?? fromBlock,
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */
-    zapJoin: e.ZAP_JOIN,
+    zapJoin: e.ZAP_JOIN ?? deployed('zapJoin'),
     /** v4-periphery `V4Quoter` on the hub chain, which the client prices routes with. */
-    v4Quoter: e.V4_QUOTER,
+    v4Quoter: e.V4_QUOTER ?? ZERO_ADDRESS,
     /** Tokens offered through the zap, each with its v4 route to ETH, as JSON. See `chain/zap.ts`. */
     zapTokens: e.ZAP_TOKENS,
     /**
@@ -264,20 +271,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * it on a timer so fees reach stakers. Blank disables it; anyone else can
      * still harvest. See `chain/feeKeeper.ts`.
      */
-    feeRouter: e.FEE_ROUTER,
+    feeRouter: e.FEE_ROUTER ?? deployed('feeRouter'),
     feeKeeperPollMs: e.FEE_KEEPER_POLL_MS,
     /** Overrides for `DEFAULT_FEE_KEEPER_POLICY`, in wei. Unset keeps the default. */
     feeKeeper: {
       minHarvest: e.HARVEST_MIN_WEI,
     },
     /** `StakedLms` on the hub chain. Blank hides the staking panel. */
-    stakedLms: e.STAKED_LMS,
+    stakedLms: e.STAKED_LMS ?? deployed('stakedLms'),
     /** `RewardsDistributor` on the hub chain. Blank hides the play-mining claim. */
-    rewardsDistributor: e.REWARDS_DISTRIBUTOR,
+    rewardsDistributor: e.REWARDS_DISTRIBUTOR ?? deployed('rewardsDistributor'),
     /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
-    governor: e.GOVERNOR_ADDRESS,
+    governor: e.GOVERNOR_ADDRESS ?? deployed('governor'),
     /** First block to look for proposals in: the governor's deployment block. */
-    governorFromBlock: e.GOVERNOR_FROM_BLOCK ?? 0n,
+    governorFromBlock: e.GOVERNOR_FROM_BLOCK ?? fromBlock ?? 0n,
     /**
      * Post-match analysis with Gemini. On when `GEMINI_API_KEY` is set;
      * `ANALYST_ENABLED=false` forces it off. Off, the client shows the panel
@@ -343,6 +350,37 @@ function parseLimits(raw: string): Record<string, number> {
   );
 }
 
-export const config = loadConfig();
+/** `contracts/deployments/<chainId>.json`, as `Deploy.s.sol` writes it. */
+export interface Deployment {
+  chainId: number;
+  /** No contract in `contracts` is older: where log scans start. */
+  deployBlock: number;
+  contracts: Record<string, `0x${string}`>;
+}
+
+const DEPLOYMENT = z.object({
+  chainId: z.number().int(),
+  deployBlock: z.number().int().min(0),
+  contracts: z.record(z.string(), hexAddress),
+});
+
+const DEPLOYMENTS_DIR = new URL('../../../contracts/deployments/', import.meta.url);
+
+/**
+ * The registry the deploy script wrote for `chainId`, or null if there is
+ * none. Throws on a file that is there but malformed, or names another chain.
+ */
+export function readDeployment(chainId: number, dir: URL = DEPLOYMENTS_DIR): Deployment | null {
+  const file = new URL(`${chainId}.json`, dir);
+  if (!existsSync(file)) return null;
+  const result = DEPLOYMENT.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+  if (!result.success) throw new ConfigError(`invalid deployment registry ${file.pathname}: ${result.error.message}`);
+  if (result.data.chainId !== chainId) {
+    throw new ConfigError(`deployment registry ${file.pathname} is for chain ${result.data.chainId}, not ${chainId}`);
+  }
+  return result.data;
+}
+
+export const config = loadConfig(process.env, readDeployment);
 
 export { ZERO_ADDRESS };

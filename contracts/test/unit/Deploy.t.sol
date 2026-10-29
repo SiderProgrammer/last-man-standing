@@ -265,11 +265,38 @@ contract DeployTest is Test {
 
     /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script
     ///      must refuse rather than fall back to the anyone-picks-the-seed mock.
-    function test_refusesTheMockOracleOffALocalChain() public {
+    function test_requiresARealOracleOffALocalChain() public {
         vm.chainId(11_155_111);
         Deploy script = new Deploy();
+        vm.expectRevert(Deploy.OracleRequired.selector);
+        script.run();
+    }
+
+    /// @dev `MOCKS=true` off a local node must be refused.
+    function test_refusesTheMocksOffALocalChain() public {
+        vm.chainId(11_155_111);
+        Deploy script = new DeployWithMocks();
         vm.expectRevert(Deploy.MockOffLocal.selector);
         script.run();
+    }
+
+    /// @dev What the server reads. A test run never writes the file itself.
+    function test_registryNamesEveryContract() public {
+        Deploy script = new Deploy();
+        Deploy.Deployment memory deployment = script.run();
+        string memory json = script.registry(deployment);
+
+        assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
+        assertEq(vm.parseJsonUint(json, ".deployBlock"), block.number);
+        assertEq(vm.parseJsonAddress(json, ".contracts.escrow"), address(deployment.escrow));
+        assertEq(vm.parseJsonAddress(json, ".contracts.config"), address(deployment.config));
+        assertEq(vm.parseJsonAddress(json, ".contracts.governor"), address(deployment.governor));
+        assertEq(vm.parseJsonAddress(json, ".contracts.timelock"), address(deployment.timelock));
+        assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
+        assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
+        assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
+        assertFalse(vm.exists(string.concat(vm.projectRoot(), "/deployments/31337.json")));
     }
 
     function test_guardianPausesAtOnce_butCannotUnpause() public {
@@ -311,5 +338,12 @@ contract DeployTest is Test {
 
         vm.warp(d.governor.proposalDeadline(id) + 1);
         assertEq(uint8(d.governor.state(id)), uint8(IGovernor.ProposalState.Succeeded));
+    }
+}
+
+/// @dev `Deploy` as if run with `MOCKS=true`.
+contract DeployWithMocks is Deploy {
+    function _mocks(bool) internal pure override returns (bool) {
+        return true;
     }
 }

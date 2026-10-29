@@ -22,16 +22,20 @@ cd contracts
 DEPLOYER_PK=0x… SAFE=0x… TEAM_BENEFICIARY=0x… \
 ORACLE=0x… \
 LZ_ENDPOINT=0x… \
-ATTESTORS=0x…,0x…,0x… \
-forge script script/Deploy.s.sol:Deploy --rpc-url $SEPOLIA_RPC --broadcast
+ATTESTORS=0x…,0x…,0x… ETHERSCAN_API_KEY=… \
+forge script script/Deploy.s.sol:Deploy --rpc-url $SEPOLIA_RPC --broadcast --verify
 ```
 
 `ORACLE` is a `ChainlinkVrfAdapter` you deployed with the hub timelock as its
 owner; register the escrow with `setConsumer` once it exists. `LZ_ENDPOINT`
 makes the script deploy the hub `LayerZeroMessenger`, point it at the escrow,
 make the timelock its endpoint delegate and hand it to the timelock with the
-config. Note the `GameEscrow` and `LayerZeroMessenger` addresses from
-`broadcast/Deploy.s.sol/11155111/run-latest.json`.
+config. `--verify` verifies every contract on the explorer.
+
+The script writes `contracts/deployments/11155111.json`: every address it
+created and the block to start scanning logs from. Commit it. The server
+reads it for `CHAIN_ID=11155111`, so its escrow, messenger, governor and
+start blocks need no `.env` entries; an env variable still overrides one.
 
 ## 2. Deploy the spoke
 
@@ -39,9 +43,12 @@ config. Note the `GameEscrow` and `LayerZeroMessenger` addresses from
 DEPLOYER_PK=0x… SAFE=0x… SPOKE_OWNER=0x… \
 HUB_CHAIN_ID=11155111 HUB_EID=40161 \
 HUB_ESCROW=0x… HUB_MESSENGER=0x… \
-LZ_ENDPOINT=0x… \
-forge script script/DeploySpoke.s.sol:DeploySpoke --rpc-url $BASE_SEPOLIA_RPC --broadcast
+LZ_ENDPOINT=0x… ETHERSCAN_API_KEY=… \
+forge script script/DeploySpoke.s.sol:DeploySpoke --rpc-url $BASE_SEPOLIA_RPC --broadcast --verify
 ```
+
+`HUB_ESCROW` and `HUB_MESSENGER` are `escrow` and `messenger` in the hub's
+registry. This one writes `contracts/deployments/84532.json`.
 
 `SPOKE_OWNER` is the spoke's own timelock. The script wires the spoke side —
 the messenger's app is the `SpokeEscrow`, its peer is the hub messenger — and
@@ -86,8 +93,6 @@ retries it once the config trusts the route.
 
 ```bash
 SPOKES='[{"chainId":84532,"escrow":"0x…"}]'
-HUB_MESSENGER=0x…
-CROSS_CHAIN_FROM_BLOCK=<hub deploy block>
 AVATAR_COLLECTIONS='[{"chainId":11155111,"address":"0x…","rpcUrl":"…"},{"chainId":84532,"address":"0x…","rpcUrl":"…"}]'
 ```
 

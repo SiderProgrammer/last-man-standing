@@ -1,6 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import { ZERO_ADDRESS } from '@lms/protocol';
-import { ConfigError, loadConfig, relayerFrom, nullRelayer } from '@lms/server';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { ConfigError, loadConfig, readDeployment, relayerFrom, nullRelayer, type Deployment } from '@lms/server';
+
+const ESCROW = `0x${'11'.repeat(20)}` as const;
+const GOVERNOR = `0x${'22'.repeat(20)}` as const;
+const DEPLOYMENT: Deployment = { chainId: 84532, deployBlock: 1234, contracts: { escrow: ESCROW, governor: GOVERNOR } };
+
+describe('deployment registry', () => {
+  it('fills addresses and scan start blocks the environment leaves unset', () => {
+    const config = loadConfig({ CHAIN_ID: '84532' }, (chainId) => (chainId === 84532 ? DEPLOYMENT : null));
+
+    expect(config.escrow).toBe(ESCROW);
+    expect(config.governor).toBe(GOVERNOR);
+    expect(config.governorFromBlock).toBe(1234n);
+    expect(config.crossChainFromBlock).toBe(1234n);
+    // Not in the registry: still the zero address.
+    expect(config.feeRouter).toBe(ZERO_ADDRESS);
+  });
+
+  it('lets the environment override the registry', () => {
+    const other = `0x${'33'.repeat(20)}`;
+    const config = loadConfig({ CHAIN_ID: '84532', ESCROW_ADDRESS: other, GOVERNOR_FROM_BLOCK: '7' }, () => DEPLOYMENT);
+
+    expect(config.escrow).toBe(other);
+    expect(config.governorFromBlock).toBe(7n);
+  });
+
+  it('reads the file the deploy script writes, and refuses one for another chain', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lms-deployments-'));
+    writeFileSync(join(dir, '84532.json'), JSON.stringify(DEPLOYMENT));
+    writeFileSync(join(dir, '1.json'), JSON.stringify(DEPLOYMENT));
+    const url = pathToFileURL(`${dir}/`);
+
+    expect(readDeployment(84532, url)).toEqual(DEPLOYMENT);
+    expect(readDeployment(11155111, url)).toBeNull();
+    expect(() => readDeployment(1, url)).toThrow(/is for chain 84532, not 1/);
+  });
+});
 
 describe('server configuration', () => {
   it('falls back to working defaults on an empty environment', () => {
