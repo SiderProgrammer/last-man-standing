@@ -65,8 +65,8 @@ export function readOpponents(
   const targetCounts = new Map<number, Map<number, number>>();
   const leaderHunts = new Map<number, number>();
 
-  for (const record of state.history) {
-    const leaders = hpLeaders(state, record);
+  for (const [index, record] of state.history.entries()) {
+    const leaders = hpLeaders(record, state.history[index - 1]);
     for (const move of record.moves) {
       const read = reads.get(move.index);
       if (!read) continue;
@@ -93,11 +93,12 @@ export function readOpponents(
 
   for (const read of reads.values()) {
     const counts = targetCounts.get(read.seat);
+    let favouriteHits = 0;
     if (counts) {
       const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-      if (best) read.favourite = best[0];
+      if (best) [read.favourite, favouriteHits] = best;
     }
-    read.tell = tellFor(read, leaderHunts.get(read.seat) ?? 0, you);
+    read.tell = tellFor(read, leaderHunts.get(read.seat) ?? 0, favouriteHits, you);
   }
 
   return [...reads.values()].sort((a, b) => Number(b.alive) - Number(a.alive) || a.seat - b.seat);
@@ -107,9 +108,7 @@ export function readOpponents(
  * Seats that were on top *going into* the round, which is the information an
  * opponent actually had when they chose their target.
  */
-function hpLeaders(state: ReadTable, record: RoundRecord): Set<number> {
-  const index = state.history.indexOf(record);
-  const previous = index > 0 ? state.history[index - 1] : undefined;
+function hpLeaders(record: RoundRecord, previous: RoundRecord | undefined): Set<number> {
   const hp = previous?.hpAfter;
   if (!hp) return new Set(record.moves.map((move) => move.index));
 
@@ -121,7 +120,8 @@ function hpLeaders(state: ReadTable, record: RoundRecord): Set<number> {
   return new Set(record.moves.filter((move) => (hp[move.index] ?? 0) === top).map((m) => m.index));
 }
 
-function tellFor(read: SeatRead, leaderHunts: number, you: number | null): string {
+/** `favouriteHits`: how many of the seat's strikes went to its favourite target. */
+function tellFor(read: SeatRead, leaderHunts: number, favouriteHits: number, you: number | null): string {
   const revealed = read.strikes + read.guards + read.charges;
   // Two rounds is noise; three is the point where a habit is worth naming.
   if (revealed < 3) return '';
@@ -133,9 +133,6 @@ function tellFor(read: SeatRead, leaderHunts: number, you: number | null): strin
   if (read.guards / revealed >= 0.45) return 'guards every chance it gets';
   if (read.charges / revealed >= 0.4) return 'loves the big swing';
   if (read.noShows >= 2) return 'keeps timing out';
-  if (read.favourite !== null && (read.strikes >= 3 || revealed >= 5)) {
-    const counts = read.strikes;
-    if (counts >= 3) return `fixated on #${read.favourite}`;
-  }
+  if (read.favourite !== null && favouriteHits >= 3) return `fixated on #${read.favourite}`;
   return '';
 }

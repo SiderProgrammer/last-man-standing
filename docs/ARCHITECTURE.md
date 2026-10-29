@@ -596,7 +596,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
   test fails `npm run typecheck` rather than sitting there unchecked.
 - **Some tests pin behaviour that is wrong.** `config.test.ts` asserts that a
   non-numeric `COMMIT_MS` yields `NaN`. Such tests exist so that fixing the behaviour
-  is a deliberate, visible change. Every one is listed in `docs/TODO.md` §3.4.
+  is a deliberate, visible change. Every one maps to a step in `docs/FIX_PLAN.md`.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
   on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
   than the ABI-encoder reference, warming the harness first so the measurement is not

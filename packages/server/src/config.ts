@@ -1,5 +1,5 @@
 import { availableParallelism } from 'node:os';
-import { ZERO_ADDRESS } from '@lms/protocol';
+import { DEFAULT_SERVER_PORT, ZERO_ADDRESS } from '@lms/protocol';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
 
@@ -16,7 +16,7 @@ export type ServerConfig = ReturnType<typeof loadConfig>;
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   return {
-    port: Number(env.WS_PORT ?? 8787),
+    port: Number(env.WS_PORT ?? DEFAULT_SERVER_PORT),
     chainId: Number(env.CHAIN_ID ?? 11155111),
     commitMs: Number(env.COMMIT_MS ?? 20_000),
     revealMs: Number(env.REVEAL_MS ?? 12_000),

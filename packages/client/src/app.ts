@@ -1,4 +1,4 @@
-import { MatchPhase, type ServerMessage } from '@lms/protocol';
+import { DEFAULT_SERVER_PORT, MatchPhase, type ServerMessage } from '@lms/protocol';
 import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
@@ -43,7 +43,7 @@ import {
 } from './wallet/flows.js';
 import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
 
-const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:8787`;
+const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:${DEFAULT_SERVER_PORT}`;
 
 /**
  * Boots the client.

@@ -12,7 +12,7 @@ Items are ordered roughly by what blocks the next demo.
 > entries (§2.2), the Redis decision — dropped (§2.3),
 > unlimited practice rooms, a restart mid-match (now aborted and refunded rather
 > than resumed) and gateway rate limiting (§3.2),
-> the stored ranking (§3.3), and the hardwired deploy mocks (§3.4). The LayerZero
+> the stored ranking (§3.3), and the hardwired deploy mocks. The LayerZero
 > adapter now builds per-message options and authenticates the originating app
 > (§2.1), but the real `@layerzerolabs` interfaces are still not vendored and no
 > two-testnet run has happened.
@@ -175,105 +175,11 @@ mainnet. Still open:
 
 ---
 
-### 3.4 Known-wrong, deliberately preserved
+### 3.4 Known-wrong behaviour
 
-Found during the staged refactor. Every one was left exactly as it was, because that
-refactor was strictly behaviour-preserving. Nothing here is a design choice, and nothing
-here is a bug report against the refactor — these all predate it.
-
-Where a test pins the current behaviour, it is named. Those tests exist so that fixing
-any of this is a deliberate, visible change rather than a silent one.
-
-**Server and protocol**
-
-- **`loadConfig` validates nothing.** `Number(env.X ?? default)` yields `NaN` for any
-  non-numeric value and nothing rejects it. A `NaN` `COMMIT_MS` makes `Room`'s
-  `now < deadlineAt` false forever, so every round resolves on the first tick and the
-  match ends instantly, with nothing logged. `ESCROW_ADDRESS` and `SESSION_DELEGATE` are
-  unchecked casts, so a typo reaches viem instead of failing at boot — note
-  `parseCollections` already regex-checks addresses, so the validation exists and is
-  applied to the least important setting. Pinned by `packages/server/test/config.test.ts`.
-- **One key silently takes three roles.** `KEEPER_PK` falls back to `ATTESTOR_PK`, and
-  `main.ts` then uses `keeperPk` as the payout pusher's gas key. Result attestor,
-  lobby keeper and payout pusher end up the same account with nothing logged. Splitting
-  them is already noted in §3.2; this records the exact path.
-- **`MemoryArchive` and `PostgresArchive` disagree on matchId case.** Memory keys on
-  `toLowerCase()`; Postgres stores and queries the id verbatim. One port, two behaviours.
-  Dormant, because nothing calls `load`. Pinned by `packages/server/test/store.test.ts`.
-- ~~**Client frames are cast, not validated.**~~ Fixed: `parseClientMessage` checks every
-  field of every message (addresses, bytes32, hex, uint256 decimals, uint8 targets,
-  actions) and rebuilds the message from the checked fields only.
-- **The wire's `code` field is decorative.** `wire.ts` reserves a machine-readable code,
-  `errorFrame` always sends `REJECTED`, and the client never reads it — while the
-  engine's `MatchError` carries a real code that is discarded at the boundary. Either
-  forward it or drop the field; both are wire changes. It is funnelled through one
-  function now, so either is a single edit.
-- **Three error conventions coexist.** Typed `MatchError` in the engine, bare
-  `new Error(string)` in the server, swallow-and-log at the edges. Server tests assert on
-  message *substrings*, so the prose is currently part of the API — which is why the
-  messages were not touched.
-- **`replay.ts` duplicates `match.ts` on purpose.** The initial state, the per-round fold
-  and the ranking rule are written out twice. **This must not be de-duplicated**: sharing
-  them would make `verifyResult` a tautology, since a wrong ranking rule would produce a
-  wrong result and a wrong replay that agree perfectly. Guarded by the replay differential
-  in `packages/engine/test/properties.test.ts`, which now covers both bot strategies and
-  a lobby with silent seats.
-
-**Client**
-
-- **A network send still happens during a render pass.** `phasePlan` decides
-  `shouldReveal` and `screens/match.ts` acts on it at the same point in the same order as before.
-  The send is no longer hidden inside a predicate, but rendering and acting are still
-  coupled; a second render in the reveal phase is prevented only by the `revealedRound`
-  guard.
-- **`Arena` never removes seats.** `this.seats` only grows, so switching from an 8-seat
-  match to a 4-seat one leaves orphan views at stale positions, and `destroy()` exists
-  but is never called. A long session leaks views and Pixi textures.
-- **`reads.ts:tellFor` has an unreachable branch.** The outer guard admits
-  `strikes >= 3 || revealed >= 5`, then the inner one re-requires `strikes >= 3`, so
-  `revealed >= 5` can never fire alone. Fixing it changes which tell is shown. Pinned by
-  `packages/client/test/reads.test.ts`.
-- **`hpLeaders` is O(n²)** — `state.history.indexOf(record)` inside a loop over
-  `state.history`. Bounded by `maxRounds: 30`, so currently harmless; the caller already
-  has the index.
-- **`data-action` is unvalidated.** `index.html` hardcodes `1|2|3` and `screens/match.ts` does
-  `Number(dataset.action) as ActionValue`, though `isActionValue` exists in
-  `@lms/protocol` and is used server-side. Malformed markup sends a garbage action rather
-  than failing.
-- **`io/net.ts` has no `off()`,** `connect()` has no re-entrancy guard, and `close()` is
-  never called. One handler is ever registered, so nothing leaks in practice.
-- **Port `8787` is hardcoded in three places** — `app.ts`, `packages/client/vite.config.ts`
-  and `.claude/launch.json`. Two are JSON and cannot import a TS constant.
-
-**Contracts**
-
-- **`UntrustedMessenger` has two incompatible signatures for one failure:**
-  `(uint32,address)` in `GameEscrow`, `(address)` in `SpokeEscrow`. Different selectors,
-  both asserted on in tests. Unifying is an ABI break, so only the signature-*identical*
-  errors were hoisted into `src/Errors.sol`. Same reasoning leaves `UnknownRequest`
-  (declared four times with three different argument types), `UntrustedPeer` and
-  `UnknownMatch` alone.
-- **`BPS_DENOMINATOR = 10_000` is declared three times with two types** — `uint16` in
-  `GameEscrow` and `ProtocolConfig`, `uint256` in `HashLib`. Retyping changes promotion
-  behaviour in the payout-schedule validation for no reader benefit.
-- **`Deploy.s.sol` deploys `MockMessenger` but never calls `setRemoteChain`,** so
-  `receiveMessage` rejects every cross-chain join on a fresh deployment and
-  `withdrawToChain` reverts with `NoMessengerForChain`.
-- **`Deploy.s.sol` hardwires the mocks** with no env switch, and no deployed addresses
-  are recorded anywhere. (The timelock now accepts config ownership during the deploy.)
-- **`GameEscrow` re-implements pausing** rather than using OpenZeppelin `Pausable`,
-  which emits different events and reverts a different error. The modifier was renamed
-  `whenNotPaused`; adopting OZ would be an ABI break.
-- **Five tests use bare `vm.expectRevert()`** — `GameEscrow.t.sol` (×2),
-  `SpokeEscrow.t.sol`, `ProtocolConfig.t.sol`, `SessionKeyDelegate.t.sol`. They pass on
-  *any* revert, including one from an unrelated cause. Every other test pins the selector.
-- **`EscrowInvariant.t.sol` re-implements `Fixtures.setUp`** with materially different
-  parameters (1h vs 2h settle window, 2 vs 3 attestors, 6 actors vs 8). Unifying would
-  change what the invariant explores, so only the attestor-signing routine was extracted.
-- **The invariant's recorded revert counts are noise.** The campaign is unseeded: three
-  consecutive runs of identical code gave 8099, 8064 and 7975. Those `.gas-snapshot`
-  lines cannot be used to detect a changed revert surface. Seeding the campaign would
-  make them meaningful.
+The list that lived here moved to [FIX_PLAN.md](FIX_PLAN.md), where every item maps
+to a step. Phase 1 fixed the mechanical ones (errors, constants, bare reverts, the
+invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
 
 ---
 

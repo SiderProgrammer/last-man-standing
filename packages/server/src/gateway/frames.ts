@@ -155,7 +155,7 @@ function action(frame: Record<string, unknown>): ActionValue {
  * The engine's `MatchError` already carries a real code that is discarded
  * here. Funnelled through one function so that changing it later — either to
  * forward `MatchError.code` or to drop the field — is a single edit rather
- * than a hunt. Both are wire changes; see `docs/TODO.md` §3.4.
+ * than a hunt. Forwarding it is `docs/FIX_PLAN.md` step 1.9.
  */
 export function errorFrame(error: unknown): Extract<ServerMessage, { type: 'error' }> {
   return { type: 'error', code: 'REJECTED', message: errorMessage(error) };

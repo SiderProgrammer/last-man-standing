@@ -29,7 +29,7 @@ describe('memory archive', () => {
   it('looks up a match id case-insensitively', async () => {
     // Characterisation: `MemoryArchive` lower-cases the key on both save and
     // load, while `PostgresArchive` stores and queries the id verbatim. One
-    // port, two behaviours — see `docs/TODO.md` §3.4.
+    // port, two behaviours — fixed in `docs/FIX_PLAN.md` step 7.2.
     const archive = new MemoryArchive();
     const id = bytes32('case');
     await archive.save(entry(id));

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { DEFAULT_SERVER_PORT } from '../protocol/src/ports.js';
 
 /**
  * The client consumes `@lms/protocol` from source rather than from `dist`, so a
@@ -18,7 +19,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/health': 'http://localhost:8787',
+      '/health': `http://localhost:${process.env.WS_PORT ?? DEFAULT_SERVER_PORT}`,
     },
   },
   build: {
