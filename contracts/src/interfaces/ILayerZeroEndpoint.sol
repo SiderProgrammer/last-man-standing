@@ -38,7 +38,10 @@ interface ILayerZeroEndpoint {
         payable
         returns (MessagingReceipt memory);
 
-    function quote(MessagingParams calldata params, address sender) external view returns (MessagingFee memory);
+    function quote(MessagingParams calldata params, address sender)
+        external
+        view
+        returns (MessagingFee memory);
 
     /// @dev The address allowed to configure this OApp's libraries and
     ///      verifiers (DVNs) on the endpoint. Without one, only the OApp itself

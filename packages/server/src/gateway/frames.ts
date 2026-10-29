@@ -1,26 +1,32 @@
+import * as z from 'zod/v4';
+import { MatchError } from '@lms/engine';
 import {
   BOT_DIFFICULTIES,
   errorMessage,
   isActionValue,
   type ActionValue,
-  type BotDifficulty,
   type ClientMessage,
-  type MoveAim,
   type ServerMessage,
 } from '@lms/protocol';
+import { RequestError } from '../errors.js';
 
 /**
  * Socket frame decoding, and the error frame that goes back when it fails.
  *
  * Every field of every message is checked here, at the boundary, so nothing
- * past `parseClientMessage` ever sees a value of the wrong shape: a `BigInt`
- * of a non-numeric string, a seat index of `1e9`, a hex string that is not
- * hex. A frame that fails throws a `FrameError`, which the gateway counts
- * against the socket.
+ * past `parseClientMessage` ever sees a value of the wrong shape: a seat index
+ * of `1e9`, a hex string that is not hex. Unknown fields are dropped, so the
+ * message is rebuilt from checked fields only. A frame that fails throws a
+ * `FrameError`, which the gateway counts against the socket.
  */
 
 /** A frame that is not a well-formed `ClientMessage`. */
-export class FrameError extends Error {}
+export class FrameError extends RequestError {
+  constructor(message: string) {
+    super('MALFORMED_FRAME', message);
+    this.name = 'FrameError';
+  }
+}
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -28,6 +34,53 @@ const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 /** Generous for any signature scheme, still far below the frame cap. */
 const MAX_SIGNATURE_HEX = 2 + 2 * 1024;
+
+const hexMatching = (pattern: RegExp, what: string) =>
+  z
+    .string({ error: `must be ${what}` })
+    .regex(pattern, `must be ${what}`)
+    .transform((value) => value as `0x${string}`);
+
+const address = hexMatching(ADDRESS, 'an address');
+const bytes32 = hexMatching(BYTES32, '32 bytes of hex');
+const signature = hexMatching(HEX, 'hex').refine(
+  (value) => value.length >= 4 && value.length <= MAX_SIGNATURE_HEX,
+  'has an implausible length',
+);
+
+const integer = (min: number, max: number) => {
+  const error = `must be an integer from ${min} to ${max}`;
+  return z.number({ error }).int(error).min(min, error).max(max, error);
+};
+
+const action = z.custom<ActionValue>(isActionValue, 'unknown action');
+const target = integer(0, 255);
+
+/** The match and round a move names. */
+const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
+
+const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
+  auth: z.object({ type: z.literal('auth'), address, signature }),
+  lobbies: z.object({ type: z.literal('lobbies') }),
+  collect: z.object({ type: z.literal('collect') }),
+  practice: z.object({
+    type: z.literal('practice'),
+    // The lobby clamps to the rules' seat range; this only rules out garbage.
+    bots: integer(0, 16).optional(),
+    difficulty: z.enum(BOT_DIFFICULTIES, { error: 'unknown difficulty' }).optional(),
+  }),
+  watch: z.object({ type: z.literal('watch'), matchId: bytes32 }),
+  analyze: z.object({ type: z.literal('analyze'), matchId: bytes32 }),
+  history: z.object({ type: z.literal('history'), before: integer(0, Number.MAX_SAFE_INTEGER).optional() }),
+  review: z.object({ type: z.literal('review'), matchId: bytes32 }),
+  commit: z.object({
+    type: z.literal('commit'),
+    commitment: bytes32,
+    hold: z.object({ action, target, salt: bytes32 }, { error: 'must be an object' }).optional(),
+    ...aim,
+  }),
+  reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, ...aim }),
+};
 
 export function parseClientMessage(raw: string): ClientMessage {
   let parsed: unknown;
@@ -39,124 +92,26 @@ export function parseClientMessage(raw: string): ClientMessage {
   if (typeof parsed !== 'object' || parsed === null || !('type' in parsed)) {
     throw new FrameError('payload has no message type');
   }
-  const frame = parsed as Record<string, unknown>;
+  const type = (parsed as { type: unknown }).type;
+  const schema = typeof type === 'string' && Object.hasOwn(MESSAGES, type) ? MESSAGES[type as ClientMessage['type']] : null;
+  if (!schema) throw new FrameError('unsupported message');
 
-  switch (frame.type) {
-    case 'auth':
-      return { type: 'auth', address: address(frame, 'address'), signature: signature(frame, 'signature') };
-    case 'lobbies':
-      return { type: 'lobbies' };
-    case 'collect':
-      return { type: 'collect' };
-    case 'practice': {
-      const out: Extract<ClientMessage, { type: 'practice' }> = { type: 'practice' };
-      // The lobby clamps to the rules' seat range; this only rules out garbage.
-      if (frame.bots !== undefined) out.bots = integer(frame, 'bots', 0, 16);
-      if (frame.difficulty !== undefined) out.difficulty = difficulty(frame);
-      return out;
-    }
-    case 'watch':
-      return { type: 'watch', matchId: bytes32(frame, 'matchId') };
-    case 'analyze':
-      return { type: 'analyze', matchId: bytes32(frame, 'matchId') };
-    case 'history':
-      if (frame.before === undefined) return { type: 'history' };
-      return { type: 'history', before: integer(frame, 'before', 0, Number.MAX_SAFE_INTEGER) };
-    case 'review':
-      return { type: 'review', matchId: bytes32(frame, 'matchId') };
-    case 'commit': {
-      const commitment = bytes32(frame, 'commitment');
-      if (frame.hold === undefined) return { type: 'commit', commitment, ...aim(frame) };
-      if (typeof frame.hold !== 'object' || frame.hold === null) throw new FrameError('hold must be an object');
-      const hold = frame.hold as Record<string, unknown>;
-      return {
-        type: 'commit',
-        commitment,
-        hold: { action: action(hold), target: integer(hold, 'target', 0, 255), salt: bytes32(hold, 'salt') },
-        ...aim(frame),
-      };
-    }
-    case 'reveal':
-      return {
-        type: 'reveal',
-        action: action(frame),
-        target: integer(frame, 'target', 0, 255),
-        salt: bytes32(frame, 'salt'),
-        ...aim(frame),
-      };
-    default:
-      throw new FrameError('unsupported message');
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    const [issue] = result.error.issues;
+    throw new FrameError(issue ? `${issue.path.join('.')}: ${issue.message}` : 'malformed message');
   }
-}
-
-/** The optional match and round a move names; absent fields stay absent. */
-function aim(frame: Record<string, unknown>): MoveAim {
-  const out: MoveAim = {};
-  if (frame.matchId !== undefined) out.matchId = bytes32(frame, 'matchId');
-  if (frame.round !== undefined) out.round = integer(frame, 'round', 0, 0xffffffff);
-  return out;
-}
-
-function string(frame: Record<string, unknown>, field: string): string {
-  const value = frame[field];
-  if (typeof value !== 'string') throw new FrameError(`${field} must be a string`);
-  return value;
-}
-
-function matching(frame: Record<string, unknown>, field: string, pattern: RegExp, what: string): `0x${string}` {
-  const value = string(frame, field);
-  if (!pattern.test(value)) throw new FrameError(`${field} must be ${what}`);
-  return value as `0x${string}`;
-}
-
-function address(frame: Record<string, unknown>, field: string): `0x${string}` {
-  return matching(frame, field, ADDRESS, 'an address');
-}
-
-function bytes32(frame: Record<string, unknown>, field: string): `0x${string}` {
-  return matching(frame, field, BYTES32, '32 bytes of hex');
-}
-
-function hex(frame: Record<string, unknown>, field: string): `0x${string}` {
-  return matching(frame, field, HEX, 'hex');
-}
-
-function signature(frame: Record<string, unknown>, field: string): `0x${string}` {
-  const value = hex(frame, field);
-  if (value.length < 4 || value.length > MAX_SIGNATURE_HEX) throw new FrameError(`${field} has an implausible length`);
-  return value;
-}
-
-function integer(frame: Record<string, unknown>, field: string, min: number, max: number): number {
-  const value = frame[field];
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
-    throw new FrameError(`${field} must be an integer from ${min} to ${max}`);
-  }
-  return value;
-}
-
-function difficulty(frame: Record<string, unknown>): BotDifficulty {
-  const value = frame.difficulty;
-  if (!BOT_DIFFICULTIES.includes(value as BotDifficulty)) throw new FrameError('unknown difficulty');
-  return value as BotDifficulty;
-}
-
-function action(frame: Record<string, unknown>): ActionValue {
-  const value = frame.action;
-  if (!isActionValue(value)) throw new FrameError('unknown action');
-  return value;
+  // Each schema mirrors its `ClientMessage` variant; zod leaves an absent
+  // optional field absent, which is what `exactOptionalPropertyTypes` wants.
+  return result.data as ClientMessage;
 }
 
 /**
- * The error frame for a rejected request.
- *
- * `code` is machine-readable in the wire format but constant in practice:
- * every failure goes out as `REJECTED`, and the client never reads the field.
- * The engine's `MatchError` already carries a real code that is discarded
- * here. Funnelled through one function so that changing it later — either to
- * forward `MatchError.code` or to drop the field — is a single edit rather
- * than a hunt. Both are wire changes; see `docs/TODO.md` §3.4.
+ * The error frame for a rejected request. A `RequestError` or the engine's
+ * `MatchError` brings its own code; anything else is `INTERNAL`, with its
+ * message kept so the cause is still visible.
  */
 export function errorFrame(error: unknown): Extract<ServerMessage, { type: 'error' }> {
-  return { type: 'error', code: 'REJECTED', message: errorMessage(error) };
+  const code = error instanceof RequestError || error instanceof MatchError ? error.code : 'INTERNAL';
+  return { type: 'error', code, message: errorMessage(error) };
 }

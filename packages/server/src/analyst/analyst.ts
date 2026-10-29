@@ -18,7 +18,7 @@ import {
   type ToolResultBlock,
   type ToolUseBlock,
 } from './model.js';
-import { SYSTEM_PROMPT, renderRequest, type SeatedMatch } from './prompt.js';
+import { SYSTEM_PROMPT, renderRequest } from './prompt.js';
 import { MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './schema.js';
 import { MatchTools, TOOLS } from './tools.js';
 import type { AnalystLimits } from './limits.js';
@@ -196,18 +196,14 @@ export class Analyst implements MatchAnalyst {
    * write from. A staked match was public while it ran; a practice match is
    * the practising player's own, and so is what an analysis of it would say.
    */
-  private async authorize(matchId: `0x${string}`, requester: `0x${string}`): Promise<{ match: SeatedMatch; seat: number | null }> {
+  private async authorize(matchId: `0x${string}`, requester: `0x${string}`): Promise<{ match: ArchivedMatch; seat: number | null }> {
     const match = await this.options.archive.load(matchId);
     if (!match) throw new AnalystError('not_found', 'no finished match with that id');
-    if (!match.seats) {
-      throw new AnalystError('not_found', 'this match was archived before seating was recorded, so it cannot be analysed');
-    }
-    const seated: SeatedMatch = { ...match, seats: match.seats };
-    const seat = seated.seats.find((entry) => addressKey(entry.address) === addressKey(requester))?.index ?? null;
-    if (seat === null && match.staked !== true) {
+    const seat = match.seats.find((entry) => addressKey(entry.address) === addressKey(requester))?.index ?? null;
+    if (seat === null && !match.staked) {
       throw new AnalystError('forbidden', 'only the players who sat in this match can analyse it');
     }
-    return { match: seated, seat };
+    return { match, seat };
   }
 
   /**
@@ -257,7 +253,7 @@ export class Analyst implements MatchAnalyst {
   }
 
   /** One fresh analysis. */
-  private async write(request: AnalyzeRequest, match: SeatedMatch, seat: number | null): Promise<AnalyzeResult> {
+  private async write(request: AnalyzeRequest, match: ArchivedMatch, seat: number | null): Promise<AnalyzeResult> {
     const started = this.now();
     const usage = this.emptyUsage();
     const tools = new MatchTools(match, seat, this.options.styles);

@@ -13,8 +13,23 @@ import {GameEscrow} from "../../src/GameEscrow.sol";
 ///      makes external calls, and the cheatcode applies to the next one.
 contract AbortMatchTest is Fixtures {
     function _abortSignatures(uint256[] memory pks, bytes32 matchId) internal view returns (bytes memory) {
+        return Attest.signAscending(pks, _abortDigest(matchId));
+    }
+
+    function _abortDigest(bytes32 matchId) internal view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(keccak256("MatchAbort(bytes32 matchId)"), matchId));
-        return Attest.signAscending(pks, harness.toTypedDataHash(escrow.domainSeparator(), structHash));
+        return harness.toTypedDataHash(escrow.domainSeparator(), structHash);
+    }
+
+    function _one(uint256 pk) internal pure returns (uint256[] memory pks) {
+        pks = new uint256[](1);
+        pks[0] = pk;
+    }
+
+    /// @dev Who one packed `r ‖ s ‖ v` signature recovers to over `digest`.
+    function _recover(bytes32 digest, bytes memory signature) internal pure returns (address) {
+        (bytes32 r, bytes32 s) = abi.decode(signature, (bytes32, bytes32));
+        return ecrecover(digest, uint8(signature[64]), r, s);
     }
 
     function _liveMatch() internal returns (bytes32 matchId) {
@@ -62,13 +77,22 @@ contract AbortMatchTest is Fixtures {
     }
 
     /// @dev Signatures over one match recover to strangers against another.
+    ///      They are ordered by what they recover to *against `matchId`*, so
+    ///      they clear the ascending-signer check and the revert is about who
+    ///      signed rather than an accident of address order.
     function test_anAbortIsForOneMatchOnly() public {
         bytes32 matchId = _liveMatch();
         bytes32 other = _createAndFill(4);
         _lockAndSeed(other, bytes32(uint256(0xAB1)));
-        bytes memory sigsForOther = _abortSignatures(_twoAttestors(), other);
+        uint256[] memory pks = _twoAttestors();
+        bytes memory first = _abortSignatures(_one(pks[0]), other);
+        bytes memory second = _abortSignatures(_one(pks[1]), other);
+        address a = _recover(_abortDigest(matchId), first);
+        address b = _recover(_abortDigest(matchId), second);
+        (bytes memory sigsForOther, address lowest) =
+            a < b ? (bytes.concat(first, second), a) : (bytes.concat(second, first), b);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, lowest));
         escrow.abortMatch(matchId, sigsForOther);
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
     }
@@ -79,7 +103,10 @@ contract AbortMatchTest is Fixtures {
         bytes memory openSigs = _abortSignatures(_twoAttestors(), open);
         vm.expectRevert(
             abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector, open, GameEscrow.MatchStatus.Live, GameEscrow.MatchStatus.Open
+                GameEscrow.WrongStatus.selector,
+                open,
+                GameEscrow.MatchStatus.Live,
+                GameEscrow.MatchStatus.Open
             )
         );
         escrow.abortMatch(open, openSigs);
@@ -90,7 +117,10 @@ contract AbortMatchTest is Fixtures {
         bytes memory settledSigs = _abortSignatures(_twoAttestors(), settled);
         vm.expectRevert(
             abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector, settled, GameEscrow.MatchStatus.Live, GameEscrow.MatchStatus.Settled
+                GameEscrow.WrongStatus.selector,
+                settled,
+                GameEscrow.MatchStatus.Live,
+                GameEscrow.MatchStatus.Settled
             )
         );
         escrow.abortMatch(settled, settledSigs);

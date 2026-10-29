@@ -2,7 +2,8 @@ import * as z from 'zod/v4';
 import { addressKey, describeStyle, readOpponents, type ReadTable } from '@lms/protocol';
 import type { StyleBook } from '../lobby/styles.js';
 import type { ToolDefinition } from './model.js';
-import { renderOverview, renderRound, type SeatedMatch } from './prompt.js';
+import type { ArchivedMatch } from '../lobby/store.js';
+import { renderOverview, renderRound } from './prompt.js';
 
 /**
  * The analyst's tools: read-only views of the one match being analysed.
@@ -73,7 +74,7 @@ export class MatchTools {
   private readonly table: ReadTable;
 
   constructor(
-    private readonly match: SeatedMatch,
+    private readonly match: ArchivedMatch,
     /** Whose perspective "you" means in reads; null for a spectator. */
     private readonly you: number | null,
     private readonly styles?: StyleBook,

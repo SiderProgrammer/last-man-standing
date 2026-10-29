@@ -2,6 +2,7 @@ import {
   Action,
   MatchPhase,
   commitMove,
+  isActionValue,
   isLegalAction,
   strikeDamageFor,
   type ActionValue,
@@ -293,7 +294,7 @@ function renderMove(): void {
   dom.movePanel.classList.toggle('sealed', sealed && !finished);
   dom.targetRow.classList.toggle('hidden', !striking || finished);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    button.setAttribute('aria-pressed', String(Number(button.dataset.action) === draft?.action));
+    button.setAttribute('aria-pressed', String(actionOf(button) === draft?.action));
   }
 
   dom.lockIn.textContent = lockInLabel(finished, sealed, draft);
@@ -424,11 +425,21 @@ export function updateTimer(): void {
 
 const HOLD_KEY = 'lms:hold-moves';
 
+/**
+ * The action an `.action` button stands for. Throws on markup that names none,
+ * rather than sending it. `None` is no button's action, and `Number('')` is 0.
+ */
+function actionOf(button: HTMLButtonElement): ActionValue {
+  const action = Number(button.dataset.action);
+  if (!isActionValue(action) || action === Action.None) throw new Error(`.action button has no valid data-action: "${button.dataset.action}"`);
+  return action;
+}
+
 export function wireMatchControls(): void {
   dom.holdMoves.checked = readRaw(HOLD_KEY) === '1';
   dom.holdMoves.onchange = () => writeRaw(HOLD_KEY, dom.holdMoves.checked ? '1' : '0');
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    button.onclick = () => selectAction(Number(button.dataset.action) as ActionValue, button);
+    button.onclick = () => selectAction(actionOf(button), button);
   }
 
   dom.target.onchange = () => {
@@ -498,7 +509,7 @@ function setActionsEnabled(enabled: boolean): void {
   const state = app.match;
   const me = yourSeat(state);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    const action = Number(button.dataset.action) as ActionValue;
+    const action = actionOf(button);
     const legal = !me || isLegalAction(action, me);
     button.disabled = !enabled || !legal;
     button.classList.toggle('cooldown', !legal);

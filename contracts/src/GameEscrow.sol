@@ -5,7 +5,8 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
-import {ZeroAddress} from "./Errors.sol";
+import {BPS_DENOMINATOR} from "./Constants.sol";
+import {UnknownMatch, UnknownRequest, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
@@ -54,13 +55,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         Pending,
         /// @dev Seed delivered; the server is running the match.
         Live,
+        /// @dev Result signed and open to a veto until `challengeDeadline`.
+        Proposed,
         /// @dev Result final and payouts credited.
         Settled,
         /// @dev Abandoned, or its result vetoed; every stake is refundable.
-        Cancelled,
-        /// @dev Result signed and open to a veto until `challengeDeadline`.
-        ///      Last in the list so the earlier values keep their numbers.
-        Proposed
+        Cancelled
     }
 
     /// @dev Terms are snapshotted when the lobby is created, so a governance
@@ -100,7 +100,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         WrongStake
     }
 
-    uint16 private constant BPS_DENOMINATOR = 10_000;
     /// @notice Length of a fee epoch. Epoch `n` is `[n * FEE_EPOCH, (n + 1) * FEE_EPOCH)`.
     uint256 public constant FEE_EPOCH = 7 days;
 
@@ -159,7 +158,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error Paused();
     error NotGovernance();
     error NotGuardian();
-    error UnknownMatch(bytes32 matchId);
     error WrongStatus(bytes32 matchId, MatchStatus expected, MatchStatus actual);
     error StakeOutOfRange(uint128 stake);
     error SeatsOutOfRange(uint16 maxSeats);
@@ -170,9 +168,6 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     error NotEnoughPlayers(uint16 seatCount, uint16 minSeats);
     error LobbyNotReady(bytes32 matchId);
     error NotOracle(address caller);
-    error UnknownRequest(bytes32 requestId);
-    error UntrustedMessenger(uint32 srcChainId, address caller);
-    error UntrustedPeer(uint32 srcChainId, bytes32 peer);
     error QuorumNotMet(uint256 signers, uint32 threshold);
     error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);
@@ -201,11 +196,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     /// @notice Opens a lobby with terms fixed from the current configuration.
     /// @param stake Per-seat stake in wei.
     /// @param maxSeats Seats in the lobby.
-    function createMatch(uint128 stake, uint16 maxSeats)
-        external
-        whenNotPaused
-        returns (bytes32 matchId)
-    {
+    function createMatch(uint128 stake, uint16 maxSeats) external whenNotPaused returns (bytes32 matchId) {
         ProtocolConfig.Params memory params = config.getParams();
 
         // A config deploys with none of these set. A lobby opened against it
@@ -275,10 +266,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
     ///      message was in flight, the stake was wrong, the escrow is paused —
     ///      the value is credited to the player on this chain instead, to
     ///      withdraw like any other refund.
-    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload)
-        external
-        payable
-    {
+    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload) external payable {
         if (config.messengerFor(srcChainId) != msg.sender) {
             revert UntrustedMessenger(srcChainId, msg.sender);
         }
@@ -611,9 +599,7 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         return JoinFailure.None;
     }
 
-    function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId)
-        private
-    {
+    function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId) private {
         if (block.timestamp >= info.joinDeadline) revert JoinWindowClosed(matchId);
         if (info.seatCount >= info.maxSeats) revert LobbyFull(matchId);
         if (hasSeat[matchId][player]) revert AlreadyJoined(matchId, player);
@@ -628,5 +614,4 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
 
         emit PlayerJoined(matchId, player, seat, originChainId);
     }
-
 }

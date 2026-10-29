@@ -1,4 +1,4 @@
-import { parseAbi } from 'viem';
+import { spokeEscrowAbi, layerZeroMessengerAbi } from './abis.js';
 
 /**
  * Joining a hub lobby from a spoke chain.
@@ -11,30 +11,10 @@ import { parseAbi } from 'viem';
  */
 
 /** The `SpokeEscrow` surface the client calls. */
-export const spokeEscrowAbi = parseAbi([
-  'function quoteJoin(bytes32 matchId, uint128 stake) view returns (uint256)',
-  'function join(bytes32 matchId, uint128 stake) payable',
-  'function hubChainId() view returns (uint32)',
-  'function hubEscrow() view returns (bytes32)',
-  'event JoinForwarded(bytes32 indexed matchId, address indexed player, uint128 stake)',
-  'error InsufficientValue(uint256 sent, uint256 required)',
-  // Raised through `quoteJoin` by LayerZero's executor when the stake is
-  // more native value than it will deliver to the hub in one message.
-  'error Executor_NativeAmountExceedsCap(uint256 amount, uint256 cap)',
-]);
+export { spokeEscrowAbi };
 
 /** The hub `LayerZeroMessenger`: its parked deliveries, and their retry. */
-export const layerZeroMessengerAbi = parseAbi([
-  'function retry(bytes32 guid, uint32 srcChainId, bytes32 srcApp, bytes payload, uint256 value)',
-  'function parked(bytes32 guid) view returns (bytes32)',
-  'function totalParked() view returns (uint256)',
-  'function setPeer(uint32 chainId, uint32 eid, bytes32 peer)',
-  'function setApp(address app)',
-  'function setDelegate(address delegate)',
-  'function setReceiveGas(uint128 gas)',
-  'event DeliveryParked(bytes32 indexed guid, uint32 srcChainId, bytes32 srcApp, bytes payload, uint256 value, bytes reason)',
-  'event DeliveryRetried(bytes32 indexed guid)',
-]);
+export { layerZeroMessengerAbi };
 
 /** A spoke the server advertises: where a player on that chain stakes. */
 export interface SpokeInfo {

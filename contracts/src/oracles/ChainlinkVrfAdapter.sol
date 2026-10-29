@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 
 import {IRandomnessOracle, IRandomnessConsumer} from "../interfaces/IRandomnessOracle.sol";
 import {IVrfCoordinator, IVrfConsumer} from "../interfaces/IVrfCoordinator.sol";
-import {ZeroAddress} from "../Errors.sol";
+import {UnknownRequest, ZeroAddress} from "../Errors.sol";
 
 /// @title ChainlinkVrfAdapter
 /// @notice Presents a Chainlink VRF v2.5 subscription as `IRandomnessOracle`.
@@ -40,7 +40,6 @@ contract ChainlinkVrfAdapter is Ownable2Step, IRandomnessOracle, IVrfConsumer {
 
     error NotCoordinator(address caller);
     error NotConsumer(address caller);
-    error UnknownRequest(uint256 requestId);
     error NoWords();
 
     constructor(
@@ -86,7 +85,7 @@ contract ChainlinkVrfAdapter is Ownable2Step, IRandomnessOracle, IVrfConsumer {
         if (msg.sender != address(coordinator)) revert NotCoordinator(msg.sender);
 
         Pending memory item = pending[requestId];
-        if (item.consumer == address(0)) revert UnknownRequest(requestId);
+        if (item.consumer == address(0)) revert UnknownRequest(bytes32(requestId));
         if (randomWords.length == 0) revert NoWords();
 
         // Cleared rather than flagged: a fulfilled request needs no record, and

@@ -69,7 +69,9 @@ contract DeploySpokeTest is Fixtures {
         assertEq(sent.dstEid, HUB_EID);
         assertEq(sent.receiver, _b32(address(hubLz)));
         vm.deal(address(hubEndpoint), sent.value);
-        guid = hubEndpoint.deliver(address(hubLz), SPOKE_EID, _b32(address(d.messenger)), sent.message, sent.value);
+        guid = hubEndpoint.deliver(
+            address(hubLz), SPOKE_EID, _b32(address(d.messenger)), sent.message, sent.value
+        );
     }
 
     function test_wiresTheSpokeSideToTheHub() public view {

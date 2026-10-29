@@ -55,7 +55,10 @@ contract DeployTest is Test {
         assertEq(d.hubLz.app(), address(d.escrow));
         assertEq(d.hubLz.owner(), address(d.timelock));
         assertEq(d.hubLz.pendingOwner(), address(0));
-        assertEq(MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)), address(d.timelock));
+        assertEq(
+            MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)),
+            address(d.timelock)
+        );
         assertEq(d.hubLz.receiveGas(), 350_000);
     }
 
@@ -262,11 +265,40 @@ contract DeployTest is Test {
 
     /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script
     ///      must refuse rather than fall back to the anyone-picks-the-seed mock.
-    function test_refusesTheMockOracleOffALocalChain() public {
+    function test_requiresARealOracleOffALocalChain() public {
         vm.chainId(11_155_111);
         Deploy script = new Deploy();
+        vm.expectRevert(Deploy.OracleRequired.selector);
+        script.run();
+    }
+
+    /// @dev `MOCKS=true` off a local node must be refused.
+    function test_refusesTheMocksOffALocalChain() public {
+        vm.chainId(11_155_111);
+        Deploy script = new DeployWithMocks();
         vm.expectRevert(Deploy.MockOffLocal.selector);
         script.run();
+    }
+
+    /// @dev What the server reads; `setUp`'s run never wrote the file itself.
+    ///      Built from that run rather than a fresh one, which would read
+    ///      `config/rules.json` by absolute path and so cost gas that depends
+    ///      on where the repository is checked out.
+    function test_registryNamesEveryContract() public {
+        Deploy.Deployment memory deployment = d;
+        string memory json = new Deploy().registry(deployment);
+
+        assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
+        assertEq(vm.parseJsonUint(json, ".deployBlock"), block.number);
+        assertEq(vm.parseJsonAddress(json, ".contracts.escrow"), address(deployment.escrow));
+        assertEq(vm.parseJsonAddress(json, ".contracts.config"), address(deployment.config));
+        assertEq(vm.parseJsonAddress(json, ".contracts.governor"), address(deployment.governor));
+        assertEq(vm.parseJsonAddress(json, ".contracts.timelock"), address(deployment.timelock));
+        assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
+        assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
+        assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
+        assertFalse(vm.exists("deployments/31337.json"));
     }
 
     function test_guardianPausesAtOnce_butCannotUnpause() public {
@@ -308,5 +340,12 @@ contract DeployTest is Test {
 
         vm.warp(d.governor.proposalDeadline(id) + 1);
         assertEq(uint8(d.governor.state(id)), uint8(IGovernor.ProposalState.Succeeded));
+    }
+}
+
+/// @dev `Deploy` as if run with `MOCKS=true`.
+contract DeployWithMocks is Deploy {
+    function _mocks(bool) internal pure override returns (bool) {
+        return true;
     }
 }

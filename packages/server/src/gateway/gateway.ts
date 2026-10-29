@@ -17,6 +17,7 @@ import {
 import type { Lobby } from '../lobby/lobby.js';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { PayoutPusher } from '../chain/payouts.js';
+import { RequestError } from '../errors.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
@@ -282,7 +283,7 @@ export class Gateway {
     const now = this.now();
     const bucket = message.type === 'commit' || message.type === 'reveal' ? session.moves : session.messages;
     if (!bucket.take(now)) {
-      this.reject(session, new Error('slow down: too many messages'));
+      this.reject(session, new RequestError('RATE_LIMITED', 'slow down: too many messages'));
       return;
     }
 
@@ -306,7 +307,7 @@ export class Gateway {
     }
 
     const address = session.address;
-    if (!address) throw new Error('authenticate before acting');
+    if (!address) throw new RequestError('NOT_AUTHENTICATED', 'authenticate before acting');
 
     switch (message.type) {
       case 'lobbies': {
@@ -325,9 +326,9 @@ export class Gateway {
       }
       case 'collect': {
         const payouts = this.options.payouts;
-        if (!payouts?.enabled) throw new Error('this server does not push payouts');
+        if (!payouts?.enabled) throw new RequestError('UNAVAILABLE', 'this server does not push payouts');
         if (now - session.lastCollectAt < COLLECT_COOLDOWN_MS) {
-          throw new Error('a payout was just requested; give it a moment');
+          throw new RequestError('RATE_LIMITED', 'a payout was just requested; give it a moment');
         }
         session.lastCollectAt = now;
         // Always the authenticated account: `withdrawFor` pays the account
@@ -375,7 +376,7 @@ export class Gateway {
   private async login(session: Session, message: Extract<ClientMessage, { type: 'auth' }>): Promise<void> {
     // Before the verifier, because a session-key login costs an RPC call.
     if (!this.loginsByIp.take(session.ip, this.now())) {
-      throw new Error('too many login attempts; try again shortly');
+      throw new RequestError('RATE_LIMITED', 'too many login attempts; try again shortly');
     }
     const verify = this.options.verify ?? offlineVerify;
     const valid = await verify({
@@ -388,7 +389,7 @@ export class Gateway {
       if (session.loginFailures >= this.limits.maxLoginFailures) {
         this.drop(session, CloseCode.PolicyViolation, 'too many failed logins');
       }
-      throw new Error('login signature does not match the nonce');
+      throw new RequestError('BAD_SIGNATURE', 'login signature does not match the nonce');
     }
     session.address = message.address;
     session.send({ type: 'authed', address: message.address });
@@ -437,12 +438,9 @@ export class Gateway {
    */
   private async review(session: Session, address: `0x${string}`, matchId: `0x${string}`): Promise<void> {
     const match = await this.requireArchive().load(matchId);
-    if (!match) throw new Error('no finished match with that id');
-    const seated = match.seats?.some((seat) => addressKey(seat.address) === addressKey(address)) ?? false;
-    if (!seated && match.staked !== true) throw new Error('only the players who sat in this match can open it');
-    if (!match.seats || !match.rules || !match.seed) {
-      throw new Error('this match was archived before its replay data was kept, so it cannot be opened');
-    }
+    if (!match) throw new RequestError('NOT_FOUND', 'no finished match with that id');
+    const seated = match.seats.some((seat) => addressKey(seat.address) === addressKey(address));
+    if (!seated && !match.staked) throw new RequestError('FORBIDDEN', 'only the players who sat in this match can open it');
     session.send({
       type: 'review',
       match: {
@@ -451,22 +449,22 @@ export class Gateway {
         seats: [...match.seats],
         rules: match.rules,
         seed: match.seed,
-        staked: match.staked === true,
+        staked: match.staked,
         settledTx: (match.settledTx as `0x${string}` | null) ?? null,
-        finishedAt: match.finishedAt ?? null,
+        finishedAt: match.finishedAt,
       },
     });
   }
 
   private requireArchive(): MatchArchive {
     const archive = this.options.archive;
-    if (!archive) throw new Error('match history is not kept on this server');
+    if (!archive) throw new RequestError('UNAVAILABLE', 'match history is not kept on this server');
     return archive;
   }
 
   private requireRoom(address: `0x${string}`) {
     const room = this.options.lobby.roomFor(address);
-    if (!room) throw new Error('you are not in a live match');
+    if (!room) throw new RequestError('NOT_SEATED', 'you are not in a live match');
     return room;
   }
 
@@ -512,10 +510,7 @@ export class Gateway {
 }
 
 function aimOf(message: MoveAim): MoveAim {
-  const aim: MoveAim = {};
-  if (message.matchId !== undefined) aim.matchId = message.matchId;
-  if (message.round !== undefined) aim.round = message.round;
-  return aim;
+  return { matchId: message.matchId, round: message.round };
 }
 
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
@@ -527,13 +522,12 @@ export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSum
   const place = match.result.ranking.findIndex((address) => addressKey(address) === key);
   return {
     matchId: match.result.matchId,
-    finishedAt: match.finishedAt ?? null,
+    finishedAt: match.finishedAt,
     rounds: match.result.rounds,
     players: match.result.ranking.length,
-    seat: match.seats?.find((seat) => addressKey(seat.address) === key)?.index ?? null,
+    seat: match.seats.find((seat) => addressKey(seat.address) === key)?.index ?? null,
     place: place + 1,
-    staked: match.staked === true,
+    staked: match.staked,
     settledTx: (match.settledTx as `0x${string}` | null) ?? null,
-    reviewable: match.seats !== undefined && match.rules !== undefined && match.seed !== undefined,
   };
 }

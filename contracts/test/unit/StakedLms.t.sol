@@ -209,7 +209,9 @@ contract StakedLmsTest is Test {
 
         vm.prank(alice);
         vault.deposit(100e18, alice);
-        assertEq(vault.periodFinish(), block.timestamp + DURATION, "none of it ran out while nobody was staked");
+        assertEq(
+            vault.periodFinish(), block.timestamp + DURATION, "none of it ran out while nobody was staked"
+        );
 
         vm.warp(block.timestamp + DURATION);
         assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
@@ -328,7 +330,9 @@ contract StakedLmsTest is Test {
         assertLe(vault.earned(alice) + vault.earned(bob), uint256(r1) + r2, "never more than arrived");
 
         vm.warp(block.timestamp + DURATION);
-        assertGe(vault.earned(alice) + vault.earned(bob) + DUST, uint256(r1) + r2, "only rounding dust is lost");
+        assertGe(
+            vault.earned(alice) + vault.earned(bob) + DUST, uint256(r1) + r2, "only rounding dust is lost"
+        );
         assertEq(address(vault).balance, uint256(r1) + r2);
     }
 

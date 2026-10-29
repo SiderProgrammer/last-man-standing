@@ -44,6 +44,7 @@ export {
   type Relayer,
 } from './chain/attestor.js';
 export { BotDriver } from './bots/bots.js';
+export { RequestError } from './errors.js';
 export { FrameError, errorFrame, parseClientMessage } from './gateway/frames.js';
 export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
 export {
@@ -93,7 +94,7 @@ export {
   viemProposalReader,
   type ProposalReader,
 } from './chain/proposals.js';
-export { config, loadConfig, type ServerConfig } from './config.js';
+export { ConfigError, config, loadConfig, readDeployment, type Deployment, type ServerConfig } from './config.js';
 export {
   Analyst,
   AnalystError,
@@ -126,7 +127,6 @@ export {
   renderOverview,
   renderRequest,
   renderRound,
-  type SeatedMatch,
 } from './analyst/prompt.js';
 export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
 export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

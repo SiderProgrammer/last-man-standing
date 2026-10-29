@@ -42,12 +42,7 @@ contract MockMessenger is ICrossChainMessenger {
     {
         if (msg.value < fee + deliverValue) revert Underpaid(msg.value, fee + deliverValue);
         sent.push(
-            SentMessage({
-                dstChainId: dstChainId,
-                receiver: receiver,
-                payload: payload,
-                value: deliverValue
-            })
+            SentMessage({dstChainId: dstChainId, receiver: receiver, payload: payload, value: deliverValue})
         );
         messageId = keccak256(abi.encode(dstChainId, receiver, payload, sent.length));
         emit MessageSent(messageId, dstChainId, msg.value);

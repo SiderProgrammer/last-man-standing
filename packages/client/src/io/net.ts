@@ -20,6 +20,7 @@ export class Net {
   private readonly outbox: ClientMessage[] = [];
   private backoff = BASE_BACKOFF_MS;
   private closed = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Whether this socket has logged in. Until it has, everything but the login
    * itself is queued: the server refuses any other message from an
@@ -39,8 +40,18 @@ export class Net {
     this.handlers.add(handler);
   }
 
+  off(handler: Handler): void {
+    this.handlers.delete(handler);
+  }
+
+  /** Opens the socket. A no-op while one is already open or opening. */
   connect(): void {
     this.closed = false;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.socket) return;
     const socket = new WebSocket(this.url);
     this.socket = socket;
     this.ready = false;
@@ -64,13 +75,15 @@ export class Net {
     };
 
     socket.onclose = () => {
+      // A socket replaced by `close()` and `connect()` must not clear its successor.
+      if (this.socket !== socket) return;
       this.socket = null;
       this.onStatus(false);
       if (this.closed) return;
       // Jittered, so a server restart is not met by every client at once on
       // the same exponential schedule. Half fixed, half random: never sooner
       // than half the backoff.
-      setTimeout(() => this.connect(), this.backoff * (0.5 + Math.random() / 2));
+      this.reconnectTimer = setTimeout(() => this.connect(), this.backoff * (0.5 + Math.random() / 2));
       this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
     };
 
@@ -97,6 +110,13 @@ export class Net {
 
   close(): void {
     this.closed = true;
-    this.socket?.close();
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const socket = this.socket;
+    this.socket = null;
+    this.onStatus(false);
+    socket?.close();
   }
 }

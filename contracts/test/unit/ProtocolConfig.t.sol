@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 
@@ -31,7 +32,9 @@ contract ProtocolConfigTest is Fixtures {
         tooLong[3] = 2000;
         tooLong[4] = 2000;
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.PayoutScheduleTooLong.selector, uint256(5), uint16(4)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.PayoutScheduleTooLong.selector, uint256(5), uint16(4))
+        );
         config.setPayoutSchedule(tooLong);
     }
 
@@ -39,16 +42,20 @@ contract ProtocolConfigTest is Fixtures {
         vm.prank(owner);
         config.setAttestor(attestorC, false);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(2), uint32(1)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.ThresholdOutOfRange.selector, uint32(2), uint32(1))
+        );
         config.setAttestor(attestorB, false);
         assertEq(config.attestorCount(), 2);
     }
 
     function test_onlyOwnerCanMutate() public {
-        vm.expectRevert();
+        bytes memory notOwner =
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this));
+        vm.expectRevert(notOwner);
         config.setRulesHash(bytes32(uint256(1)));
 
-        vm.expectRevert();
+        vm.expectRevert(notOwner);
         config.setGuardian(address(this));
     }
 
@@ -90,7 +97,9 @@ contract ProtocolConfigTest is Fixtures {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(0)));
         config.setChallengeWindow(0);
-        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidChallengeWindow.selector, uint64(8 days))
+        );
         config.setChallengeWindow(8 days);
         vm.stopPrank();
     }

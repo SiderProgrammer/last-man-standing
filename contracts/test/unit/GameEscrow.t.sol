@@ -5,7 +5,8 @@ import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
+import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
+import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -154,7 +155,9 @@ contract GameEscrowTest is Fixtures {
         // Nothing is paid while the result can still be vetoed.
         assertEq(escrow.withdrawable(ranking[0]), 0);
 
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline));
+        vm.expectRevert(
+            abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline)
+        );
         escrow.finalize(matchId, ranking);
         vm.warp(info.challengeDeadline);
         escrow.finalize(matchId, ranking);
@@ -187,7 +190,7 @@ contract GameEscrowTest is Fixtures {
         stranger[1] = ATTESTOR_PK_A;
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, vm.addr(0xDEAD)));
         escrow.settle(matchId, 3, historyRoot, ranking, bad);
 
         address[] memory shuffled = new address[](4);
@@ -196,7 +199,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[2] = ranking[2];
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
-        vm.expectRevert();
+        vm.expectRevert(SeatSetLib.NotAPermutation.selector);
         escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
     }
 
@@ -329,7 +332,9 @@ contract GameEscrowTest is Fixtures {
 
         address remotePlayer = makeAddr("remote");
         bytes32 peer = config.peerFor(421_614);
-        messenger.deliver{value: STAKE}(address(escrow), 421_614, peer, abi.encode(matchId, remotePlayer), STAKE);
+        messenger.deliver{value: STAKE}(
+            address(escrow), 421_614, peer, abi.encode(matchId, remotePlayer), STAKE
+        );
 
         assertTrue(escrow.hasSeat(matchId, remotePlayer));
         assertEq(escrow.seatOrigin(matchId, remotePlayer), 421_614);
@@ -348,13 +353,11 @@ contract GameEscrowTest is Fixtures {
         vm.deal(address(this), STAKE * 2);
         vm.deal(address(messenger), STAKE * 2);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.UntrustedMessenger.selector, uint32(421_614), address(this))
-        );
+        vm.expectRevert(abi.encodeWithSelector(UntrustedMessenger.selector, uint32(421_614), address(this)));
         escrow.receiveMessage{value: STAKE}(421_614, peer, payload);
 
         vm.prank(address(messenger));
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1))));
+        vm.expectRevert(abi.encodeWithSelector(UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1))));
         escrow.receiveMessage{value: STAKE}(421_614, bytes32(uint256(1)), payload);
     }
 

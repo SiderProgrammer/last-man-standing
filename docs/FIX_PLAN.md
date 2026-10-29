@@ -5,7 +5,7 @@ L1–L4, and the test gaps). It also builds in the design answers given on 2026-
 2026-10-29. A
 coverage table at the end maps each finding to its step.
 
-Nothing in this plan has been implemented yet.
+Phase 1 is implemented on the `design-rework-phase-1-foundations` branch. Nothing after it is.
 
 ---
 
@@ -88,11 +88,21 @@ Nothing in this plan has been implemented yet.
 
 Mechanical work, so later diffs stay readable.
 
+**Done**, one commit per step (1.4 in two). Where it differs from the table:
+- 1.2 has no TypeScript linter yet; typecheck is the gate. CI also checks the gas
+  snapshot (deterministic now that 1.4 fixed the fuzz seed) and the generated ABIs.
+- 1.3: the convention is `test_camelCase`, which most tests already used.
+- 1.7: production without `DATABASE_URL` is refused unless `ARCHIVE=memory`, the switch 7.1
+  asks for.
+- 1.8 also made `hello.spokes` required, and removed `MatchSummary.reviewable`.
+- 1.10 writes `contracts/deployments/<chainId>.json`; the client gets addresses through
+  the server's `hello`, so the server is the only reader.
+
 | Step | Work | Findings |
 |---|---|---|
 | 1.1 | Add `forge-std` as a submodule and stop ignoring `contracts/lib/` for submodules. A fresh clone must pass `forge test`. | M27 |
 | 1.2 | **GitHub Actions CI:**<ul><li>`npm ci`, typecheck, lint, vitest;</li><li>`forge build`, `forge test`, `forge fmt --check`;</li><li>coverage report;</li><li>Slither with a triaged baseline file, so only new findings fail the build;</li><li>Aderyn (optional).</li></ul> | M27 |
-| 1.3 | Run `forge fmt` once. Replace the deprecated `deny_warnings`. Rename tests to one convention (`test_snake_case`). | M24, M27 |
+| 1.3 | Run `forge fmt` once. Replace the deprecated `deny_warnings`. Rename tests to one convention (`test_camelCase`, which most tests already use). | M24, M27 |
 | 1.4 | **Remove the TODO §3.4 known bugs:**<ul><li>one `Errors.sol` with one signature each for `UntrustedMessenger`, `UnknownRequest`, `UntrustedPeer` and `UnknownMatch`;</li><li>one `BPS_DENOMINATOR` constant;</li><li>pin the selector in the five bare `vm.expectRevert()` calls;</li><li>`EscrowInvariant` uses the shared `Fixtures`;</li><li>seed the invariant campaign;</li><li>fix `tellFor`, `hpLeaders` O(n²), the `data-action` check, `net.ts off()` and connect re-entrancy;</li><li>put the port number in one config.</li></ul>Then delete §3.4 from the TODO. | M24, L4 (part) |
 | 1.5 | **Reorder `MatchStatus`:** Open, Pending, Live, Proposed, Settled, Cancelled. | M15 |
 | 1.6 | **Generate ABIs from `contracts/out`** (wagmi CLI or an abitype build step). Delete the hand-written `parseAbi` mirrors. | M14 |

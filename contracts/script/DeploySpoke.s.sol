@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
+import {Registry} from "./Registry.sol";
 
 import {SpokeEscrow} from "../src/SpokeEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
@@ -42,7 +43,9 @@ import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
 ///        SAFE           owns the avatar collection; required off a local node
 ///        RECEIVE_GAS    gas for `lzReceive` on the hub, default 350k
 ///        AVATARS        false to skip the avatar collection
-contract DeploySpoke is Script {
+///
+///      On a broadcast it writes `deployments/<chainId>.json` (see `Registry`).
+contract DeploySpoke is Registry {
     /// @dev The two chains `npm run dev:fork` runs: the hub fork and a spoke.
     uint256 private constant LOCAL_HUB = 31_337;
     uint256 private constant LOCAL_SPOKE = 31_338;
@@ -54,6 +57,8 @@ contract DeploySpoke is Script {
         address endpoint;
         PlayerAvatars avatars;
         address owner;
+        /// @dev The head when the script started: no contract here is older.
+        uint256 deployBlock;
     }
 
     error OwnerRequired();
@@ -85,6 +90,7 @@ contract DeploySpoke is Script {
             safe = deployer;
         }
 
+        d.deployBlock = block.number;
         vm.startBroadcast(pk);
 
         d.endpoint = vm.envOr("LZ_ENDPOINT", address(0));
@@ -126,6 +132,17 @@ contract DeploySpoke is Script {
 
         vm.stopBroadcast();
         _report(d, hubMessenger);
+        _record(registry(d));
+    }
+
+    /// @notice The `deployments/<chainId>.json` contents for `d`.
+    function registry(SpokeDeployment memory d) public returns (string memory) {
+        _entry("spokeEscrow", address(d.spoke));
+        _entry("messenger", address(d.messenger));
+        _entry("endpoint", d.endpoint);
+        _entry("avatars", address(d.avatars));
+        _entry("owner", d.owner);
+        return _registry(d.deployBlock);
     }
 
     function _local() private view returns (bool) {

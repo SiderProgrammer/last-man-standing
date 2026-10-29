@@ -32,7 +32,10 @@ contract SettlementLibFuzzTest is Test {
         );
     }
 
-    function testFuzz_dirtyHighBitsDoNotChangeDigest(address a, address b, uint96 dirtA, uint96 dirtB) public view {
+    function testFuzz_dirtyHighBitsDoNotChangeDigest(address a, address b, uint96 dirtA, uint96 dirtB)
+        public
+        view
+    {
         address[] memory clean = new address[](2);
         clean[0] = a;
         clean[1] = b;

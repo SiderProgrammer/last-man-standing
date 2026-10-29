@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {BPS_DENOMINATOR} from "../Constants.sol";
+
 /// @title HashLib
 /// @notice Byte-identical Solidity mirror of `@lms/protocol` hashing.
 /// @dev Every function uses `abi.encode` (or equivalent Yul) so a verifier
@@ -8,7 +10,6 @@ pragma solidity 0.8.28;
 ///      Changing the encodings here is a consensus break and must be mirrored
 ///      in `packages/protocol/src/game/hash.ts`.
 library HashLib {
-    uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint8 internal constant ACTION_STRIKE = 1;
 
     /// @dev Field order is the hash order: `abi.encode` of this all-static
@@ -28,14 +29,11 @@ library HashLib {
         uint16 maxRounds;
     }
 
-    function commitMove(
-        bytes32 matchId,
-        uint32 round,
-        uint8 seat,
-        uint8 action,
-        uint8 target,
-        bytes32 salt
-    ) internal pure returns (bytes32) {
+    function commitMove(bytes32 matchId, uint32 round, uint8 seat, uint8 action, uint8 target, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
         if (action != ACTION_STRIKE) target = 0;
         return keccak256(abi.encode(matchId, round, seat, action, target, salt));
     }

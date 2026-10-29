@@ -4,10 +4,10 @@
  * Two id spaces meet in this file and they are not the same thing. An EVM chain
  * id (`1`, `8453`, `11155111`) is what a wallet reports and what a block
  * explorer keys on. A transport endpoint id — LayerZero v2's `eid` — is what
- * `ICrossChainMessenger` carries and therefore what `GameEscrow.seatOrigin`
- * stores. Conflating them shows a player "chain 40161" when they staked on
- * Sepolia, so every origin coming off the escrow goes through
- * `normaliseOriginChainId` before it reaches a `Seat`.
+ * the messenger speaks on the wire. `LayerZeroMessenger` translates eids to
+ * chain ids before the escrow sees them, so `GameEscrow.seatOrigin` holds a
+ * chain id, or zero for a stake placed on the hub; `originChainId` turns that
+ * into the chain a `Seat` shows.
  */
 
 /** Seat origin used by practice matches, which never touch a chain. */
@@ -90,19 +90,9 @@ export function eidForChainId(chainId: number): number | null {
   return byChainId.get(chainId)?.eid ?? null;
 }
 
-/**
- * Turns a `GameEscrow.seatOrigin` value into an EVM chain id.
- *
- * The escrow stores whatever `srcChainId` the messenger delivered, and zero
- * for a player who staked on the hub directly. `LayerZeroMessenger` now
- * translates endpoint ids to chain ids before the escrow sees them, so the
- * value is normally already a chain id and passes straight through; mapping a
- * known endpoint id is kept for escrows fed by an older adapter. An id that
- * matches no known endpoint renders as a number rather than as the wrong chain.
- */
-export function normaliseOriginChainId(origin: number, hubChainId: number): number {
-  if (origin === 0) return hubChainId;
-  return chainIdForEid(origin) ?? origin;
+/** The chain a `GameEscrow.seatOrigin` value names: zero means the stake was placed on the hub. */
+export function originChainId(origin: number, hubChainId: number): number {
+  return origin === 0 ? hubChainId : origin;
 }
 
 /** `#rrggbb`, for the DOM side of the badge. */

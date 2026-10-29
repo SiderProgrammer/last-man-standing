@@ -15,6 +15,7 @@ import {
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
+import { RequestError } from '../errors.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -154,14 +155,14 @@ export class Room {
     commitment: `0x${string}`,
     now: number = Date.now(),
     hold?: SealedMove,
-    aim: MoveAim = {},
+    aim?: MoveAim,
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
       if (opened.toLowerCase() !== commitment.toLowerCase()) {
-        throw new Error('the held move does not open the commitment');
+        throw new RequestError('COMMITMENT_MISMATCH', 'the held move does not open the commitment');
       }
       this.match.assertPlayable(seat, hold);
     }
@@ -173,7 +174,7 @@ export class Room {
     else this.broadcastState();
   }
 
-  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim: MoveAim = {}): void {
+  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim?: MoveAim): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
     this.match.submitReveal(seat, move);
@@ -200,20 +201,24 @@ export class Room {
     else if (this.match.phase === MatchPhase.Reveal) this.resolveRound(now);
   }
 
-  /** Refuses a move made for another match or round: see `MoveAim`. */
-  private requireAim(aim: MoveAim): void {
-    if (aim.matchId !== undefined && aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
-      throw new Error('this move is for another match');
+  /**
+   * Refuses a move made for another match or round: see `MoveAim`. Every
+   * client move carries one; only the server's own moves (house bots) omit it.
+   */
+  private requireAim(aim: MoveAim | undefined): void {
+    if (!aim) return;
+    if (aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
+      throw new RequestError('STALE_MOVE', 'this move is for another match');
     }
-    if (aim.round !== undefined && aim.round !== this.match.round) {
-      throw new Error(`this move is for round ${aim.round}; the match is on round ${this.match.round}`);
+    if (aim.round !== this.match.round) {
+      throw new RequestError('STALE_MOVE', `this move is for round ${aim.round}; the match is on round ${this.match.round}`);
     }
   }
 
   private requireSeat(address: `0x${string}`): number {
     const seat = this.seatOf(address);
-    if (seat === null) throw new Error('you are not seated in this match');
-    if (this.bots.has(seat)) throw new Error('seat is played by the house bot');
+    if (seat === null) throw new RequestError('NOT_SEATED', 'you are not seated in this match');
+    if (this.bots.has(seat)) throw new RequestError('FORBIDDEN', 'seat is played by the house bot');
     return seat;
   }
 

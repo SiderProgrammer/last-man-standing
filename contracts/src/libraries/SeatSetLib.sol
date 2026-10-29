@@ -20,8 +20,7 @@ library SeatSetLib {
 
     /// @dev Namespace for the transient slots, to avoid colliding with any
     ///      other transient storage used in the same transaction.
-    uint256 private constant SEAT_SET_NAMESPACE =
-        uint256(keccak256("lms.seatset.transient.v1")) - 1;
+    uint256 private constant SEAT_SET_NAMESPACE = uint256(keccak256("lms.seatset.transient.v1")) - 1;
 
     /// @param seats Seats of the match, in join order.
     /// @param ranking Signed finishing order, best first.
@@ -36,7 +35,7 @@ library SeatSetLib {
             // a repeat entry), so no duplicate check is needed here.
             let cursor := add(seats, 0x20)
             let end := add(cursor, shl(5, length))
-            for {} lt(cursor, end) {cursor := add(cursor, 0x20)} {
+            for {} lt(cursor, end) { cursor := add(cursor, 0x20) } {
                 mstore(0x00, mload(cursor))
                 mstore(0x20, namespace)
                 tstore(keccak256(0x00, 0x40), 1)
@@ -70,7 +69,7 @@ library SeatSetLib {
         assembly ("memory-safe") {
             let cursor := add(seats, 0x20)
             let end := add(cursor, shl(5, length))
-            for {} lt(cursor, end) {cursor := add(cursor, 0x20)} {
+            for {} lt(cursor, end) { cursor := add(cursor, 0x20) } {
                 mstore(0x00, mload(cursor))
                 mstore(0x20, namespace)
                 tstore(keccak256(0x00, 0x40), 0)

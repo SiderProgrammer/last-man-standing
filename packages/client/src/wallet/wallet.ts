@@ -6,7 +6,6 @@ import {
   erc20Abi,
   formatEther,
   http,
-  parseAbi,
   parseEther,
   parseSignature,
   type Address,
@@ -51,7 +50,6 @@ import {
  * never sent. Ignoring the return value is what `SafeERC20` does on-chain; a
  * token that actually refuses the approval still reverts.
  */
-const approveAbi = parseAbi(['function approve(address spender, uint256 amount)']);
 
 /** How long a staking permit signature stays valid, in seconds. */
 const PERMIT_SECONDS = 10 * 60;
@@ -271,7 +269,7 @@ export class Wallet {
       this.rpc.simulateContract({
         account: this.address,
         address: token,
-        abi: approveAbi,
+        abi: erc20Abi,
         functionName: 'approve',
         args: [spender, value],
       });
@@ -629,7 +627,7 @@ export class Wallet {
       this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalThreshold' }),
       this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'clock' }),
       known.escrow
-        ? this.rpc.readContract({ address: known.escrow, abi: protocolConfigAbi, functionName: 'config' })
+        ? this.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'config' })
         : Promise.resolve(null),
     ]);
     const [power, params] = await Promise.all([

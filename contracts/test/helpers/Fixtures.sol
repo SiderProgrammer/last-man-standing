@@ -88,7 +88,11 @@ contract Fixtures is Test {
     /// @dev Signs and proposes `ranking` with two attestors.
     function _propose(bytes32 matchId, address[] memory ranking) internal {
         escrow.settle(
-            matchId, ROUNDS, HISTORY_ROOT, ranking, _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, ranking)
+            matchId,
+            ROUNDS,
+            HISTORY_ROOT,
+            ranking,
+            _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, ranking)
         );
     }
 

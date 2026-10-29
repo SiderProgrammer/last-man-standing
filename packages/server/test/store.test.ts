@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MatchResult } from '@lms/protocol';
+import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
 import { Lobby, MemoryArchive, nullRelayer, type ArchivedMatch } from '@lms/server';
 import { bytes32, setupWithBots } from './helpers.js';
 
@@ -10,7 +10,16 @@ function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = nu
     historyRoot: bytes32(`root:${matchId}:${rounds}`),
     ranking: ['0x00000000000000000000000000000000000000a1'],
   };
-  return { result, history: [], settledTx };
+  return {
+    result,
+    history: [],
+    settledTx,
+    seats: [{ index: 0, address: '0x00000000000000000000000000000000000000a1', chainId: 0 }],
+    rules: DEFAULT_RULES,
+    staked: false,
+    seed: bytes32(`seed:${matchId}`),
+    finishedAt: 1_000,
+  };
 }
 
 describe('memory archive', () => {
@@ -29,7 +38,7 @@ describe('memory archive', () => {
   it('looks up a match id case-insensitively', async () => {
     // Characterisation: `MemoryArchive` lower-cases the key on both save and
     // load, while `PostgresArchive` stores and queries the id verbatim. One
-    // port, two behaviours — see `docs/TODO.md` §3.4.
+    // port, two behaviours — fixed in `docs/FIX_PLAN.md` step 7.2.
     const archive = new MemoryArchive();
     const id = bytes32('case');
     await archive.save(entry(id));
@@ -55,7 +64,12 @@ describe('memory archive', () => {
     const other = '0x00000000000000000000000000000000000000b2' as const;
     const theirs = entry(bytes32('b'));
     await archive.save({ ...entry(bytes32('a')), finishedAt: 1 });
-    await archive.save({ ...theirs, result: { ...theirs.result, ranking: [other] }, finishedAt: 2 });
+    await archive.save({
+      ...theirs,
+      result: { ...theirs.result, ranking: [other] },
+      seats: [{ index: 0, address: other, chainId: 0 }],
+      finishedAt: 2,
+    });
     await archive.save({ ...entry(bytes32('c')), finishedAt: 3 });
 
     expect((await archive.forPlayer(you, 10)).map((item) => item.finishedAt)).toEqual([3, 1]);

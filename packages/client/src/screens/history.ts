@@ -67,7 +67,7 @@ function historyRow(match: MatchSummary): HTMLLIElement {
   detail.textContent = [
     match.staked ? 'Staked' : 'Practice',
     `${match.rounds} rounds`,
-    match.finishedAt === null ? null : formatWhen(match.finishedAt),
+    formatWhen(match.finishedAt),
     match.settledTx ? `tx ${short(match.settledTx)}` : null,
   ]
     .filter((part) => part !== null)
@@ -79,8 +79,6 @@ function historyRow(match: MatchSummary): HTMLLIElement {
 
   const open = document.createElement('button');
   open.textContent = 'Open';
-  open.disabled = !match.reviewable;
-  if (!match.reviewable) open.title = 'Archived before replays were kept';
   open.onclick = () => net.send({ type: 'review', matchId: match.matchId });
 
   li.append(label, open);

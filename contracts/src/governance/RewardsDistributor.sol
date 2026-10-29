@@ -104,7 +104,9 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
         uint256 totalBudget_,
         uint256 maxRewardPerEth_
     ) Ownable(owner_) {
-        if (address(escrow_) == address(0) || address(vault_) == address(0)) revert ZeroAddress();
+        if (address(escrow_) == address(0) || address(vault_) == address(0)) {
+            revert ZeroAddress();
+        }
 
         escrow = escrow_;
         vault = vault_;

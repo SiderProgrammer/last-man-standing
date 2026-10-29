@@ -85,11 +85,11 @@ export function onAuthed(): void {
 }
 
 /**
- * Called with every server error. Before `authed` the only thing in flight is
- * the login, so an error then is the server refusing the session key: the
- * account was re-delegated, the key revoked, or the chain behind it reset (a
- * redeployed fork puts the delegate at the same address, so `Session.load`
- * cannot tell). Returns true when it handled the error by retrying with the wallet.
+ * Called when the server refuses a login signature. During a session-key login
+ * that means the server no longer accepts the key: the account was
+ * re-delegated, the key revoked, or the chain behind it reset (a redeployed
+ * fork puts the delegate at the same address, so `Session.load` cannot tell).
+ * Returns true when it handled the error by retrying with the wallet.
  */
 export function onLoginRejected(): boolean {
   if (!sessionLoginPending) return false;

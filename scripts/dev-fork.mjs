@@ -44,12 +44,12 @@ import {
   createWalletClient,
   encodeAbiParameters,
   encodeFunctionData,
+  erc20Abi,
   formatUnits,
   http,
   keccak256,
   numberToHex,
   pad,
-  parseAbi,
   parseEther,
   parseUnits,
   toHex,
@@ -142,40 +142,22 @@ const LOBBIES = [
   { stake: '0.05', seats: 6 },
 ];
 
-const erc20 = parseAbi([
-  'function balanceOf(address) view returns (uint256)',
-  'function approve(address spender, uint256 amount) returns (bool)',
-]);
-const vaultAbi = parseAbi(['function deposit(uint256 assets, address receiver) returns (uint256)']);
+/**
+ * A contract's ABI from Foundry's build output. Read on use, not at load:
+ * `forge script` compiles the contracts first.
+ */
+const abiOf = (contract) =>
+  JSON.parse(readFileSync(`${CONTRACTS}out/${contract}.sol/${contract}.json`, 'utf8')).abi;
 /** Staked by the operator: enough to clear the 100,000 sLMS proposal threshold. */
 const OPERATOR_STAKE = '200000';
 /** Staked for each funded player, so they can vote on the demo proposal from the start. */
 const PLAYER_STAKE = '1000';
-const governorAbi = parseAbi([
-  'function propose(address[] targets, uint256[] values, bytes[] calldatas, string description) returns (uint256)',
-]);
-const feeRouterSetterAbi = parseAbi(['function setStakerBps(uint16 stakerBps)']);
 const DEMO_PROPOSAL = [
   "# Raise the stakers' share of fees to 60%",
   '',
   'A demo proposal created by `npm run dev:fork`. Voting opens a minute after',
   'the fork starts and closes thirty minutes later.',
 ].join('\n');
-const escrowAbi = parseAbi(['function createMatch(uint128 stake, uint16 maxSeats) returns (bytes32)']);
-const oracleAbi = parseAbi([
-  'event RandomnessRequested(bytes32 indexed requestId, address indexed consumer, bytes32 context)',
-  'function fulfill(bytes32 requestId, bytes32 randomness)',
-]);
-const lzEndpointAbi = parseAbi([
-  'function setFee(uint256 fee)',
-  'function sentCount() view returns (uint256)',
-  'function getSent(uint256 index) view returns ((uint32 dstEid, bytes32 receiver, bytes message, bytes options, uint128 value))',
-  'function deliver(address target, uint32 srcEid, bytes32 srcSender, bytes message, uint256 value) payable returns (bytes32)',
-]);
-const registrationAbi = parseAbi([
-  'function setRemoteChain(uint32 chainId, address messenger, bytes32 peer)',
-  'function setPeer(uint32 chainId, uint32 eid, bytes32 peer)',
-]);
 
 const children = [];
 let stopping = false;
@@ -407,11 +389,11 @@ async function registerSpoke(publicClient, hub, spoke) {
   await rpc('anvil_setBalance', [timelock, numberToHex(parseEther('1'))]);
   const asTimelock = createWalletClient({ account: timelock, transport: http(RPC) });
   const calls = [
-    [hub.ProtocolConfig, 'setRemoteChain', [SPOKE_CHAIN_ID, hub.LayerZeroMessenger, bytes32Of(spoke.SpokeEscrow)]],
-    [hub.LayerZeroMessenger, 'setPeer', [SPOKE_CHAIN_ID, SPOKE_EID, bytes32Of(spoke.LayerZeroMessenger)]],
+    [hub.ProtocolConfig, 'ProtocolConfig', 'setRemoteChain', [SPOKE_CHAIN_ID, hub.LayerZeroMessenger, bytes32Of(spoke.SpokeEscrow)]],
+    [hub.LayerZeroMessenger, 'LayerZeroMessenger', 'setPeer', [SPOKE_CHAIN_ID, SPOKE_EID, bytes32Of(spoke.LayerZeroMessenger)]],
   ];
-  for (const [address, functionName, args] of calls) {
-    const hash = await asTimelock.writeContract({ chain: null, address, abi: registrationAbi, functionName, args });
+  for (const [address, contract, functionName, args] of calls) {
+    const hash = await asTimelock.writeContract({ chain: null, address, abi: abiOf(contract), functionName, args });
     await publicClient.waitForTransactionReceipt({ hash });
   }
   await rpc('anvil_stopImpersonatingAccount', [timelock]);
@@ -422,7 +404,7 @@ async function registerSpoke(publicClient, hub, spoke) {
   const hash = await operator.writeContract({
     chain: null,
     address: spoke.MockLayerZeroEndpoint,
-    abi: lzEndpointAbi,
+    abi: abiOf('MockLayerZeroEndpoint'),
     functionName: 'setFee',
     args: [parseEther(SPOKE_LZ_FEE)],
   });
@@ -445,11 +427,11 @@ function runRelayer(hub, spoke) {
     if (busy) return;
     busy = true;
     try {
-      const count = await spokeClient.readContract({ address: spoke.MockLayerZeroEndpoint, abi: lzEndpointAbi, functionName: 'sentCount' });
+      const count = await spokeClient.readContract({ address: spoke.MockLayerZeroEndpoint, abi: abiOf('MockLayerZeroEndpoint'), functionName: 'sentCount' });
       for (; next < count; next++) {
         const sent = await spokeClient.readContract({
           address: spoke.MockLayerZeroEndpoint,
-          abi: lzEndpointAbi,
+          abi: abiOf('MockLayerZeroEndpoint'),
           functionName: 'getSent',
           args: [next],
         });
@@ -470,7 +452,7 @@ function runRelayer(hub, spoke) {
       await executor.writeContract({
         chain: null,
         address: hub.MockLayerZeroEndpoint,
-        abi: lzEndpointAbi,
+        abi: abiOf('MockLayerZeroEndpoint'),
         functionName: 'deliver',
         args: [hub.LayerZeroMessenger, SPOKE_EID, bytes32Of(spoke.LayerZeroMessenger), sent.message, sent.value],
         value: sent.value,
@@ -505,7 +487,7 @@ async function fundToken(publicClient, token, holder) {
 
   const balance = await publicClient.readContract({
     address: token.address,
-    abi: erc20,
+    abi: erc20Abi,
     functionName: 'balanceOf',
     args: [holder],
   });
@@ -543,7 +525,7 @@ async function seed(publicClient, escrow) {
     const hash = await operator.writeContract({
       chain: null,
       address: escrow,
-      abi: escrowAbi,
+      abi: abiOf('GameEscrow'),
       functionName: 'createMatch',
       args: [parseEther(lobby.stake), lobby.seats],
     });
@@ -563,10 +545,10 @@ async function stakeAsOperator(publicClient, lms, vault, holders) {
   const own = parseEther(OPERATOR_STAKE);
   const each = parseEther(PLAYER_STAKE);
   const calls = [
-    [lms, erc20, 'approve', [vault, own + each * BigInt(holders.length)]],
-    [vault, vaultAbi, 'deposit', [own, operator.account.address]],
+    [lms, erc20Abi, 'approve', [vault, own + each * BigInt(holders.length)]],
+    [vault, abiOf('StakedLms'), 'deposit', [own, operator.account.address]],
     // Deposited *for* each player: the shares, and the votes, are theirs.
-    ...holders.map((holder) => [vault, vaultAbi, 'deposit', [each, holder]]),
+    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'deposit', [each, holder]]),
   ];
   for (const [address, abi, functionName, args] of calls) {
     const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });
@@ -587,9 +569,9 @@ async function demoProposal(publicClient, governor, router) {
   const hash = await operator.writeContract({
     chain: null,
     address: governor,
-    abi: governorAbi,
+    abi: abiOf('LmsGovernor'),
     functionName: 'propose',
-    args: [[router], [0n], [encodeFunctionData({ abi: feeRouterSetterAbi, functionName: 'setStakerBps', args: [6_000] })], DEMO_PROPOSAL],
+    args: [[router], [0n], [encodeFunctionData({ abi: abiOf('FeeRouter'), functionName: 'setStakerBps', args: [6_000] })], DEMO_PROPOSAL],
   });
   await publicClient.waitForTransactionReceipt({ hash });
 }
@@ -606,7 +588,7 @@ function runOracleNode(publicClient, oracle) {
   const answered = new Set();
   publicClient.watchContractEvent({
     address: oracle,
-    abi: oracleAbi,
+    abi: abiOf('MockRandomnessOracle'),
     eventName: 'RandomnessRequested',
     pollingInterval: 1_000,
     onLogs: async (logs) => {
@@ -617,7 +599,7 @@ function runOracleNode(publicClient, oracle) {
           await node.writeContract({
             chain: null,
             address: oracle,
-            abi: oracleAbi,
+            abi: abiOf('MockRandomnessOracle'),
             functionName: 'fulfill',
             args: [args.requestId, toHex(randomBytes(32))],
           });

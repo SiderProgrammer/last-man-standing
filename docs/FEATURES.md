@@ -337,16 +337,12 @@ spoke, before anything is sent; the client says so in words.
 
 ### Two id spaces
 
-A detail worth knowing because it caused a real bug. `seatOrigin` stores
-whatever `srcChainId` the messenger delivered, which for LayerZero is an
-**endpoint id** (`40245`), not an **EVM chain id** (`84532`). Passing one off as
-the other would have labelled a Base Sepolia player "chain 40245".
-
-`normaliseOriginChainId` in `protocol/chains.ts` resolves this: zero means the
-hub, a known endpoint id maps to its chain, and anything unrecognised passes
-through unchanged — so a transport whose id space already is chain ids stays
-correct, and an unknown endpoint degrades to a number rather than to the wrong
-chain.
+A detail worth knowing because it caused a real bug. LayerZero speaks
+**endpoint ids** (`40245`), not **EVM chain ids** (`84532`); passing one off as
+the other would label a Base Sepolia player "chain 40245". `LayerZeroMessenger`
+translates at its boundary, so `seatOrigin` holds a chain id, or zero for a
+stake placed on the hub, which `originChainId` in `protocol/chains.ts` maps to
+the hub.
 
 ### Showing the origin
 

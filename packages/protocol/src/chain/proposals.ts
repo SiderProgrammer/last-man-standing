@@ -2,12 +2,22 @@ import {
   decodeFunctionData,
   getAddress,
   keccak256,
-  parseAbi,
   toBytes,
   type Abi,
   type Address,
   type Hex,
 } from 'viem';
+import {
+  feeRouterAbi,
+  gameEscrowAbi,
+  layerZeroMessengerAbi,
+  lmsGovernorAbi,
+  lmsTokenAbi,
+  protocolConfigAbi,
+  rewardsDistributorAbi,
+  stakedLmsAbi,
+  timelockControllerAbi,
+} from './abis.js';
 
 /**
  * Token governance as the client and server see it: proposals made to
@@ -19,42 +29,10 @@ import {
  * client itself.
  */
 
-export const lmsGovernorAbi = parseAbi([
-  'function state(uint256 proposalId) view returns (uint8)',
-  'function proposalVotes(uint256 proposalId) view returns (uint256 againstVotes, uint256 forVotes, uint256 abstainVotes)',
-  'function hasVoted(uint256 proposalId, address account) view returns (bool)',
-  'function getVotes(address account, uint256 timepoint) view returns (uint256)',
-  'function proposalSnapshot(uint256 proposalId) view returns (uint256)',
-  'function proposalDeadline(uint256 proposalId) view returns (uint256)',
-  'function proposalEta(uint256 proposalId) view returns (uint256)',
-  'function quorum(uint256 timepoint) view returns (uint256)',
-  'function castVote(uint256 proposalId, uint8 support) returns (uint256)',
-  'function castVoteWithReason(uint256 proposalId, uint8 support, string reason) returns (uint256)',
-  'function propose(address[] targets, uint256[] values, bytes[] calldatas, string description) returns (uint256)',
-  'function proposalThreshold() view returns (uint256)',
-  'function clock() view returns (uint48)',
-  'function timelock() view returns (address)',
-  'function votingPeriod() view returns (uint256)',
-  'function queue(address[] targets, uint256[] values, bytes[] calldatas, bytes32 descriptionHash) returns (uint256)',
-  'function execute(address[] targets, uint256[] values, bytes[] calldatas, bytes32 descriptionHash) payable returns (uint256)',
-  'event ProposalCreated(uint256 proposalId, address proposer, address[] targets, uint256[] values, string[] signatures, bytes[] calldatas, uint256 voteStart, uint256 voteEnd, string description)',
-  'error GovernorUnexpectedProposalState(uint256 proposalId, uint8 current, bytes32 expectedStates)',
-  'error GovernorAlreadyCastVote(address voter)',
-  'error GovernorInvalidVoteType()',
-  'error GovernorNonexistentProposal(uint256 proposalId)',
-  'error GovernorInsufficientProposerVotes(address proposer, uint256 votes, uint256 threshold)',
-  'error GovernorInvalidProposalLength(uint256 targets, uint256 calldatas, uint256 values)',
-  'error GovernorRestrictedProposer(address proposer)',
-  'error TimelockUnexpectedOperationState(bytes32 operationId, bytes32 expectedStates)',
-  'error ERC5805FutureLookup(uint256 timepoint, uint48 clock)',
-]);
+export { lmsGovernorAbi };
 
 /** The `ProtocolConfig` reads a proposal builder needs, and where the escrow keeps it. */
-export const protocolConfigAbi = parseAbi([
-  'function config() view returns (address)',
-  'function getParams() view returns ((uint16 feeBps, uint16 minSeats, uint16 maxSeats, uint64 joinWindow, uint64 settleWindow, uint128 minStake, uint128 maxStake, address treasury))',
-  'function guardian() view returns (address)',
-]);
+export { protocolConfigAbi };
 
 /** The config's parameter set, as `getParams` returns it and `setParams` takes it. */
 export interface ProtocolParams {
@@ -131,54 +109,22 @@ export function splitDescription(description: string): { title: string; body: st
 }
 
 /**
- * Every function a proposal is expected to call, across the contracts the
- * timelock owns. Used only to *display* actions; a call that matches none of
- * these is shown raw, never hidden.
+ * Every function of the contracts a proposal is expected to call: the ones the
+ * timelock owns, the timelock itself, and the token for a transfer out of the
+ * treasury. Used only to *display* actions; a call that matches none of these
+ * is shown raw, never hidden.
  */
-export const governableAbi = parseAbi([
-  // ProtocolConfig
-  'function setParams((uint16 feeBps, uint16 minSeats, uint16 maxSeats, uint64 joinWindow, uint64 settleWindow, uint128 minStake, uint128 maxStake, address treasury) params)',
-  'function setRulesHash(bytes32 rulesHash)',
-  'function setPayoutSchedule(uint16[] payoutBps)',
-  'function setRandomnessOracle(address oracle)',
-  'function setAttestor(address attestor, bool allowed)',
-  'function setAttestorThreshold(uint32 threshold)',
-  'function setGuardian(address guardian)',
-  'function setRemoteChain(uint32 chainId, address messenger, bytes32 peer)',
-  // LayerZeroMessenger
-  'function setPeer(uint32 chainId, uint32 eid, bytes32 peer)',
-  'function setApp(address app)',
-  'function setDelegate(address delegate)',
-  'function setReceiveGas(uint128 gas)',
-  // GameEscrow
-  'function pause()',
-  'function unpause()',
-  // FeeRouter
-  'function setTreasury(address treasury)',
-  'function setStakerBps(uint16 stakerBps)',
-  // StakedLms
-  'function setCooldown(uint64 cooldown)',
-  'function sweepStray(address to)',
-  // TimelockController
-  'function updateDelay(uint256 delay)',
-  'function grantRole(bytes32 role, address account)',
-  'function revokeRole(bytes32 role, address account)',
-  // LmsGovernor (GovernorSettings, GovernorVotesQuorumFraction)
-  'function setVotingDelay(uint48 votingDelay)',
-  'function setVotingPeriod(uint32 votingPeriod)',
-  'function setProposalThreshold(uint256 proposalThreshold)',
-  'function updateQuorumNumerator(uint256 quorumNumerator)',
-  // LmsGovernor: the minimum quorum, in votes
-  'function setQuorumFloor(uint256 quorumFloor)',
-  // RewardsDistributor
-  'function setMaxRewardPerEth(uint256 maxRewardPerEth)',
-  'function sweep(address to)',
-  // Ownable2Step, on any of them
-  'function transferOwnership(address owner)',
-  'function acceptOwnership()',
-  // A token transfer out of the treasury
-  'function transfer(address to, uint256 amount)',
-]);
+export const governableAbi = [
+  ...protocolConfigAbi,
+  ...gameEscrowAbi,
+  ...layerZeroMessengerAbi,
+  ...feeRouterAbi,
+  ...stakedLmsAbi,
+  ...rewardsDistributorAbi,
+  ...lmsGovernorAbi,
+  ...timelockControllerAbi,
+  ...lmsTokenAbi,
+] as const;
 
 /** Named `TimelockController` roles, so a role change reads as what it is. */
 const ROLE_NAMES: Record<string, string> = Object.fromEntries(

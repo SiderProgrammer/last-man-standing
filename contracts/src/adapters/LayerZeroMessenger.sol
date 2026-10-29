@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 
 import {ICrossChainMessenger, ICrossChainReceiver} from "../interfaces/ICrossChainMessenger.sol";
 import {ILayerZeroEndpoint, ILayerZeroReceiver, Origin} from "../interfaces/ILayerZeroEndpoint.sol";
-import {ZeroAddress} from "../Errors.sol";
+import {UntrustedPeer, ZeroAddress} from "../Errors.sol";
 
 /// @title LayerZeroMessenger
 /// @notice Adapts LayerZero v2 to the protocol's messenger interface, as an
@@ -95,14 +95,15 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
     error NotApp(address caller);
     error NotEndpoint(address caller);
     error UnknownChain(uint32 chainId);
-    error UntrustedPeer(uint32 eid, bytes32 sender);
     error NotParked(bytes32 guid);
     error ReceiveGasTooLow(uint128 gas);
     error NotEnoughGas(uint256 available, uint256 needed);
 
     /// @dev `owner_` is also made the endpoint delegate, as `OAppCore` does,
     ///      so the owner can set this OApp's verifiers and libraries.
-    constructor(address owner_, ILayerZeroEndpoint endpoint_, address app_, uint128 receiveGas_) Ownable(owner_) {
+    constructor(address owner_, ILayerZeroEndpoint endpoint_, address app_, uint128 receiveGas_)
+        Ownable(owner_)
+    {
         if (address(endpoint_) == address(0)) revert ZeroAddress();
         if (receiveGas_ < MIN_RECEIVE_GAS) revert ReceiveGasTooLow(receiveGas_);
         endpoint = endpoint_;
@@ -159,7 +160,8 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
         view
         returns (uint256 nativeFee)
     {
-        nativeFee = endpoint.quote(_params(dstChainId, receiver, payload, deliverValue), address(this)).nativeFee;
+        nativeFee =
+        endpoint.quote(_params(dstChainId, receiver, payload, deliverValue), address(this)).nativeFee;
     }
 
     /// @notice The executor options for one message: `lzReceive` gas and value.
@@ -219,7 +221,8 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
         }
         if (gasleft() < APP_GAS + PARK_GAS) revert NotEnoughGas(gasleft(), APP_GAS + PARK_GAS);
 
-        (bytes32 srcApp, bytes32 receiver, bytes memory payload) = abi.decode(message, (bytes32, bytes32, bytes));
+        (bytes32 srcApp, bytes32 receiver, bytes memory payload) =
+            abi.decode(message, (bytes32, bytes32, bytes));
         uint32 srcChainId = chainIdOf[origin.srcEid];
 
         address target = app;
@@ -229,7 +232,8 @@ contract LayerZeroMessenger is Ownable2Step, ICrossChainMessenger, ILayerZeroRec
         }
         try ICrossChainReceiver(target).receiveMessage{value: msg.value, gas: gasleft() - PARK_GAS}(
             srcChainId, srcApp, payload
-        ) {} catch (bytes memory reason) {
+        ) {}
+        catch (bytes memory reason) {
             _park(guid, srcChainId, srcApp, payload, msg.value, reason);
         }
     }

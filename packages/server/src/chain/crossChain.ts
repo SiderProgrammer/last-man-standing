@@ -4,7 +4,7 @@ import {
   errorMessage,
   gameEscrowAbi,
   layerZeroMessengerAbi,
-  normaliseOriginChainId,
+  originChainId,
   type CrossChainEvent,
   type SpokeInfo,
 } from '@lms/protocol';
@@ -163,7 +163,7 @@ export class CrossChainWatcher {
         notify(log.player, {
           kind: 'seated',
           matchId: log.matchId,
-          chainId: normaliseOriginChainId(log.originChainId, hubChainId),
+          chainId: originChainId(log.originChainId, hubChainId),
         });
         return;
       case 'refunded':

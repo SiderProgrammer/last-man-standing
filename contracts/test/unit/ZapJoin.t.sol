@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ZapJoin} from "../../src/periphery/ZapJoin.sol";
 import {PoolKey} from "../../src/interfaces/IPoolManager.sol";
@@ -205,7 +206,8 @@ contract ZapJoinTest is Fixtures {
         address stranger = makeAddr("stranger");
         usdc.mint(stranger, 10_000e18);
         vm.prank(stranger);
-        vm.expectRevert();
+        // The amount in the error is the swap's exact input, which the mock pool prices.
+        vm.expectPartialRevert(IERC20Errors.ERC20InsufficientAllowance.selector);
         zap.joinWithToken(matchId, _usdcPath(), 2000e18, block.timestamp);
     }
 

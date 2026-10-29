@@ -4,10 +4,8 @@ import { readOpponents } from '../src/game/reads.js';
 import { round, stateWith } from './helpers.js';
 
 /**
- * Characterisation tests: these pin what `readOpponents` does today, including
- * where that is arguably wrong. See `docs/TODO.md` §3.4 for the two quirks
- * pinned here deliberately — the unreachable `revealed >= 5` disjunct and the
- * first-round leader fallback that treats every mover as a leader.
+ * What `readOpponents` concludes from a history. The first-round leader
+ * fallback, which treats every mover as a leader, is pinned deliberately.
  */
 describe('reads panel', () => {
   it('omits your own seat and sorts the living first, then by seat', () => {
@@ -121,10 +119,26 @@ describe('reads panel', () => {
     expect(one?.tell).toBe('fixated on #3');
   });
 
+  it('does not call a seat fixated when its strikes are spread across targets', () => {
+    // Three strikes, but no target was hit three times. Seat 3 is never the
+    // HP leader, so the hunt and grudge tells stay out of the way.
+    const state = stateWith(5, [
+      round(1, [{ index: 1, action: Action.Guard }], [100, 100, 100, 50, 100]),
+      round(2, [{ index: 1, action: Action.Strike, target: 3 }], [100, 100, 100, 40, 100]),
+      round(3, [{ index: 1, action: Action.Charge }], [100, 100, 100, 40, 100]),
+      round(4, [{ index: 1, action: Action.Strike, target: 3 }], [100, 100, 100, 30, 100]),
+      round(5, [{ index: 1, action: Action.Guard }], [100, 100, 100, 30, 100]),
+      round(6, [{ index: 1, action: Action.Strike, target: 4 }], [100, 100, 100, 30, 90]),
+      round(7, [{ index: 1, action: Action.Charge }], [100, 100, 100, 30, 90]),
+    ]);
+    const [one] = readOpponents(state, 0);
+
+    expect(one?.strikes).toBe(3);
+    expect(one?.favourite).toBe(3);
+    expect(one?.tell).toBe('');
+  });
+
   it('says nothing about a favourite backed by only two attacks, however long the history', () => {
-    // Pins the dead disjunct in `tellFor`: the outer guard admits
-    // `revealed >= 5`, but the inner one re-requires `attacks >= 3`, so a long
-    // history with two attacks can never produce the "fixated" tell.
     const state = stateWith(4, [
       round(1, [{ index: 1, action: Action.Guard }], [100, 100, 100, 66]),
       round(2, [{ index: 1, action: Action.Guard }], [100, 100, 100, 66]),

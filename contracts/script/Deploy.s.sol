@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script} from "forge-std/Script.sol";
+import {Registry} from "./Registry.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
@@ -44,14 +44,19 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
-///      The mock oracle and messenger are deployed on a local node only; anywhere
-///      else pass `ORACLE` (a `ChainlinkVrfAdapter`). Cross-chain joins need a
+///      `MOCKS` picks the mock oracle and messenger or real ones. It defaults
+///      to true on a local node and must be false anywhere else; with it false
+///      pass `ORACLE` (a `ChainlinkVrfAdapter`). Cross-chain joins need a
 ///      hub `LayerZeroMessenger`: pass `LZ_ENDPOINT` and this script deploys
 ///      one, points it at the escrow and hands it to the timelock with the
 ///      config — or pass `MESSENGER` for one deployed separately, which must
 ///      then be owned by the timelock, never an EOA: whoever owns it can forge
 ///      cross-chain joins. On a local node, `MOCK_LZ=true` puts the messenger
 ///      over a `MockLayerZeroEndpoint`, which `npm run dev:fork` relays.
+///
+///      On a broadcast it writes `deployments/<chainId>.json` (see `Registry`),
+///      which the server reads for its addresses. Add `--verify` to the
+///      `forge script` command to verify every contract on the explorer.
 ///
 ///      Spokes come after, each with `DeploySpoke.s.sol` on its own chain,
 ///      behind its own Safe and timelock. The hub learns about each one by a
@@ -60,7 +65,7 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      template builds — because both are the timelock's by then. A join sent
 ///      before that executes is not lost: the messenger parks it, and it is
 ///      retried into the seat once the proposal lands.
-contract Deploy is Script {
+contract Deploy is Registry {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
     /// @dev The hub's home: Ethereum L1.
@@ -100,6 +105,8 @@ contract Deploy is Script {
         /// @dev The hub messenger this script deployed, if any; it is also
         ///      `messenger`. Zero when `MESSENGER` was passed or no endpoint was.
         LayerZeroMessenger hubLz;
+        /// @dev The head when the script started: no contract here is older.
+        uint256 deployBlock;
     }
 
     /// @dev Gas the executor gives `lzReceive` on the far side: a hub join is
@@ -108,6 +115,7 @@ contract Deploy is Script {
 
     error SafeRequired();
     error MockOffLocal();
+    error OracleRequired();
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
     error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
     error RewardsUnderfunded(uint256 budget, uint256 funded);
@@ -117,6 +125,7 @@ contract Deploy is Script {
         uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
         deployment.safe = _safe(deployer);
+        deployment.deployBlock = block.number;
 
         vm.startBroadcast(pk);
 
@@ -153,6 +162,27 @@ contract Deploy is Script {
         _handOver(deployment, deployer);
 
         vm.stopBroadcast();
+        _record(registry(deployment));
+    }
+
+    /// @notice The `deployments/<chainId>.json` contents for `deployment`.
+    function registry(Deployment memory deployment) public returns (string memory) {
+        _entry("config", address(deployment.config));
+        _entry("escrow", address(deployment.escrow));
+        _entry("avatars", address(deployment.avatars));
+        _entry("sessionDelegate", address(deployment.sessionDelegate));
+        _entry("zapJoin", address(deployment.zap));
+        _entry("timelock", address(deployment.timelock));
+        _entry("lmsToken", address(deployment.lms));
+        _entry("stakedLms", address(deployment.stakedLms));
+        _entry("governor", address(deployment.governor));
+        _entry("feeRouter", address(deployment.feeRouter));
+        _entry("rewardsDistributor", address(deployment.rewards));
+        _entry("teamVesting", address(deployment.teamVesting));
+        _entry("safe", deployment.safe);
+        _entry("randomnessOracle", deployment.oracle);
+        _entry("messenger", deployment.messenger);
+        return _registry(deployment.deployBlock);
     }
 
     /// @dev Required everywhere but a local node. Pointing it at the deployer's
@@ -169,10 +199,11 @@ contract Deploy is Script {
     ///      is open to anyone, so on any other chain whoever calls it first
     ///      chooses the seed of every match.
     ///
-    ///      Elsewhere `ORACLE` is required — a `ChainlinkVrfAdapter` whose owner
-    ///      must then register the escrow with `setConsumer` — and a messenger
-    ///      is optional: neither `LZ_ENDPOINT` nor `MESSENGER` means a hub with
-    ///      no spokes yet.
+    ///      Without mocks `ORACLE` is required — a `ChainlinkVrfAdapter` whose
+    ///      owner must then register the escrow with `setConsumer` — and a
+    ///      messenger is optional: neither `LZ_ENDPOINT` nor `MESSENGER` means a
+    ///      hub with no spokes yet. `MOCKS=false` on a local node is a fork
+    ///      run against the real ones.
     function _transport(address deployer)
         private
         returns (address oracle, address messenger, LayerZeroMessenger hubLz)
@@ -181,14 +212,16 @@ contract Deploy is Script {
         messenger = vm.envOr("MESSENGER", address(0));
         address endpoint = vm.envOr("LZ_ENDPOINT", address(0));
         bool local = block.chainid == LOCAL_CHAIN_ID;
+        bool mocks = _mocks(local);
 
-        if (!local && oracle == address(0)) revert MockOffLocal();
+        if (mocks && !local) revert MockOffLocal();
+        if (!mocks && oracle == address(0)) revert OracleRequired();
         // Answers nothing on its own: something must call `fulfill` after each
         // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
         if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
 
         if (messenger != address(0)) return (oracle, messenger, hubLz);
-        if (endpoint == address(0) && local && vm.envOr("MOCK_LZ", false)) {
+        if (endpoint == address(0) && mocks && vm.envOr("MOCK_LZ", false)) {
             endpoint = address(new MockLayerZeroEndpoint());
         }
         if (endpoint != address(0)) {
@@ -200,9 +233,16 @@ contract Deploy is Script {
                 uint128(vm.envOr("RECEIVE_GAS", DEFAULT_RECEIVE_GAS))
             );
             messenger = address(hubLz);
-        } else if (local) {
+        } else if (mocks) {
             messenger = address(new MockMessenger());
         }
+    }
+
+    /// @dev `MOCKS`, defaulting to whether this is a local node. Virtual so a
+    ///      test can force it without `vm.setEnv`, which every test in the
+    ///      process would see.
+    function _mocks(bool local) internal view virtual returns (bool) {
+        return vm.envOr("MOCKS", local);
     }
 
     /// @dev Points the hub messenger at the escrow and makes the timelock its
@@ -372,7 +412,8 @@ contract Deploy is Script {
         if (budget > play) revert RewardsUnderfunded(budget, play);
 
         uint64 vestingStart = uint64(block.timestamp + TEAM_CLIFF);
-        deployment.teamVesting = new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
+        deployment.teamVesting =
+            new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
         uint256 team = (supply * TEAM_BPS) / BPS;
         lms.transfer(address(deployment.teamVesting), team);
 

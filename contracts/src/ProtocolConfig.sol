@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {BPS_DENOMINATOR} from "./Constants.sol";
 import {ZeroAddress} from "./Errors.sol";
 
 /// @title ProtocolConfig
@@ -30,7 +31,6 @@ contract ProtocolConfig is Ownable2Step {
         address treasury;
     }
 
-    uint16 public constant BPS_DENOMINATOR = 10_000;
     /// @dev Hard ceiling on the protocol fee. Governance cannot exceed it.
     uint16 public constant MAX_FEE_BPS = 1_000;
     /// @dev Seat index is a uint8 in the commit preimage, so 256 is the cap.

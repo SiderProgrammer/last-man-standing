@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 
@@ -60,7 +61,7 @@ contract SpokeEscrowTest is Fixtures {
 
     function test_onlyOwnerRepointsTheHub() public {
         vm.prank(players[0]);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, players[0]));
         spoke.setHub(address(spokeMessenger), HUB_CHAIN, players[0]);
     }
 }

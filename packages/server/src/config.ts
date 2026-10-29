@@ -1,47 +1,214 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
-import { ZERO_ADDRESS } from '@lms/protocol';
+import * as z from 'zod/v4';
+import { DEFAULT_SERVER_PORT, ZERO_ADDRESS } from '@lms/protocol';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
 
+/** A malformed environment, with every problem listed, one per line. */
+export class ConfigError extends Error {
+  override name = 'ConfigError';
+}
+
+// Blank counts as unset: `.env.example` ships with empty values.
+const variable = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((value) => (value === '' ? undefined : value), schema);
+
+const whole = (fallback: number, min = 0) =>
+  variable(
+    z
+      .string()
+      .regex(/^\d+$/, 'must be a whole number')
+      .default(String(fallback))
+      .transform(Number)
+      .pipe(z.number().min(min, `must be at least ${min}`).max(Number.MAX_SAFE_INTEGER, 'is too large')),
+  );
+
+const bigint = variable(
+  z
+    .string()
+    .regex(/^\d+$/, 'must be a whole number')
+    .transform((value) => BigInt(value))
+    .optional(),
+);
+
+const hexAddress = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+  .transform((value) => value as `0x${string}`);
+
+/** Unset falls back to the deployment registry, then to the zero address. */
+const address = variable(hexAddress.optional());
+
+const privateKey = variable(
+  z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 32-byte hex private key')
+    .transform((value) => value as `0x${string}`)
+    .optional(),
+);
+
+const url = (protocol: RegExp, what: string) =>
+  variable(z.url({ protocol, error: `must be ${what} URL` }).optional());
+const text = (fallback = '') => variable(z.string().default(fallback));
+const json = variable(
+  z
+    .string()
+    .refine((value) => {
+      try {
+        JSON.parse(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'must be valid JSON')
+    .default(''),
+);
+
+const flag = (fallback: boolean) =>
+  variable(
+    z
+      .enum(['true', 'false', '1', '0'], { error: 'must be true or false' })
+      .default(fallback ? 'true' : 'false')
+      .transform((value) => value === 'true' || value === '1'),
+  );
+
+/** A positive whole-number limit, `none` for no limit. */
+const limit = (fallback: number) =>
+  variable(
+    z
+      .string()
+      .regex(/^(none|[1-9]\d*)$/, 'must be a positive integer or "none"')
+      .default(String(fallback))
+      .transform((value) => (value === 'none' ? Infinity : Number(value))),
+  );
+
+/** A non-negative amount, `none` for no ceiling. */
+const ceiling = (fallback: number) =>
+  variable(
+    z
+      .string()
+      .regex(/^(none|\d+(\.\d+)?)$/, 'must be a non-negative number or "none"')
+      .default(String(fallback))
+      .transform((value) => (value === 'none' ? Infinity : Number(value))),
+  );
+
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** Every variable the server reads, with its default. Anything else in the environment is ignored. */
+const ENV = z.object({
+  NODE_ENV: text(),
+  WS_PORT: whole(DEFAULT_SERVER_PORT, 1),
+  CHAIN_ID: whole(11155111, 1),
+  COMMIT_MS: whole(20_000, 1),
+  REVEAL_MS: whole(12_000, 1),
+  REPLAY_MS: whole(2_500),
+  RPC_URL: url(/^(https?|wss?)$/, 'an http(s) or ws(s)'),
+  ESCROW_ADDRESS: address,
+  ATTESTOR_PK: privateKey,
+  KEEPER_PK: privateKey,
+  DATABASE_URL: url(/^postgres(ql)?$/, 'a postgres://'),
+  ARCHIVE: variable(z.enum(['postgres', 'memory'], { error: 'must be postgres or memory' }).optional()),
+  MAX_PRACTICE_ROOMS: whole(200),
+  MAX_CONNECTIONS: whole(10_000, 1),
+  MAX_CONNECTIONS_PER_IP: whole(20, 1),
+  LOGIN_TIMEOUT_MS: whole(120_000, 1),
+  ALLOWED_ORIGINS: text(),
+  TRUST_PROXY: flag(false),
+  GATEWAY_LIMITS: json,
+  VERIFY_THREADS: whole(Math.max(1, Math.min(4, availableParallelism() - 1))),
+  AVATAR_COLLECTIONS: text(),
+  IPFS_GATEWAY: text('https://ipfs.io/ipfs/'),
+  SESSION_DELEGATE: address,
+  SPOKES: text(),
+  HUB_MESSENGER: address,
+  CROSS_CHAIN_FROM_BLOCK: bigint,
+  ZAP_JOIN: address,
+  V4_QUOTER: address,
+  ZAP_TOKENS: text(),
+  FEE_ROUTER: address,
+  FEE_KEEPER_POLL_MS: whole(60_000, 1),
+  HARVEST_MIN_WEI: bigint,
+  STAKED_LMS: address,
+  REWARDS_DISTRIBUTOR: address,
+  GOVERNOR_ADDRESS: address,
+  GOVERNOR_FROM_BLOCK: bigint,
+  ANALYST_ENABLED: flag(true),
+  ANALYST_MODEL: text('gemini-3.8-flash'),
+  GEMINI_API_KEY: text(),
+  GEMINI_BASE_URL: text(),
+  ANALYST_EFFORT: variable(z.enum(EFFORTS, { error: `must be one of ${EFFORTS.join(', ')}` }).default('medium')),
+  ANALYST_MAX_TOKENS: whole(16_000, 1),
+  ANALYST_TIMEOUT_MS: whole(240_000, 1),
+  ANALYST_MAX_RETRIES: whole(2),
+  ANALYST_DEADLINE_MS: whole(300_000, 1),
+  ANALYST_MAX_TURNS: limit(1),
+  ANALYST_QUOTA_PER_HOUR: whole(3),
+  ANALYST_MAX_CONCURRENT: whole(1, 1),
+  ANALYST_RPM: limit(5),
+  ANALYST_RPD: limit(20),
+  ANALYST_DAILY_BUDGET_USD: ceiling(10),
+});
+
 /**
- * Reads the server's configuration out of an environment.
+ * Reads the server's configuration out of an environment, and refuses a
+ * malformed one: a non-numeric duration, an address that is not one, or a
+ * production server with no database. Every problem is reported at once, so
+ * fixing a `.env` takes one restart, not one per typo.
  *
  * Taking `env` as an argument rather than reaching for `process.env` directly
- * is what makes this testable, and it is the only change here: the parsing is
- * deliberately left exactly as it was, including the parts that are wrong.
- * `Number()` still yields `NaN` for a non-numeric value and nothing rejects
- * it, the address fields are still unchecked casts, and `KEEPER_PK` still
- * falls back to `ATTESTOR_PK`. Each is recorded in `docs/TODO.md` §3.4 and pinned by
- * `test/config.test.ts`; fixing them is a behaviour change, not a refactor.
+ * is what makes this testable.
  */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  deployments: (chainId: number) => Deployment | null = () => null,
+) {
+  const result = ENV.safeParse(env);
+  if (!result.success) {
+    throw new ConfigError(
+      `invalid server configuration:\n${result.error.issues.map((issue) => `  ${issue.path.join('.')} ${issue.message}`).join('\n')}`,
+    );
+  }
+  const e = result.data;
+  const deployment = deployments(e.CHAIN_ID);
+  const deployed = (name: string): `0x${string}` => deployment?.contracts[name] ?? ZERO_ADDRESS;
+  const fromBlock = deployment ? BigInt(deployment.deployBlock) : undefined;
+  if (e.NODE_ENV === 'production' && !e.DATABASE_URL && e.ARCHIVE !== 'memory') {
+    throw new ConfigError(
+      'invalid server configuration:\n  DATABASE_URL is required in production; set ARCHIVE=memory to run without one',
+    );
+  }
+  if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
+    throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
+  }
+
   return {
-    port: Number(env.WS_PORT ?? 8787),
-    chainId: Number(env.CHAIN_ID ?? 11155111),
-    commitMs: Number(env.COMMIT_MS ?? 20_000),
-    revealMs: Number(env.REVEAL_MS ?? 12_000),
+    port: e.WS_PORT,
+    chainId: e.CHAIN_ID,
+    commitMs: e.COMMIT_MS,
+    revealMs: e.REVEAL_MS,
     /** Hold after each round so clients can replay it before the next clock starts. */
-    replayMs: Number(env.REPLAY_MS ?? 2_500),
-    rpcUrl: env.RPC_URL ?? '',
-    escrow: (env.ESCROW_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
-    attestorPk: env.ATTESTOR_PK as `0x${string}` | undefined,
+    replayMs: e.REPLAY_MS,
+    rpcUrl: e.RPC_URL ?? '',
+    escrow: e.ESCROW_ADDRESS ?? deployed('escrow'),
+    attestorPk: e.ATTESTOR_PK,
     /** Optional key that pays for the permissionless `lockMatch` call. */
-    keeperPk: (env.KEEPER_PK ?? env.ATTESTOR_PK) as `0x${string}` | undefined,
-    databaseUrl: env.DATABASE_URL ?? '',
+    keeperPk: e.KEEPER_PK ?? e.ATTESTOR_PK,
+    /** Blank, or `ARCHIVE=memory`, keeps the archive in memory. */
+    databaseUrl: e.ARCHIVE === 'memory' ? '' : (e.DATABASE_URL ?? ''),
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */
-    maxPracticeRooms: Number(env.MAX_PRACTICE_ROOMS ?? 200),
+    maxPracticeRooms: e.MAX_PRACTICE_ROOMS,
     /** Sockets open at once, across the server and per client IP. See `gateway/limits.ts`. */
-    maxConnections: Number(env.MAX_CONNECTIONS ?? 10_000),
-    maxConnectionsPerIp: Number(env.MAX_CONNECTIONS_PER_IP ?? 20),
+    maxConnections: e.MAX_CONNECTIONS,
+    maxConnectionsPerIp: e.MAX_CONNECTIONS_PER_IP,
     /** A socket that has not logged in by then is closed. */
-    loginTimeoutMs: Number(env.LOGIN_TIMEOUT_MS ?? 120_000),
+    loginTimeoutMs: e.LOGIN_TIMEOUT_MS,
     /**
      * Comma-separated `Origin`s the WebSocket handshake accepts, e.g.
      * `https://play.example.com`. Blank accepts any origin, which is what
      * local development wants and production should not.
      */
-    allowedOrigins: (env.ALLOWED_ORIGINS ?? '')
-      .split(',')
+    allowedOrigins: e.ALLOWED_ORIGINS.split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
     /**
@@ -49,19 +216,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * behind a proxy that sets it: otherwise any client can claim any IP and
      * walk straight past the per-IP limits.
      */
-    trustProxy: env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1',
+    trustProxy: e.TRUST_PROXY,
     /**
      * Overrides for any field of `DEFAULT_GATEWAY_LIMITS`, as JSON, e.g.
      * `{"connectRatePerIp":1000,"connectBurstPerIp":10000}` for a load test
      * whose clients all come from one IP. Unknown or non-numeric fields are
      * ignored.
      */
-    gatewayLimits: parseLimits(env.GATEWAY_LIMITS),
+    gatewayLimits: parseLimits(e.GATEWAY_LIMITS),
     /**
      * Worker threads that recover login signatures off the event loop. Zero
      * recovers inline. The default leaves one core for the event loop.
      */
-    verifyThreads: Number(env.VERIFY_THREADS ?? Math.max(1, Math.min(4, availableParallelism() - 1))),
+    verifyThreads: e.VERIFY_THREADS,
     /**
      * `PlayerAvatars` deployments, as JSON:
      * `[{"chainId":11155111,"address":"0x…","rpcUrl":"https://…"}]`
@@ -70,101 +237,101 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
      * per chain rather than bridged. Reading a spoke's collection needs that
      * spoke's RPC, which is why the URL travels with the address.
      */
-    avatarCollections: env.AVATAR_COLLECTIONS ?? '',
+    avatarCollections: e.AVATAR_COLLECTIONS,
     /** Prefix `ipfs://` is rewritten to when fetching avatar metadata. */
-    ipfsGateway: env.IPFS_GATEWAY ?? 'https://ipfs.io/ipfs/',
+    ipfsGateway: e.IPFS_GATEWAY,
     /**
      * `SessionKeyDelegate` on the hub chain. Players delegate their EOA to it
      * under EIP-7702 so the client can sign logins with a scoped session key
      * instead of prompting the wallet on every reconnect. Blank disables the
      * offer; logins then always cost a wallet signature.
      */
-    sessionDelegate: (env.SESSION_DELEGATE ?? ZERO_ADDRESS) as `0x${string}`,
+    sessionDelegate: e.SESSION_DELEGATE ?? deployed('sessionDelegate'),
     /**
      * Spoke chains players may stake from, as JSON:
      * `[{"chainId":8453,"escrow":"0x…"}]`, one `SpokeEscrow` per chain. Blank
      * offers hub-only staking. See `chain/crossChain.ts`.
      */
-    spokes: env.SPOKES ?? '',
+    spokes: e.SPOKES,
     /**
      * The hub `LayerZeroMessenger`. With it, the server reports deliveries the
      * hub could not take, and retries them with `KEEPER_PK` once it can.
      */
-    hubMessenger: (env.HUB_MESSENGER ?? ZERO_ADDRESS) as `0x${string}`,
+    hubMessenger: e.HUB_MESSENGER ?? deployed('messenger'),
     /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
-    crossChainFromBlock: optionalBigInt(env.CROSS_CHAIN_FROM_BLOCK),
+    crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK ?? fromBlock,
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */
-    zapJoin: (env.ZAP_JOIN ?? ZERO_ADDRESS) as `0x${string}`,
+    zapJoin: e.ZAP_JOIN ?? deployed('zapJoin'),
     /** v4-periphery `V4Quoter` on the hub chain, which the client prices routes with. */
-    v4Quoter: (env.V4_QUOTER ?? ZERO_ADDRESS) as `0x${string}`,
+    v4Quoter: e.V4_QUOTER ?? ZERO_ADDRESS,
     /** Tokens offered through the zap, each with its v4 route to ETH, as JSON. See `chain/zap.ts`. */
-    zapTokens: env.ZAP_TOKENS ?? '',
+    zapTokens: e.ZAP_TOKENS,
     /**
      * `FeeRouter` on the hub chain. With `KEEPER_PK` set, the server harvests
      * it on a timer so fees reach stakers. Blank disables it; anyone else can
      * still harvest. See `chain/feeKeeper.ts`.
      */
-    feeRouter: (env.FEE_ROUTER ?? ZERO_ADDRESS) as `0x${string}`,
-    feeKeeperPollMs: Number(env.FEE_KEEPER_POLL_MS ?? 60_000),
+    feeRouter: e.FEE_ROUTER ?? deployed('feeRouter'),
+    feeKeeperPollMs: e.FEE_KEEPER_POLL_MS,
     /** Overrides for `DEFAULT_FEE_KEEPER_POLICY`, in wei. Unset keeps the default. */
     feeKeeper: {
-      minHarvest: optionalBigInt(env.HARVEST_MIN_WEI),
+      minHarvest: e.HARVEST_MIN_WEI,
     },
     /** `StakedLms` on the hub chain. Blank hides the staking panel. */
-    stakedLms: (env.STAKED_LMS ?? ZERO_ADDRESS) as `0x${string}`,
+    stakedLms: e.STAKED_LMS ?? deployed('stakedLms'),
     /** `RewardsDistributor` on the hub chain. Blank hides the play-mining claim. */
-    rewardsDistributor: (env.REWARDS_DISTRIBUTOR ?? ZERO_ADDRESS) as `0x${string}`,
+    rewardsDistributor: e.REWARDS_DISTRIBUTOR ?? deployed('rewardsDistributor'),
     /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
-    governor: (env.GOVERNOR_ADDRESS ?? ZERO_ADDRESS) as `0x${string}`,
+    governor: e.GOVERNOR_ADDRESS ?? deployed('governor'),
     /** First block to look for proposals in: the governor's deployment block. */
-    governorFromBlock: optionalBigInt(env.GOVERNOR_FROM_BLOCK) ?? 0n,
+    governorFromBlock: e.GOVERNOR_FROM_BLOCK ?? fromBlock ?? 0n,
     /**
      * Post-match analysis with Gemini. On when `GEMINI_API_KEY` is set;
      * `ANALYST_ENABLED=false` forces it off. Off, the client shows the panel
      * as unavailable and nothing is ever sent anywhere.
      */
     analyst: {
-      enabled: env.ANALYST_ENABLED !== 'false' && Boolean(env.GEMINI_API_KEY),
+      enabled: e.ANALYST_ENABLED && Boolean(e.GEMINI_API_KEY),
       /** A Gemini 3 model or later: the first to combine structured output with function calling. */
-      model: env.ANALYST_MODEL || 'gemini-3.8-flash',
-      geminiApiKey: env.GEMINI_API_KEY ?? '',
+      model: e.ANALYST_MODEL,
+      geminiApiKey: e.GEMINI_API_KEY,
       /** Blank uses the public Gemini API. */
-      geminiBaseUrl: env.GEMINI_BASE_URL ?? '',
+      geminiBaseUrl: e.GEMINI_BASE_URL,
       /** `low` | `medium` | `high` | `xhigh` | `max`, as Gemini's thinking level; the top three all mean `high`. */
-      effort: parseEffort(env.ANALYST_EFFORT),
+      effort: e.ANALYST_EFFORT,
       /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
-      maxTokens: Number(env.ANALYST_MAX_TOKENS ?? 16_000),
+      maxTokens: e.ANALYST_MAX_TOKENS,
       /**
        * Per model call. Long, because the Gemini free tier can take a minute
        * or two on even a tiny request. 5xx are retried up to `maxRetries`
        * times; a timeout is not.
        */
-      timeoutMs: Number(env.ANALYST_TIMEOUT_MS ?? 240_000),
-      maxRetries: Number(env.ANALYST_MAX_RETRIES ?? 2),
+      timeoutMs: e.ANALYST_TIMEOUT_MS,
+      maxRetries: e.ANALYST_MAX_RETRIES,
       /** Ceiling on one whole analysis, every turn and retry included. */
-      deadlineMs: Number(env.ANALYST_DEADLINE_MS ?? 300_000),
+      deadlineMs: e.ANALYST_DEADLINE_MS,
       /**
        * Model calls per analysis. 1: the whole match goes in the first
        * message and the answer comes back in the same call. More lets the
        * model look details up again, at one quota request per turn.
        */
-      maxTurns: limit(env.ANALYST_MAX_TURNS, 1),
+      maxTurns: e.ANALYST_MAX_TURNS,
       /** Fresh analyses per wallet per hour. Cached answers do not count. */
-      quotaPerHour: Number(env.ANALYST_QUOTA_PER_HOUR ?? 3),
+      quotaPerHour: e.ANALYST_QUOTA_PER_HOUR,
       /** Analyses being written at once, server-wide. One, so a single analysis has the whole per-minute quota. */
-      maxConcurrent: Number(env.ANALYST_MAX_CONCURRENT ?? 1),
+      maxConcurrent: e.ANALYST_MAX_CONCURRENT,
       /**
        * The Gemini project's own rate limits, enforced here so they are never
        * hit as errors. Defaults are the free tier for Gemini 3.8 Flash: 5
        * requests a minute, 20 a day. `none` lifts either.
        */
-      requestsPerMinute: limit(env.ANALYST_RPM, 5),
-      requestsPerDay: limit(env.ANALYST_RPD, 20),
+      requestsPerMinute: e.ANALYST_RPM,
+      requestsPerDay: e.ANALYST_RPD,
       /**
        * Estimated spend per UTC day, in US dollars, after which fresh
        * analyses stop until midnight. `none` lifts the ceiling.
        */
-      dailyBudgetUsd: env.ANALYST_DAILY_BUDGET_USD === 'none' ? Infinity : Number(env.ANALYST_DAILY_BUDGET_USD ?? 10),
+      dailyBudgetUsd: e.ANALYST_DAILY_BUDGET_USD,
     },
     /** True once an escrow is configured and the chain bridge can run. */
     get onChain(): boolean {
@@ -173,8 +340,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-/** Numeric fields of a JSON object; anything else is dropped. Throws on invalid JSON. */
-function parseLimits(raw: string | undefined): Record<string, number> {
+/** Numeric fields of a JSON object; anything else is dropped. */
+function parseLimits(raw: string): Record<string, number> {
   if (!raw) return {};
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null) return {};
@@ -183,30 +350,37 @@ function parseLimits(raw: string | undefined): Record<string, number> {
   );
 }
 
-/** A positive whole-number limit, `none` for no limit, or the default when unset. */
-function limit(value: string | undefined, fallback: number): number {
-  if (value === undefined || value === '') return fallback;
-  if (value === 'none') return Infinity;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`expected a positive integer or "none", got "${value}"`);
-  return parsed;
+/** `contracts/deployments/<chainId>.json`, as `Deploy.s.sol` writes it. */
+export interface Deployment {
+  chainId: number;
+  /** No contract in `contracts` is older: where log scans start. */
+  deployBlock: number;
+  contracts: Record<string, `0x${string}`>;
 }
 
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const DEPLOYMENT = z.object({
+  chainId: z.number().int(),
+  deployBlock: z.number().int().min(0),
+  contracts: z.record(z.string(), hexAddress),
+});
 
-/** A valid effort level, or `medium` when unset. Throws on anything else rather than sending it. */
-function parseEffort(value: string | undefined): (typeof EFFORTS)[number] {
-  if (value === undefined || value === '') return 'medium';
-  const effort = EFFORTS.find((level) => level === value);
-  if (!effort) throw new Error(`ANALYST_EFFORT must be one of ${EFFORTS.join(', ')}`);
-  return effort;
+const DEPLOYMENTS_DIR = new URL('../../../contracts/deployments/', import.meta.url);
+
+/**
+ * The registry the deploy script wrote for `chainId`, or null if there is
+ * none. Throws on a file that is there but malformed, or names another chain.
+ */
+export function readDeployment(chainId: number, dir: URL = DEPLOYMENTS_DIR): Deployment | null {
+  const file = new URL(`${chainId}.json`, dir);
+  if (!existsSync(file)) return null;
+  const result = DEPLOYMENT.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+  if (!result.success) throw new ConfigError(`invalid deployment registry ${file.pathname}: ${result.error.message}`);
+  if (result.data.chainId !== chainId) {
+    throw new ConfigError(`deployment registry ${file.pathname} is for chain ${result.data.chainId}, not ${chainId}`);
+  }
+  return result.data;
 }
 
-/** Throws on a value that is not an integer, rather than carrying on with garbage. */
-function optionalBigInt(value: string | undefined): bigint | undefined {
-  return value === undefined || value === '' ? undefined : BigInt(value);
-}
-
-export const config = loadConfig();
+export const config = loadConfig(process.env, readDeployment);
 
 export { ZERO_ADDRESS };

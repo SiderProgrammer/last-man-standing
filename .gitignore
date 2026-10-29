@@ -8,7 +8,9 @@ coverage/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
-contracts/lib/
+# Local nodes' registries; testnet and mainnet ones are committed.
+contracts/deployments/31337.json
+contracts/deployments/31338.json
 
 # Local env
 .env
@@ -18,3 +20,8 @@ contracts/lib/
 # Editors / OS
 .DS_Store
 Thumbs.db
+
+# Analysis output
+contracts/slither.json
+contracts/lcov.info
+contracts/coverage.txt

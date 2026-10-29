@@ -110,14 +110,14 @@ describe('room lifecycle', () => {
   it('refuses moves from a wallet without a seat', () => {
     const instance = room();
     const stranger = '0x00000000000000000000000000000000000000ee' as const;
-    expect(() => instance.submitCommit(stranger, bytes32('x'), 100)).toThrow(/not seated/);
+    expect(() => instance.submitCommit(stranger, bytes32('x'), 100)).toThrow(expect.objectContaining({ code: 'NOT_SEATED' }));
   });
 
   it('refuses to let a client play a bot seat', () => {
     const setup = setupWithBots(4, 'bot-seat');
     const instance = new Room(setup, { ...OPTIONS, botSeats: [1, 2, 3] }, 0);
     const botAddress = setup.seats[1]?.address as `0x${string}`;
-    expect(() => instance.submitCommit(botAddress, bytes32('x'), 100)).toThrow(/house bot/);
+    expect(() => instance.submitCommit(botAddress, bytes32('x'), 100)).toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
   });
 
   it('runs to a single winner and reports a signable result', () => {
@@ -251,8 +251,8 @@ describe('move aim', () => {
     const instance = room();
     const move = humanMove(instance, Action.Guard);
     const stale = commitMove(instance.matchId, 0, 0, move);
-    expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { round: 0 })).toThrow(
-      /for round 0; the match is on round 1/,
+    expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { matchId: instance.matchId, round: 0 })).toThrow(
+      expect.objectContaining({ code: 'STALE_MOVE', message: expect.stringMatching(/for round 0; the match is on round 1/) }),
     );
     expect(instance.match.publicState().committed).not.toContain(0);
   });
@@ -261,8 +261,8 @@ describe('move aim', () => {
     const instance = room();
     const move = humanMove(instance, Action.Guard);
     const commitment = commitMove(instance.matchId, 1, 0, move);
-    expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere') })).toThrow(
-      /another match/,
+    expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere'), round: 1 })).toThrow(
+      expect.objectContaining({ code: 'STALE_MOVE', message: expect.stringMatching(/another match/) }),
     );
   });
 

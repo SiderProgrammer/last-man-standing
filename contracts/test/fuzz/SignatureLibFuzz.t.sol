@@ -14,7 +14,10 @@ contract SignatureLibFuzzTest is Test {
         harness = new SettlementHarness();
     }
 
-    function testFuzz_recoversUniqueSortedSigners(bytes32 digest, uint256 pkA, uint256 pkB, uint256 pkC) public {
+    function testFuzz_recoversUniqueSortedSigners(bytes32 digest, uint256 pkA, uint256 pkB, uint256 pkC)
+        public
+        view
+    {
         pkA = _boundKey(pkA);
         pkB = _boundKey(pkB);
         pkC = _boundKey(pkC);
@@ -63,7 +66,7 @@ contract SignatureLibFuzzTest is Test {
         return pk;
     }
 
-    function _sort(uint256[] memory pks) internal view {
+    function _sort(uint256[] memory pks) internal pure {
         Attest.sortByAddress(pks);
     }
 }

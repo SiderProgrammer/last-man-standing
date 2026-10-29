@@ -41,12 +41,11 @@ library SettlementLib {
     }
 
     /// @notice EIP-712 struct hash of a `MatchResult`.
-    function hashMatchResult(
-        bytes32 matchId,
-        uint32 rounds,
-        bytes32 historyRoot,
-        address[] calldata ranking
-    ) internal pure returns (bytes32 structHash) {
+    function hashMatchResult(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] calldata ranking)
+        internal
+        pure
+        returns (bytes32 structHash)
+    {
         bytes32 rankingHash = hashRanking(ranking);
         // Constants are not addressable from inline assembly, so bind it first.
         bytes32 typeHash = MATCH_RESULT_TYPEHASH;

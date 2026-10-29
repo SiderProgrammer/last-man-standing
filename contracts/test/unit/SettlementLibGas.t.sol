@@ -27,8 +27,7 @@ contract SettlementLibGasTest is Test {
         // call pays 2600 gas of cold-account access, which would otherwise swamp
         // the difference being measured.
         bytes32 yul = harness.hashMatchResult(bytes32(uint256(1)), 4, bytes32(uint256(2)), ranking);
-        bytes32 ref =
-            harness.hashMatchResultReference(bytes32(uint256(1)), 4, bytes32(uint256(2)), ranking);
+        bytes32 ref = harness.hashMatchResultReference(bytes32(uint256(1)), 4, bytes32(uint256(2)), ranking);
         assertEq(yul, ref);
 
         uint256 yulGas = gasleft();

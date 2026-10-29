@@ -1,4 +1,5 @@
 import { parseAbi } from 'viem';
+import { zapJoinAbi } from './abis.js';
 
 /**
  * Joining a lobby with a token other than ETH, through `ZapJoin` and Uniswap v4.
@@ -66,19 +67,7 @@ export function maxAmountInFor(quote: bigint, slippageBps: number = DEFAULT_ZAP_
 const PATH_KEY = 'struct PathKey { address intermediateCurrency; uint24 fee; int24 tickSpacing; address hooks; bytes hookData; }';
 
 /** The `ZapJoin` surface. Errors are included so a failed simulation reads as its cause. */
-export const zapJoinAbi = parseAbi([
-  PATH_KEY,
-  'function joinWithToken(bytes32 matchId, PathKey[] path, uint256 maxAmountIn, uint256 deadline) returns (uint256 amountIn)',
-  'event ZapJoined(bytes32 indexed matchId, address indexed player, address indexed tokenIn, uint256 amountIn, uint128 stake)',
-  'error NotPoolManager(address caller)',
-  'error DeadlinePassed(uint256 deadline)',
-  'error EmptyPath()',
-  'error NativeInput()',
-  'error MatchNotOpen(bytes32 matchId)',
-  'error SlippageExceeded(uint256 amountIn, uint256 maxAmountIn)',
-  'error PartialFill(uint256 requested, uint256 received)',
-  'error UnexpectedDelta(int128 amountIn)',
-]);
+export { zapJoinAbi };
 
 /**
  * v4-periphery's `V4Quoter`, exact-output only.

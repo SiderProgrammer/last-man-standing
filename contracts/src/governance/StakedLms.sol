@@ -198,7 +198,8 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     /// @notice ETH `account` can claim now.
     function earned(address account) public view returns (uint256) {
-        return owed[account] + Math.mulDiv(balanceOf(account), rewardPerShare() - settledAt[account], PRECISION);
+        return
+            owed[account] + Math.mulDiv(balanceOf(account), rewardPerShare() - settledAt[account], PRECISION);
     }
 
     /// @notice Pays the caller's earned ETH to `to`.

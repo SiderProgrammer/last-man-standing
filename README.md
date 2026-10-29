@@ -94,9 +94,14 @@ which is what makes a match replayable by a third party.
 ## Running it locally
 
 ```bash
+git clone --recurse-submodules https://github.com/SiderProgrammer/gambling-project
 npm install
 cp .env.example .env
 ```
+
+The Solidity dependencies (`forge-std`, OpenZeppelin) are git submodules under
+`contracts/lib/`. In a clone made without `--recurse-submodules`, run
+`git submodule update --init` before `forge build`.
 
 The server's `dev` and `start` scripts read this root `.env`; variables already set
 in the shell win. Practice mode needs no chain at all. In two terminals:
@@ -174,8 +179,16 @@ npm test                    # TypeScript: protocol, engine, server, client — i
 npm run typecheck           # whole monorepo, strict — including every test file
 npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
+npm run abis                # regenerate packages/protocol/src/chain/abis.ts after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above, plus
+`forge fmt --check`, a coverage report and Slither. Slither fails only on findings
+missing from `contracts/slither-baseline.json`, where every accepted finding has a
+triage note. To add one, run Slither with `--json contracts/slither.json`, then
+`node scripts/slither-baseline.mjs contracts/slither.json contracts/slither-baseline.json --update`,
+and write the note.
 
 The TypeScript and Solidity hashing implementations are pinned against each
 other by frozen vectors in `packages/protocol/test/parity.test.ts` and
