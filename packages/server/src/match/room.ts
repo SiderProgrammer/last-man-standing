@@ -154,7 +154,7 @@ export class Room {
     commitment: `0x${string}`,
     now: number = Date.now(),
     hold?: SealedMove,
-    aim: MoveAim = {},
+    aim?: MoveAim,
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
@@ -173,7 +173,7 @@ export class Room {
     else this.broadcastState();
   }
 
-  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim: MoveAim = {}): void {
+  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim?: MoveAim): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
     this.match.submitReveal(seat, move);
@@ -200,12 +200,16 @@ export class Room {
     else if (this.match.phase === MatchPhase.Reveal) this.resolveRound(now);
   }
 
-  /** Refuses a move made for another match or round: see `MoveAim`. */
-  private requireAim(aim: MoveAim): void {
-    if (aim.matchId !== undefined && aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
+  /**
+   * Refuses a move made for another match or round: see `MoveAim`. Every
+   * client move carries one; only the server's own moves (house bots) omit it.
+   */
+  private requireAim(aim: MoveAim | undefined): void {
+    if (!aim) return;
+    if (aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
       throw new Error('this move is for another match');
     }
-    if (aim.round !== undefined && aim.round !== this.match.round) {
+    if (aim.round !== this.match.round) {
       throw new Error(`this move is for round ${aim.round}; the match is on round ${this.match.round}`);
     }
   }

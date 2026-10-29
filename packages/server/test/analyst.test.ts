@@ -311,14 +311,4 @@ describe('analyst tool loop', () => {
       outputTokens: 540,
     });
   });
-
-  it('refuses a match archived before seats were recorded', async () => {
-    const archive = new MemoryArchive();
-    const { seats: _seats, ...legacy } = match;
-    await archive.save(legacy);
-    const model = new FakeModel([]);
-    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000 });
-    expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('not_found');
-    expect(model.requests).toHaveLength(0);
-  });
 });

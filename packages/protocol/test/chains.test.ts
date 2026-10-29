@@ -6,7 +6,7 @@ import {
   chainIdForEid,
   chainInfo,
   eidForChainId,
-  normaliseOriginChainId,
+  originChainId,
 } from '../src/chain/chains.js';
 
 const HUB = 11155111;
@@ -29,23 +29,14 @@ describe('chainInfo', () => {
   });
 });
 
-describe('normaliseOriginChainId', () => {
+describe('originChainId', () => {
   it('maps a zero origin to the hub, because that is what the escrow stores for a local stake', () => {
-    expect(normaliseOriginChainId(0, HUB)).toBe(HUB);
+    expect(originChainId(0, HUB)).toBe(HUB);
   });
 
-  it('maps a transport endpoint id back to its chain id', () => {
-    // 40245 is Base Sepolia's LayerZero endpoint id, not a chain id: rendering
-    // it verbatim would label the seat "chain 40245".
-    expect(normaliseOriginChainId(40_245, HUB)).toBe(84_532);
-    expect(normaliseOriginChainId(30_110, HUB)).toBe(42_161);
-  });
-
-  it('passes an unrecognised origin through unchanged', () => {
-    // A transport whose id space already is chain ids stays correct, and an
-    // unknown endpoint degrades to a number instead of to the wrong chain.
-    expect(normaliseOriginChainId(84_532, HUB)).toBe(84_532);
-    expect(normaliseOriginChainId(999_999, HUB)).toBe(999_999);
+  it('passes a spoke chain id through', () => {
+    expect(originChainId(84_532, HUB)).toBe(84_532);
+    expect(originChainId(999_999, HUB)).toBe(999_999);
   });
 });
 

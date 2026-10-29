@@ -489,7 +489,7 @@ describe('gateway match history', () => {
 
     const page = socket.last('history');
     expect(page?.matches.map((match) => match.finishedAt)).toEqual([3_000, 1_000]);
-    expect(page?.matches[0]).toMatchObject({ place: 1, players: 2, seat: 1, staked: true, reviewable: true });
+    expect(page?.matches[0]).toMatchObject({ place: 1, players: 2, seat: 1, staked: true });
     expect(page?.matches[1]).toMatchObject({ place: 2, staked: false });
     expect(page?.before).toBeNull();
     expect(page?.more).toBe(false);
@@ -512,21 +512,6 @@ describe('gateway match history', () => {
     expect(second?.before).toBe(oldest);
     expect(second?.matches.map((match) => match.finishedAt)).toEqual([3_000, 2_000, 1_000]);
     expect(second?.more).toBe(false);
-  });
-
-  it('marks a match archived without its seed as not reviewable, and will not open it', async () => {
-    const archive = new MemoryArchive();
-    const { seed: _seed, ...old } = played(1, 1_000);
-    await archive.save(old);
-    const { socket } = harness({ archive });
-    await login(socket);
-
-    await socket.deliver({ type: 'history' });
-    expect(socket.last('history')?.matches[0]?.reviewable).toBe(false);
-
-    await socket.deliver({ type: 'review', matchId: old.result.matchId });
-    expect(socket.last('review')).toBeUndefined();
-    expect(socket.last('error')?.message).toMatch(/cannot be opened/);
   });
 
   it('reopens a match the caller played', async () => {

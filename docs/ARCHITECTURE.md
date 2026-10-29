@@ -568,10 +568,8 @@ the escrow's peer check names the remote `SpokeEscrow`, not merely the messenger
 carried the message. Each message's executor options deliver exactly that lobby's stake.
 
 **One id space.** The messenger translates LayerZero endpoint ids (`40161`) to EVM chain
-ids (`11155111`) at its boundary, so `GameEscrow.seatOrigin` holds chain ids. `ChainBridge`
-still runs every origin through `normaliseOriginChainId` — zero means the hub, a known
-endpoint id maps to its chain, anything else passes through — which keeps an escrow fed
-by an older adapter readable. Origins are read from
+ids (`11155111`) at its boundary, so `GameEscrow.seatOrigin` holds chain ids, or zero
+for a stake placed on the hub, which `originChainId` maps to the hub. Origins are read from
 `PlayerJoined`, which already carries them, and cached per seat; the escrow is only read
 for a seat that joined before the backfill window.
 

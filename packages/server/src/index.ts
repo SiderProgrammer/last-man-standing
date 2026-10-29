@@ -126,7 +126,6 @@ export {
   renderOverview,
   renderRequest,
   renderRound,
-  type SeatedMatch,
 } from './analyst/prompt.js';
 export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
 export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

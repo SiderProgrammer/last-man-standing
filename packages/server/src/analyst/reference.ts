@@ -32,7 +32,8 @@ export function playReferenceMatch(options: {
     address: `0x${label(`${base}:seat:${index}`).slice(2, 42)}` as `0x${string}`,
     chainId: 0,
   }));
-  const match = new Match({ matchId: label(`${base}:id`), seats, seed: label(`${base}:seed`), rules });
+  const seed = label(`${base}:seed`);
+  const match = new Match({ matchId: label(`${base}:id`), seats, seed, rules });
   const players = options.strategies.map((name, seat) => strategyByName(name, new Prng(label(`${base}:${seat}`))));
 
   while (!match.finished) {
@@ -56,6 +57,10 @@ export function playReferenceMatch(options: {
     settledTx: null,
     seats,
     rules,
+    // A reference match is replayed for the analyst, never shown as anyone's.
+    staked: false,
+    seed,
+    finishedAt: 0,
     strategies: [...options.strategies],
   };
 }

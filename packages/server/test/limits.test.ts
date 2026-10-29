@@ -164,7 +164,7 @@ describe('frame validation', () => {
   });
 
   it('rejects a target outside a uint8 and an unknown action', () => {
-    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32 };
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, matchId: BYTES32, round: 1 };
     expect(parse(reveal)).not.toThrow();
     expect(parse({ ...reveal, target: 256 })).toThrow(/target/);
     expect(parse({ ...reveal, target: 1.5 })).toThrow(/target/);
@@ -173,10 +173,9 @@ describe('frame validation', () => {
   });
 
   it('validates a held move as strictly as a reveal', () => {
-    expect(parse({ type: 'commit', commitment: BYTES32, hold: 'yes' })).toThrow(/hold/);
-    expect(parse({ type: 'commit', commitment: BYTES32, hold: { action: 1, target: 999, salt: BYTES32 } })).toThrow(
-      /target/,
-    );
+    const commit = { type: 'commit', commitment: BYTES32, matchId: BYTES32, round: 1 };
+    expect(parse({ ...commit, hold: 'yes' })).toThrow(/hold/);
+    expect(parse({ ...commit, hold: { action: 1, target: 999, salt: BYTES32 } })).toThrow(/target/);
   });
 
   it('validates the match and round a move names, and keeps them', () => {
@@ -186,9 +185,16 @@ describe('frame validation', () => {
       matchId: BYTES32,
       round: 3,
     });
-    expect(parse({ ...reveal, round: -1 })).toThrow(/round/);
-    expect(parse({ ...reveal, matchId: '0x12' })).toThrow(/matchId/);
-    expect(parse({ type: 'commit', commitment: BYTES32, round: 1.5 })).toThrow(/round/);
+    expect(parse({ ...reveal, matchId: BYTES32, round: -1 })).toThrow(/round/);
+    expect(parse({ ...reveal, matchId: '0x12', round: 3 })).toThrow(/matchId/);
+    expect(parse({ type: 'commit', commitment: BYTES32, matchId: BYTES32, round: 1.5 })).toThrow(/round/);
+  });
+
+  it('refuses a move that does not name its match and round', () => {
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32 };
+    expect(parse({ ...reveal, round: 3 })).toThrow(/matchId/);
+    expect(parse({ ...reveal, matchId: BYTES32 })).toThrow(/round/);
+    expect(parse({ type: 'commit', commitment: BYTES32 })).toThrow(/matchId/);
   });
 
   it('rejects an unknown message type', () => {
@@ -303,7 +309,9 @@ describe('message limits', () => {
 
     // The general bucket is empty; a commit still reaches the room.
     const errors = socket.sent.filter((message) => message.type === 'error').length;
-    await socket.deliver({ type: 'commit', commitment: BYTES32 });
+    const live = lastOfType(socket.sent, 'state')?.state;
+    if (!live) throw new Error('no match state yet');
+    await socket.deliver({ type: 'commit', commitment: BYTES32, matchId: live.matchId, round: live.round });
     expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(errors);
     expect(lastOfType(socket.sent, 'state')?.state.committed).toContain(0);
   });

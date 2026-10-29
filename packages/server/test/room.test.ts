@@ -251,7 +251,7 @@ describe('move aim', () => {
     const instance = room();
     const move = humanMove(instance, Action.Guard);
     const stale = commitMove(instance.matchId, 0, 0, move);
-    expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { round: 0 })).toThrow(
+    expect(() => instance.submitCommit(HUMAN, stale, 0, undefined, { matchId: instance.matchId, round: 0 })).toThrow(
       /for round 0; the match is on round 1/,
     );
     expect(instance.match.publicState().committed).not.toContain(0);
@@ -261,7 +261,7 @@ describe('move aim', () => {
     const instance = room();
     const move = humanMove(instance, Action.Guard);
     const commitment = commitMove(instance.matchId, 1, 0, move);
-    expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere') })).toThrow(
+    expect(() => instance.submitCommit(HUMAN, commitment, 0, undefined, { matchId: bytes32('elsewhere'), round: 1 })).toThrow(
       /another match/,
     );
   });

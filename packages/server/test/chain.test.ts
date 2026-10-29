@@ -12,7 +12,7 @@ import {
 import { bytes32 } from './helpers.js';
 
 const HUB = 11155111;
-const ARBITRUM_SEPOLIA_EID = 40231;
+const ARBITRUM_SEPOLIA = 421614;
 
 function seat(n: number): Address {
   return `0x${(n + 0xa0).toString(16).padStart(40, '0')}` as Address;
@@ -160,7 +160,7 @@ describe('chain bridge discovery', () => {
 });
 
 describe('chain bridge seat origins', () => {
-  it('takes an origin from the join log and maps it out of the messenger id space', async () => {
+  it('takes an origin from the join log', async () => {
     const reader = new FakeEscrow();
     const id = bytes32('origins');
     reader.created = [id];
@@ -168,15 +168,15 @@ describe('chain bridge seat origins', () => {
     reader.seats.set(id, [seat(0), seat(1)]);
     reader.joins = [
       { matchId: id, player: seat(0), originChainId: 0 },
-      { matchId: id, player: seat(1), originChainId: ARBITRUM_SEPOLIA_EID },
+      { matchId: id, player: seat(1), originChainId: ARBITRUM_SEPOLIA },
     ];
     const { bridge } = bridgeOver(reader);
 
     await bridge.poll();
 
     const [lobby] = bridge.directory().open;
-    // Origin 0 means the hub itself; an endpoint id becomes its EVM chain id.
-    expect(lobby?.players.map((p) => p.chainId)).toEqual([HUB, 421614]);
+    // Origin 0 means the hub itself.
+    expect(lobby?.players.map((p) => p.chainId)).toEqual([HUB, ARBITRUM_SEPOLIA]);
     expect(reader.seatOriginReads).toBe(0);
   });
 
@@ -186,11 +186,11 @@ describe('chain bridge seat origins', () => {
     reader.created = [id];
     reader.matches.set(id, match({ seatCount: 1 }));
     reader.seats.set(id, [seat(0)]);
-    reader.origins.set(seat(0).toLowerCase(), ARBITRUM_SEPOLIA_EID);
+    reader.origins.set(seat(0).toLowerCase(), ARBITRUM_SEPOLIA);
     const { bridge } = bridgeOver(reader);
 
     await bridge.poll();
-    expect(bridge.directory().open[0]?.players[0]?.chainId).toBe(421614);
+    expect(bridge.directory().open[0]?.players[0]?.chainId).toBe(ARBITRUM_SEPOLIA);
     expect(reader.seatOriginReads).toBe(1);
 
     // Cached: an origin never changes, so a second poll must not read again.

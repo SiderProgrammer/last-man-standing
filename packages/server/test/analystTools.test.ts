@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { tallyStyles } from '@lms/protocol';
-import { MatchTools, MemoryStyleBook, TOOLS, playReferenceMatch, type SeatedMatch } from '@lms/server';
+import { MatchTools, MemoryStyleBook, TOOLS, playReferenceMatch } from '@lms/server';
 
-const match = playReferenceMatch({ label: 'tools', strategies: ['reader', 'striker', 'guarder', 'charger'] }) as SeatedMatch;
+const match = playReferenceMatch({ label: 'tools', strategies: ['reader', 'striker', 'guarder', 'charger'] });
 
 describe('analyst tools', () => {
   it('are closed schemas in a fixed order', () => {

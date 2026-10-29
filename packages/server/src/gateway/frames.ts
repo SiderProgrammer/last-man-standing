@@ -49,8 +49,8 @@ const integer = (min: number, max: number) => {
 const action = z.custom<ActionValue>(isActionValue, 'unknown action');
 const target = integer(0, 255);
 
-/** The optional match and round a move names; absent fields stay absent. */
-const aim = { matchId: bytes32.optional(), round: integer(0, 0xffffffff).optional() };
+/** The match and round a move names. */
+const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
 
 const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   auth: z.object({ type: z.literal('auth'), address, signature }),

@@ -11,16 +11,15 @@ import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
 
 /**
- * Which match and round a move was made for. Optional on the wire for older
- * clients, but every current client sends it: without it the server can only
+ * Which match and round a move was made for. Without it the server could only
  * assume a move is for the round in progress, so a commit computed for an
  * earlier round — delayed in flight, or queued while offline and flushed on
- * reconnect — was accepted as this round's and could then never be opened.
- * With it, such a move is refused with an error naming the round.
+ * reconnect — would be accepted as this round's and could then never be
+ * opened. With it, such a move is refused with an error naming the round.
  */
 export interface MoveAim {
-  matchId?: `0x${string}`;
-  round?: number;
+  matchId: `0x${string}`;
+  round: number;
 }
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
@@ -99,16 +98,12 @@ export type ServerMessage =
        */
       staking: StakingInfo | null;
       /**
-       * True when this server can write match analyses. Optional for older
-       * servers; absent means no. Lets the client say so up front rather than
-       * after the player has asked.
+       * True when this server can write match analyses. Lets the client say
+       * so up front rather than after the player has asked.
        */
-      analyst?: boolean;
-      /**
-       * Spoke chains a player can stake from, each with its `SpokeEscrow`.
-       * Optional for older servers; absent or empty means hub-only.
-       */
-      spokes?: SpokeInfo[];
+      analyst: boolean;
+      /** Spoke chains a player can stake from, each with its `SpokeEscrow`. Empty means hub-only. */
+      spokes: SpokeInfo[];
       /**
        * The hub `LayerZeroMessenger`, which a new spoke's messenger must be
        * registered as a peer of. Optional; absent or null when there is none.
@@ -174,18 +169,16 @@ export type ServerMessage =
 /** One finished match in a player's history, as seen from their seat. */
 export interface MatchSummary {
   matchId: `0x${string}`;
-  /** Unix milliseconds the match was archived, or null if it predates the field. */
-  finishedAt: number | null;
+  /** Unix milliseconds the match was archived. */
+  finishedAt: number;
   rounds: number;
   players: number;
-  /** The player's seat, or null if the archive does not record seating. */
+  /** The player's seat, or null if they did not sit in it. */
   seat: number | null;
   /** 1 for the winner. */
   place: number;
   staked: boolean;
   settledTx: `0x${string}` | null;
-  /** False for a match archived before its seed and seating were kept; it cannot be opened. */
-  reviewable: boolean;
 }
 
 /** A finished match as archived, complete enough to replay and verify in the browser. */
@@ -197,7 +190,7 @@ export interface ReviewedMatch {
   seed: `0x${string}`;
   staked: boolean;
   settledTx: `0x${string}` | null;
-  finishedAt: number | null;
+  finishedAt: number;
 }
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */
@@ -210,8 +203,7 @@ export interface AvatarCollectionInfo {
 export interface LobbySeat {
   address: `0x${string}`;
   /**
-   * EVM chain the stake was placed on, already normalised out of the
-   * transport's id space. See `normaliseOriginChainId`.
+   * EVM chain the stake was placed on. See `originChainId`.
    */
   chainId: number;
 }

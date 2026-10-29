@@ -5,7 +5,7 @@ import {
   hashRules,
   addressKey,
   errorMessage,
-  normaliseOriginChainId,
+  originChainId,
   type LobbyInfo,
   type LobbySeat,
   type Seat,
@@ -162,7 +162,7 @@ export class ChainBridge {
       if (!entry) continue;
       entry.origins.set(
         addressKey(join.player),
-        normaliseOriginChainId(join.originChainId, this.deps.chainId),
+        originChainId(join.originChainId, this.deps.chainId),
       );
     }
 
@@ -302,7 +302,7 @@ export class ChainBridge {
     const origin = await this.reader.seatOrigin(matchId, address);
     // Zero means the player staked on the hub chain itself; anything else is in
     // the messenger's id space and has to be mapped back to a chain id.
-    const chainId = normaliseOriginChainId(origin, this.deps.chainId);
+    const chainId = originChainId(origin, this.deps.chainId);
     entry.origins.set(key, chainId);
     return chainId;
   }

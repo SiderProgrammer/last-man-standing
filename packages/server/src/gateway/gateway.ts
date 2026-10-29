@@ -438,11 +438,8 @@ export class Gateway {
   private async review(session: Session, address: `0x${string}`, matchId: `0x${string}`): Promise<void> {
     const match = await this.requireArchive().load(matchId);
     if (!match) throw new Error('no finished match with that id');
-    const seated = match.seats?.some((seat) => addressKey(seat.address) === addressKey(address)) ?? false;
-    if (!seated && match.staked !== true) throw new Error('only the players who sat in this match can open it');
-    if (!match.seats || !match.rules || !match.seed) {
-      throw new Error('this match was archived before its replay data was kept, so it cannot be opened');
-    }
+    const seated = match.seats.some((seat) => addressKey(seat.address) === addressKey(address));
+    if (!seated && !match.staked) throw new Error('only the players who sat in this match can open it');
     session.send({
       type: 'review',
       match: {
@@ -451,9 +448,9 @@ export class Gateway {
         seats: [...match.seats],
         rules: match.rules,
         seed: match.seed,
-        staked: match.staked === true,
+        staked: match.staked,
         settledTx: (match.settledTx as `0x${string}` | null) ?? null,
-        finishedAt: match.finishedAt ?? null,
+        finishedAt: match.finishedAt,
       },
     });
   }
@@ -512,10 +509,7 @@ export class Gateway {
 }
 
 function aimOf(message: MoveAim): MoveAim {
-  const aim: MoveAim = {};
-  if (message.matchId !== undefined) aim.matchId = message.matchId;
-  if (message.round !== undefined) aim.round = message.round;
-  return aim;
+  return { matchId: message.matchId, round: message.round };
 }
 
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
@@ -527,13 +521,12 @@ export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSum
   const place = match.result.ranking.findIndex((address) => addressKey(address) === key);
   return {
     matchId: match.result.matchId,
-    finishedAt: match.finishedAt ?? null,
+    finishedAt: match.finishedAt,
     rounds: match.result.rounds,
     players: match.result.ranking.length,
-    seat: match.seats?.find((seat) => addressKey(seat.address) === key)?.index ?? null,
+    seat: match.seats.find((seat) => addressKey(seat.address) === key)?.index ?? null,
     place: place + 1,
-    staked: match.staked === true,
+    staked: match.staked,
     settledTx: (match.settledTx as `0x${string}` | null) ?? null,
-    reviewable: match.seats !== undefined && match.rules !== undefined && match.seed !== undefined,
   };
 }

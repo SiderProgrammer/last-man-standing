@@ -11,23 +11,20 @@ export interface ArchivedMatch {
   result: MatchResult;
   history: readonly RoundRecord[];
   settledTx: string | null;
-  /**
-   * Who sat where. Optional because rows archived before it was recorded
-   * lack it; `result.ranking` names the wallets but not their seats.
-   */
-  seats?: readonly Seat[];
-  /** The rule set the match was played under. Optional for the same reason. */
-  rules?: Rules;
+  /** Who sat where. `result.ranking` names the wallets but not their seats. */
+  seats: readonly Seat[];
+  /** The rule set the match was played under. */
+  rules: Rules;
   /**
    * True for a match played for escrowed stakes, which anyone may watch and
    * so anyone may have analysed; false for a practice match, which is the
-   * practising player's own. Absent on older rows, which are treated as private.
+   * practising player's own.
    */
-  staked?: boolean;
-  /** The oracle seed, without which the browser cannot replay the match. Optional for the same reason. */
-  seed?: `0x${string}`;
-  /** Unix milliseconds the match was archived. Optional for the same reason. */
-  finishedAt?: number;
+  staked: boolean;
+  /** The oracle seed, without which the browser cannot replay the match. */
+  seed: `0x${string}`;
+  /** Unix milliseconds the match was archived. */
+  finishedAt: number;
 }
 
 /**
@@ -97,7 +94,7 @@ export class MemoryArchive implements MatchArchive {
     for (let i = this.order.length - 1; i >= 0 && out.length < limit; i -= 1) {
       const entry = this.entries.get(this.order[i] as string);
       if (!entry || !playersOf(entry).includes(key)) continue;
-      if (before !== undefined && !((entry.finishedAt ?? 0) < before)) continue;
+      if (before !== undefined && !(entry.finishedAt < before)) continue;
       out.push(entry);
     }
     return out;
@@ -156,20 +153,14 @@ export class PostgresArchive implements MatchArchive {
         ranking      JSONB NOT NULL,
         history      JSONB NOT NULL,
         settled_tx   TEXT,
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+        seats        JSONB NOT NULL,
+        rules        JSONB NOT NULL,
+        staked       BOOLEAN NOT NULL,
+        seed         TEXT NOT NULL,
+        -- Lower-cased seat addresses, so one wallet's history is an index lookup.
+        players      TEXT[] NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL
       )
-    `);
-    // Added after the table first shipped; nullable, so older rows stay valid.
-    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS seats JSONB');
-    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS rules JSONB');
-    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS staked BOOLEAN');
-    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS seed TEXT');
-    // Lower-cased seat addresses, so one wallet's history is an index lookup.
-    await pool.query('ALTER TABLE matches ADD COLUMN IF NOT EXISTS players TEXT[]');
-    await pool.query(`
-      UPDATE matches
-         SET players = ARRAY(SELECT lower(address) FROM jsonb_array_elements_text(ranking) AS address)
-       WHERE players IS NULL
     `);
     await pool.query('CREATE INDEX IF NOT EXISTS matches_players ON matches USING GIN (players)');
     await pool.query('CREATE INDEX IF NOT EXISTS matches_created_at ON matches (created_at DESC)');
@@ -190,7 +181,7 @@ export class PostgresArchive implements MatchArchive {
     await this.pool.query(
       `INSERT INTO matches
          (match_id, rounds, history_root, ranking, history, settled_tx, seats, rules, staked, seed, players, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE(to_timestamp($12::double precision / 1000), now()))
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000))
        ON CONFLICT (match_id) DO UPDATE SET settled_tx = EXCLUDED.settled_tx`,
       [
         entry.result.matchId,
@@ -199,14 +190,14 @@ export class PostgresArchive implements MatchArchive {
         JSON.stringify(entry.result.ranking),
         JSON.stringify(entry.history),
         entry.settledTx,
-        entry.seats ? JSON.stringify(entry.seats) : null,
-        entry.rules ? JSON.stringify(entry.rules) : null,
-        entry.staked ?? null,
-        entry.seed ?? null,
+        JSON.stringify(entry.seats),
+        JSON.stringify(entry.rules),
+        entry.staked,
+        entry.seed,
         playersOf(entry),
         // Stored at millisecond precision, so `finishedAt` read back is exactly
         // the cursor a later `forPlayer` page compares against.
-        entry.finishedAt ?? null,
+        entry.finishedAt,
       ],
     );
   }
@@ -262,7 +253,7 @@ export class PostgresArchive implements MatchArchive {
 }
 
 function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
-  const entry: ArchivedMatch = {
+  return {
     result: {
       matchId: row.match_id as `0x${string}`,
       rounds: Number(row.rounds),
@@ -271,19 +262,17 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
     },
     history: row.history as RoundRecord[],
     settledTx: (row.settled_tx as string | null) ?? null,
+    seats: row.seats as Seat[],
+    rules: row.rules as Rules,
+    staked: row.staked as boolean,
+    seed: row.seed as `0x${string}`,
+    finishedAt: (row.created_at as Date).getTime(),
   };
-  if (row.seats) entry.seats = row.seats as Seat[];
-  if (row.rules) entry.rules = row.rules as Rules;
-  if (typeof row.staked === 'boolean') entry.staked = row.staked;
-  if (row.seed) entry.seed = row.seed as `0x${string}`;
-  if (row.created_at instanceof Date) entry.finishedAt = row.created_at.getTime();
-  return entry;
 }
 
-/** Every wallet that sat in the match, lower-cased. The ranking names all of them. */
+/** Every wallet that sat in the match, lower-cased. */
 function playersOf(entry: ArchivedMatch): string[] {
-  const addresses = entry.seats?.map((seat) => seat.address) ?? entry.result.ranking;
-  return addresses.map((address) => address.toLowerCase());
+  return entry.seats.map((seat) => seat.address.toLowerCase());
 }
 
 export async function createArchive(databaseUrl: string): Promise<MatchArchive> {

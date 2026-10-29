@@ -44,14 +44,11 @@ What to write:
 
 Every key moment is checked against the published round records before anyone sees it, and moments that do not match the records are thrown away. Only state what the records show; if you are unsure whether something happened, leave it out.`;
 
-/** An archived match that recorded who sat where, which every analysis needs. */
-export type SeatedMatch = ArchivedMatch & { seats: readonly Seat[] };
-
 /**
  * The opening user message: whose perspective, the overview, then the
  * briefing — the full detail, so the model can answer without a lookup.
  */
-export function renderRequest(match: SeatedMatch, seat: number | null, briefing = ''): string {
+export function renderRequest(match: ArchivedMatch, seat: number | null, briefing = ''): string {
   const perspective =
     seat === null
       ? 'Write the analysis for a spectator who did not play in this match.'
@@ -67,7 +64,7 @@ export function renderRequest(match: SeatedMatch, seat: number | null, briefing 
  * salts and hashes the analysis has no use for and that would triple the
  * token count.
  */
-export function renderOverview(match: SeatedMatch, you: number | null): string {
+export function renderOverview(match: ArchivedMatch, you: number | null): string {
   const seatOf = new Map(match.seats.map((seat) => [addressKey(seat.address), seat.index]));
   const name = (address: `0x${string}`) => {
     const seat = seatOf.get(addressKey(address));
