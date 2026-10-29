@@ -38,10 +38,10 @@ export const MatchStatus = {
   Open: 1,
   Pending: 2,
   Live: 3,
-  Settled: 4,
-  Cancelled: 5,
   /** Signed and published; pays out once the challenge window closes unvetoed. */
-  Proposed: 6,
+  Proposed: 4,
+  Settled: 5,
+  Cancelled: 6,
 } as const;
 
 export type MatchStatusValue = (typeof MatchStatus)[keyof typeof MatchStatus];

@@ -55,13 +55,12 @@ contract GameEscrow is EIP712, PullPayable, IRandomnessConsumer, ICrossChainRece
         Pending,
         /// @dev Seed delivered; the server is running the match.
         Live,
+        /// @dev Result signed and open to a veto until `challengeDeadline`.
+        Proposed,
         /// @dev Result final and payouts credited.
         Settled,
         /// @dev Abandoned, or its result vetoed; every stake is refundable.
-        Cancelled,
-        /// @dev Result signed and open to a veto until `challengeDeadline`.
-        ///      Last in the list so the earlier values keep their numbers.
-        Proposed
+        Cancelled
     }
 
     /// @dev Terms are snapshotted when the lobby is created, so a governance
