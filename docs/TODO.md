@@ -279,12 +279,15 @@ any of this is a deliberate, visible change rather than a silent one.
 
 ## 4. Tooling and process
 
-- **CI:** nothing runs automatically. Add a workflow for `npm test`, `npm run typecheck`
-  (which now also typechecks `test/**`, via a `tsconfig.test.json` per package),
-  `forge test`, `npm run sol:snapshot:check`, and the deep fuzz profile on a schedule.
-  `forge fmt --check` cannot be part of it until the formatting in §3.4 is fixed.
-- **Static analysis:** Slither and Aderyn are available as MCP tooling but no run is
-  committed. Add a baseline and fail CI on new findings.
+- **CI:** `.github/workflows/ci.yml` runs typecheck, vitest and a 500-match `sim` on
+  the TypeScript side, and `forge fmt --check`, `forge build` and `forge test` on the
+  Solidity side, plus a coverage report and Slither. Still open: no linter for the
+  TypeScript, `sol:snapshot:check` (waits on a seeded invariant campaign) and the deep
+  fuzz profile on a schedule.
+- **Static analysis:** Slither runs in CI against `contracts/slither-baseline.json`.
+  Every accepted finding carries a triage note, and
+  `scripts/slither-baseline.mjs` fails on a new finding or one without a note.
+  Aderyn is not wired in.
 - **Client tests:** done. The pure modules — `game/phase.ts`, `game/reads.ts`,
   `ui/views.ts`, `ui/format.ts`, `arena/layout.ts`, `arena/choreography.ts` — are covered
   by `packages/client/test`. What is still untested is the DOM applier layer in

@@ -1,0 +1,5 @@
+{
+  "filter_paths": "(lib|test|script|mocks)[\\\\/]",
+  "exclude_informational": false,
+  "exclude_optimization": false
+}

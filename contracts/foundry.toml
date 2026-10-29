@@ -15,6 +15,12 @@ deny = "warnings"
 # `Deploy` reads the rule set from `config/rules.json`.
 fs_permissions = [{ access = "read", path = "./config" }]
 
+[lint]
+# Lint only what ships. Slither runs on the same sources in CI.
+ignore = ["test/**/*.sol", "script/**/*.sol"]
+# False positive on every `1 << n` bitmask, which is the right operand order.
+exclude_lints = ["incorrect-shift"]
+
 [profile.default.fuzz]
 runs = 512
 max_test_rejects = 200_000

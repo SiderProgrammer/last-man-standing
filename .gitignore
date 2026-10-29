@@ -17,3 +17,8 @@ contracts/broadcast/
 # Editors / OS
 .DS_Store
 Thumbs.db
+
+# Analysis output
+contracts/slither.json
+contracts/lcov.info
+contracts/coverage.txt

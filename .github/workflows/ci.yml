@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # Bot matches under the current rules; exits non-zero if a balance target slips.
+      - run: npm run sim -- 500
+
+  solidity:
+    name: Solidity
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.4.3
+      - run: forge fmt --check
+      - run: forge build --sizes
+      - run: forge test -vv
+
+  coverage:
+    name: Solidity coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.4.3
+      - name: forge coverage
+        run: |
+          forge coverage --no-match-coverage '(test|script|mocks)/' --report summary --report lcov > coverage.txt
+          cat coverage.txt
+          { echo '```'; awk '/^\| File/{p=1} p' coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: contracts/lcov.info
+
+  slither:
+    name: Slither
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.4.3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pip install slither-analyzer==0.11.3
+      # Slither exits non-zero whenever it finds anything, so the gate is the
+      # baseline diff below, not its exit code.
+      - run: slither . --json slither.json || true
+        working-directory: contracts
+      - run: node scripts/slither-baseline.mjs contracts/slither.json contracts/slither-baseline.json
