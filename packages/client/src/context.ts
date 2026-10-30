@@ -35,6 +35,8 @@ export interface AppState {
   sessionDelegate: `0x${string}` | null;
   /** The key the wallet granted for this login. Signs every commit and reveal. */
   grantKey: GrantedKey | null;
+  /** The key the server signs commit receipts with, or null when it issues none. */
+  receiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeEscrow`. */
@@ -90,6 +92,7 @@ export const app: AppState = {
   avatarCollections: [],
   sessionDelegate: null,
   grantKey: null,
+  receiptSigner: null,
   zap: null,
   spokes: [],
   inTransit: new Set(),

@@ -5,6 +5,7 @@ import {
   errorMessage,
   type AvatarEntry,
   type BotDifficulty,
+  type CommitReceipt,
   type MatchResult,
   type PlayStyle,
   type MoveAim,
@@ -90,6 +91,8 @@ export class Room {
   /** This round's commit and reveal signatures, by seat. House bots sign nothing. */
   private readonly commitSignatures = new Map<number, `0x${string}`>();
   private readonly revealSignatures = new Map<number, `0x${string}`>();
+  /** When each player's commit was taken this round: the time its receipt carries. */
+  private readonly receivedAt = new Map<number, number>();
   /** Every round's signatures, in round order, alongside `match.history`. */
   private readonly proofLog: SeatProof[][] = [];
   /** Every grant a seat played under, by session key. A player may reconnect with a new one mid-match. */
@@ -181,6 +184,8 @@ export class Room {
    *        rules up front, so a held move can never be one the player could not
    *        have revealed: the server opens it unattended, on the room's clock,
    *        where a rejection would have nobody to report to.
+   * @returns What the server's receipt for the commit says, for the gateway
+   *          to sign and send back.
    */
   submitCommit(
     address: `0x${string}`,
@@ -189,9 +194,10 @@ export class Room {
     hold?: SealedMove,
     aim?: MoveAim,
     proof?: MoveProof,
-  ): void {
+  ): CommitReceipt {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    const round = this.match.round;
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
       if (opened.toLowerCase() !== commitment.toLowerCase()) {
@@ -200,6 +206,7 @@ export class Room {
       this.match.assertPlayable(seat, hold);
     }
     this.match.submitCommit(seat, commitment);
+    this.receivedAt.set(seat, now);
     if (hold) this.held.set(seat, hold);
     if (proof) {
       this.recordGrant(proof.grant);
@@ -210,6 +217,7 @@ export class Room {
     // the reveal once the replay has finished.
     if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
     else this.broadcastState();
+    return { matchId: this.matchId, round, seat, commitment, receivedAt: now };
   }
 
   submitReveal(
@@ -310,10 +318,12 @@ export class Room {
       index: move.index,
       commitSignature: this.commitSignatures.get(move.index) ?? null,
       revealSignature: move.revealed ? (this.revealSignatures.get(move.index) ?? null) : null,
+      receivedAt: this.receivedAt.get(move.index) ?? null,
     }));
     this.proofLog.push(proofs);
     this.commitSignatures.clear();
     this.revealSignatures.clear();
+    this.receivedAt.clear();
 
     // One object for the whole table: the gateway serialises a shared message
     // once, however many sockets it goes to.

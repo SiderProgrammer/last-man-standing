@@ -190,6 +190,44 @@ export function revealTypedData(
   };
 }
 
+export const COMMIT_RECEIPT_TYPES = {
+  CommitReceipt: [
+    { name: 'matchId', type: 'bytes32' },
+    { name: 'round', type: 'uint32' },
+    { name: 'seat', type: 'uint8' },
+    { name: 'commitment', type: 'bytes32' },
+    { name: 'receivedAt', type: 'uint64' },
+  ],
+} as const;
+
+/**
+ * The server's word that it took a commitment, and when. A player holding
+ * one can prove the server had their move: if the transcript then leaves the
+ * commitment out, or records the seat as not revealing when it did, the
+ * receipt is the evidence for a dispute.
+ */
+export interface CommitReceipt extends MovePlace {
+  commitment: `0x${string}`;
+  /** Unix milliseconds, by the server's clock. */
+  receivedAt: number;
+}
+
+/** Arguments for `signTypedData` / `verifyTypedData` over a receipt. */
+export function receiptTypedData(chainId: number, receipt: CommitReceipt) {
+  return {
+    domain: playDomain(chainId),
+    types: COMMIT_RECEIPT_TYPES,
+    primaryType: 'CommitReceipt' as const,
+    message: {
+      matchId: receipt.matchId,
+      round: receipt.round,
+      seat: receipt.seat,
+      commitment: receipt.commitment,
+      receivedAt: BigInt(receipt.receivedAt),
+    },
+  };
+}
+
 /**
  * Signatures behind one seat's play in one round. Not part of the round hash:
  * each signs data the hash already covers, and the transcript hash covers
@@ -201,4 +239,10 @@ export interface SeatProof {
   commitSignature: `0x${string}` | null;
   /** The seat's session key over `Reveal`. Null for a house bot, or a seat that did not reveal. */
   revealSignature: `0x${string}` | null;
+  /**
+   * When the server took the commit, as its receipt says. With the seat's
+   * commitment it is the whole receipt, so a receipt a player holds can be
+   * matched to this entry. Null for a house bot, or a seat that did not commit.
+   */
+  receivedAt: number | null;
 }

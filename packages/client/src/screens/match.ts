@@ -5,6 +5,7 @@ import {
   isActionValue,
   errorFirstLine,
   isLegalAction,
+  receiptTypedData,
   strikeDamageFor,
   type ActionValue,
   type MatchResult,
@@ -13,12 +14,13 @@ import {
   type SealedMove,
   type ServerMessage,
 } from '@lms/protocol';
+import { verifyTypedData } from 'viem';
 import { describeRound } from '@lms/engine';
 import { Arena } from '../arena/arena.js';
 import { app, dom, net } from '../context.js';
 import { phasePlan } from '../game/phase.js';
 import { readOpponents } from '../game/reads.js';
-import { forgetMatch, freshSalt, recallMove, rememberMove } from '../game/salts.js';
+import { forgetMatch, freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
 import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
@@ -61,6 +63,28 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
 export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
   if (app.replaying) app.pendingFinish = message;
   else showFinished(message);
+}
+
+/**
+ * Keeps the server's receipt for this browser's own commitment, once it checks
+ * out: signed by the key `hello` named, for the commitment this browser sealed.
+ * It is the evidence if the transcript later leaves the move out.
+ */
+export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt' }>): Promise<void> {
+  const { receipt, signature } = message;
+  const stored = recallMove(receipt.matchId, receipt.round);
+  const signer = app.receiptSigner;
+  if (!stored || !signer) return;
+  const sealed = commitMove(receipt.matchId, receipt.round, receipt.seat, stored);
+  if (sealed.toLowerCase() !== receipt.commitment.toLowerCase()) return;
+  const valid = await verifyTypedData({ address: signer, ...receiptTypedData(app.chainId, receipt), signature }).catch(
+    () => false,
+  );
+  if (!valid) {
+    console.warn(`[receipt] not signed by the server's receipt key ${signer}`);
+    return;
+  }
+  updateMove(receipt.matchId, receipt.round, { receipt: { receivedAt: receipt.receivedAt, signature } });
 }
 
 export function onDossier(message: Extract<ServerMessage, { type: 'dossier' }>): void {
@@ -261,6 +285,8 @@ async function sendCommit(key: GrantedKey, place: MovePlace, sealed: SealedMove,
       round: place.round,
       ...(held ? { hold: held } : {}),
     });
+    // Held, the server reveals it: as far as the transcript goes, it was revealed.
+    if (held) updateMove(place.matchId, place.round, { revealed: true });
   } catch (error) {
     dom.moveStatus.textContent = `Could not sign your move: ${errorFirstLine(error)}`;
   }
@@ -279,13 +305,26 @@ function revealNow(state: PublicMatchState): void {
   }
   app.revealedRound = state.round;
   dom.moveStatus.textContent = 'Revealed. Resolving…';
-  void sendReveal(key, { matchId: state.matchId, round: state.round, seat: app.you }, stored);
+  void sendReveal(key, { matchId: state.matchId, round: state.round, seat: app.you }, {
+    action: stored.action,
+    target: stored.target,
+    salt: stored.salt,
+  });
 }
 
 async function sendReveal(key: GrantedKey, place: MovePlace, move: SealedMove): Promise<void> {
   try {
     const signature = await key.signReveal(place, move);
-    net.send({ type: 'reveal', ...move, signature, matchId: place.matchId, round: place.round });
+    net.send({
+      type: 'reveal',
+      action: move.action,
+      target: move.target,
+      salt: move.salt,
+      signature,
+      matchId: place.matchId,
+      round: place.round,
+    });
+    updateMove(place.matchId, place.round, { revealed: true });
   } catch (error) {
     dom.moveStatus.textContent = `Could not sign your reveal: ${errorFirstLine(error)}`;
   }

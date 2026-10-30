@@ -180,6 +180,13 @@ export interface PublicMatchState {
   }>;
   /** Seats whose commitment has been received this round. */
   committed: number[];
+  /**
+   * Every commitment taken this round, by seat, once the commit window has
+   * closed; empty while it is open. Withheld until then because the round's
+   * rolls are drawn from the full set: a player who could see the others'
+   * commitments while still choosing a salt could grind the rolls.
+   */
+  commitments: Array<{ index: number; commitment: `0x${string}` }>;
   /** Seats whose reveal has been accepted this round. */
   revealed: number[];
   history: RoundRecord[];

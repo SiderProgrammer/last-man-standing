@@ -11,6 +11,7 @@ import {
   type SignedGrant,
   type AvatarCollectionInfo,
   type ClientMessage,
+  type CommitReceipt,
   type LobbyInfo,
   type MatchSummary,
   type MoveAim,
@@ -140,10 +141,21 @@ export interface GatewayOptions {
    * recovery on the event loop; `main.ts` hands it the worker pool.
    */
   verifyKey?: { message: SignatureVerifier; typed: TypedSignatureVerifier };
+  /**
+   * Signs commit receipts. Omitted, commits are taken without one, and the
+   * client cannot later prove the server had its move.
+   */
+  receipts?: ReceiptSigner;
   /** Overrides for `DEFAULT_GATEWAY_LIMITS`. */
   limits?: Partial<GatewayLimits>;
   /** Wall clock, injectable for tests. */
   now?: () => number;
+}
+
+/** The server key that signs commit receipts, and its address for the client to check them against. */
+export interface ReceiptSigner {
+  address: `0x${string}`;
+  sign(receipt: CommitReceipt): Promise<`0x${string}`>;
 }
 
 /** Stands in for the IP of a socket the transport could not identify. */
@@ -228,6 +240,7 @@ export class Gateway {
       staking: this.options.staking ?? null,
       analyst: this.options.analyst !== undefined,
       spokes: this.options.spokes ?? [],
+      receiptSigner: this.options.receipts?.address ?? null,
       hubMessenger: this.options.hubMessenger ?? null,
     });
 
@@ -369,7 +382,7 @@ export class Gateway {
         if (hold) await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, hold), hold.signature);
         // The clock is read again: the signature checks took time, and the
         // room compares against its own deadlines.
-        room.submitCommit(
+        const receipt = room.submitCommit(
           address,
           message.commitment,
           this.now(),
@@ -377,6 +390,8 @@ export class Gateway {
           aimOf(message),
           { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
         );
+        const signer = this.options.receipts;
+        if (signer) session.send({ type: 'receipt', receipt, signature: await signer.sign(receipt) });
         return;
       }
       case 'reveal': {

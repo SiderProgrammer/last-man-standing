@@ -310,6 +310,10 @@ export class Match {
       // Which seats have acted, never what they did: a revealed salt would
       // let anyone holding the rest of them preview the round's rolls.
       committed: [...this.commitments.keys()].sort((a, b) => a - b),
+      commitments:
+        this.phaseValue === MatchPhase.Reveal
+          ? [...this.commitments].sort(([a], [b]) => a - b).map(([index, commitment]) => ({ index, commitment }))
+          : [],
       revealed: [...this.reveals.keys()].sort((a, b) => a - b),
       history: this.rounds,
       historyRoot: this.root,

@@ -14,8 +14,10 @@ export {
   summarise,
   type GatewayOptions,
   type Peer,
+  type ReceiptSigner,
   type Socket,
   type SignatureVerifier,
+  type TypedSignatureVerifier,
 } from './gateway/gateway.js';
 export {
   CloseCode,
@@ -37,6 +39,7 @@ export {
 } from './lobby/store.js';
 export {
   signResult,
+  receiptSigner,
   packSignatures,
   createRelayer,
   relayerFrom,

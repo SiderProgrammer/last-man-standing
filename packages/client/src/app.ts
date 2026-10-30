@@ -15,6 +15,7 @@ import {
   onAvatars,
   onDossier,
   onFinished,
+  onReceipt,
   onRound,
   onState,
   updateTimer,
@@ -94,6 +95,7 @@ function onServerMessage(message: ServerMessage): void {
       app.escrow = message.escrow;
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
+      app.receiptSigner = message.receiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
       app.hubMessenger = message.hubMessenger ?? null;
@@ -142,6 +144,10 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'round':
       onRound(message);
+      break;
+
+    case 'receipt':
+      void onReceipt(message);
       break;
 
     case 'finished':

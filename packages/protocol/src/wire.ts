@@ -4,7 +4,7 @@ import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
 import type { Rules } from './game/rules.js';
-import type { SeatProof, SignedGrant } from './chain/moves.js';
+import type { CommitReceipt, SeatProof, SignedGrant } from './chain/moves.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
@@ -165,12 +165,23 @@ export type ServerMessage =
       /** Spoke chains a player can stake from, each with its `SpokeEscrow`. Empty means hub-only. */
       spokes: SpokeInfo[];
       /**
+       * The key that signs commit receipts, or null when this server issues
+       * none. In a staked match it is an attestor, so the escrow's own
+       * attestor set vouches for it.
+       */
+      receiptSigner: `0x${string}` | null;
+      /**
        * The hub `LayerZeroMessenger`, which a new spoke's messenger must be
        * registered as a peer of. Optional; absent or null when there is none.
        */
       hubMessenger?: `0x${string}` | null;
     }
   | { type: 'authed'; address: `0x${string}` }
+  /**
+   * The server's signed word that it took a commit. Sent only to the
+   * committing socket; the player keeps it as evidence.
+   */
+  | { type: 'receipt'; receipt: CommitReceipt; signature: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
   | {
       type: 'state';

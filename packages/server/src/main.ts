@@ -15,7 +15,8 @@ import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
 import { createStyleBook } from './lobby/styles.js';
-import { relayerFromEnv } from './chain/attestor.js';
+import { generatePrivateKey } from 'viem/accounts';
+import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
@@ -137,6 +138,9 @@ async function main(): Promise<void> {
     // A contract wallet's grant can only be checked by asking the wallet.
     verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
     verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
+    // The attestor key where there is one. A practice-only server has none,
+    // and signs with a key of its own that lasts as long as the process.
+    receipts: receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId),
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     ...(analyst ? { analyst } : {}),

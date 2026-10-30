@@ -65,6 +65,7 @@ export function stateWith(
       lastAction: Action.None,
     })),
     committed: [],
+    commitments: [],
     revealed: [],
     history,
     historyRoot: bytes32('root'),

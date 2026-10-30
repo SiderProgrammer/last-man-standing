@@ -15,6 +15,18 @@ describe('commit / reveal lifecycle', () => {
     expect(match.alive).toEqual([0, 1, 2, 3]);
   });
 
+  it('publishes the commitment set only once the commit window closes', () => {
+    const setup = setupFor(4);
+    const match = new Match(setup);
+    const commitment = commitMove(setup.matchId, 1, 2, sealed(Action.Guard, 0, 'salt-c'));
+    match.submitCommit(2, commitment);
+    expect(match.publicState().committed).toEqual([2]);
+    expect(match.publicState().commitments).toEqual([]);
+
+    match.openRevealPhase();
+    expect(match.publicState().commitments).toEqual([{ index: 2, commitment }]);
+  });
+
   it('rejects a reveal that does not match the commitment', () => {
     const setup = setupFor(4);
     const match = new Match(setup);

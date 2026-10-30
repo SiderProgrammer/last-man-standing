@@ -6,8 +6,10 @@ import {
   addressKey,
   matchResultDomain,
   matchResultMessage,
+  receiptTypedData,
   type MatchResult,
 } from '@lms/protocol';
+import type { ReceiptSigner } from '../gateway/gateway.js';
 import { gameEscrowAbi } from '@lms/protocol';
 import { config, type ServerConfig } from '../config.js';
 import { signerClients } from './viem.js';
@@ -32,6 +34,19 @@ export async function signResult(
     primaryType: 'MatchResult',
     message: matchResultMessage(result),
   });
+}
+
+/**
+ * Signs commit receipts with `privateKey`. The server uses the attestor key
+ * where it has one: then the escrow's attestor set is what vouches for the
+ * receipts, and a player can check a receipt against the chain.
+ */
+export function receiptSigner(privateKey: Hex, chainId: number): ReceiptSigner {
+  const account = privateKeyToAccount(privateKey);
+  return {
+    address: account.address,
+    sign: (receipt) => account.signTypedData(receiptTypedData(chainId, receipt)),
+  };
 }
 
 /**

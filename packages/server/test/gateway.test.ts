@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { verifyTypedData } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
   Action,
   DEFAULT_RULES,
   grantTypedData,
+  receiptTypedData,
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
@@ -12,12 +14,13 @@ import {
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
-import { AnalystError, Gateway, HISTORY_PAGE, Lobby, MemoryArchive, nullRelayer } from '@lms/server';
+import { AnalystError, Gateway, HISTORY_PAGE, Lobby, MemoryArchive, nullRelayer, receiptSigner } from '@lms/server';
 import type {
   AnalyzeRequest,
   ArchivedMatch,
   AnalyzeResult,
   MatchAnalyst,
+  ReceiptSigner,
   SignatureVerifier,
   Socket,
 } from '@lms/server';
@@ -89,6 +92,7 @@ interface Extras {
   analyst: MatchAnalyst;
   archive: MemoryArchive;
   spokes: SpokeInfo[];
+  receipts: ReceiptSigner;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -111,6 +115,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.spokes ? { spokes: extras.spokes } : {}),
     ...(extras.analyst ? { analyst: extras.analyst } : {}),
     ...(extras.archive ? { archive: extras.archive } : {}),
+    ...(extras.receipts ? { receipts: extras.receipts } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -564,9 +569,11 @@ describe('gateway session grants and signed moves', () => {
   const nonceOf = (socket: FakeSocket) => socket.last('hello')?.nonce ?? '';
   const SALT = `0x${'5a'.repeat(32)}` as const;
 
+  const RECEIPT_KEY = `0x${'7e'.repeat(32)}` as const;
+
   /** Logs `player` in with a grant and opens a practice room; returns the seat's place in round 1. */
   async function seated() {
-    const { socket, lobby } = harness();
+    const { socket, lobby } = harness({ receipts: receiptSigner(RECEIPT_KEY, 11155111) });
     await socket.deliver(await player.auth(nonceOf(socket)));
     await socket.deliver({ type: 'practice', bots: 3 });
     const state = socket.last('state')?.state;
@@ -635,8 +642,36 @@ describe('gateway session grants and signed moves', () => {
     expect(round?.proofs[0]?.commitSignature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(round?.proofs[0]?.revealSignature).toMatch(/^0x[0-9a-f]{130}$/);
     // House bots sign nothing.
-    expect(round?.proofs[1]).toEqual({ index: 1, commitSignature: null, revealSignature: null });
+    expect(round?.proofs[1]).toEqual({ index: 1, commitSignature: null, revealSignature: null, receivedAt: null });
     expect(lobby.list()[0]?.grants.map((grant) => grant.grant.sessionKey)).toEqual([player.key.address]);
+  });
+
+  it('answers a commit with a receipt signed by the key hello named', async () => {
+    const { socket } = await seated();
+    const signer = socket.last('hello')?.receiptSigner;
+    expect(signer).toBe(privateKeyToAccount(RECEIPT_KEY).address);
+
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    const commit = await player.commit(place(socket), move);
+    await socket.deliver(commit);
+    const answer = socket.last('receipt');
+    if (!answer || commit.type !== 'commit' || !signer) throw new Error('no receipt');
+    expect(answer.receipt).toEqual({ ...place(socket), commitment: commit.commitment, receivedAt: 0 });
+    const valid = await verifyTypedData({
+      address: signer,
+      ...receiptTypedData(11155111, answer.receipt),
+      signature: answer.signature,
+    });
+    expect(valid).toBe(true);
+
+    // The bots had committed, so the reveal is open, and the whole set is public.
+    const state = socket.last('state')?.state;
+    expect(state?.commitments.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
+    expect(state?.commitments[0]?.commitment).toBe(commit.commitment);
+
+    await socket.deliver(await player.reveal(place(socket), move));
+    expect(socket.last('round')?.proofs[0]?.receivedAt).toBe(0);
+    expect(socket.last('round')?.proofs[1]?.receivedAt).toBeNull();
   });
 
   it('refuses a commit the session key did not sign, or signed for another seat', async () => {
