@@ -3,11 +3,22 @@ pragma solidity 0.8.28;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {ProtocolConfig} from "./ProtocolConfig.sol";
 import {PullPayable} from "./PullPayable.sol";
 import {ExpiringPause} from "./ExpiringPause.sol";
-import {BPS_DENOMINATOR, LOCK_GRACE, RANDOMNESS_TIMEOUT, SEQUENCER_GRACE_PERIOD} from "./Constants.sol";
+import {
+    BPS_DENOMINATOR,
+    LOCK_GRACE,
+    MAX_DISCOUNT_BPS,
+    RANDOMNESS_TIMEOUT,
+    SEQUENCER_GRACE_PERIOD
+} from "./Constants.sol";
 import {UnknownMatch, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
 import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
@@ -48,6 +59,14 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      ends. The escrow does nothing with them; they exist so a rewards
 ///      contract can pay players in proportion to the fees they paid, entirely
 ///      on-chain.
+///
+///      Fee discount. A seat may pay up to `MAX_DISCOUNT_BPS` of its fee in
+///      LMS instead of ETH, at the config's `lmsPerEthDiscount` (`joinWithLms`).
+///      It stakes that much less ETH; the prize pool is the same, and the
+///      treasury's cut is smaller by the discount. The LMS is held here, against
+///      the seat, until the match ends: burned when it settles, refunded with
+///      the stake when it is cancelled, vetoed or aborted. Fee totals count
+///      only the ETH part, the net fee.
 contract GameEscrow is
     EIP712,
     PullPayable,
@@ -114,6 +133,14 @@ contract GameEscrow is
         bytes32 rankingHash;
     }
 
+    /// @dev Part of a seat's fee paid in LMS, or a match's total of them.
+    struct Discount {
+        /// @dev ETH off the fee.
+        uint128 eth;
+        /// @dev LMS paid for it, held until the match ends.
+        uint128 lms;
+    }
+
     /// @notice Why a seat could not be taken. `None` means it could.
     enum JoinFailure {
         None,
@@ -150,6 +177,13 @@ contract GameEscrow is
     /// @notice Fees every player paid in matches that settled during `epoch`.
     mapping(uint256 epoch => uint256) public epochFees;
 
+    mapping(bytes32 matchId => mapping(address player => Discount)) private seatDiscount;
+    /// @dev Every seat's discount in a match, added up. Zero for nearly every
+    ///      match, which then never reads `seatDiscount`.
+    mapping(bytes32 matchId => Discount) private matchDiscount;
+    /// @notice LMS held against seats of matches that have not ended.
+    uint256 public totalLmsEscrowed;
+
     /// @notice Stakes held for matches that have not yet settled or cancelled.
     /// @dev This and `PullPayable.totalOwed` account for the entire contract
     ///      balance; the solvency invariant is
@@ -185,6 +219,9 @@ contract GameEscrow is
     /// @notice A cross-chain stake arrived for a seat that could no longer be
     ///         taken, and was credited back to the player here instead.
     event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
+    event FeeDiscounted(bytes32 indexed matchId, address indexed player, uint256 ethOff, uint256 lmsPaid);
+    event LmsBurned(bytes32 indexed matchId, uint256 amount);
+    event LmsRefunded(bytes32 indexed matchId, address indexed player, uint256 amount);
 
     error WrongStatus(bytes32 matchId, MatchStatus expected, MatchStatus actual);
     error StakeOutOfRange(uint128 stake);
@@ -207,6 +244,10 @@ contract GameEscrow is
     error NotAPermutation();
     error SequencerDown();
     error SequencerGracePeriod(uint256 until);
+    error DiscountOff();
+    error NoDiscount(uint256 lmsIn);
+
+    using SafeERC20 for IERC20;
 
     constructor(ProtocolConfig config_) EIP712("LastManStanding", "1") {
         config = config_;
@@ -271,7 +312,79 @@ contract GameEscrow is
     function join(bytes32 matchId) external payable whenNotPaused {
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
-        _seat(matchId, info, msg.sender, 0);
+        _seat(matchId, info, msg.sender, 0, info.stake);
+    }
+
+    /// @notice Takes a seat paying part of its fee in LMS: up to `lmsIn`,
+    ///         and never more than buys `MAX_DISCOUNT_BPS` of the fee.
+    /// @dev Send the stake less the discount, which `quoteLmsDiscount` gives.
+    ///      The caller must have approved the LMS.
+    function joinWithLms(bytes32 matchId, uint256 lmsIn) external payable whenNotPaused {
+        _joinWithLms(matchId, lmsIn);
+    }
+
+    /// @notice `joinWithLms`, with the LMS allowance granted by an EIP-2612
+    ///         signature. The permit is attempted, not required, as in
+    ///         `StakedLms.depositWithPermit`.
+    function joinWithLmsPermit(
+        bytes32 matchId,
+        uint256 lmsIn,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable whenNotPaused {
+        address token = config.lmsToken();
+        if (token != address(0)) {
+            try IERC20Permit(token).permit(msg.sender, address(this), lmsIn, deadline, v, r, s) {} catch {}
+        }
+        _joinWithLms(matchId, lmsIn);
+    }
+
+    /// @notice What `lmsIn` LMS takes off a seat's fee in `matchId` now, and
+    ///         how much of it would be used: no more than buys the most
+    ///         discount allowed.
+    function quoteLmsDiscount(bytes32 matchId, uint256 lmsIn)
+        public
+        view
+        returns (uint256 discount, uint256 lmsUsed)
+    {
+        uint256 rate = config.lmsPerEthDiscount();
+        if (rate == 0 || config.lmsToken() == address(0)) return (0, 0);
+        MatchInfo storage info = matchInfo[matchId];
+        uint256 fee = (uint256(info.stake) * terms[info.termsId].feeBps) / BPS_DENOMINATOR;
+        uint256 maxDiscount = (fee * MAX_DISCOUNT_BPS) / BPS_DENOMINATOR;
+
+        discount = Math.mulDiv(lmsIn, 1 ether, rate);
+        if (discount < maxDiscount) return (discount, lmsIn);
+        return (maxDiscount, Math.mulDiv(maxDiscount, rate, 1 ether, Math.Rounding.Ceil));
+    }
+
+    function _joinWithLms(bytes32 matchId, uint256 lmsIn) private {
+        MatchInfo storage info = _open(matchId);
+        address token = config.lmsToken();
+        if (token == address(0) || config.lmsPerEthDiscount() == 0) revert DiscountOff();
+        (uint256 discount, uint256 lmsUsed) = quoteLmsDiscount(matchId, lmsIn);
+        if (discount == 0) revert NoDiscount(lmsIn);
+
+        // Less than the stake: at most half of a fee of at most 10% of it.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 due = info.stake - uint128(discount);
+        if (msg.value != due) revert IncorrectStake(msg.value, due);
+        _seat(matchId, info, msg.sender, 0, due);
+
+        // Both fit: the discount is under the stake, a uint128, and the LMS
+        // is bounded by the token's supply.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        Discount memory seat = Discount({eth: uint128(discount), lms: uint128(lmsUsed)});
+        seatDiscount[matchId][msg.sender] = seat;
+        Discount storage total = matchDiscount[matchId];
+        total.eth += seat.eth;
+        total.lms += seat.lms;
+        totalLmsEscrowed += lmsUsed;
+
+        IERC20(token).safeTransferFrom(msg.sender, address(this), lmsUsed);
+        emit FeeDiscounted(matchId, msg.sender, discount, lmsUsed);
     }
 
     /// @notice Takes a seat for `player`, with the stake paid by the caller.
@@ -284,7 +397,7 @@ contract GameEscrow is
         if (player == address(0)) revert ZeroAddress();
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
-        _seat(matchId, info, player, 0);
+        _seat(matchId, info, player, 0, info.stake);
     }
 
     /// @notice Takes a seat on behalf of a player whose stake arrived from another chain.
@@ -314,7 +427,7 @@ contract GameEscrow is
             emit JoinRefunded(matchId, player, msg.value, failure);
             return;
         }
-        _seat(matchId, info, player, srcChainId);
+        _seat(matchId, info, player, srcChainId, info.stake);
     }
 
     /// @notice Closes the lobby and asks the oracle for a seed.
@@ -453,10 +566,17 @@ contract GameEscrow is
         _checkSequencer();
 
         info.status = MatchStatus.Settled;
-        totalEscrowed -= uint256(info.stake) * info.seatCount;
+        Discount memory discount = matchDiscount[matchId];
+        totalEscrowed -= uint256(info.stake) * info.seatCount - discount.eth;
         Terms storage matchTerms = terms[info.termsId];
-        _distribute(matchId, info, matchTerms, ranking);
-        _recordFees(info.stake, matchTerms.feeBps, ranking);
+        _distribute(matchId, info, matchTerms, ranking, discount.eth);
+        _recordFees(matchId, info.stake, matchTerms.feeBps, ranking, discount.eth != 0);
+
+        if (discount.lms != 0) {
+            totalLmsEscrowed -= discount.lms;
+            ERC20Burnable(config.lmsToken()).burn(discount.lms);
+            emit LmsBurned(matchId, discount.lms);
+        }
 
         emit MatchSettled(matchId, info.historyRoot, info.rounds, ranking[0]);
     }
@@ -470,17 +590,28 @@ contract GameEscrow is
         if (block.timestamp < until) revert SequencerGracePeriod(until);
     }
 
-    /// @dev Adds every seat's fee to this epoch's totals, now that it is paid.
-    ///      `ranking` was checked against the seat set when it was proposed,
-    ///      and again by hash above, so it is exactly the seats.
-    function _recordFees(uint128 stake, uint16 feeBps, address[] calldata ranking) private {
+    /// @dev Adds every seat's net fee — what it paid in ETH — to this epoch's
+    ///      totals, now that it is paid. `ranking` was checked against the seat
+    ///      set when it was proposed, and again by hash above, so it is exactly
+    ///      the seats.
+    function _recordFees(
+        bytes32 matchId,
+        uint128 stake,
+        uint16 feeBps,
+        address[] calldata ranking,
+        bool discounted
+    ) private {
         uint256 fee = (uint256(stake) * feeBps) / BPS_DENOMINATOR;
         if (fee == 0) return;
         uint256 epoch = block.timestamp / FEE_EPOCH;
+        uint256 total;
         for (uint256 i = 0; i < ranking.length; ++i) {
-            feesPaid[ranking[i]][epoch] += fee;
+            address player = ranking[i];
+            uint256 net = discounted ? fee - seatDiscount[matchId][player].eth : fee;
+            feesPaid[player][epoch] += net;
+            total += net;
         }
-        epochFees[epoch] += fee * ranking.length;
+        epochFees[epoch] += total;
     }
 
     /// @notice Throws out a proposed result and refunds every stake.
@@ -505,11 +636,15 @@ contract GameEscrow is
         emit MatchCancelled(matchId, "result vetoed");
     }
 
+    /// @dev The pool is the full stakes, as if nobody had a discount: the
+    ///      prizes do not depend on how seats paid. The ETH actually held is
+    ///      `discountEth` less, which comes out of the treasury's cut.
     function _distribute(
         bytes32 matchId,
         MatchInfo storage info,
         Terms storage matchTerms,
-        address[] calldata ranking
+        address[] calldata ranking,
+        uint256 discountEth
     ) private {
         uint256 pool = uint256(info.stake) * info.seatCount;
         uint256 distributable = pool - (pool * matchTerms.feeBps) / BPS_DENOMINATOR;
@@ -530,7 +665,8 @@ contract GameEscrow is
 
         // The treasury takes the fee plus whatever integer division left behind,
         // so the pool is always fully assigned and nothing can be stranded.
-        uint256 remainder = pool - paid;
+        // Less the discounts, which never exceed half the fee.
+        uint256 remainder = pool - paid - discountEth;
         if (remainder > 0) {
             address treasury = matchTerms.treasury;
             _credit(treasury, remainder);
@@ -600,15 +736,33 @@ contract GameEscrow is
         emit MatchCancelled(matchId, reason);
     }
 
-    /// @dev Cancels the match and credits every seat its stake back.
+    /// @dev Cancels the match and credits every seat what it paid back: its
+    ///      stake, less any discount, and the LMS that paid for the discount.
     function _refundAll(bytes32 matchId, MatchInfo storage info) private {
         info.status = MatchStatus.Cancelled;
 
         address[] memory seats = matchSeats[matchId];
         uint128 stake = info.stake;
-        totalEscrowed -= uint256(stake) * seats.length;
+        Discount memory total = matchDiscount[matchId];
+        totalEscrowed -= uint256(stake) * seats.length - total.eth;
+        if (total.eth == 0) {
+            for (uint256 i = 0; i < seats.length; ++i) {
+                _credit(seats[i], stake);
+            }
+            return;
+        }
+
+        totalLmsEscrowed -= total.lms;
+        IERC20 lms = IERC20(config.lmsToken());
         for (uint256 i = 0; i < seats.length; ++i) {
-            _credit(seats[i], stake);
+            Discount memory seat = seatDiscount[matchId][seats[i]];
+            _credit(seats[i], stake - seat.eth);
+            // Pushed rather than credited: LMS has no transfer hooks, so a
+            // recipient cannot make this revert.
+            if (seat.lms != 0) {
+                lms.safeTransfer(seats[i], seat.lms);
+                emit LmsRefunded(matchId, seats[i], seat.lms);
+            }
         }
     }
 
@@ -650,6 +804,11 @@ contract GameEscrow is
         return matchSeats[matchId];
     }
 
+    /// @notice ETH off `player`'s fee in `matchId`, and the LMS paid for it.
+    function getSeatDiscount(bytes32 matchId, address player) external view returns (Discount memory) {
+        return seatDiscount[matchId][player];
+    }
+
     function getPayoutSchedule(bytes32 matchId) external view returns (uint16[] memory) {
         return terms[matchInfo[matchId].termsId].payoutBps;
     }
@@ -685,7 +844,14 @@ contract GameEscrow is
         return JoinFailure.None;
     }
 
-    function _seat(bytes32 matchId, MatchInfo storage info, address player, uint32 originChainId) private {
+    /// @param paid ETH the seat paid: the stake, less any discount.
+    function _seat(
+        bytes32 matchId,
+        MatchInfo storage info,
+        address player,
+        uint32 originChainId,
+        uint256 paid
+    ) private {
         if (block.timestamp >= info.joinDeadline) revert JoinWindowClosed(matchId);
         if (info.seatCount >= info.maxSeats) revert LobbyFull(matchId);
         if (hasSeat(matchId, player)) revert AlreadyJoined(matchId, player);
@@ -696,7 +862,7 @@ contract GameEscrow is
 
         matchSeats[matchId].push(player);
         info.seatCount = seat + 1;
-        totalEscrowed += info.stake;
+        totalEscrowed += paid;
 
         emit PlayerJoined(matchId, player, seat, originChainId);
     }

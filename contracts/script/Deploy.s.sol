@@ -503,6 +503,15 @@ contract Deploy is Registry {
         ProtocolConfig.Params memory params = deployment.config.getParams();
         params.treasury = address(deployment.feeRouter);
         deployment.config.setParams(params);
+        deployment.config.setLmsToken(address(deployment.lms));
+        deployment.config.setLmsPerEthDiscount(vm.envOr("LMS_PER_ETH_DISCOUNT", _defaultLmsPerEthDiscount()));
+    }
+
+    /// @dev LMS that buys one ETH off a fee. Off on Base mainnet, like the
+    ///      stakers' share, until there is advice; twice the play-mining rate
+    ///      elsewhere, so mined LMS buys back half the fee that earned it.
+    function _defaultLmsPerEthDiscount() internal view returns (uint256) {
+        return block.chainid == BASE_CHAIN_ID ? 0 : 20_000e18;
     }
 
     /// @dev Nothing on Base mainnet until there is legal advice on paying

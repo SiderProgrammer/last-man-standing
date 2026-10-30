@@ -62,6 +62,9 @@ Around that core:
   `RewardVesting` and votes only once released and staked. Two caps: 10,000
   LMS per ETH of fees (the real bound on farming) and a per-wallet cap per
   week (which stops one wallet taking a quiet week, not sybils).
+- **LMS fee discount** — a seat may pay up to half its fee in LMS at a
+  governance-set rate (`joinWithLms`). The LMS is held with the stake, burned
+  when the match settles and refunded if it does not.
 - **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271. The key only signs logins: every join is the

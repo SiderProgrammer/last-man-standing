@@ -10,6 +10,10 @@ optimizer = true
 optimizer_runs = 20_000
 via_ir = false
 bytecode_hash = "none"
+# GameEscrow alone is optimised for size: at 20,000 runs it is over the
+# 24,576-byte EIP-170 limit. 200 runs costs it under 1% more gas per call.
+additional_compiler_profiles = [{ name = "escrow", optimizer_runs = 200 }]
+compilation_restrictions = [{ paths = "src/GameEscrow.sol", max_optimizer_runs = 200 }]
 # Compiler warnings fail the build.
 deny = "warnings"
 # `Deploy` reads the rule set from `config/rules.json`, and on a broadcast

@@ -23,6 +23,10 @@ contract DeployHarness is Deploy {
         return _teamBeneficiary(safe);
     }
 
+    function defaultLmsPerEthDiscount() external view returns (uint256) {
+        return _defaultLmsPerEthDiscount();
+    }
+
     function guardian() external view returns (address) {
         return _guardian();
     }
@@ -173,6 +177,14 @@ contract DeployTest is Test {
     function test_quorumFloorAppliesWhileLittleIsStaked() public view {
         assertEq(d.governor.quorumFloor(), 1_000_000e18);
         assertEq(d.governor.quorum(block.timestamp - 1), 1_000_000e18, "nothing staked: the floor applies");
+    }
+
+    function test_theLmsDiscountIsWired_andOffOnBaseMainnet() public {
+        assertEq(d.config.lmsToken(), address(d.lms));
+        assertEq(d.config.lmsPerEthDiscount(), 20_000e18);
+        DeployHarness harness = new DeployHarness();
+        vm.chainId(8453);
+        assertEq(harness.defaultLmsPerEthDiscount(), 0);
     }
 
     function test_baseMainnetStartsWithNoFeeShareForStakers() public {

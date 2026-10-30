@@ -632,6 +632,28 @@ Defaults, all overridable through the deploy environment:
 - **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
   only moves fees to where the router already sends them, so the worst a caller
   can do is pay the gas for everyone else.
+### Paying part of the fee in LMS
+
+`GameEscrow.joinWithLms` · `ProtocolConfig.lmsPerEthDiscount`
+
+A seat can pay up to half its fee (`MAX_DISCOUNT_BPS`) in LMS, at a rate
+governance sets: `lmsPerEthDiscount` LMS buys one ETH off the fee (20,000 by
+default, off on Base mainnet). The seat stakes that much less ETH;
+`quoteLmsDiscount` says how much, and how much of the LMS offered it uses.
+
+- **Held, then burned.** The LMS stays in the escrow against the seat. When
+  the match settles it is burned; when it is cancelled, vetoed or aborted it
+  goes back with the stake. So LMS only leaves supply for a fee that was
+  actually paid.
+- **Prizes do not change.** The prize pool is computed from the full stakes;
+  the discounts come out of the treasury's cut, which is at least the full fee.
+- **Play-mining counts the net fee**, what the seat paid in ETH, so paying in
+  LMS earns proportionally less LMS.
+- **A rate change reaches only later seats.** It is read at join and stored
+  with the seat.
+- **No market price inside the protocol.** The rate is a governance setting,
+  not an oracle; the 50% cap bounds what a bad rate can cost the treasury.
+
 ### The fee keeper
 
 `FeeKeeper` runs in the game server when `FEE_ROUTER` and `KEEPER_PK` are set,
