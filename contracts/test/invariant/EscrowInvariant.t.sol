@@ -134,10 +134,12 @@ contract EscrowHandler is Test {
     address[] internal proposedRanking;
     uint256 public finalized;
 
-    /// @dev Waits out the challenge window and pays the proposed result.
+    /// @dev Waits out the challenge window, extended or not, and pays the
+    ///      proposed result.
     function finalize() public {
         if (current == bytes32(0) || proposedRanking.length == 0) return;
-        vm.warp(block.timestamp + 2 hours);
+        uint256 deadline = escrow.getMatch(current).deadline;
+        vm.warp(block.timestamp < deadline ? deadline : block.timestamp + 2 hours);
         escrow.finalize(current, proposedRanking);
         ++finalized;
 
@@ -158,6 +160,25 @@ contract EscrowHandler is Test {
         vm.prank(GUARDIAN);
         escrow.veto(current);
         ++vetoed;
+    }
+
+    uint256 public disputed;
+
+    /// @dev A seated player disputes the proposed result, holding back its payout.
+    function dispute(uint256 who) public {
+        if (current == bytes32(0)) return;
+        address[] memory seats = escrow.getSeats(current);
+        if (seats.length == 0) return;
+        vm.prank(seats[who % seats.length]);
+        escrow.dispute(current, keccak256(abi.encode(who)));
+        ++disputed;
+    }
+
+    /// @dev The guardian finds a dispute unfounded.
+    function dismissDispute() public {
+        if (current == bytes32(0)) return;
+        vm.prank(GUARDIAN);
+        escrow.dismissDispute(current);
     }
 
     function withdraw(uint256 who) public {
