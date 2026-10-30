@@ -34,7 +34,7 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
 ///                                                           ^  (anyone may execute     StakedLms
 ///        Safe --> MultisigPhase --proposes, cancels---------+   once the delay         FeeRouter
-///         |       (until PHASE_END, then retired)               has passed)           PlayerAvatars
+///         |       (until phaseEnd, then retired)                has passed)           PlayerAvatars
 ///         |                                                                           ChainlinkVrfAdapter
 ///         +- owns the VRF subscription
 ///         +- releases the liquidity share of LMS from `LiquidityReserve`,

@@ -131,9 +131,9 @@ contract DeployTest is Test {
 
     function test_liquidityReserveIsTheSafes_toReleaseWhereTheTimelockApproves() public view {
         assertEq(d.liquidityReserve.owner(), address(d.timelock));
-        assertEq(d.liquidityReserve.SAFE(), safe);
-        assertEq(d.liquidityReserve.VAULT(), address(d.stakedLms));
-        assertEq(address(d.liquidityReserve.LMS()), address(d.lms));
+        assertEq(d.liquidityReserve.safe(), safe);
+        assertEq(d.liquidityReserve.vault(), address(d.stakedLms));
+        assertEq(address(d.liquidityReserve.lms()), address(d.lms));
     }
 
     function test_teamVestsNothingForAYear_thenLinearlyOverThree() public {
@@ -155,7 +155,7 @@ contract DeployTest is Test {
         assertEq(rewards.owner(), address(d.timelock));
         assertEq(address(rewards.escrow()), address(d.escrow));
         assertEq(address(rewards.lms()), address(d.lms));
-        assertEq(rewards.vesting().DISTRIBUTOR(), address(rewards));
+        assertEq(rewards.vesting().distributor(), address(rewards));
         assertEq(rewards.firstEpoch(), block.timestamp / 7 days + 1, "the first full week after the deploy");
         assertEq(rewards.maxRewardPerEth(), 10_000e18);
         assertEq(rewards.maxRewardPerWalletPerEpoch(), 20_000e18);
@@ -216,10 +216,10 @@ contract DeployTest is Test {
     }
 
     function test_multisigPhaseEndsAYearOut_forTheSafe() public view {
-        assertEq(address(d.multisigPhase.TIMELOCK()), address(d.timelock));
-        assertEq(d.multisigPhase.SAFE(), safe);
+        assertEq(address(d.multisigPhase.timelock()), address(d.timelock));
+        assertEq(d.multisigPhase.safe(), safe);
         // `_handOver` moves the dry run's clock from 1 to 2 before it is made.
-        assertApproxEqAbs(d.multisigPhase.PHASE_END(), block.timestamp + 365 days, 1);
+        assertApproxEqAbs(d.multisigPhase.phaseEnd(), block.timestamp + 365 days, 1);
     }
 
     /// @dev Through `MultisigPhase`, with the same delay as a vote.
@@ -236,7 +236,7 @@ contract DeployTest is Test {
 
     /// @dev Once the phase is over anyone retires it, and governance is left alone.
     function test_afterThePhase_theSafesRolesAreGone() public {
-        vm.warp(d.multisigPhase.PHASE_END());
+        vm.warp(d.multisigPhase.phaseEnd());
         d.multisigPhase.retire();
         TimelockController timelock = d.timelock;
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.multisigPhase)));

@@ -37,11 +37,11 @@ contract RewardVesting {
         uint128 released;
     }
 
-    IERC20 public immutable LMS;
+    IERC20 public immutable lms;
     /// @notice The only account that can grant: the distributor that made this.
-    address public immutable DISTRIBUTOR;
+    address public immutable distributor;
     /// @notice Length of an epoch, as the distributor counts them.
-    uint256 public immutable EPOCH_LENGTH;
+    uint256 public immutable epochLength;
 
     mapping(address player => mapping(uint256 epoch => Tranche)) public trancheOf;
     /// @notice Every tranche's amount, added up.
@@ -56,17 +56,17 @@ contract RewardVesting {
     error AlreadyGranted(address player, uint256 epoch);
     error NothingToRelease();
 
-    constructor(IERC20 lms, uint256 epochLength) {
-        if (address(lms) == address(0)) revert ZeroAddress();
-        LMS = lms;
-        DISTRIBUTOR = msg.sender;
-        EPOCH_LENGTH = epochLength;
+    constructor(IERC20 lms_, uint256 epochLength_) {
+        if (address(lms_) == address(0)) revert ZeroAddress();
+        lms = lms_;
+        distributor = msg.sender;
+        epochLength = epochLength_;
     }
 
     /// @notice Records one tranche per epoch for `player`. The distributor
     ///         has already sent the LMS.
     function grant(address player, uint256[] memory epochs, uint256[] memory amounts) external {
-        if (msg.sender != DISTRIBUTOR) revert NotDistributor(msg.sender);
+        if (msg.sender != distributor) revert NotDistributor(msg.sender);
         uint256 total;
         for (uint256 i = 0; i < epochs.length; ++i) {
             uint256 amount = amounts[i];
@@ -82,7 +82,7 @@ contract RewardVesting {
 
     /// @notice When `epoch`'s tranches start vesting: the moment it ended.
     function vestingStart(uint256 epoch) public view returns (uint256) {
-        return (epoch + 1) * EPOCH_LENGTH;
+        return (epoch + 1) * epochLength;
     }
 
     /// @notice How much of `player`'s tranche for `epoch` has vested by now.
@@ -135,7 +135,7 @@ contract RewardVesting {
         }
         if (amount == 0) revert NothingToRelease();
         totalReleased += amount;
-        LMS.safeTransfer(player, amount);
+        lms.safeTransfer(player, amount);
         emit Released(player, msg.sender, amount, epochs);
     }
 }

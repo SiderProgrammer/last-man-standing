@@ -566,7 +566,7 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100
 | `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
 | `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and grants each player their share of that week's LMS budget, as a tranche in `RewardVesting`. |
 | `RewardVesting` | Holds each (player, week) tranche while it vests, linearly over six months from the week's end; `release` pays out liquid LMS. Cannot stake, so vesting LMS never votes. |
-| `MultisigPhase` | Holds the Safe's proposer and canceller roles on the timelock until `PHASE_END`, a date fixed at deploy; then anyone retires it. |
+| `MultisigPhase` | Holds the Safe's proposer and canceller roles on the timelock until `phaseEnd`, a date fixed at deploy; then anyone retires it. |
 | `LiquidityReserve` | Holds the 5% liquidity share. Pays out only to a recipient the timelock approves, never the vault or the Safe. |
 | `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
 
@@ -800,7 +800,7 @@ fork's clock (`evm_increaseTime`) past the end of the week.
 The Safe's proposer and canceller roles are training wheels, and they end on a
 date written into `MultisigPhase` at deploy (a year out by default, two at
 most). The Safe never holds a timelock role itself: it calls `MultisigPhase`,
-which forwards only before `PHASE_END`. After that anyone calls `retire()`,
+which forwards only before `phaseEnd`. After that anyone calls `retire()`,
 which renounces both roles. No vote is needed, and the Safe cannot cancel its
 own removal. Before then it cannot schedule a call on the timelock itself or a
 `transferOwnership`/`renounceOwnership`, so nothing it does can outlast the

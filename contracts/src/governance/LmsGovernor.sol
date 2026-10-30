@@ -31,7 +31,7 @@ import {StakedLms} from "./StakedLms.sol";
 ///        sLMS votes --> LmsGovernor --proposes--> TimelockController --owns--> ProtocolConfig,
 ///                                                          ^                    StakedLms, FeeRouter
 ///                                                          |
-///                                   Safe --> MultisigPhase: proposes and vetoes, until PHASE_END
+///                                   Safe --> MultisigPhase: proposes and vetoes, until phaseEnd
 ///
 ///      Voting power is read from `StakedLms`, never from plain LMS, and at the
 ///      proposal's snapshot, so tokens bought or staked after a proposal is

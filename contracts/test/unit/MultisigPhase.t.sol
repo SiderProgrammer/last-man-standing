@@ -125,7 +125,7 @@ contract MultisigPhaseTest is Test {
         timelock.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
         bytes32 id = timelock.hashOperation(address(target), 0, call, bytes32(0), bytes32(0));
 
-        uint256 end = phase.PHASE_END();
+        uint256 end = phase.phaseEnd();
         vm.warp(end);
         vm.startPrank(safe);
         vm.expectRevert(abi.encodeWithSelector(MultisigPhase.PhaseOver.selector, end));
@@ -139,7 +139,7 @@ contract MultisigPhaseTest is Test {
     }
 
     function test_retire_onlyAfterTheEnd_byAnyone_dropsBothRoles() public {
-        uint256 end = phase.PHASE_END();
+        uint256 end = phase.phaseEnd();
         vm.expectRevert(abi.encodeWithSelector(MultisigPhase.PhaseNotOver.selector, end));
         phase.retire();
 

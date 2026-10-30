@@ -26,11 +26,11 @@ import {ZeroAddress} from "../Errors.sol";
 contract LiquidityReserve is Ownable2Step {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable LMS;
+    IERC20 public immutable lms;
     /// @notice May release to an approved recipient, as the timelock may.
-    address public immutable SAFE;
+    address public immutable safe;
     /// @notice `StakedLms`, which may never be a recipient.
-    address public immutable VAULT;
+    address public immutable vault;
 
     mapping(address recipient => bool) public isApproved;
 
@@ -41,25 +41,25 @@ contract LiquidityReserve is Ownable2Step {
     error RecipientNotApproved(address recipient);
     error CannotApprove(address recipient);
 
-    constructor(IERC20 lms, address safe, address vault, address owner_) Ownable(owner_) {
-        if (address(lms) == address(0) || safe == address(0) || vault == address(0)) revert ZeroAddress();
-        LMS = lms;
-        SAFE = safe;
-        VAULT = vault;
+    constructor(IERC20 lms_, address safe_, address vault_, address owner_) Ownable(owner_) {
+        if (address(lms_) == address(0) || safe_ == address(0) || vault_ == address(0)) revert ZeroAddress();
+        lms = lms_;
+        safe = safe_;
+        vault = vault_;
     }
 
     /// @notice Approves, or with `false` withdraws approval of, a recipient.
     function setRecipient(address recipient, bool approved) external onlyOwner {
-        if (recipient == address(0) || recipient == VAULT || recipient == SAFE || recipient == address(this)) revert CannotApprove(recipient);
+        if (recipient == address(0) || recipient == vault || recipient == safe || recipient == address(this)) revert CannotApprove(recipient);
         isApproved[recipient] = approved;
         emit RecipientSet(recipient, approved);
     }
 
     /// @notice Sends `amount` LMS to an approved recipient.
     function release(address to, uint256 amount) external {
-        if (msg.sender != SAFE && msg.sender != owner()) revert NotAllowed(msg.sender);
+        if (msg.sender != safe && msg.sender != owner()) revert NotAllowed(msg.sender);
         if (!isApproved[to]) revert RecipientNotApproved(to);
-        LMS.safeTransfer(to, amount);
+        lms.safeTransfer(to, amount);
         emit Released(to, amount, msg.sender);
     }
 }

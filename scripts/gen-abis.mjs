@@ -16,6 +16,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { artifactPath } from './artifacts.mjs';
+
 /** Contract name in `contracts/out` → export name. */
 const CONTRACTS = {
   GameEscrow: 'gameEscrowAbi',
@@ -38,7 +40,7 @@ const OUT = fileURLToPath(new URL('../contracts/out/', import.meta.url));
 const TARGET = fileURLToPath(new URL('../packages/protocol/src/chain/abis.ts', import.meta.url));
 
 const sections = Object.entries(CONTRACTS).map(([contract, name]) => {
-  const { abi } = JSON.parse(readFileSync(`${OUT}${contract}.sol/${contract}.json`, 'utf8'));
+  const { abi } = JSON.parse(readFileSync(artifactPath(OUT, contract), 'utf8'));
   // One entry per line, in a stable order, so a diff shows exactly what changed.
   const entries = [...abi].sort(byKindAndName).map((entry) => `  ${JSON.stringify(entry)},`);
   return `/** \`${contract}\`. */\nexport const ${name} = [\n${entries.join('\n')}\n] as const;\n`;

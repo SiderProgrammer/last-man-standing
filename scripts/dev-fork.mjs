@@ -56,6 +56,8 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
+import { artifactPath } from './artifacts.mjs';
+
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CONTRACTS = fileURLToPath(new URL('../contracts/', import.meta.url));
 
@@ -147,7 +149,7 @@ const LOBBIES = [
  * `forge script` compiles the contracts first.
  */
 const abiOf = (contract) =>
-  JSON.parse(readFileSync(`${CONTRACTS}out/${contract}.sol/${contract}.json`, 'utf8')).abi;
+  JSON.parse(readFileSync(artifactPath(`${CONTRACTS}out/`, contract), 'utf8')).abi;
 /** Staked by the operator: enough to clear the 100,000 sLMS proposal threshold. */
 const OPERATOR_STAKE = '200000';
 /** Staked for each funded player, so they can vote on the demo proposal from the start. */
