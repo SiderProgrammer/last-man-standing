@@ -23,6 +23,7 @@ import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
 import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
+import {MultisigPhase} from "../src/governance/MultisigPhase.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /// @notice Hub deploy, on Base or Base Sepolia: token-governed config,
@@ -31,8 +32,8 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
 ///                                                           ^  (anyone may execute     StakedLms
-///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
-///         |                                                     has passed)           PlayerAvatars
+///        Safe --> MultisigPhase --proposes, cancels---------+   once the delay         FeeRouter
+///         |       (until PHASE_END, then retired)               has passed)           PlayerAvatars
 ///         |                                                                           ChainlinkVrfAdapter
 ///         +- guardian: may pause GameEscrow at once, for a week at most;
 ///         |            may veto a proposed result, which refunds every stake
@@ -124,6 +125,8 @@ contract Deploy is Registry {
         FeeRouter feeRouter;
         RewardsDistributor rewards;
         VestingWallet teamVesting;
+        /// @dev Holds the Safe's timelock roles until its fixed end date.
+        MultisigPhase multisigPhase;
         address safe;
         address oracle;
         address messenger;
@@ -208,6 +211,7 @@ contract Deploy is Registry {
         _entry("feeRouter", address(deployment.feeRouter));
         _entry("rewardsDistributor", address(deployment.rewards));
         _entry("teamVesting", address(deployment.teamVesting));
+        _entry("multisigPhase", address(deployment.multisigPhase));
         _entry("safe", deployment.safe);
         _entry("randomnessOracle", deployment.oracle);
         _entry("messenger", deployment.messenger);
@@ -532,6 +536,12 @@ contract Deploy is Registry {
         return vm.envOr("TIMELOCK_DELAY", uint256(3 days));
     }
 
+    /// @dev `MULTISIG_PHASE_END`, a Unix timestamp. A year from the deploy by
+    ///      default; `MultisigPhase` refuses anything over two.
+    function _multisigPhaseEnd() private view returns (uint256) {
+        return vm.envOr("MULTISIG_PHASE_END", block.timestamp + 365 days);
+    }
+
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
     ///      proposes: the timelock has to call `acceptOwnership` itself. While
     ///      its delay is still zero that can be scheduled and executed at once,
@@ -576,18 +586,19 @@ contract Deploy is Registry {
         timelock.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), 0);
         timelock.executeBatch(targets, values, payloads, bytes32(0), bytes32(0));
 
-        // Revoke before granting, so that on a local node, where the Safe may
-        // be the deployer itself, it keeps the roles it is meant to end with.
         timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
         timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
-        // The governor is the only proposer. It also needs the canceller
-        // role, which `GovernorTimelockControl` uses to cancel its own
+        // The governor proposes. It also needs the canceller role, which `GovernorTimelockControl` uses to cancel its own
         // queued proposals.
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(deployment.governor));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(deployment.governor));
-        // The Safe's veto. Governance can revoke it through the timelock,
-        // which is its own admin once the deployer renounces below.
-        timelock.grantRole(timelock.CANCELLER_ROLE(), safe);
+        // The Safe proposes and vetoes through `MultisigPhase` until its end
+        // date, and never holds a role itself, so the veto ends when the
+        // contract says rather than when governance manages to remove it.
+        MultisigPhase phase = new MultisigPhase(timelock, safe, _multisigPhaseEnd());
+        deployment.multisigPhase = phase;
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(phase));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(phase));
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
     }
 }

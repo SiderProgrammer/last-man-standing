@@ -30,7 +30,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///        sLMS votes --> LmsGovernor --proposes--> TimelockController --owns--> ProtocolConfig,
 ///                                                          ^                    StakedLms, FeeRouter
 ///                                                          |
-///                                             Safe: canceller only (veto)
+///                                   Safe --> MultisigPhase: proposes and vetoes, until PHASE_END
 ///
 ///      Voting power is read from `StakedLms`, never from plain LMS, and at the
 ///      proposal's snapshot, so tokens bought or staked after a proposal is
@@ -45,10 +45,10 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///      already under way, and it is capped at 10% of the LMS supply, so a
 ///      proposal cannot raise it out of reach of everyone who could stake.
 ///
-///      The Safe keeps the timelock's canceller role and can veto anything the
-///      governor queues. That is a training-wheels period, not a permanent
-///      feature: governance can end it with a proposal that calls
-///      `timelock.revokeRole(CANCELLER_ROLE, safe)`.
+///      During the multisig phase the Safe can veto anything the governor
+///      queues, through `MultisigPhase`. That is a training-wheels period, not
+///      a permanent feature: it ends on the date fixed in `MultisigPhase`,
+///      with no vote needed and none able to stop it.
 contract LmsGovernor is
     Governor,
     GovernorSettings,

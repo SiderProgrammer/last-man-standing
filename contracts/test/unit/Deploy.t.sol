@@ -71,12 +71,15 @@ contract DeployTest is Test {
         assertEq(d.timelock.getMinDelay(), 3 days);
     }
 
-    function test_governorProposes_safeOnlyCancels_deployerHoldsNothing() public view {
+    function test_governorAndMultisigPhasePropose_safeHoldsNoRole_deployerHoldsNothing() public view {
         TimelockController timelock = d.timelock;
+        address phase = address(d.multisigPhase);
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.governor)));
         assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(d.governor)));
-        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), safe));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), phase));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), phase));
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), safe));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), safe));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(0)));
 
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), deployer));
@@ -182,6 +185,35 @@ contract DeployTest is Test {
         assertEq(address(d.zap.poolManager()), poolManager);
     }
 
+    function test_multisigPhaseEndsAYearOut_forTheSafe() public view {
+        assertEq(address(d.multisigPhase.TIMELOCK()), address(d.timelock));
+        assertEq(d.multisigPhase.SAFE(), safe);
+        // `_handOver` moves the dry run's clock from 1 to 2 before it is made.
+        assertApproxEqAbs(d.multisigPhase.PHASE_END(), block.timestamp + 365 days, 1);
+    }
+
+    /// @dev Through `MultisigPhase`, with the same delay as a vote.
+    function test_safeProposesThroughTheMultisigPhase() public {
+        address newGuardian = makeAddr("newGuardian");
+        bytes memory call = abi.encodeCall(d.config.setGuardian, (newGuardian));
+        uint256 delay = d.timelock.getMinDelay();
+        vm.prank(safe);
+        d.multisigPhase.schedule(address(d.config), 0, call, bytes32(0), bytes32(0), delay);
+        vm.warp(block.timestamp + delay);
+        d.timelock.execute(address(d.config), 0, call, bytes32(0), bytes32(0));
+        assertEq(d.config.guardian(), newGuardian);
+    }
+
+    /// @dev Once the phase is over anyone retires it, and governance is left alone.
+    function test_afterThePhase_theSafesRolesAreGone() public {
+        vm.warp(d.multisigPhase.PHASE_END());
+        d.multisigPhase.retire();
+        TimelockController timelock = d.timelock;
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.multisigPhase)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(d.multisigPhase)));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.governor)));
+    }
+
     function test_safeCannotScheduleDirectly() public {
         bytes memory call = abi.encodeCall(d.config.setGuardian, (deployer));
         bytes32 role = d.timelock.PROPOSER_ROLE();
@@ -229,7 +261,7 @@ contract DeployTest is Test {
         bytes32 salt = bytes20(address(d.governor)) ^ descriptionHash;
         bytes32 operation = d.timelock.hashOperationBatch(targets, values, calls, bytes32(0), salt);
         vm.prank(safe);
-        d.timelock.cancel(operation);
+        d.multisigPhase.cancel(operation);
 
         assertEq(uint8(d.governor.state(id)), uint8(IGovernor.ProposalState.Canceled));
         vm.warp(block.timestamp + d.timelock.getMinDelay());
@@ -333,7 +365,8 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
         assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
+        assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 16);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
