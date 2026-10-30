@@ -6,8 +6,10 @@ import {
   commitTypedData,
   revealTypedData,
   sameAddress,
+  sessionCallTypedData,
   type MovePlace,
   type SealedMove,
+  type SessionCallParams,
   type SessionGrant,
   type SignedGrant,
 } from '@lms/protocol';
@@ -52,6 +54,11 @@ export class GrantedKey {
 
   get grant(): SessionGrant {
     return this.signed.grant;
+  }
+
+  /** The key's own address, which the wallet grants on-chain for one-click play. */
+  get address(): Address {
+    return this.account.address;
   }
 
   /**
@@ -127,5 +134,10 @@ export class GrantedKey {
 
   signReveal(place: MovePlace, move: SealedMove): Promise<Hex> {
     return this.account.signTypedData(revealTypedData(this.grant.chainId, place, move));
+  }
+
+  /** Signs a call for `SessionKeyDelegate.executeWithSession` on the wallet's account. */
+  signSessionCall(call: SessionCallParams): Promise<Hex> {
+    return this.account.signTypedData(sessionCallTypedData(call));
   }
 }

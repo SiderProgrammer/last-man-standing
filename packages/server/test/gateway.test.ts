@@ -5,22 +5,35 @@ import {
   AUTH_PREFIX,
   Action,
   DEFAULT_RULES,
+  delegationCode,
   grantTypedData,
+  joinCall,
   receiptTypedData,
   type ClientMessage,
+  type RelayedCall,
   type LobbyInfo,
   type ServerMessage,
   type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/protocol';
-import { AnalystError, Gateway, HISTORY_PAGE, Lobby, MemoryArchive, nullRelayer, receiptSigner } from '@lms/server';
+import {
+  AnalystError,
+  Gateway,
+  HISTORY_PAGE,
+  Lobby,
+  MemoryArchive,
+  SessionRelay,
+  nullRelayer,
+  receiptSigner,
+} from '@lms/server';
 import type {
   AnalyzeRequest,
   ArchivedMatch,
   AnalyzeResult,
   MatchAnalyst,
   ReceiptSigner,
+  RelayPort,
   SignatureVerifier,
   Socket,
 } from '@lms/server';
@@ -69,6 +82,20 @@ class FakeSocket implements Socket {
 
 const ESCROW = `0x${'ab'.repeat(20)}` as const;
 
+/** A chain that has `account` delegated to `delegate`, and records each submission. */
+function relayPort(
+  delegate: `0x${string}` = `0x${'99'.repeat(20)}`,
+  onSubmit: (account: `0x${string}`, call: RelayedCall) => void = () => undefined,
+): RelayPort {
+  return {
+    codeOf: async () => delegationCode(delegate),
+    submit: async (account, call) => {
+      onSubmit(account, call);
+      return `0x${'77'.repeat(32)}`;
+    },
+  };
+}
+
 function openLobby(): LobbyInfo {
   return {
     matchId: `0x${'cd'.repeat(32)}`,
@@ -86,7 +113,7 @@ interface Extras {
   escrow: `0x${string}` | null;
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   verify: SignatureVerifier;
-  sessionDelegate: `0x${string}` | null;
+  relay: SessionRelay;
   zap: ZapInfo | null;
   staking: StakingInfo | null;
   analyst: MatchAnalyst;
@@ -109,7 +136,7 @@ function harness(extras: Partial<Extras> = {}) {
     escrow: extras.escrow ?? null,
     directory: extras.directory ?? (() => ({ open: [], live: [] })),
     ...(extras.verify ? { verify: extras.verify } : {}),
-    sessionDelegate: extras.sessionDelegate ?? null,
+    ...(extras.relay ? { relay: extras.relay } : {}),
     zap: extras.zap ?? null,
     staking: extras.staking ?? null,
     ...(extras.spokes ? { spokes: extras.spokes } : {}),
@@ -235,10 +262,48 @@ describe('gateway', () => {
     expect(socket.sent.length).toBe(before);
   });
 
-  it('advertises the session delegate so the client can offer prompt-free logins', () => {
+  it('advertises the session delegate and quota only when it relays', () => {
     const delegate = `0x${'99'.repeat(20)}` as const;
-    const { socket } = harness({ sessionDelegate: delegate });
-    expect(socket.last('hello')?.sessionDelegate).toBe(delegate);
+    const relay = new SessionRelay({ port: relayPort(), escrow: ESCROW, delegate, quotaPerDay: 7 });
+    expect(harness({ relay }).socket.last('hello')).toMatchObject({ sessionDelegate: delegate, relayQuota: 7 });
+    expect(harness().socket.last('hello')).toMatchObject({ sessionDelegate: null, relayQuota: 0 });
+  });
+
+  it('relays a session call for the logged-in wallet and answers by id', async () => {
+    const delegate = `0x${'99'.repeat(20)}` as const;
+    const sent: Array<{ account: `0x${string}`; call: RelayedCall }> = [];
+    const relay = new SessionRelay({
+      port: relayPort(delegate, (account, call) => sent.push({ account, call })),
+      escrow: ESCROW,
+      delegate,
+      quotaPerDay: 1,
+    });
+    const { socket } = harness({ relay });
+    await login(socket);
+
+    const call = { ...joinCall(ESCROW, `0x${'cd'.repeat(32)}`, 10n ** 15n), nonce: '0', signature: '0x1234' as const };
+    await socket.deliver({ type: 'relay', id: 'a', call: { ...call, value: call.value.toString() } });
+    expect(socket.last('relayed')).toMatchObject({ id: 'a', kind: 'join', left: 0 });
+    // Sent from the socket's own wallet, whatever the frame says.
+    expect(sent.map((entry) => entry.account)).toEqual([account.address]);
+
+    await socket.deliver({ type: 'relay', id: 'b', call: { ...call, value: call.value.toString() } });
+    expect(socket.last('relay.error')).toMatchObject({ id: 'b', code: 'RELAY_QUOTA' });
+  });
+
+  it('answers a relay with UNAVAILABLE when the server has no relayer', async () => {
+    const { socket } = harness();
+    await login(socket);
+    const call = { target: ESCROW, value: '0', data: '0x' as const, nonce: '0', signature: '0x1234' as const };
+    await socket.deliver({ type: 'relay', id: 'x', call });
+    expect(socket.last('relay.error')).toMatchObject({ id: 'x', code: 'UNAVAILABLE' });
+  });
+
+  it('refuses a relay before login', async () => {
+    const { socket } = harness();
+    const call = { target: ESCROW, value: '0', data: '0x' as const, nonce: '0', signature: '0x1234' as const };
+    await socket.deliver({ type: 'relay', id: 'x', call });
+    expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
   });
 
   it('advertises token payment so the client can offer it', () => {

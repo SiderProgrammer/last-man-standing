@@ -164,10 +164,19 @@ describe('frame validation', () => {
     expect(parse({ type: 'auth', address: 'oops', signature: '0x1234' })).toThrow(/address/);
   });
 
-  /** Players send their own joins on L1: the server relays no session call. */
-  it('refuses a relayed call outright', () => {
-    const relay = { type: 'relay', target: ADDRESS, value: '0', data: '0x', nonce: '0', signature: '0x12' };
-    expect(parse(relay)).toThrow(/unsupported message/);
+  it('checks every field of a relayed call', () => {
+    const call = { target: ADDRESS, value: '1000', data: `0x${'ab'.repeat(36)}`, nonce: '0', signature: SIG };
+    const relay = { type: 'relay', id: 'join-1', call };
+    expect(parse(relay)).not.toThrow();
+    expect(parse({ ...relay, id: '' })).toThrow(/id/);
+    expect(parse({ ...relay, id: 'x'.repeat(65) })).toThrow(/id/);
+    expect(parse({ ...relay, call: { ...call, value: '-1' } })).toThrow(/call.value/);
+    expect(parse({ ...relay, call: { ...call, value: 1000 } })).toThrow(/call.value/);
+    expect(parse({ ...relay, call: { ...call, nonce: '1e3' } })).toThrow(/call.nonce/);
+    expect(parse({ ...relay, call: { ...call, data: '0xabc' } })).toThrow(/call.data/);
+    expect(parse({ ...relay, call: { ...call, target: '0x12' } })).toThrow(/call.target/);
+    // The old flat shape is not a call at all.
+    expect(parse({ type: 'relay', target: ADDRESS, value: '0', data: '0x', nonce: '0', signature: SIG })).toThrow();
   });
 
   it('rejects a target outside a uint8 and an unknown action', () => {

@@ -30,6 +30,7 @@ export {
 export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
+export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions } from './chain/sessionRelay.js';
 export {
   MemoryArchive,
   PostgresArchive,

@@ -26,6 +26,7 @@ import {
   stakeButtonLabel,
 } from '../ui/views.js';
 import { renderWinnings } from '../wallet/payouts.js';
+import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
 
@@ -171,8 +172,18 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.');
 
-  // Always the player's own transaction. The session key only signs logins.
   try {
+    if (canRelay()) {
+      try {
+        await relayJoin(lobby.matchId, BigInt(lobby.stake));
+        return seated(lobby);
+      } catch (error) {
+        // Over the caps, out of today's quota, or a lobby that just filled:
+        // say why, and let the wallet try it as an ordinary transaction.
+        if (!(error instanceof RelayError)) throw error;
+        toast(`One-click join refused: ${error.message}. Using your wallet.`);
+      }
+    }
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
     await wallet.waitFor(hash);
     seated(lobby);
@@ -195,9 +206,8 @@ function seated(lobby: LobbyInfo): void {
 // the player has seen that figure, because the wallet's own prompt for
 // `joinWithToken` shows a contract call, not a price.
 //
-// The player's own transactions, like every other join: the session key only
-// signs logins, and a token approval is exactly the kind of call a prompt-free
-// key should never be able to make anyway.
+// Always the player's own transactions, one-click play or not: a token
+// approval is exactly the kind of call a prompt-free key must never make.
 
 function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): void {
   button.textContent = stakeButtonLabel(lobby.stake, token);

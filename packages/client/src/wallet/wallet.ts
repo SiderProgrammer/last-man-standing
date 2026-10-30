@@ -27,6 +27,7 @@ import {
   claimableEpochRange,
   descriptionHash,
   grantTypedData,
+  isDelegatedTo,
   rewardsDistributorAbi,
   gameEscrowAbi,
   lmsGovernorAbi,
@@ -57,22 +58,6 @@ import {
 
 /** How long a staking permit signature stays valid, in seconds. */
 const PERMIT_SECONDS = 10 * 60;
-
-/**
- * What a session key is granted: logins, and nothing else.
- *
- * The hub is Ethereum L1. A call made through the key needs somebody else to
- * submit it, and on L1 that means the server paying L1 gas for every join and
- * mint. So players send their own transactions, and the key only signs the
- * login nonce, which the gateway checks through ERC-1271 with no transaction
- * at all. No call is allowed and no value may move: a leaked key can log in as
- * the player until it expires, and do nothing else.
- */
-export const SESSION_GRANT = {
-  spendCap: 0n,
-  targets: [] as readonly Address[],
-  selectors: [] as readonly Hex[],
-} as const;
 
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -134,8 +119,17 @@ export class Wallet {
    * practice loop needs nothing but a login signature, and requiring a wallet
    * extension to click through the game locally is pure friction.
    */
-  static async burner(privateKey: Hex, rpcUrl = 'http://127.0.0.1:8545'): Promise<Wallet> {
-    const account = privateKeyToAccount(privateKey);
+  static burner(privateKey: Hex, rpcUrl?: string): Promise<Wallet> {
+    return Wallet.fromAccount(privateKeyToAccount(privateKey), rpcUrl);
+  }
+
+  /**
+   * A wallet that signs in-process, through a viem local account: the dev
+   * burner, or an embedded wallet wrapped with viem's `toAccount`. Unlike an
+   * injected wallet, it can sign an EIP-7702 authorization for our delegate,
+   * which is what one-click play needs.
+   */
+  static async fromAccount(account: LocalAccount, rpcUrl = 'http://127.0.0.1:8545'): Promise<Wallet> {
     const transport = http(rpcUrl);
     const rpc = createPublicClient({ transport });
 
@@ -742,19 +736,30 @@ export class Wallet {
   }
 
   /**
-   * Delegates this EOA under EIP-7702 and grants a login-only session key, in
-   * one transaction.
+   * True when this wallet can sign an EIP-7702 authorization itself. Injected
+   * wallets cannot be asked for one for a contract of our choosing, so they
+   * keep the normal flow: every join is their own transaction.
+   */
+  get canDelegate(): boolean {
+    return typeof this.account !== 'string';
+  }
+
+  /**
+   * Delegates this EOA to `delegate` under EIP-7702 and grants `sessionKey` a
+   * capped session, in one transaction.
    *
    * The authorization and the `grantSession` call travel together: the
    * transaction is addressed to the player's *own* address, which only has code
    * to call because the authorization in the same transaction put it there.
-   * That is what makes this a one-time cost rather than a setup ritual.
-   *
-   * The key may call nothing and move nothing; see `SESSION_GRANT`.
+   * From then on the key may join lobbies and collect winnings for this
+   * account, within the caps, and the server pays the gas.
    */
-  async grantSession(delegate: Address, sessionKey: Address, validUntil: number): Promise<Hex> {
-    const { spendCap, targets, selectors } = SESSION_GRANT;
-
+  async enableOneClick(
+    delegate: Address,
+    sessionKey: Address,
+    validUntil: number,
+    caps: { valueCap: bigint; spendCap: bigint },
+  ): Promise<Hex> {
     const authorization = await this.wallet.signAuthorization({
       account: this.account,
       contractAddress: delegate,
@@ -771,9 +776,29 @@ export class Wallet {
       data: encodeFunctionData({
         abi: sessionKeyDelegateAbi,
         functionName: 'grantSession',
-        args: [sessionKey, validUntil, spendCap, [...targets], [...selectors]],
+        args: [sessionKey, validUntil, caps.valueCap, caps.spendCap],
       }),
     });
+  }
+
+  /**
+   * Whether `sessionKey` may act for this account through `delegate` now, and
+   * the nonce its next call must carry. Off when the account is delegated
+   * elsewhere, or not at all.
+   */
+  async oneClickStatus(
+    delegate: Address,
+    sessionKey: Address,
+  ): Promise<{ active: boolean; validUntil: number; spent: bigint; spendCap: bigint; nonce: bigint }> {
+    const off = { active: false, validUntil: 0, spent: 0n, spendCap: 0n, nonce: 0n };
+    if (!isDelegatedTo(await this.rpc.getCode({ address: this.address }), delegate)) return off;
+    const at = { address: this.address, abi: sessionKeyDelegateAbi } as const;
+    const [[validUntil, , spendCap, spent], nonce, block] = await Promise.all([
+      this.rpc.readContract({ ...at, functionName: 'sessions', args: [sessionKey] }),
+      this.rpc.readContract({ ...at, functionName: 'sessionNonce' }),
+      this.rpc.getBlock(),
+    ]);
+    return { active: validUntil > Number(block.timestamp), validUntil, spent, spendCap, nonce };
   }
 
   /** Ends a session on-chain, so a stolen key stops working immediately. */

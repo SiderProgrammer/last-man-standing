@@ -82,6 +82,12 @@ const grant = z.object(
   { error: 'must be an object' },
 );
 
+/** Decimal wei, up to a uint256. */
+const wei = z.string({ error: 'must be a decimal string' }).regex(/^\d{1,78}$/, 'must be a decimal string');
+
+/** Calldata for one of the two calls a session key may make: a selector and one word. */
+const calldata = hexMatching(HEX, 'hex').refine((value) => value.length <= 2 + 2 * 1024, 'is too long');
+
 /** The match and round a move names. */
 const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
 
@@ -106,6 +112,11 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
     ...aim,
   }),
   reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, signature, ...aim }),
+  relay: z.object({
+    type: z.literal('relay'),
+    id: z.string({ error: 'must be a string' }).min(1).max(64, 'is too long'),
+    call: z.object({ target: address, value: wei, data: calldata, nonce: wei, signature }, { error: 'must be an object' }),
+  }),
 };
 
 export function parseClientMessage(raw: string): ClientMessage {

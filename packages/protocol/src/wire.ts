@@ -5,6 +5,7 @@ import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
 import type { Rules } from './game/rules.js';
 import type { CommitReceipt, SeatProof, SignedGrant } from './chain/moves.js';
+import type { RelayedCall, SessionCallKind } from './chain/session.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
@@ -61,6 +62,10 @@ export type RequestErrorCode =
   | 'STALE_MOVE'
   /** A lobby that will not be played; its stakes are being refunded. */
   | 'MATCH_ABANDONED'
+  /** A session call the relayer will not submit: outside the key's scope, or one that would revert. */
+  | 'RELAY_REFUSED'
+  /** The wallet has used today's relayed calls. Its own transactions still work. */
+  | 'RELAY_QUOTA'
   /** A failure with no specific code. The message says what happened. */
   | 'INTERNAL';
 
@@ -125,7 +130,14 @@ export type ClientMessage =
    * `review`. The same rule as an analysis: a staked match is public, a
    * practice match is its player's own.
    */
-  | { type: 'review'; matchId: `0x${string}` };
+  | { type: 'review'; matchId: `0x${string}` }
+  /**
+   * Asks the server to submit a call the wallet's session key signed, paying
+   * its gas: a join, or collecting winnings. Answered with `relayed` or
+   * `relay.error` carrying the same `id`. The call runs from the
+   * authenticated wallet, through `SessionKeyDelegate.executeWithSession`.
+   */
+  | { type: 'relay'; id: string; call: RelayedCall };
 
 export type ServerMessage =
   | {
@@ -140,12 +152,13 @@ export type ServerMessage =
        */
       avatarCollections: AvatarCollectionInfo[];
       /**
-       * `SessionKeyDelegate` on the hub chain, or null when the server cannot
-       * verify ERC-1271 logins. The client offers one-click play only when this
-       * is present, because a session-key login is worthless if the gateway
-       * would reject it.
+       * `SessionKeyDelegate` on the hub chain, or null when this server relays
+       * no session calls. The client offers one-click play only when this is
+       * present, because a signed join is worthless if nobody will submit it.
        */
       sessionDelegate: `0x${string}` | null;
+      /** Relayed calls each wallet may make per UTC day, or 0 with no relayer. */
+      relayQuota: number;
       /**
        * Token payment through `ZapJoin`, or null when this server offers none.
        * Lives on the hub, like the escrow it pays into.
@@ -232,6 +245,10 @@ export type ServerMessage =
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
+  /** A relayed call that landed. `left` is how many more the wallet may relay today. */
+  | { type: 'relayed'; id: string; kind: SessionCallKind; tx: `0x${string}`; left: number }
+  /** A relayed call the server refused, or that failed on-chain. */
+  | { type: 'relay.error'; id: string; code: ErrorCode; message: string }
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
   | { type: 'review'; match: ReviewedMatch }

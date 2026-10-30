@@ -8,6 +8,7 @@ import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
 import { renderPayWith } from '../screens/lobby.js';
 import { GrantedKey } from './grant.js';
+import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
 
 /**
@@ -79,6 +80,7 @@ export async function authenticate(): Promise<void> {
 
 export function onAuthed(): void {
   storedGrantPending = false;
+  void refreshOneClick();
 }
 
 /**
@@ -206,5 +208,6 @@ function forgetGrant(): void {
   if (wallet) GrantedKey.forget(wallet.address, app.chainId);
   app.grantKey = null;
   renderSessionPanel();
+  void refreshOneClick();
   toast('Session key forgotten. Your next login asks your wallet for a new one.');
 }

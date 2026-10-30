@@ -27,6 +27,7 @@ import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { Analyst } from './analyst/analyst.js';
 import { geminiModel } from './analyst/gemini.js';
 import { AnalystLimits } from './analyst/limits.js';
+import { SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -75,11 +76,10 @@ async function main(): Promise<void> {
       })
     : null;
 
-  // With an RPC the gateway can verify ERC-1271 logins, which is what lets a
-  // 7702-delegated account log in with a session key instead of prompting the
-  // player's wallet on every reconnect. Without one, EOA signatures still work.
-  // Either way an EOA login is settled by local recovery on the verify pool,
-  // and only a signature that does not recover is put to the RPC.
+  // With an RPC the gateway can verify ERC-1271 signatures, which is what lets
+  // a contract wallet sign its session grant. Without one, EOAs still work.
+  // Either way an EOA's signature is settled by local recovery on the verify
+  // pool, and only a signature that does not recover is put to the RPC.
   const rpc = config.rpcUrl
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
@@ -105,6 +105,18 @@ async function main(): Promise<void> {
       : null;
 
   const verifyPool = new VerifyPool(config.verifyThreads);
+
+  // One-click play: joins and withdrawals a player's session key signed, sent
+  // with the relayer's gas. Needs all of an escrow, a delegate and a key.
+  const relay =
+    config.onChain && config.sessionDelegate !== ZERO_ADDRESS && config.sessionRelayerPk
+      ? new SessionRelay({
+          port: viemRelayPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, relayerKey: config.sessionRelayerPk }),
+          escrow: config.escrow,
+          delegate: config.sessionDelegate,
+          quotaPerDay: config.relayQuotaPerDay,
+        })
+      : null;
 
   // Reads finished matches from the archive and nothing else; see `analyst/analyst.ts`.
   const analystLimits = new AnalystLimits({
@@ -145,8 +157,7 @@ async function main(): Promise<void> {
     verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
     verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
     receipts,
-    // Only offered when logins can actually be verified on-chain.
-    sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
+    ...(relay ? { relay } : {}),
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,

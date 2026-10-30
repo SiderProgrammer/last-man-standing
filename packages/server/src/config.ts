@@ -120,6 +120,8 @@ const ENV = z.object({
   AVATAR_COLLECTIONS: text(),
   IPFS_GATEWAY: text('https://ipfs.io/ipfs/'),
   SESSION_DELEGATE: address,
+  SESSION_RELAYER_PK: privateKey,
+  RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
   HUB_MESSENGER: address,
   CROSS_CHAIN_FROM_BLOCK: bigint,
@@ -250,12 +252,16 @@ export function loadConfig(
     /** Prefix `ipfs://` is rewritten to when fetching avatar metadata. */
     ipfsGateway: e.IPFS_GATEWAY,
     /**
-     * `SessionKeyDelegate` on the hub chain. Players delegate their EOA to it
-     * under EIP-7702 so the client can sign logins with a scoped session key
-     * instead of prompting the wallet on every reconnect. Blank disables the
-     * offer; logins then always cost a wallet signature.
+     * `SessionKeyDelegate` on the hub chain. A burner or embedded wallet
+     * delegates to it under EIP-7702 and grants its browser key a capped
+     * session; the server then relays that key's joins and withdrawals. See
+     * `chain/sessionRelay.ts`.
      */
     sessionDelegate: e.SESSION_DELEGATE ?? deployed('sessionDelegate'),
+    /** Pays relayed gas. Unset, the server relays nothing and offers no one-click play. */
+    sessionRelayerPk: e.SESSION_RELAYER_PK,
+    /** Relayed calls per wallet per UTC day. */
+    relayQuotaPerDay: e.RELAY_QUOTA_PER_DAY,
     /**
      * Spoke chains players may stake from, as JSON:
      * `[{"chainId":8453,"escrow":"0x…"}]`, one `SpokeEscrow` per chain. Blank
