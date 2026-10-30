@@ -303,7 +303,7 @@ async function waitForAnvil(publicClient, chainId = CHAIN_ID, rpc = RPC) {
 
 /** Every variable either deploy script reads; a value left in the shell must not leak in. */
 const DEPLOY_KEYS = [
-  ...['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
+  ...['SAFE', 'GUARDIAN', 'MULTISIG_PHASE_END', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
   ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
   ...['STAKER_FEE_BPS', 'QUORUM_FLOOR', 'REWARD_DURATION', 'TEAM_BENEFICIARY'],
   ...['REWARDS_FIRST_EPOCH', 'MAX_REWARD_PER_ETH'],

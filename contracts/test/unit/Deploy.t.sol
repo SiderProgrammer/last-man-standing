@@ -22,6 +22,10 @@ contract DeployHarness is Deploy {
     function teamBeneficiary(address safe) external view returns (address) {
         return _teamBeneficiary(safe);
     }
+
+    function guardian() external view returns (address) {
+        return _guardian();
+    }
 }
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
@@ -30,6 +34,9 @@ contract DeployHarness is Deploy {
 contract DeployTest is Test {
     uint256 private constant DEPLOYER_PK = 0xDE9107;
     string private constant DESCRIPTION = "Move the guardian";
+
+    /// @dev `Deploy`'s default on a local node: anvil's tenth account.
+    address private constant GUARDIAN = 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720;
 
     address private deployer;
     address private safe;
@@ -94,10 +101,11 @@ contract DeployTest is Test {
         assertEq(d.avatars.pendingOwner(), address(0));
     }
 
-    function test_safeHoldsGuardianAndTreasury_behindTheRouter() public view {
-        assertEq(d.config.guardian(), safe);
+    function test_guardianIsItsOwnKey_andTheTimelockIsTheTreasury_behindTheRouter() public view {
+        assertEq(d.guardian, GUARDIAN);
+        assertEq(d.config.guardian(), GUARDIAN);
         assertEq(d.config.treasury(), address(d.feeRouter));
-        assertEq(d.feeRouter.treasury(), safe);
+        assertEq(d.feeRouter.treasury(), address(d.timelock));
         assertEq(d.feeRouter.stakerBps(), 5_000);
     }
 
@@ -277,7 +285,7 @@ contract DeployTest is Test {
             )
         );
         d.governor.execute(targets, values, calls, descriptionHash);
-        assertEq(d.config.guardian(), safe);
+        assertEq(d.config.guardian(), GUARDIAN);
     }
 
     function test_proposal_unstakedLmsCannotVote() public {
@@ -295,13 +303,26 @@ contract DeployTest is Test {
         d.governor.propose(new address[](1), new uint256[](1), new bytes[](1), DESCRIPTION);
     }
 
-    /// @dev A lobby can open straight away, and the Safe that may veto a
-    ///      result during the window is the guardian.
-    function test_settlementIsWiredAndTheSafeMayVeto() public view {
+    /// @dev A lobby can open straight away.
+    function test_settlementIsWired() public view {
         assertTrue(d.config.isComplete());
         assertEq(d.config.challengeWindow(), 1 hours);
         assertTrue(d.config.isAttestor(deployer));
-        assertEq(d.config.guardian(), safe);
+    }
+
+    function test_offALocalChain_theGuardianIsRequired() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.guardian(), GUARDIAN);
+        vm.chainId(84_532);
+        vm.expectRevert(Deploy.GuardianRequired.selector);
+        harness.guardian();
+    }
+
+    /// @dev One key may not hold two roles: here the guardian is the Safe.
+    function test_refusesAGuardianThatIsTheSafe() public {
+        Deploy script = new DeployWithGuardian(safe);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RolesOverlap.selector, safe));
+        script.run();
     }
 
     /// @dev `config/rules.json` → `Deploy` → the deployed hash, pinned to the
@@ -315,7 +336,7 @@ contract DeployTest is Test {
     ///      anyone-picks-the-seed mock.
     function test_requiresARealOracleOffALocalChain() public {
         vm.chainId(84_532);
-        Deploy script = new Deploy();
+        Deploy script = new DeployWithGuardian(makeAddr("guardian"));
         vm.expectRevert(Deploy.OracleRequired.selector);
         script.run();
     }
@@ -366,12 +387,13 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 16);
+        assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 17);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
     function test_guardianPausesAtOnce_forAWeek() public {
-        vm.prank(safe);
+        vm.prank(GUARDIAN);
         d.escrow.pause();
         assertTrue(d.escrow.paused());
 
@@ -420,11 +442,32 @@ contract DeployOnBaseSepolia is Deploy {
     function _teamBeneficiary(address safe) internal pure override returns (address) {
         return safe;
     }
+
+    function _guardian() internal pure override returns (address) {
+        return address(0x6A4D);
+    }
 }
 
 /// @dev `Deploy` as if run with `MOCKS=true`.
 contract DeployWithMocks is Deploy {
     function _mocks(bool) internal pure override returns (bool) {
         return true;
+    }
+
+    function _guardian() internal pure override returns (address) {
+        return address(0x6A4D);
+    }
+}
+
+/// @dev `Deploy` with `GUARDIAN` set to `guardian_`.
+contract DeployWithGuardian is Deploy {
+    address private immutable GUARDIAN_;
+
+    constructor(address guardian_) {
+        GUARDIAN_ = guardian_;
+    }
+
+    function _guardian() internal view override returns (address) {
+        return GUARDIAN_;
     }
 }
