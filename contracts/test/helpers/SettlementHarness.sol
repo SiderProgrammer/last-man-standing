@@ -15,8 +15,7 @@ import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
 ///
 ///      It lives in its own file rather than in `Fixtures.sol` because the
 ///      pure-library suites need only this — pulling it from `Fixtures` made
-///      them compile `GameEscrow`, `SpokeEscrow` and two mocks
-///      to test a hashing function.
+///      them compile `GameEscrow` and its mocks to test a hashing function.
 contract SettlementHarness {
     function hashMatchResult(
         bytes32 matchId,

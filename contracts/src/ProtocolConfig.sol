@@ -97,17 +97,17 @@ contract ProtocolConfig is Ownable2Step {
     /// @dev Read at join, so a change only reaches seats taken after it.
     uint256 public lmsPerEthDiscount;
 
-    /// @notice Trusted messenger per remote chain, for cross-chain joins.
-    mapping(uint32 chainId => address messenger) public messengerFor;
-    /// @notice Trusted peer contract per remote chain.
-    mapping(uint32 chainId => bytes32 peer) public peerFor;
+    /// @notice The one contract that may seat a player whose stake was
+    ///         bridged from another chain (`GameEscrow.bridgeJoin`). Zero means
+    ///         no cross-chain joins.
+    address public bridgeReceiver;
 
     event ParamsUpdated(Params params);
     event RulesHashUpdated(bytes32 indexed previous, bytes32 indexed current);
     event PayoutScheduleUpdated(uint16[] payoutBps);
     event RandomnessOracleUpdated(address indexed previous, address indexed current);
     event AttestorSetUpdated(uint32 indexed version, address[] attestors, uint32 threshold);
-    event RemoteChainUpdated(uint32 indexed chainId, address messenger, bytes32 peer);
+    event BridgeReceiverUpdated(address indexed previous, address indexed current);
     event GuardianUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
     event SequencerUptimeFeedUpdated(address indexed previous, address indexed current);
@@ -273,11 +273,12 @@ contract ProtocolConfig is Ownable2Step {
             && attestorSetVersion != 0;
     }
 
-    /// @notice Registers, or with zero arguments removes, a remote chain.
-    function setRemoteChain(uint32 chainId, address messenger, bytes32 peer) external onlyOwner {
-        messengerFor[chainId] = messenger;
-        peerFor[chainId] = peer;
-        emit RemoteChainUpdated(chainId, messenger, peer);
+    /// @notice Sets, or with zero removes, the bridge receiver.
+    /// @dev Whoever this names decides which player a bridged stake seats, so
+    ///      it is a contract the timelock has reviewed, never an account.
+    function setBridgeReceiver(address receiver) external onlyOwner {
+        emit BridgeReceiverUpdated(bridgeReceiver, receiver);
+        bridgeReceiver = receiver;
     }
 
     // --- Internal ----------------------------------------------------------

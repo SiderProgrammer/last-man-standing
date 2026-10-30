@@ -9,7 +9,6 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {Deploy} from "../../script/Deploy.s.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
-import {MockLayerZeroEndpoint} from "../../src/mocks/MockLayerZeroEndpoint.sol";
 import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
 import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
 
@@ -55,23 +54,7 @@ contract DeployTest is Test {
         vm.setEnv("SAFE", vm.toString(safe));
         poolManager = address(new MockPoolManager());
         vm.setEnv("POOL_MANAGER", vm.toString(poolManager));
-        vm.setEnv("MOCK_LZ", "true");
         d = new Deploy().run();
-    }
-
-    /// @dev Like the config: deployed by the script, then the timelock's,
-    ///      accepted in the same batch that raised the delay.
-    function test_hubMessengerServesTheEscrow_ownedAndConfiguredByTheTimelock() public view {
-        assertTrue(address(d.hubLz) != address(0));
-        assertEq(d.messenger, address(d.hubLz));
-        assertEq(d.hubLz.app(), address(d.escrow));
-        assertEq(d.hubLz.owner(), address(d.timelock));
-        assertEq(d.hubLz.pendingOwner(), address(0));
-        assertEq(
-            MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)),
-            address(d.timelock)
-        );
-        assertEq(d.hubLz.receiveGas(), 350_000);
     }
 
     function test_timelockOwnsConfigVaultAndRouter() public view {
@@ -406,7 +389,6 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.governor"), address(deployment.governor));
         assertEq(vm.parseJsonAddress(json, ".contracts.timelock"), address(deployment.timelock));
         assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
-        assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
         assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
@@ -414,7 +396,7 @@ contract DeployTest is Test {
             vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
         );
         assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 19);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 18);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

@@ -75,6 +75,9 @@ contract ProtocolConfigTest is Fixtures {
 
         vm.expectRevert(notOwner);
         config.setGuardian(address(this));
+
+        vm.expectRevert(notOwner);
+        config.setBridgeReceiver(address(this));
     }
 
     function test_rejectsAZeroRulesHash() public {
@@ -215,6 +218,19 @@ contract ProtocolConfigTest is Fixtures {
 
         config.setGuardian(address(0));
         assertEq(config.guardian(), address(0));
+        vm.stopPrank();
+    }
+
+    function test_bridgeReceiverCanBeSetAndRemoved() public {
+        address receiver = makeAddr("receiver");
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, false, false, address(config));
+        emit ProtocolConfig.BridgeReceiverUpdated(bridge, receiver);
+        config.setBridgeReceiver(receiver);
+        assertEq(config.bridgeReceiver(), receiver);
+
+        config.setBridgeReceiver(address(0));
+        assertEq(config.bridgeReceiver(), address(0));
         vm.stopPrank();
     }
 }

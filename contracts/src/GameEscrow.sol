@@ -20,9 +20,8 @@ import {
     RANDOMNESS_TIMEOUT,
     SEQUENCER_GRACE_PERIOD
 } from "./Constants.sol";
-import {UnknownMatch, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "./Errors.sol";
+import {UnknownMatch, ZeroAddress} from "./Errors.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOracle.sol";
-import {ICrossChainReceiver} from "./interfaces/ICrossChainMessenger.sol";
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
 import {ISequencerUptimeFeed} from "./interfaces/ISequencerUptimeFeed.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
@@ -70,14 +69,7 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      the seat, until the match ends: burned when it settles, refunded with
 ///      the stake when it is cancelled, vetoed or aborted. Fee totals count
 ///      only the ETH part, the net fee.
-contract GameEscrow is
-    EIP712,
-    PullPayable,
-    ExpiringPause,
-    IRandomnessConsumer,
-    ICrossChainReceiver,
-    IFeeLedger
-{
+contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, IFeeLedger {
     enum MatchStatus {
         None,
         /// @dev Accepting joins.
@@ -173,7 +165,7 @@ contract GameEscrow is
         WindowClosed,
         LobbyFull,
         AlreadyJoined,
-        WrongStake
+        StakeTooLow
     }
 
     /// @notice Length of a fee epoch. Epoch `n` is `[n * FEE_EPOCH, (n + 1) * FEE_EPOCH)`.
@@ -248,8 +240,8 @@ contract GameEscrow is
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
     event MatchCancelled(bytes32 indexed matchId, CancelReason reason);
-    /// @notice A cross-chain stake arrived for a seat that could no longer be
-    ///         taken, and was credited back to the player here instead.
+    /// @notice A bridged stake arrived for a seat that could no longer be
+    ///         taken, and was credited to the player here instead.
     event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
     event FeeDiscounted(bytes32 indexed matchId, address indexed player, uint256 ethOff, uint256 lmsPaid);
     event LmsBurned(bytes32 indexed matchId, uint256 amount);
@@ -281,6 +273,7 @@ contract GameEscrow is
     error NotDisputed(bytes32 matchId);
     error DiscountOff();
     error NoDiscount(uint256 lmsIn);
+    error NotBridgeReceiver(address caller);
 
     using SafeERC20 for IERC20;
 
@@ -435,25 +428,22 @@ contract GameEscrow is
         _seat(matchId, info, player, 0, info.stake);
     }
 
-    /// @notice Takes a seat on behalf of a player whose stake arrived from another chain.
-    /// @dev The transport delivers the staked value together with the message,
-    ///      so the hub always holds the full prize pool. Both the calling
-    ///      messenger and the originating peer contract are authenticated:
-    ///      a trusted transport still relays messages from untrusted senders.
+    /// @notice Takes a seat for a player whose stake was bridged from another
+    ///         chain, with the value the bridge delivered.
+    /// @dev Only the config's `bridgeReceiver` may call it, and for any
+    ///      player but zero it then never reverts: the stake has already left
+    ///      its chain. If the seat cannot be taken — the lobby filled or closed
+    ///      while the stake was in flight, too little arrived, the escrow is
+    ///      paused — all of it is credited to the player here instead, to
+    ///      withdraw like any other refund. More than the stake takes the seat
+    ///      and credits the player the rest.
     ///
-    ///      Once authenticated, this never reverts. The stake has already left
-    ///      the spoke; a revert here would leave it with the transport, stuck.
-    ///      If the seat cannot be taken — the lobby filled or closed while the
-    ///      message was in flight, the stake was wrong, the escrow is paused —
-    ///      the value is credited to the player on this chain instead, to
-    ///      withdraw like any other refund.
-    function receiveMessage(uint32 srcChainId, bytes32 srcSender, bytes calldata payload) external payable {
-        if (config.messengerFor(srcChainId) != msg.sender) {
-            revert UntrustedMessenger(srcChainId, msg.sender);
-        }
-        if (config.peerFor(srcChainId) != srcSender) revert UntrustedPeer(srcChainId, srcSender);
-
-        (bytes32 matchId, address player) = abi.decode(payload, (bytes32, address));
+    ///      `originChainId` is what the bridged message claims, and anyone may
+    ///      send a message through a bridge, so it is shown, never trusted.
+    ///      Nothing else about the seat depends on it.
+    function bridgeJoin(bytes32 matchId, address player, uint32 originChainId) external payable {
+        if (msg.sender != config.bridgeReceiver()) revert NotBridgeReceiver(msg.sender);
+        if (player == address(0)) revert ZeroAddress();
 
         MatchInfo storage info = matchInfo[matchId];
         JoinFailure failure = _joinFailure(matchId, info, player, msg.value);
@@ -462,7 +452,9 @@ contract GameEscrow is
             emit JoinRefunded(matchId, player, msg.value, failure);
             return;
         }
-        _seat(matchId, info, player, srcChainId, info.stake);
+        _seat(matchId, info, player, originChainId, info.stake);
+        uint256 extra = msg.value - info.stake;
+        if (extra > 0) _credit(player, extra);
     }
 
     /// @notice Closes the lobby and asks the oracle for a seed.
@@ -939,7 +931,7 @@ contract GameEscrow is
         if (block.timestamp >= info.joinDeadline) return JoinFailure.WindowClosed;
         if (info.seatCount >= info.maxSeats) return JoinFailure.LobbyFull;
         if (hasSeat(matchId, player)) return JoinFailure.AlreadyJoined;
-        if (value != info.stake) return JoinFailure.WrongStake;
+        if (value < info.stake) return JoinFailure.StakeTooLow;
         return JoinFailure.None;
     }
 

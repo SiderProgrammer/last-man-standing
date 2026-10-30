@@ -6,7 +6,6 @@ import {Test} from "forge-std/Test.sol";
 import {BPS_DENOMINATOR} from "../../src/Constants.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
-import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
@@ -187,30 +186,31 @@ contract EscrowHandler is Test {
         escrow.withdraw(actor);
     }
 
-    MockMessenger public messenger;
+    address public bridge;
     uint32 public constant REMOTE_CHAIN = 421_614;
-    bytes32 public constant REMOTE_PEER = bytes32(uint256(0xBEEF));
 
     /// @dev Set once by `setUp`. The fuzzer calls every public function on the
-    ///      handler, so a re-settable messenger would be pointed at junk.
-    function setMessenger(MockMessenger messenger_) external {
-        if (address(messenger) == address(0)) messenger = messenger_;
+    ///      handler, so a re-settable receiver would be pointed at junk.
+    function setBridge(address bridge_) external {
+        if (bridge == address(0)) bridge = bridge_;
     }
 
-    /// @dev A stake arriving from a spoke. Sometimes the wrong amount, often
-    ///      for a lobby that has since filled, locked or settled: every one of
-    ///      those must be refunded on the hub, and the books must still balance.
-    function crossChainJoin(uint256 who, bool wrongStake) public {
-        if (current == bytes32(0) || address(messenger) == address(0)) return;
+    /// @dev A stake arriving from a spoke: too little, exactly the stake, or
+    ///      more. Often for a lobby that has since filled, locked or settled:
+    ///      every one of those must be refunded on the hub, and the books must
+    ///      still balance.
+    function crossChainJoin(uint256 who, uint8 amount) public {
+        if (current == bytes32(0) || bridge == address(0)) return;
         address actor = actors[who % actors.length];
-        uint256 value = wrongStake ? STAKE / 2 : STAKE;
-        vm.deal(address(messenger), address(messenger).balance + value);
-        messenger.deliver(address(escrow), REMOTE_CHAIN, REMOTE_PEER, abi.encode(current, actor), value);
+        uint256 value = [STAKE / 2, STAKE, STAKE + STAKE / 4][amount % 3];
+        vm.deal(bridge, bridge.balance + value);
+        vm.prank(bridge);
+        escrow.bridgeJoin{value: value}(current, actor, REMOTE_CHAIN);
     }
 
     LmsToken public lms;
 
-    /// @dev Set once by `setUp`, like the messenger.
+    /// @dev Set once by `setUp`, like the bridge.
     function setLms(LmsToken lms_) external {
         if (address(lms) == address(0)) lms = lms_;
     }
@@ -251,7 +251,7 @@ contract EscrowInvariantTest is Fixtures {
         }
 
         handler = new EscrowHandler(escrow, oracle, harness, actors, _twoAttestors());
-        handler.setMessenger(messenger);
+        handler.setBridge(bridge);
 
         lms = new LmsToken(address(this), 1_000_000e18);
         handler.setLms(lms);
