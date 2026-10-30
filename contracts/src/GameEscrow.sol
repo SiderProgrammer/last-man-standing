@@ -110,7 +110,7 @@ contract GameEscrow is
         uint16[] payoutBps;
     }
 
-    /// @dev Five slots. The first two are packed; `deadline` is the deadline
+    /// @dev Six slots. The first two are packed; `deadline` is the deadline
     ///      of the current phase: the seed's while Pending, the result's while
     ///      Live, the challenge window's while Proposed.
     struct MatchInfo {
@@ -131,6 +131,9 @@ contract GameEscrow is
         /// @dev The ranking of a proposed result, by hash: it is in
         ///      `ResultProposed`, and whoever finalises passes it back.
         bytes32 rankingHash;
+        /// @dev Hash of the archived transcript the result came from. Anyone
+        ///      can fetch the transcript by it and replay the match.
+        bytes32 transcriptHash;
     }
 
     /// @dev Part of a seat's fee paid in LMS, or a match's total of them.
@@ -206,6 +209,7 @@ contract GameEscrow is
         bytes32 indexed matchId,
         bytes32 indexed historyRoot,
         uint32 rounds,
+        bytes32 transcriptHash,
         address[] ranking,
         uint40 challengeDeadline
     );
@@ -486,12 +490,15 @@ contract GameEscrow is
     /// @notice Proposes a match result signed by a quorum of attestors.
     /// @dev Pays nothing yet. The result is open to `veto` until
     ///      `challengeDeadline`; after that anyone may `finalize` it.
+    /// @param transcriptHash Hash of the transcript the server archived before
+    ///        settling: the evidence anyone can replay the result from.
     /// @param ranking Finishing order, best first. Must be exactly the seat set.
     /// @param signatures Concatenated 65-byte signatures in ascending signer order.
     function settle(
         bytes32 matchId,
         uint32 rounds,
         bytes32 historyRoot,
+        bytes32 transcriptHash,
         address[] calldata ranking,
         bytes calldata signatures
     ) external nonReentrant whenNotPaused {
@@ -503,7 +510,9 @@ contract GameEscrow is
 
         _checkQuorum(
             info.attestorSetVersion,
-            _hashTypedDataV4(SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)),
+            _hashTypedDataV4(
+                SettlementLib.hashMatchResult(matchId, rounds, historyRoot, transcriptHash, ranking)
+            ),
             signatures
         );
         _assertSeatSet(matchId, info.seatCount, ranking);
@@ -516,8 +525,9 @@ contract GameEscrow is
         info.rounds = uint16(rounds);
         info.deadline = deadline;
         info.rankingHash = keccak256(abi.encode(ranking));
+        info.transcriptHash = transcriptHash;
 
-        emit ResultProposed(matchId, historyRoot, rounds, ranking, deadline);
+        emit ResultProposed(matchId, historyRoot, rounds, transcriptHash, ranking, deadline);
     }
 
     /// @dev Reverts unless `signatures` over `digest` come from a quorum of

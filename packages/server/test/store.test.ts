@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
 import { Lobby, MemoryArchive, nullRelayer, type ArchivedMatch } from '@lms/server';
-import { bytes32, setupWithBots } from './helpers.js';
+import { bytes32, setupWithBots, transcriptOf } from './helpers.js';
 
 function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
   const result: MatchResult = {
@@ -10,16 +10,14 @@ function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = nu
     historyRoot: bytes32(`root:${matchId}:${rounds}`),
     ranking: ['0x00000000000000000000000000000000000000a1'],
   };
-  return {
+  const fields = {
     result,
     history: [],
-    settledTx,
-    seats: [{ index: 0, address: '0x00000000000000000000000000000000000000a1', chainId: 0 }],
+    seats: [{ index: 0, address: '0x00000000000000000000000000000000000000a1' as const, chainId: 0 }],
     rules: DEFAULT_RULES,
-    staked: false,
     seed: bytes32(`seed:${matchId}`),
-    finishedAt: 1_000,
   };
+  return { ...fields, ...transcriptOf(fields), settledTx, staked: false, finishedAt: 1_000 };
 }
 
 describe('memory archive', () => {

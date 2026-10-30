@@ -6,17 +6,18 @@ import {
   ZERO_ADDRESS,
   deriveMatchId,
   errorMessage,
+  hashTranscript,
   tallyStyles,
+  type AttestedResult,
   type BotDifficulty,
-  type MatchResult,
-  type RoundRecord,
   type Rules,
   type Seat,
+  type Transcript,
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
-import type { MatchArchive } from './store.js';
+import type { ArchivedMatch, MatchArchive } from './store.js';
 import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
 import { RequestError } from '../errors.js';
@@ -46,6 +47,10 @@ export interface LobbyOptions {
   practiceNonceStart?: bigint;
   /** Seeds for practice matches. Defaults to 32 random bytes each; tests pin it to replay a run. */
   practiceSeed?: () => `0x${string}`;
+  /** The hub chain, which moves and receipts are signed for. Recorded in every transcript. */
+  chainId?: number;
+  /** The key that signs commit receipts, recorded in every transcript. */
+  receiptSigner?: `0x${string}` | null;
 }
 
 const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000];
@@ -249,8 +254,10 @@ export class Lobby {
       replayMs: this.options.replayMs ?? 0,
       botSeats,
       botDifficulty,
-      onFinished: (result, history) => {
-        void this.finalise(setup, result, history, staked);
+      ...(this.options.chainId !== undefined ? { chainId: this.options.chainId } : {}),
+      receiptSigner: this.options.receiptSigner ?? null,
+      onFinished: (transcript) => {
+        void this.finalise(transcript, staked);
       },
     };
   }
@@ -276,60 +283,88 @@ export class Lobby {
   }
 
   /**
-   * Submits the result, retrying with backoff. A failure is usually transient
-   * — an RPC timeout, a nonce race, a gas spike — and the escrow stays `Live`
-   * until its deadline, so a resubmission a few seconds later normally lands.
-   * Retrying an attempt that did land in fact is harmless: the escrow is no
-   * longer `Live`, so the relayer's simulation reverts before spending gas.
-   * After the last attempt the match refunds at its deadline as before.
+   * Runs `attempt` until it succeeds, waiting `settleBackoffMs` between tries.
+   * Returns null, after logging, once the last try fails.
+   *
+   * A failure is usually transient — an RPC timeout, a nonce race, a gas
+   * spike, a dropped database connection — so a retry a few seconds later
+   * normally lands.
    */
-  private async settle(result: MatchResult): Promise<`0x${string}` | null> {
+  private async withRetry<T>(what: string, attempt: () => Promise<T>): Promise<T | null> {
     const backoff = this.options.settleBackoffMs ?? DEFAULT_SETTLE_BACKOFF_MS;
     const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-    for (let attempt = 0; ; attempt += 1) {
+    for (let tries = 0; ; tries += 1) {
       try {
-        return await this.options.relayer.settle(result);
+        return await attempt();
       } catch (error) {
-        const wait = backoff[attempt];
+        const wait = backoff[tries];
         if (wait === undefined) {
-          console.error(
-            `[lobby] settlement of ${result.matchId} failed after ${attempt + 1} attempts; the escrow refunds at its deadline:`,
-            errorMessage(error),
-          );
+          console.error(`[lobby] ${what} failed after ${tries + 1} attempts:`, errorMessage(error));
           return null;
         }
-        console.warn(`[lobby] settlement of ${result.matchId} failed; retrying in ${wait} ms:`, errorMessage(error));
+        console.warn(`[lobby] ${what} failed; retrying in ${wait} ms:`, errorMessage(error));
         await sleep(wait);
       }
     }
   }
 
-  private async finalise(
-    setup: MatchSetup,
-    result: MatchResult,
-    history: readonly RoundRecord[],
-    staked: boolean,
-  ): Promise<void> {
-    const settledTx = staked ? await this.settle(result) : await this.options.relayer.settle(result).catch(() => null);
-    await this.options.archive.save({
+  /**
+   * Archives the transcript, and only then settles.
+   *
+   * The order is the point: `settle` carries the transcript's hash, so once a
+   * result is proposed on-chain the evidence for it must already be
+   * fetchable, or nobody could check it inside the challenge window. A match
+   * whose transcript cannot be archived is therefore never settled; it is
+   * aborted, which refunds every stake at once.
+   *
+   * Retrying a settlement that did in fact land is harmless: the escrow is no
+   * longer `Live`, so the relayer's simulation reverts before spending gas.
+   * After the last attempt the match refunds at its deadline.
+   */
+  private async finalise(transcript: Transcript, staked: boolean): Promise<void> {
+    const result = transcript.result;
+    const transcriptHash = hashTranscript(transcript);
+    const entry: ArchivedMatch = {
       result,
-      history,
-      settledTx,
-      seats: setup.seats,
-      rules: setup.rules,
+      history: transcript.rounds.map((round) => round.record),
+      settledTx: null,
+      seats: transcript.seats,
+      rules: transcript.rules,
       staked,
-      seed: setup.seed,
+      seed: transcript.seed,
       finishedAt: Date.now(),
-    });
+      transcript,
+      transcriptHash,
+    };
+    const archived = await this.withRetry(`archiving ${result.matchId}`, () => this.options.archive.save(entry));
+    if (archived === null) {
+      if (staked) {
+        console.error(`[lobby] ${result.matchId} is not settled without its transcript; aborting it instead`);
+        await this.options.relayer.abort(result.matchId).catch((error: unknown) => {
+          console.error(`[lobby] abort of ${result.matchId} failed; it refunds at its deadline:`, errorMessage(error));
+        });
+        this.get(result.matchId)?.announceSettled(null);
+      }
+      return;
+    }
+
+    const attested: AttestedResult = { ...result, transcriptHash };
+    const settledTx = staked
+      ? await this.withRetry(`settlement of ${result.matchId}`, () => this.options.relayer.settle(attested))
+      : await this.options.relayer.settle(attested).catch(() => null);
+    if (settledTx) {
+      await this.options.archive.recordSettlement(result.matchId, settledTx).catch((error: unknown) => {
+        console.warn(`[lobby] could not record the settlement of ${result.matchId}:`, errorMessage(error));
+      });
+    }
     if (staked && this.options.styles) {
-      const seats = this.get(result.matchId)?.match.seats.map((seat) => seat.address) ?? [];
       try {
-        await this.options.styles.record(tallyStyles(result, history, seats));
+        await this.options.styles.record(tallyStyles(result, entry.history, transcript.seats.map((seat) => seat.address)));
       } catch (error) {
         console.warn('[lobby] style record failed:', errorMessage(error));
       }
     }
-    if (staked) this.get(result.matchId)?.announceSettled(settledTx as `0x${string}` | null);
+    if (staked) this.get(result.matchId)?.announceSettled(settledTx);
   }
 }
 

@@ -15,6 +15,8 @@ import {
   type SeatProof,
   type ServerMessage,
   type SignedGrant,
+  type Transcript,
+  TRANSCRIPT_VERSION,
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
@@ -37,8 +39,8 @@ export interface MoveProof {
   holdSignature?: `0x${string}`;
 }
 
-/** Called once a match reaches a signable result. */
-export type MatchFinished = (result: MatchResult, history: readonly RoundRecord[]) => void;
+/** Called once a match reaches a signable result, with everything needed to check it. */
+export type MatchFinished = (transcript: Transcript) => void;
 
 export interface RoomOptions {
   commitMs: number;
@@ -53,6 +55,10 @@ export interface RoomOptions {
    * Zero (the default) opens the next window immediately.
    */
   replayMs?: number;
+  /** The hub chain, which every move and receipt is signed for. Recorded in the transcript. */
+  chainId?: number;
+  /** The key that signs commit receipts, recorded in the transcript. */
+  receiptSigner?: `0x${string}` | null;
   onFinished?: MatchFinished;
 }
 
@@ -357,7 +363,24 @@ export class Room {
     this.broadcastState();
     const message = { type: 'finished', result, ranking } as const;
     for (const client of this.clients) client.send(message);
-    this.options.onFinished?.(result, this.match.history);
+    this.options.onFinished?.(this.transcript());
+  }
+
+  /** The finished match, complete enough for anyone to check without the server. */
+  transcript(): Transcript {
+    return {
+      version: TRANSCRIPT_VERSION,
+      matchId: this.matchId,
+      chainId: this.options.chainId ?? 0,
+      seed: this.match.seed,
+      rules: this.match.rules,
+      seats: [...this.match.seats],
+      botSeats: [...this.options.botSeats],
+      receiptSigner: this.options.receiptSigner ?? null,
+      grants: this.grants,
+      rounds: this.match.history.map((record, i) => ({ record, proofs: [...(this.proofLog[i] ?? [])] })),
+      result: this.match.result(),
+    };
   }
 
   private broadcastState(): void {

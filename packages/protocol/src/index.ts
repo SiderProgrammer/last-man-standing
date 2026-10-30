@@ -4,6 +4,7 @@ export * from './game/rules.js';
 export * from './game/hash.js';
 export * from './game/style.js';
 export * from './game/reads.js';
+export * from './game/transcript.js';
 
 // Everything tied to a chain: chain ids, typed data, and the contract ABIs.
 export * from './chain/chains.js';

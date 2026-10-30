@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { keccak256, recoverTypedDataAddress, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { MATCH_RESULT_TYPES, matchResultDomain, type MatchResult } from '@lms/protocol';
+import { MATCH_RESULT_TYPES, matchResultDomain, type AttestedResult } from '@lms/protocol';
 import { packSignatures, signResult } from '@lms/server';
 
 const ESCROW = '0x000000000000000000000000000000000000e5c0' as const;
 const CHAIN_ID = 11155111;
 
-const result: MatchResult = {
+const result: AttestedResult = {
   matchId: keccak256(toHex('match')),
   rounds: 7,
   historyRoot: keccak256(toHex('history')),
+  transcriptHash: keccak256(toHex('transcript')),
   ranking: [
     '0x00000000000000000000000000000000000000a1',
     '0x00000000000000000000000000000000000000b2',
@@ -47,6 +48,13 @@ describe('attestation', () => {
 
     expect(onHub).not.toBe(onOtherChain);
     expect(onHub).not.toBe(onOtherEscrow);
+  });
+
+  it('binds the signature to the transcript', async () => {
+    const key = `0x${'44'.repeat(32)}` as const;
+    const signed = await signResult(key, result, CHAIN_ID, ESCROW);
+    const other = await signResult(key, { ...result, transcriptHash: keccak256(toHex('another')) }, CHAIN_ID, ESCROW);
+    expect(signed).not.toBe(other);
   });
 
   it('packs signatures in ascending signer order', () => {

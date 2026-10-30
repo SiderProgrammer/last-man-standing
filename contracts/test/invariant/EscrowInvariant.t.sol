@@ -115,7 +115,8 @@ contract EscrowHandler is Test {
         address[] memory ranking = seats;
         rounds = uint32(bound(rounds, 1, 64));
 
-        bytes32 structHash = harness.hashMatchResult(current, rounds, historyRoot, ranking);
+        bytes32 transcriptHash = keccak256(abi.encode(historyRoot));
+        bytes32 structHash = harness.hashMatchResult(current, rounds, historyRoot, transcriptHash, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
 
         uint256 n = attestorPks.length;
@@ -123,7 +124,9 @@ contract EscrowHandler is Test {
         for (uint256 i = 0; i < n; ++i) {
             pks[i] = attestorPks[i];
         }
-        escrow.settle(current, rounds, historyRoot, ranking, Attest.signAscending(pks, digest));
+        escrow.settle(
+            current, rounds, historyRoot, transcriptHash, ranking, Attest.signAscending(pks, digest)
+        );
         proposedRanking = ranking;
         ++settled;
     }

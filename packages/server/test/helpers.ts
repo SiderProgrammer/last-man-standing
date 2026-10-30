@@ -1,5 +1,15 @@
 import { keccak256, toHex } from 'viem';
-import { DEFAULT_RULES, type Seat, type ServerMessage } from '@lms/protocol';
+import {
+  DEFAULT_RULES,
+  TRANSCRIPT_VERSION,
+  hashTranscript,
+  type MatchResult,
+  type RoundRecord,
+  type Rules,
+  type Seat,
+  type ServerMessage,
+  type Transcript,
+} from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import type { Client } from '@lms/server';
 
@@ -64,4 +74,31 @@ export class FakeClient implements Client {
       (message): message is Extract<ServerMessage, { type: T }> => message.type === type,
     );
   }
+}
+
+/**
+ * The transcript, and its hash, for an archived match a test made up rather
+ * than played: the rounds it names, no signatures, no grants.
+ */
+export function transcriptOf(entry: {
+  result: MatchResult;
+  history: readonly RoundRecord[];
+  seats: readonly Seat[];
+  rules: Rules;
+  seed: `0x${string}`;
+}): { transcript: Transcript; transcriptHash: `0x${string}` } {
+  const transcript: Transcript = {
+    version: TRANSCRIPT_VERSION,
+    matchId: entry.result.matchId,
+    chainId: 0,
+    seed: entry.seed,
+    rules: entry.rules,
+    seats: [...entry.seats],
+    botSeats: [],
+    receiptSigner: null,
+    grants: [],
+    rounds: entry.history.map((record) => ({ record, proofs: [] })),
+    result: entry.result,
+  };
+  return { transcript, transcriptHash: hashTranscript(transcript) };
 }

@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CLIENT_FRAME_BYTES, type ClientMessage, type ServerMessage } from '@lms/protocol';
+import {
+  MAX_CLIENT_FRAME_BYTES,
+  hashTranscript,
+  type AttestedResult,
+  type ClientMessage,
+  type ServerMessage,
+} from '@lms/protocol';
 import {
   Gateway,
   Lobby,
   MemoryArchive,
   nullRelayer,
+  type ArchivedMatch,
+  type Relayer,
   type Socket,
 } from '@lms/server';
 import { FakeClient, HUMAN, botSeats, lastOfType, setupWithBots } from './helpers.js';
@@ -38,6 +46,74 @@ describe('settlement announcement', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(watcher.last('settled')).toEqual({ type: 'settled', matchId: room.matchId, tx: null });
+  });
+});
+
+describe('archive first', () => {
+  /** Plays a staked all-bot match to the end and lets `finalise` run. */
+  async function playStaked(lobby: Lobby, label: string): Promise<`0x${string}`> {
+    const room = lobby.adopt(setupWithBots(4, label), botSeats(4), 0);
+    let now = 1;
+    while (!room.finished) {
+      now += COMMIT_MS + 1;
+      room.tick(now);
+    }
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    return room.matchId;
+  }
+
+  it('archives the transcript before settling, and settles with its hash', async () => {
+    const archive = new MemoryArchive();
+    const settled: Array<{ result: AttestedResult; archived: ArchivedMatch | null }> = [];
+    const relayer: Relayer = {
+      async settle(result) {
+        settled.push({ result, archived: await archive.load(result.matchId) });
+        return '0x5e771ed';
+      },
+      abort: async () => null,
+    };
+    const lobby = new Lobby({ archive, relayer, commitMs: COMMIT_MS, revealMs: REVEAL_MS, chainId: 84532 });
+    const matchId = await playStaked(lobby, 'archive-first');
+
+    expect(settled).toHaveLength(1);
+    const [{ result, archived }] = settled as [(typeof settled)[0]];
+    // Already archived when `settle` was called, and settled over that transcript.
+    expect(archived?.transcriptHash).toBe(result.transcriptHash);
+    expect(hashTranscript(archived?.transcript as ArchivedMatch['transcript'])).toBe(result.transcriptHash);
+    expect(archived?.transcript.chainId).toBe(84532);
+    expect(archived?.transcript.rounds).toHaveLength(result.rounds);
+    // The transaction is recorded once it exists.
+    expect((await archive.load(matchId))?.settledTx).toBe('0x5e771ed');
+    expect((await archive.loadByTranscript(result.transcriptHash))?.result.matchId).toBe(matchId);
+  });
+
+  it('never settles a match it could not archive, and aborts it instead', async () => {
+    const calls: string[] = [];
+    const archive = new MemoryArchive();
+    archive.save = async () => {
+      calls.push('save');
+      throw new Error('database is down');
+    };
+    const relayer: Relayer = {
+      settle: async () => {
+        calls.push('settle');
+        return null;
+      },
+      abort: async () => {
+        calls.push('abort');
+        return null;
+      },
+    };
+    const lobby = new Lobby({
+      archive,
+      relayer,
+      commitMs: COMMIT_MS,
+      revealMs: REVEAL_MS,
+      settleBackoffMs: [1, 1],
+      sleep: async () => undefined,
+    });
+    await playStaked(lobby, 'archive-down');
+    expect(calls).toEqual(['save', 'save', 'save', 'abort']);
   });
 });
 

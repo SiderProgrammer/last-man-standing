@@ -5,6 +5,7 @@ import {
   type RoundRecord,
   type Rules,
   type Seat,
+  type Transcript,
 } from '@lms/protocol';
 
 export interface ArchivedMatch {
@@ -25,6 +26,10 @@ export interface ArchivedMatch {
   seed: `0x${string}`;
   /** Unix milliseconds the match was archived. */
   finishedAt: number;
+  /** Everything needed to check the match without trusting the server: setup, rounds, signatures, grants. */
+  transcript: Transcript;
+  /** `hashTranscript(transcript)`: what `settle` carried, and what anyone can fetch the transcript by. */
+  transcriptHash: `0x${string}`;
 }
 
 /**
@@ -42,7 +47,11 @@ export interface ArchivedAnalysis {
 
 export interface MatchArchive {
   save(entry: ArchivedMatch): Promise<void>;
+  /** Records the transaction that proposed an archived match's result. */
+  recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void>;
   load(matchId: `0x${string}`): Promise<ArchivedMatch | null>;
+  /** The match whose transcript hashes to `transcriptHash`. */
+  loadByTranscript(transcriptHash: `0x${string}`): Promise<ArchivedMatch | null>;
   recent(limit: number): Promise<ArchivedMatch[]>;
   /**
    * The matches a wallet sat in, newest first, at most `limit` of them, and
@@ -76,8 +85,19 @@ export class MemoryArchive implements MatchArchive {
     this.entries.set(key, entry);
   }
 
+  async recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void> {
+    const entry = this.entries.get(matchId.toLowerCase());
+    if (entry) this.entries.set(matchId.toLowerCase(), { ...entry, settledTx });
+  }
+
   async load(matchId: `0x${string}`): Promise<ArchivedMatch | null> {
     return this.entries.get(matchId.toLowerCase()) ?? null;
+  }
+
+  async loadByTranscript(transcriptHash: `0x${string}`): Promise<ArchivedMatch | null> {
+    const key = transcriptHash.toLowerCase();
+    for (const entry of this.entries.values()) if (entry.transcriptHash.toLowerCase() === key) return entry;
+    return null;
   }
 
   async recent(limit: number): Promise<ArchivedMatch[]> {
@@ -159,10 +179,14 @@ export class PostgresArchive implements MatchArchive {
         seed         TEXT NOT NULL,
         -- Lower-cased seat addresses, so one wallet's history is an index lookup.
         players      TEXT[] NOT NULL,
-        created_at   TIMESTAMPTZ NOT NULL
+        created_at   TIMESTAMPTZ NOT NULL,
+        transcript   JSONB NOT NULL,
+        -- Lower-cased, as the transcript route looks it up.
+        transcript_hash TEXT NOT NULL
       )
     `);
     await pool.query('CREATE INDEX IF NOT EXISTS matches_players ON matches USING GIN (players)');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS matches_transcript_hash ON matches (transcript_hash)');
     await pool.query('CREATE INDEX IF NOT EXISTS matches_created_at ON matches (created_at DESC)');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS match_analyses (
@@ -180,8 +204,9 @@ export class PostgresArchive implements MatchArchive {
   async save(entry: ArchivedMatch): Promise<void> {
     await this.pool.query(
       `INSERT INTO matches
-         (match_id, rounds, history_root, ranking, history, settled_tx, seats, rules, staked, seed, players, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000))
+         (match_id, rounds, history_root, ranking, history, settled_tx, seats, rules, staked, seed, players, created_at,
+          transcript, transcript_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000), $13, $14)
        ON CONFLICT (match_id) DO UPDATE SET settled_tx = EXCLUDED.settled_tx`,
       [
         entry.result.matchId,
@@ -198,8 +223,22 @@ export class PostgresArchive implements MatchArchive {
         // Stored at millisecond precision, so `finishedAt` read back is exactly
         // the cursor a later `forPlayer` page compares against.
         entry.finishedAt,
+        JSON.stringify(entry.transcript),
+        entry.transcriptHash.toLowerCase(),
       ],
     );
+  }
+
+  async recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void> {
+    await this.pool.query('UPDATE matches SET settled_tx = $2 WHERE match_id = $1', [matchId, settledTx]);
+  }
+
+  async loadByTranscript(transcriptHash: `0x${string}`): Promise<ArchivedMatch | null> {
+    const { rows } = await this.pool.query('SELECT * FROM matches WHERE transcript_hash = $1', [
+      transcriptHash.toLowerCase(),
+    ]);
+    const row = rows[0];
+    return row ? rowToEntry(row) : null;
   }
 
   async load(matchId: `0x${string}`): Promise<ArchivedMatch | null> {
@@ -267,6 +306,8 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
     staked: row.staked as boolean,
     seed: row.seed as `0x${string}`,
     finishedAt: (row.created_at as Date).getTime(),
+    transcript: row.transcript as Transcript,
+    transcriptHash: row.transcript_hash as `0x${string}`,
   };
 }
 

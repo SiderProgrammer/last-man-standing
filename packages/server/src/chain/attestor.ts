@@ -7,7 +7,7 @@ import {
   matchResultDomain,
   matchResultMessage,
   receiptTypedData,
-  type MatchResult,
+  type AttestedResult,
 } from '@lms/protocol';
 import type { ReceiptSigner } from '../gateway/gateway.js';
 import { gameEscrowAbi } from '@lms/protocol';
@@ -23,7 +23,7 @@ import { signerClients } from './viem.js';
  */
 export async function signResult(
   privateKey: Hex,
-  result: MatchResult,
+  result: AttestedResult,
   chainId: number,
   escrow: Address,
 ): Promise<Hex> {
@@ -66,7 +66,7 @@ export interface Relayer {
    * window closes unvetoed; `ChainBridge` finalises it then.
    * No-op when unconfigured.
    */
-  settle(result: MatchResult): Promise<Hex | null>;
+  settle(result: AttestedResult): Promise<Hex | null>;
   /**
    * Signs and submits an abort for a live match this server cannot finish,
    * refunding every seat at once. Null when unconfigured; the escrow then
@@ -131,7 +131,7 @@ export function createRelayer(options: {
         address: options.escrow,
         abi: gameEscrowAbi,
         functionName: 'settle',
-        args: [result.matchId, result.rounds, result.historyRoot, result.ranking, signatures],
+        args: [result.matchId, result.rounds, result.historyRoot, result.transcriptHash, result.ranking, signatures],
       });
       return walletClient.writeContract(request);
     },

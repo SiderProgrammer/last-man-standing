@@ -36,6 +36,9 @@ const HEARTBEAT_MS = 30_000;
 async function main(): Promise<void> {
   const archive = await createArchive(config.databaseUrl);
   const relayer = relayerFromEnv();
+  // The attestor key where there is one. A practice-only server has none,
+  // and signs with a key of its own that lasts as long as the process.
+  const receipts = receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId);
 
   const avatarCollections = parseCollections(config.avatarCollections);
   const avatars = new AvatarRegistry({
@@ -53,6 +56,8 @@ async function main(): Promise<void> {
     avatars,
     styles,
     maxPracticeRooms: config.maxPracticeRooms,
+    chainId: config.chainId,
+    receiptSigner: receipts.address,
   });
 
 
@@ -138,9 +143,7 @@ async function main(): Promise<void> {
     // A contract wallet's grant can only be checked by asking the wallet.
     verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
     verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
-    // The attestor key where there is one. A practice-only server has none,
-    // and signs with a key of its own that lasts as long as the process.
-    receipts: receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId),
+    receipts,
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     ...(analyst ? { analyst } : {}),

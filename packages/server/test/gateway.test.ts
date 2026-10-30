@@ -24,7 +24,7 @@ import type {
   SignatureVerifier,
   Socket,
 } from '@lms/server';
-import { lastOfType } from './helpers.js';
+import { lastOfType, transcriptOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -459,21 +459,19 @@ describe('gateway match history', () => {
       { index: 1, address: account.address, chainId: 11155111 },
     ];
     const addresses = seats.map((seat) => seat.address);
-    return {
+    const fields = {
       result: {
-        matchId: `0x${label.toString(16).padStart(64, '0')}`,
+        matchId: `0x${label.toString(16).padStart(64, '0')}` as const,
         rounds: 4,
-        historyRoot: `0x${'77'.repeat(32)}`,
+        historyRoot: `0x${'77'.repeat(32)}` as const,
         ranking: options.won ? [...addresses].reverse() : addresses,
       },
       history: [],
-      settledTx: null,
       seats,
       rules: DEFAULT_RULES,
-      staked: options.staked ?? false,
-      seed: `0x${'5e'.repeat(32)}`,
-      finishedAt,
+      seed: `0x${'5e'.repeat(32)}` as const,
     };
+    return { ...fields, ...transcriptOf(fields), settledTx: null, staked: options.staked ?? false, finishedAt };
   }
 
   const strangers = [{ index: 0, address: STRANGER, chainId: 11155111 }];

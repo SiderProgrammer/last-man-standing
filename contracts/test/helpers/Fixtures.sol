@@ -36,6 +36,7 @@ contract Fixtures is Test {
     ///      non-zero count and root will do.
     uint32 internal constant ROUNDS = 3;
     bytes32 internal constant HISTORY_ROOT = keccak256("history");
+    bytes32 internal constant TRANSCRIPT_HASH = keccak256("transcript");
 
     function setUp() public virtual {
         owner = makeAddr("owner");
@@ -88,6 +89,7 @@ contract Fixtures is Test {
             matchId,
             ROUNDS,
             HISTORY_ROOT,
+            TRANSCRIPT_HASH,
             ranking,
             _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, ranking)
         );
@@ -123,6 +125,7 @@ contract Fixtures is Test {
         seed = escrow.getMatch(matchId).seed;
     }
 
+    /// @dev Over `TRANSCRIPT_HASH`, which every test settles with.
     function _signResult(
         uint256[] memory pks,
         bytes32 matchId,
@@ -130,7 +133,7 @@ contract Fixtures is Test {
         bytes32 historyRoot,
         address[] memory ranking
     ) internal view returns (bytes memory signatures) {
-        bytes32 structHash = harness.hashMatchResult(matchId, rounds, historyRoot, ranking);
+        bytes32 structHash = harness.hashMatchResult(matchId, rounds, historyRoot, TRANSCRIPT_HASH, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
         signatures = Attest.signAscending(pks, digest);
     }
