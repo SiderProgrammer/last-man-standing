@@ -1,8 +1,14 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** WebSocket endpoint of the game server. Defaults to the current host on `DEFAULT_SERVER_PORT`. */
+  /**
+   * WebSocket endpoint of the game server. Defaults to the current host on
+   * `DEFAULT_SERVER_PORT`, which the build's Content-Security-Policy allows
+   * only on localhost: a deployed build must set it.
+   */
   readonly VITE_WS_URL?: string;
+  /** Space-separated origins avatar images load from, for the CSP. Defaults to `https://ipfs.io`. */
+  readonly VITE_CSP_MEDIA?: string;
   /** RPC used by the development burner wallet. */
   readonly VITE_RPC_URL?: string;
   /** The spoke `npm run dev:fork` runs, which the burner uses on `?chain=spoke`. */

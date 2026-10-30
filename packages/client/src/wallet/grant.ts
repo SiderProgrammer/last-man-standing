@@ -13,7 +13,8 @@ import {
   type SessionGrant,
   type SignedGrant,
 } from '@lms/protocol';
-import { readRaw, removeRaw, writeRaw } from '../io/storage.js';
+import { KeyStore } from '../io/keystore.js';
+import { removeRaw } from '../io/storage.js';
 
 /**
  * The key this browser plays with, and the wallet's grant to it.
@@ -24,16 +25,23 @@ import { readRaw, removeRaw, writeRaw } from '../io/storage.js';
  * the rest. The same key signs the login nonce, so the grant also stands in
  * for a login signature: reconnecting costs no prompt until it expires.
  *
- * The key is a real private key in localStorage. It can sign logins and moves
- * for this player until the grant expires, and nothing else: no stake, no
- * transfer, no on-chain call accepts it.
+ * The key is a real private key, kept sealed in IndexedDB (`io/keystore.ts`).
+ * Off-chain it signs logins and moves until the grant expires. On-chain it can
+ * do nothing unless the wallet also turns on one-click play, and then only
+ * join lobbies and collect winnings, within caps the delegate enforces.
  */
 interface StoredGrant {
   privateKey: Hex;
   signed: SignedGrant;
 }
 
-const STORAGE_PREFIX = 'lms.grant.';
+const STORAGE_PREFIX = 'grant.';
+
+/** Where the key was kept before it was sealed: plain localStorage. */
+const LEGACY_PREFIX = 'lms.grant.';
+
+let store: KeyStore | null = null;
+const keys = (): KeyStore => (store ??= KeyStore.open());
 
 /** How long a new grant runs. A day of play, well under the server's week. */
 export const GRANT_HOURS = 24;
@@ -65,8 +73,11 @@ export class GrantedKey {
    * The grant this browser holds for `wallet` on `chainId`, or null when there
    * is none it should still use: expired, for another origin, or unreadable.
    */
-  static load(wallet: Address, chainId: number, now: number = Date.now()): GrantedKey | null {
-    const raw = readRaw(storageKey(wallet, chainId));
+  static async load(wallet: Address, chainId: number, now: number = Date.now()): Promise<GrantedKey | null> {
+    // A key a previous version left in the clear is dropped, not migrated: the
+    // wallet grants a fresh one, sealed, at the next login.
+    removeRaw(`${LEGACY_PREFIX}${chainId}.${addressKey(wallet)}`);
+    const raw = await keys().read(storageKey(wallet, chainId));
     if (!raw) return null;
     try {
       const stored = JSON.parse(raw) as StoredGrant;
@@ -110,18 +121,18 @@ export class GrantedKey {
       nonce: toHex(nonce),
     };
     const key = new GrantedKey({ grant, signature: await sign(grant) }, privateKey, account);
-    key.save();
+    await key.save();
     return key;
   }
 
-  static forget(wallet: Address, chainId: number): void {
-    removeRaw(storageKey(wallet, chainId));
+  static forget(wallet: Address, chainId: number): Promise<void> {
+    return keys().remove(storageKey(wallet, chainId));
   }
 
-  private save(): void {
+  private save(): Promise<void> {
     // If storage refuses, the key still works for this page's lifetime.
     const stored: StoredGrant = { privateKey: this.privateKey, signed: this.signed };
-    writeRaw(storageKey(this.grant.wallet, this.grant.chainId), JSON.stringify(stored));
+    return keys().write(storageKey(this.grant.wallet, this.grant.chainId), JSON.stringify(stored));
   }
 
   signLogin(nonce: string): Promise<Hex> {

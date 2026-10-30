@@ -9,7 +9,8 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["vite/client"],
+    // Node for tests that read the source tree, such as the CSP guard.
+    "types": ["vite/client", "node"],
     "paths": {
       "@lms/protocol": ["../protocol/src/index.ts"],
       "@lms/engine": ["../engine/src/index.ts"]

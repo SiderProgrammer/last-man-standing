@@ -138,6 +138,22 @@ export function queryDom(doc: Document = document) {
 
 export type Dom = ReturnType<typeof queryDom>;
 
+/**
+ * A new element with a class and text. The one way the client builds markup:
+ * text goes in as `textContent`, never as HTML, so nothing a server or another
+ * player sends can become an element or a script.
+ */
+export function element<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className = '',
+  text = '',
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
 /** Replaces a select's options, keeping the current value when it survives. */
 export function fillSelect(select: HTMLSelectElement, options: Array<[string, string]>): void {
   const previous = select.value;

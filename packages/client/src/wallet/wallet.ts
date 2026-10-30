@@ -17,6 +17,7 @@ import {
 } from 'viem';
 import type { ChainRecord } from '@lms/engine';
 import { privateKeyToAccount } from 'viem/accounts';
+import { DEV_RPC_URL } from '../csp.js';
 import type { PlayRewards, StakingPosition } from '../ui/staking.js';
 import type { ProposalLive } from '../ui/governance.js';
 import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
@@ -129,7 +130,7 @@ export class Wallet {
    * injected wallet, it can sign an EIP-7702 authorization for our delegate,
    * which is what one-click play needs.
    */
-  static async fromAccount(account: LocalAccount, rpcUrl = 'http://127.0.0.1:8545'): Promise<Wallet> {
+  static async fromAccount(account: LocalAccount, rpcUrl = DEV_RPC_URL): Promise<Wallet> {
     const transport = http(rpcUrl);
     const rpc = createPublicClient({ transport });
 

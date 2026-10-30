@@ -1,6 +1,7 @@
 import type { MatchSummary, ServerMessage } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
 import { reviewOf } from '../game/review.js';
+import { element } from '../ui/dom.js';
 import { placeLabel, short } from '../ui/format.js';
 import { showReview } from './match.js';
 import { onSettled } from './result.js';
@@ -48,7 +49,7 @@ export function onReview(message: Extract<ServerMessage, { type: 'review' }>): v
 
 function renderHistory(): void {
   if (shown.length === 0) {
-    dom.historyList.innerHTML = '<li class="muted small">No finished matches yet. Play one above.</li>';
+    dom.historyList.replaceChildren(element('li', 'muted small', 'No finished matches yet. Play one above.'));
     return;
   }
   dom.historyList.replaceChildren(...shown.map(historyRow));

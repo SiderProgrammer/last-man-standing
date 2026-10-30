@@ -64,7 +64,7 @@ export async function authenticate(): Promise<void> {
     // A stored grant logs in with no prompt at all. Only a missing or
     // expiring one asks the wallet, once, and that one grant then covers
     // every reconnect and every move until it expires.
-    const stored = GrantedKey.load(wallet.address, app.chainId);
+    const stored = await GrantedKey.load(wallet.address, app.chainId);
     const key = stored ?? (await GrantedKey.create(wallet.address, app.chainId, (grant) => wallet.signGrant(grant)));
     app.grantKey = key;
     storedGrantPending = stored !== null;
@@ -93,10 +93,10 @@ export function onLoginRejected(): boolean {
   if (!storedGrantPending) return false;
   storedGrantPending = false;
   const wallet = app.wallet;
-  if (wallet) GrantedKey.forget(wallet.address, app.chainId);
   app.grantKey = null;
   toast('Session key rejected — asking your wallet for a new one.');
-  void authenticate();
+  // Forgotten first, or the login would load the same key straight back.
+  void (wallet ? GrantedKey.forget(wallet.address, app.chainId) : Promise.resolve()).then(authenticate);
   return true;
 }
 
@@ -196,7 +196,7 @@ export function renderSessionPanel(): void {
   const left = Math.max(0, key.grant.expiresAt - Math.floor(Date.now() / 1000));
   const hours = Math.floor(left / 3600);
   const minutes = Math.floor((left % 3600) / 60);
-  dom.sessionStatus.textContent = `Signing logins and moves · expires in ${hours}h ${minutes}m · it cannot spend`;
+  dom.sessionStatus.textContent = `Signing logins and moves · expires in ${hours}h ${minutes}m · spends only through one-click play`;
 }
 
 /**
@@ -205,7 +205,7 @@ export function renderSessionPanel(): void {
  */
 function forgetGrant(): void {
   const wallet = app.wallet;
-  if (wallet) GrantedKey.forget(wallet.address, app.chainId);
+  if (wallet) void GrantedKey.forget(wallet.address, app.chainId);
   app.grantKey = null;
   renderSessionPanel();
   void refreshOneClick();

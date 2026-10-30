@@ -12,10 +12,11 @@ import {
 } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
-import { fillSelect } from '../ui/dom.js';
+import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import {
   crossChainNotice,
+  chainChips,
   lobbySummary,
   payWithOptions,
   planTokenJoin,
@@ -94,9 +95,13 @@ export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
     }
   }
   if (open.length === 0 && live.length === 0) {
-    dom.lobbyList.innerHTML = app.escrow
-      ? '<li class="muted small">No staked lobbies yet. Create one above.</li>'
-      : '<li class="muted small">Server is running without an escrow: practice only.</li>';
+    dom.lobbyList.replaceChildren(
+      element(
+        'li',
+        'muted small',
+        app.escrow ? 'No staked lobbies yet. Create one above.' : 'Server is running without an escrow: practice only.',
+      ),
+    );
     return;
   }
 
@@ -108,16 +113,23 @@ export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
 
 function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
   const li = document.createElement('li');
-  const label = document.createElement('span');
-  label.innerHTML = lobbySummary(
-    lobby.matchId,
-    lobby.stake,
-    lobby.seatCount,
-    lobby.maxSeats,
-    lobby.status,
-    lobby.players,
-    short,
+  const label = element('span');
+  const chips = chainChips(lobby.players).map((chip) => {
+    const node = element('span', 'chain-chip', chip.label);
+    node.title = chip.title;
+    node.style.setProperty('--chain', chip.css);
+    return node;
+  });
+  label.append(
+    element('strong', '', short(lobby.matchId)),
+    ' ',
+    element('span', 'muted small', lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status)),
   );
+  if (chips.length > 0) {
+    const row = element('span', 'chain-chips');
+    row.append(...chips);
+    label.append(row);
+  }
 
   const button = document.createElement('button');
   const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
