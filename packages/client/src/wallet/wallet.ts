@@ -24,6 +24,7 @@ import {
   ProposalState,
   claimableEpochRange,
   descriptionHash,
+  grantTypedData,
   rewardsDistributorAbi,
   gameEscrowAbi,
   lmsGovernorAbi,
@@ -36,6 +37,7 @@ import {
   v4QuoterAbi,
   zapJoinAbi,
   type ProposalStateValue,
+  type SessionGrant,
   type ProtocolParams,
   type ProposalSummary,
   type VoteSupportValue,
@@ -147,6 +149,14 @@ export class Wallet {
     }
 
     return new Wallet(account.address, chainId, account, createWalletClient({ account, transport }), rpc);
+  }
+
+  /**
+   * Signs a session grant: the one prompt that lets a browser-held key sign
+   * logins and moves for this wallet until the grant expires.
+   */
+  signGrant(grant: SessionGrant): Promise<Hex> {
+    return this.wallet.signTypedData({ account: this.account, ...grantTypedData(grant) });
   }
 
   /** Signs the server's login nonce. Plain personal_sign, no typed data needed. */

@@ -1,4 +1,4 @@
-import { keccak256, toHex, type Hex } from 'viem';
+import { keccak256, toHex, type Hex, type TypedDataDefinition } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
@@ -6,11 +6,16 @@ import {
   legalActions,
   MatchPhase,
   commitMove,
+  commitTypedData,
+  grantTypedData,
+  revealTypedData,
   type ActionValue,
   type ClientMessage,
   type PublicMatchState,
   type SealedMove,
   type ServerMessage,
+  type SessionGrant,
+  type SignedGrant,
 } from '@lms/protocol';
 import type { Link } from './link.js';
 
@@ -51,10 +56,11 @@ export interface BotClientOptions {
   /** False logs in and then sits idle, for connection-soak runs. */
   play?: boolean;
   /**
-   * Signs the login message. Defaults to the private key's real signature;
-   * the deterministic simulation substitutes a stand-in its server accepts.
+   * Makes every signature: the wallet's grant, and the session key's login
+   * and moves. Defaults to the real keys; the deterministic simulation
+   * substitutes stand-ins its server accepts.
    */
-  sign?: (message: string) => Promise<Hex>;
+  signer?: BotSigner;
   /** A staked table this bot is already seated at: it watches that match instead of opening a practice room. */
   table?: `0x${string}`;
   /** Ask the server to hold the move and reveal it if this bot drops. */
@@ -70,6 +76,20 @@ export interface BotClientOptions {
   onEvent?: (event: BotEvent) => void;
 }
 
+/** Everything a bot signs, by the key that signs it. */
+export interface BotSigner {
+  message(key: PrivateKeyAccount, message: string): Promise<Hex>;
+  typed(key: PrivateKeyAccount, data: TypedDataDefinition): Promise<Hex>;
+}
+
+const realSigner: BotSigner = {
+  message: (key, message) => key.signMessage({ message }),
+  typed: (key, data) => key.signTypedData(data),
+};
+
+/** How long a bot's grant runs. A soak run outlasting it logs in afresh. */
+const GRANT_SECONDS = 24 * 60 * 60;
+
 interface Pending {
   matchId: `0x${string}`;
   round: number;
@@ -82,12 +102,20 @@ interface Pending {
 
 export class BotClient {
   readonly account: PrivateKeyAccount;
+  /**
+   * The key the wallet grants, which signs logins and moves as the browser's
+   * does. Derived from the wallet key, so a seeded run is reproducible.
+   */
+  readonly sessionKey: PrivateKeyAccount;
+  private grant: SignedGrant | null = null;
+  /** The hub chain, from `hello`: the grant and every move are signed for it. */
+  private chainId = 0;
   private link: Link | null = null;
   /** Whether the current link has logged in. Moves wait for it: the server refuses them before. */
   private authed = false;
   /** Matches already counted, so a `finished` frame and a finished `state` never count twice. */
   private readonly counted = new Set<string>();
-  private readonly sign: ((message: string) => Promise<Hex>) | undefined;
+  private readonly signer: BotSigner;
   private stopped = false;
   private connectedAt = 0;
   private backoff: number;
@@ -97,7 +125,7 @@ export class BotClient {
   private pending: Pending | null = null;
   /** Round a commit is already scheduled for, so repeated `state` frames do not stack timers. */
   private thinkingFor: string | null = null;
-  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'sign'>> &
+  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'signer'>> &
     Pick<BotClientOptions, 'onEvent' | 'reconnect'>;
 
   constructor(options: BotClientOptions) {
@@ -114,8 +142,9 @@ export class BotClient {
       ...options,
     };
     this.account = privateKeyToAccount(options.privateKey);
+    this.sessionKey = privateKeyToAccount(keccak256(toHex(`session:${options.privateKey}`)));
     this.matchId = options.table ?? null;
-    this.sign = options.sign;
+    this.signer = options.signer ?? realSigner;
     this.backoff = this.options.reconnect ? this.options.reconnect.baseMs : 0;
   }
 
@@ -180,9 +209,10 @@ export class BotClient {
   private async handle(message: ServerMessage): Promise<void> {
     switch (message.type) {
       case 'hello': {
-        const text = `${AUTH_PREFIX}${message.nonce}`;
-        const signature = await (this.sign ? this.sign(text) : this.account.signMessage({ message: text }));
-        this.send({ type: 'auth', address: this.address, signature });
+        this.chainId = message.chainId;
+        const grant = await this.ensureGrant();
+        const signature = await this.signer.message(this.sessionKey, `${AUTH_PREFIX}${message.nonce}`);
+        this.send({ type: 'auth', address: this.address, signature, grant });
         return;
       }
       case 'authed': {
@@ -299,32 +329,63 @@ export class BotClient {
           if (this.thinkingFor === key) this.thinkingFor = null;
           return;
         }
-        const commitment = commitMove(target.matchId, target.round, target.seat, target.move);
         target.committed = true;
         target.actedAt = this.options.now();
-        const aim = { matchId: target.matchId, round: target.round };
-        this.send(
-          this.options.hold
-            ? { type: 'commit', commitment, hold: target.move, ...aim }
-            : { type: 'commit', commitment, ...aim },
-        );
-        this.emit({ type: 'committed', round: target.round });
+        void this.sendCommit(target);
       }, this.options.thinkMs());
     }
 
     if (state.phase === MatchPhase.Reveal && pending.committed && !pending.revealed && this.authed) {
       pending.revealed = true;
       pending.actedAt = this.options.now();
-      this.send({
-        type: 'reveal',
-        action: pending.move.action,
-        target: pending.move.target,
-        salt: pending.move.salt,
-        matchId: pending.matchId,
-        round: pending.round,
-      });
-      this.emit({ type: 'revealed', round: pending.round });
+      void this.sendReveal(pending);
     }
+  }
+
+  /** The grant this bot logs in with, signed afresh once the old one is near its end. */
+  private async ensureGrant(): Promise<SignedGrant> {
+    const now = Math.floor(this.options.now() / 1000);
+    const current = this.grant;
+    if (current && current.grant.chainId === this.chainId && current.grant.expiresAt - 60 > now) return current;
+    const grant: SessionGrant = {
+      wallet: this.address,
+      sessionKey: this.sessionKey.address,
+      domain: 'harness.local',
+      uri: 'http://harness.local',
+      chainId: this.chainId,
+      issuedAt: now,
+      expiresAt: now + GRANT_SECONDS,
+      nonce: keccak256(toHex(`grant:${this.options.privateKey}:${now}`)),
+    };
+    this.grant = { grant, signature: await this.signer.typed(this.account, grantTypedData(grant)) };
+    return this.grant;
+  }
+
+  private async sendCommit(target: Pending): Promise<void> {
+    const commitment = commitMove(target.matchId, target.round, target.seat, target.move);
+    const signature = await this.signer.typed(this.sessionKey, commitTypedData(this.chainId, target, commitment));
+    const aim = { matchId: target.matchId, round: target.round };
+    if (this.options.hold) {
+      const held = await this.signer.typed(this.sessionKey, revealTypedData(this.chainId, target, target.move));
+      this.send({ type: 'commit', commitment, signature, hold: { ...target.move, signature: held }, ...aim });
+    } else {
+      this.send({ type: 'commit', commitment, signature, ...aim });
+    }
+    this.emit({ type: 'committed', round: target.round });
+  }
+
+  private async sendReveal(pending: Pending): Promise<void> {
+    const signature = await this.signer.typed(this.sessionKey, revealTypedData(this.chainId, pending, pending.move));
+    this.send({
+      type: 'reveal',
+      action: pending.move.action,
+      target: pending.move.target,
+      salt: pending.move.salt,
+      matchId: pending.matchId,
+      round: pending.round,
+      signature,
+    });
+    this.emit({ type: 'revealed', round: pending.round });
   }
 
   private chooseMove(state: PublicMatchState, you: number): SealedMove {

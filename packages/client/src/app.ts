@@ -187,6 +187,7 @@ function onServerMessage(message: ServerMessage): void {
 function onError(message: Extract<ServerMessage, { type: 'error' }>): void {
   switch (message.code) {
     case 'BAD_SIGNATURE':
+    case 'BAD_GRANT':
       if (!onLoginRejected()) toast(message.message);
       return;
     default:

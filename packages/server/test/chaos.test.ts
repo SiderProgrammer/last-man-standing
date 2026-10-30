@@ -4,7 +4,6 @@ import { BotClient, keyFor, type BotEvent } from '@lms/harness';
 import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
 import { moveLogFromHistory, verifyResult, type MatchSetup } from '@lms/engine';
 import { MemoryArchive, type Relayer } from '@lms/server';
-import { privateKeyToAccount } from 'viem/accounts';
 import { simSigner, world, type Faults } from './sim.js';
 
 /**
@@ -55,7 +54,7 @@ function players(w: ReturnType<typeof world>, count: number, options: Partial<Co
     const privateKey = keyFor(i, `chaos-${w.random()}`);
     const bot = new BotClient({
       privateKey,
-      sign: simSigner(privateKeyToAccount(privateKey).address),
+      signer: simSigner,
       connect: () => w.net.connect(`10.0.0.${i % 250}`),
       games: 2,
       thinkMs: () => 200 + w.random() * 3_000,

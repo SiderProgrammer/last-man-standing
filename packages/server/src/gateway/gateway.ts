@@ -1,9 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { verifyMessage } from 'viem';
+import { verifyMessage, verifyTypedData, type TypedDataDefinition } from 'viem';
 import {
   AUTH_PREFIX,
   MAX_CLIENT_FRAME_BYTES,
   addressKey,
+  commitTypedData,
+  grantProblem,
+  grantTypedData,
+  revealTypedData,
+  type SignedGrant,
   type AvatarCollectionInfo,
   type ClientMessage,
   type LobbyInfo,
@@ -37,6 +42,11 @@ export type SignatureVerifier = (args: {
   message: string;
   signature: `0x${string}`;
 }) => Promise<boolean>;
+
+/** `SignatureVerifier` for EIP-712 typed data. */
+export type TypedSignatureVerifier = (
+  args: TypedDataDefinition & { address: `0x${string}`; signature: `0x${string}` },
+) => Promise<boolean>;
 
 /**
  * The slice of `ws` the gateway actually uses, so tests can supply a fake.
@@ -82,6 +92,8 @@ interface Session extends Client {
   /** Misbehaviour; empty closes the socket. */
   readonly strikes: TokenBucket;
   loginFailures: number;
+  /** The grant this socket logged in with. Null for a login without one, which may watch but not play. */
+  grant: SignedGrant | null;
   closed: boolean;
   /** The analysis being written for this socket, if any; aborted if it closes. */
   analysis: AbortController | null;
@@ -116,6 +128,18 @@ export interface GatewayOptions {
    * keys from 7702-delegated accounts.
    */
   verify?: SignatureVerifier;
+  /**
+   * How a wallet's signature over a session grant is checked. Defaults to
+   * offline recovery; supply one that falls back to ERC-1271 over RPC to
+   * accept grants from contract wallets.
+   */
+  verifyGrant?: TypedSignatureVerifier;
+  /**
+   * How a session key's signatures are checked: its login, and every move.
+   * Session keys are plain keys, so this never needs an RPC. Defaults to
+   * recovery on the event loop; `main.ts` hands it the worker pool.
+   */
+  verifyKey?: { message: SignatureVerifier; typed: TypedSignatureVerifier };
   /** Overrides for `DEFAULT_GATEWAY_LIMITS`. */
   limits?: Partial<GatewayLimits>;
   /** Wall clock, injectable for tests. */
@@ -186,6 +210,7 @@ export class Gateway {
       moves: new TokenBucket(l.moveRate, l.moveBurst, now),
       strikes: new TokenBucket(l.strikeRate, l.strikeBurst, now),
       loginFailures: 0,
+      grant: null,
       closed: false,
       analysis: null,
     };
@@ -336,16 +361,31 @@ export class Gateway {
         return;
       }
       case 'commit': {
-        this.requireRoom(address).submitCommit(address, message.commitment, now, message.hold, aimOf(message));
+        const grant = this.requireGrant(session);
+        const room = this.requireRoom(address);
+        const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
+        await this.requireKeySigned(grant, commitTypedData(this.options.chainId, place, message.commitment), message.signature);
+        const hold = message.hold;
+        if (hold) await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, hold), hold.signature);
+        // The clock is read again: the signature checks took time, and the
+        // room compares against its own deadlines.
+        room.submitCommit(
+          address,
+          message.commitment,
+          this.now(),
+          hold ? { action: hold.action, target: hold.target, salt: hold.salt } : undefined,
+          aimOf(message),
+          { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
+        );
         return;
       }
       case 'reveal': {
-        this.requireRoom(address).submitReveal(
-          address,
-          { action: message.action, target: message.target, salt: message.salt },
-          now,
-          aimOf(message),
-        );
+        const grant = this.requireGrant(session);
+        const room = this.requireRoom(address);
+        const move = { action: message.action, target: message.target, salt: message.salt };
+        const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
+        await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, move), message.signature);
+        room.submitReveal(address, move, this.now(), aimOf(message), { grant, signature: message.signature });
         return;
       }
     }
@@ -356,21 +396,59 @@ export class Gateway {
     if (!this.loginsByIp.take(session.ip, this.now())) {
       throw new RequestError('RATE_LIMITED', 'too many login attempts; try again shortly');
     }
-    const verify = this.options.verify ?? offlineVerify;
-    const valid = await verify({
-      address: message.address,
-      message: `${AUTH_PREFIX}${session.nonce}`,
-      signature: message.signature,
-    });
-    if (!valid) {
-      session.loginFailures += 1;
-      if (session.loginFailures >= this.limits.maxLoginFailures) {
-        this.drop(session, CloseCode.PolicyViolation, 'too many failed logins');
-      }
-      throw new RequestError('BAD_SIGNATURE', 'login signature does not match the nonce');
+    const text = `${AUTH_PREFIX}${session.nonce}`;
+    const grant = message.grant ?? null;
+    if (grant) {
+      await this.checkGrant(session, message.address, grant);
+      // The key, not the wallet, signs the nonce: that is what proves this
+      // socket holds the key, so a grant copied off the wire is useless alone.
+      const verify = this.options.verifyKey?.message ?? offlineVerify;
+      const valid = await verify({ address: grant.grant.sessionKey, message: text, signature: message.signature });
+      if (!valid) this.failLogin(session, new RequestError('BAD_SIGNATURE', 'login signature is not from the granted key'));
+    } else {
+      const verify = this.options.verify ?? offlineVerify;
+      const valid = await verify({ address: message.address, message: text, signature: message.signature });
+      if (!valid) this.failLogin(session, new RequestError('BAD_SIGNATURE', 'login signature does not match the nonce'));
     }
     session.address = message.address;
+    session.grant = grant;
     session.send({ type: 'authed', address: message.address });
+  }
+
+  /** Throws unless `signed` is a usable grant from `wallet`. */
+  private async checkGrant(session: Session, wallet: `0x${string}`, signed: SignedGrant): Promise<void> {
+    if (addressKey(signed.grant.wallet) !== addressKey(wallet)) {
+      this.failLogin(session, new RequestError('BAD_GRANT', 'the grant is for another wallet'));
+    }
+    const problem = grantProblem(signed.grant, {
+      chainId: this.options.chainId,
+      now: Math.floor(this.now() / 1000),
+      origins: this.limits.allowedOrigins,
+    });
+    if (problem) this.failLogin(session, new RequestError('BAD_GRANT', problem));
+    const verify = this.options.verifyGrant ?? offlineVerifyTyped;
+    const valid = await verify({ address: wallet, ...grantTypedData(signed.grant), signature: signed.signature });
+    if (!valid) this.failLogin(session, new RequestError('BAD_GRANT', 'the grant is not signed by its wallet'));
+  }
+
+  /** Counts a failed login against the socket, and throws `error`. */
+  private failLogin(session: Session, error: RequestError): never {
+    session.loginFailures += 1;
+    if (session.loginFailures >= this.limits.maxLoginFailures) {
+      this.drop(session, CloseCode.PolicyViolation, 'too many failed logins');
+    }
+    throw error;
+  }
+
+  /** Throws unless the grant's session key signed `data`. */
+  private async requireKeySigned(
+    signed: SignedGrant,
+    data: TypedDataDefinition,
+    signature: `0x${string}`,
+  ): Promise<void> {
+    const verify = this.options.verifyKey?.typed ?? offlineVerifyTyped;
+    const valid = await verify({ ...data, address: signed.grant.sessionKey, signature });
+    if (!valid) throw new RequestError('BAD_SIGNATURE', 'the move is not signed by your session key');
   }
 
   /**
@@ -434,6 +512,17 @@ export class Gateway {
     });
   }
 
+  /**
+   * The grant a socket plays under. A grant can expire mid-connection; a move
+   * signed after that is refused, and the client logs in again with a new one.
+   */
+  private requireGrant(session: Session): SignedGrant {
+    const grant = session.grant;
+    if (!grant) throw new RequestError('NO_GRANT', 'log in with a session grant to play');
+    if (grant.grant.expiresAt * 1000 <= this.now()) throw new RequestError('BAD_GRANT', 'the session grant has expired');
+    return grant;
+  }
+
   private requireArchive(): MatchArchive {
     const archive = this.options.archive;
     if (!archive) throw new RequestError('UNAVAILABLE', 'match history is not kept on this server');
@@ -493,6 +582,8 @@ function aimOf(message: MoveAim): MoveAim {
 
 /** `ecrecover` only: no network, and therefore no ERC-1271. */
 const offlineVerify: SignatureVerifier = (args) => verifyMessage(args);
+
+const offlineVerifyTyped: TypedSignatureVerifier = (args) => verifyTypedData(args).catch(() => false);
 
 /** One archived match as its player sees it in their history. */
 export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSummary {

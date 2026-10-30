@@ -22,10 +22,13 @@ import {
   type Socket,
 } from '@lms/server';
 import { lastOfType } from './helpers.js';
+import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'33'.repeat(32)}`);
+const player = new TestPlayer('limits', 11155111);
 const BYTES32 = `0x${'ab'.repeat(32)}` as const;
 const ADDRESS = `0x${'cd'.repeat(20)}` as const;
+const SIG = `0x${'12'.repeat(65)}` as const;
 
 /** A socket that records what it was sent and how it was closed. */
 class FakeSocket implements Socket {
@@ -168,7 +171,7 @@ describe('frame validation', () => {
   });
 
   it('rejects a target outside a uint8 and an unknown action', () => {
-    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, matchId: BYTES32, round: 1 };
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, signature: SIG, matchId: BYTES32, round: 1 };
     expect(parse(reveal)).not.toThrow();
     expect(parse({ ...reveal, target: 256 })).toThrow(/target/);
     expect(parse({ ...reveal, target: 1.5 })).toThrow(/target/);
@@ -177,13 +180,39 @@ describe('frame validation', () => {
   });
 
   it('validates a held move as strictly as a reveal', () => {
-    const commit = { type: 'commit', commitment: BYTES32, matchId: BYTES32, round: 1 };
+    const commit = { type: 'commit', commitment: BYTES32, signature: SIG, matchId: BYTES32, round: 1 };
     expect(parse({ ...commit, hold: 'yes' })).toThrow(/hold/);
-    expect(parse({ ...commit, hold: { action: 1, target: 999, salt: BYTES32 } })).toThrow(/target/);
+    expect(parse({ ...commit, hold: { action: 1, target: 999, salt: BYTES32, signature: SIG } })).toThrow(/target/);
+    expect(parse({ ...commit, hold: { action: 1, target: 1, salt: BYTES32 } })).toThrow(/hold.signature/);
+  });
+
+  it('refuses a move with no signature', () => {
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, matchId: BYTES32, round: 1 };
+    expect(parse(reveal)).toThrow(/signature/);
+    expect(parse({ type: 'commit', commitment: BYTES32, matchId: BYTES32, round: 1 })).toThrow(/signature/);
+  });
+
+  it('validates a session grant field by field', () => {
+    const grant = {
+      wallet: ADDRESS,
+      sessionKey: ADDRESS,
+      domain: 'play.test',
+      uri: 'https://play.test',
+      chainId: 1,
+      issuedAt: 0,
+      expiresAt: 60,
+      nonce: BYTES32,
+    };
+    const auth = { type: 'auth', address: ADDRESS, signature: SIG };
+    expect(parse({ ...auth, grant: { grant, signature: SIG } })).not.toThrow();
+    expect(parse({ ...auth, grant: { grant: { ...grant, sessionKey: 'nope' }, signature: SIG } })).toThrow(/sessionKey/);
+    expect(parse({ ...auth, grant: { grant: { ...grant, uri: 'x'.repeat(300) }, signature: SIG } })).toThrow(/uri/);
+    expect(parse({ ...auth, grant: { grant: { ...grant, expiresAt: -1 }, signature: SIG } })).toThrow(/expiresAt/);
+    expect(parse({ ...auth, grant: { grant } })).toThrow(/grant.signature/);
   });
 
   it('validates the match and round a move names, and keeps them', () => {
-    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32 };
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, signature: SIG };
     expect(parseClientMessage(JSON.stringify({ ...reveal, matchId: BYTES32, round: 3 }))).toEqual({
       ...reveal,
       matchId: BYTES32,
@@ -191,14 +220,14 @@ describe('frame validation', () => {
     });
     expect(parse({ ...reveal, matchId: BYTES32, round: -1 })).toThrow(/round/);
     expect(parse({ ...reveal, matchId: '0x12', round: 3 })).toThrow(/matchId/);
-    expect(parse({ type: 'commit', commitment: BYTES32, matchId: BYTES32, round: 1.5 })).toThrow(/round/);
+    expect(parse({ type: 'commit', commitment: BYTES32, signature: SIG, matchId: BYTES32, round: 1.5 })).toThrow(/round/);
   });
 
   it('refuses a move that does not name its match and round', () => {
-    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32 };
+    const reveal = { type: 'reveal', action: 1, target: 0, salt: BYTES32, signature: SIG };
     expect(parse({ ...reveal, round: 3 })).toThrow(/matchId/);
     expect(parse({ ...reveal, matchId: BYTES32 })).toThrow(/round/);
-    expect(parse({ type: 'commit', commitment: BYTES32 })).toThrow(/matchId/);
+    expect(parse({ type: 'commit', commitment: BYTES32, signature: SIG })).toThrow(/matchId/);
   });
 
   it('rejects an unknown message type', () => {
@@ -313,7 +342,7 @@ describe('message limits', () => {
   it('keeps a budget for moves that other traffic cannot spend', async () => {
     const { connect } = harness({ messageBurst: 3, messageRate: 0, strikeBurst: 100 });
     const { socket } = connect();
-    await login(socket);
+    await socket.deliver(await player.auth(lastOfType(socket.sent, 'hello')?.nonce ?? ''));
     await socket.deliver({ type: 'practice', bots: 3 });
     for (let i = 0; i < 5; i += 1) await socket.deliver({ type: 'lobbies' });
     expect(socket.lastError()).toBe('RATE_LIMITED');
@@ -322,7 +351,8 @@ describe('message limits', () => {
     const errors = socket.sent.filter((message) => message.type === 'error').length;
     const live = lastOfType(socket.sent, 'state')?.state;
     if (!live) throw new Error('no match state yet');
-    await socket.deliver({ type: 'commit', commitment: BYTES32, matchId: live.matchId, round: live.round });
+    const place = { matchId: live.matchId, round: live.round, seat: 0 };
+    await socket.deliver(await player.commit(place, { action: 1, target: 1, salt: BYTES32 }));
     expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(errors);
     expect(lastOfType(socket.sent, 'state')?.state.committed).toContain(0);
   });

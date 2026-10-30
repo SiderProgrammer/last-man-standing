@@ -134,6 +134,9 @@ async function main(): Promise<void> {
     directory: () => bridge?.directory() ?? { open: [], live: [] },
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
+    // A contract wallet's grant can only be checked by asking the wallet.
+    verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
+    verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     ...(analyst ? { analyst } : {}),

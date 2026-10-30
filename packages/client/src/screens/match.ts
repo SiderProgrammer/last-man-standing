@@ -3,11 +3,14 @@ import {
   MatchPhase,
   commitMove,
   isActionValue,
+  errorFirstLine,
   isLegalAction,
   strikeDamageFor,
   type ActionValue,
   type MatchResult,
+  type MovePlace,
   type PublicMatchState,
+  type SealedMove,
   type ServerMessage,
 } from '@lms/protocol';
 import { describeRound } from '@lms/engine';
@@ -26,6 +29,7 @@ import { hideResult, showResult } from './result.js';
 import { offerAnalysis, resetAnalysis, wireAnalysisControls } from './analysis.js';
 import { stateBeforeRound } from '../game/rewind.js';
 import type { Review } from '../game/review.js';
+import type { GrantedKey } from '../wallet/grant.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -211,6 +215,11 @@ function lockIn(): void {
   const state = app.match;
   const draft = app.draft;
   if (!state || !draft || app.you === null) return;
+  const key = app.grantKey;
+  if (!key) {
+    dom.moveStatus.textContent = 'Log in to play: there is no session key to sign your move.';
+    return;
+  }
 
   const salt = freshSalt();
   const sealed = { action: draft.action, target: draft.target, salt };
@@ -218,16 +227,8 @@ function lockIn(): void {
   // before we persist would leave a commitment we can no longer open.
   rememberMove(state.matchId, state.round, sealed);
 
-  const commitment = commitMove(state.matchId, state.round, app.you, sealed);
-  net.send({
-    type: 'commit',
-    commitment,
-    // Names the round, so a commit flushed late from the offline queue is
-    // refused instead of being taken for a later round's.
-    matchId: state.matchId,
-    round: state.round,
-    ...(dom.holdMoves.checked ? { hold: sealed } : {}),
-  });
+  const place = { matchId: state.matchId, round: state.round, seat: app.you };
+  void sendCommit(key, place, sealed, dom.holdMoves.checked);
   app.committedRound = state.round;
   dom.lockIn.disabled = true;
   setActionsEnabled(false);
@@ -240,22 +241,54 @@ function lockIn(): void {
   dom.movePanel.classList.add('sealing');
 }
 
+/**
+ * Signs and sends a commitment. The session key signs it, so the server can
+ * show it in the transcript but never forge one; a held move is signed as the
+ * reveal it stands in for.
+ */
+async function sendCommit(key: GrantedKey, place: MovePlace, sealed: SealedMove, hold: boolean): Promise<void> {
+  try {
+    const commitment = commitMove(place.matchId, place.round, place.seat, sealed);
+    const signature = await key.signCommit(place, commitment);
+    const held = hold ? { ...sealed, signature: await key.signReveal(place, sealed) } : null;
+    net.send({
+      type: 'commit',
+      commitment,
+      signature,
+      // Names the round, so a commit flushed late from the offline queue is
+      // refused instead of being taken for a later round's.
+      matchId: place.matchId,
+      round: place.round,
+      ...(held ? { hold: held } : {}),
+    });
+  } catch (error) {
+    dom.moveStatus.textContent = `Could not sign your move: ${errorFirstLine(error)}`;
+  }
+}
+
 function revealNow(state: PublicMatchState): void {
   const stored = recallMove(state.matchId, state.round);
   if (!stored) {
     dom.moveStatus.textContent = 'No sealed move for this round — sitting it out.';
     return;
   }
-  net.send({
-    type: 'reveal',
-    action: stored.action,
-    target: stored.target,
-    salt: stored.salt,
-    matchId: state.matchId,
-    round: state.round,
-  });
+  const key = app.grantKey;
+  if (!key || app.you === null) {
+    dom.moveStatus.textContent = 'No session key to sign the reveal — log in again.';
+    return;
+  }
   app.revealedRound = state.round;
   dom.moveStatus.textContent = 'Revealed. Resolving…';
+  void sendReveal(key, { matchId: state.matchId, round: state.round, seat: app.you }, stored);
+}
+
+async function sendReveal(key: GrantedKey, place: MovePlace, move: SealedMove): Promise<void> {
+  try {
+    const signature = await key.signReveal(place, move);
+    net.send({ type: 'reveal', ...move, signature, matchId: place.matchId, round: place.round });
+  } catch (error) {
+    dom.moveStatus.textContent = `Could not sign your reveal: ${errorFirstLine(error)}`;
+  }
 }
 
 // ------------------------------------------------------------------ rendering

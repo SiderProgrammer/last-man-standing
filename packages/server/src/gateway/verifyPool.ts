@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads';
-import { verifyMessage } from 'viem';
-import type { SignatureVerifier } from './gateway.js';
+import { verifyMessage, verifyTypedData } from 'viem';
+import type { SignatureVerifier, TypedSignatureVerifier } from './gateway.js';
 
 /**
  * Login signature recovery on worker threads.
@@ -17,9 +17,9 @@ import type { SignatureVerifier } from './gateway.js';
  */
 const WORKER_SOURCE = `
 const { parentPort } = require('node:worker_threads');
-const { verifyMessage } = require('viem');
-parentPort.on('message', ({ id, address, message, signature }) => {
-  verifyMessage({ address, message, signature }).then(
+const { verifyMessage, verifyTypedData } = require('viem');
+parentPort.on('message', ({ id, typed, args }) => {
+  (typed ? verifyTypedData(args) : verifyMessage(args)).then(
     (valid) => parentPort.postMessage({ id, valid }),
     () => parentPort.postMessage({ id, valid: false }),
   );
@@ -47,15 +47,29 @@ export class VerifyPool {
   /** True when `signature` over `message` recovers to `address`. Never throws. */
   readonly verify: SignatureVerifier = (args) => {
     if (this.slots.length === 0) return verifyMessage(args).catch(() => false);
+    return this.post(false, args);
+  };
+
+  /**
+   * True when `signature` over the typed data recovers to `address`. Never
+   * throws. Session grants and every signed move go through here: a move is
+   * one recovery, and a full table makes two a round per seat.
+   */
+  readonly verifyTyped: TypedSignatureVerifier = (args) => {
+    if (this.slots.length === 0) return verifyTypedData(args).catch(() => false);
+    return this.post(true, args);
+  };
+
+  private post(typed: boolean, args: unknown): Promise<boolean> {
     // Least loaded, so one slow batch does not queue behind another.
     let slot = this.slots[0] as Slot;
     for (const candidate of this.slots) if (candidate.pending.size < slot.pending.size) slot = candidate;
     const id = this.nextId++;
     return new Promise<boolean>((resolve) => {
       slot.pending.set(id, resolve);
-      slot.worker.postMessage({ id, ...args });
+      slot.worker.postMessage({ id, typed, args });
     });
-  };
+  }
 
   async close(): Promise<void> {
     this.closing = true;
@@ -91,6 +105,9 @@ export class VerifyPool {
  * RPC. Previously every login made that call, which put one RPC request on
  * the critical path of every connection.
  */
-export function layeredVerifier(local: SignatureVerifier, fallback?: SignatureVerifier): SignatureVerifier {
+export function layeredVerifier<Args>(
+  local: (args: Args) => Promise<boolean>,
+  fallback?: (args: Args) => Promise<boolean>,
+): (args: Args) => Promise<boolean> {
   return async (args) => (await local(args)) || (fallback ? fallback(args) : false);
 }

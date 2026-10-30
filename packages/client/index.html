@@ -52,17 +52,16 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Prompt-free login</h2>
+            <h2>Session key</h2>
             <span id="session-state" class="pill">off</span>
           </div>
           <p class="muted small">
-            Delegate your wallet once (EIP-7702) and this browser gets an expiring key.
-            It signs you back in after every reconnect without a wallet prompt, and does
-            nothing else: it cannot stake, spend or move your winnings.
+            Your wallet signs one grant to a key this browser keeps for a day. The key signs
+            your logins and every move you make, so each move is provably yours and a
+            reconnect needs no wallet prompt. It cannot stake, spend or move your winnings.
           </p>
           <div class="row">
-            <button id="enable-session" class="primary" disabled>Enable prompt-free login</button>
-            <button id="revoke-session" class="ghost hidden">Revoke</button>
+            <button id="forget-session" class="ghost hidden">Forget key</button>
             <span id="session-status" class="muted small">Connect a wallet to set up.</span>
           </div>
         </div>

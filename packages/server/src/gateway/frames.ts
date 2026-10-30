@@ -56,11 +56,37 @@ const integer = (min: number, max: number) => {
 const action = z.custom<ActionValue>(isActionValue, 'unknown action');
 const target = integer(0, 255);
 
+/** Unix seconds, as a grant carries them. */
+const seconds = integer(0, 2 ** 40);
+
+/** Long enough for any real host or origin, short enough to stay well inside a frame. */
+const origin = z.string({ error: 'must be a string' }).max(256, 'is too long');
+
+const grant = z.object(
+  {
+    grant: z.object(
+      {
+        wallet: address,
+        sessionKey: address,
+        domain: origin,
+        uri: origin,
+        chainId: integer(1, Number.MAX_SAFE_INTEGER),
+        issuedAt: seconds,
+        expiresAt: seconds,
+        nonce: bytes32,
+      },
+      { error: 'must be an object' },
+    ),
+    signature,
+  },
+  { error: 'must be an object' },
+);
+
 /** The match and round a move names. */
 const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
 
 const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
-  auth: z.object({ type: z.literal('auth'), address, signature }),
+  auth: z.object({ type: z.literal('auth'), address, signature, grant: grant.optional() }),
   lobbies: z.object({ type: z.literal('lobbies') }),
   practice: z.object({
     type: z.literal('practice'),
@@ -75,10 +101,11 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   commit: z.object({
     type: z.literal('commit'),
     commitment: bytes32,
-    hold: z.object({ action, target, salt: bytes32 }, { error: 'must be an object' }).optional(),
+    signature,
+    hold: z.object({ action, target, salt: bytes32, signature }, { error: 'must be an object' }).optional(),
     ...aim,
   }),
-  reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, ...aim }),
+  reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, signature, ...aim }),
 };
 
 export function parseClientMessage(raw: string): ClientMessage {

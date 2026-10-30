@@ -11,7 +11,7 @@ import type {
 } from '@lms/protocol';
 import type { Net } from './io/net.js';
 import type { Dom } from './ui/dom.js';
-import type { Session } from './wallet/session.js';
+import type { GrantedKey } from './wallet/grant.js';
 import type { Wallet } from './wallet/wallet.js';
 
 /**
@@ -33,8 +33,8 @@ export interface AppState {
   avatarCollections: AvatarCollectionInfo[];
   /** 7702 delegate the account may point at, or null if the server cannot verify one. */
   sessionDelegate: `0x${string}` | null;
-  /** Live session key, if this browser holds one. Signs logins without a prompt. */
-  session: Session | null;
+  /** The key the wallet granted for this login. Signs every commit and reveal. */
+  grantKey: GrantedKey | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeEscrow`. */
@@ -89,7 +89,7 @@ export const app: AppState = {
   escrow: null,
   avatarCollections: [],
   sessionDelegate: null,
-  session: null,
+  grantKey: null,
   zap: null,
   spokes: [],
   inTransit: new Set(),

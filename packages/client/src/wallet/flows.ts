@@ -1,5 +1,4 @@
 import {
-  AUTH_PREFIX,
   chainInfo,
   errorFirstLine,
   type AvatarCollectionInfo,
@@ -8,20 +7,19 @@ import { app, dom, net } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
 import { renderPayWith } from '../screens/lobby.js';
-import { Session } from './session.js';
+import { GrantedKey } from './grant.js';
 import { Wallet } from './wallet.js';
 
 /**
- * Everything the player does with their wallet: connecting, logging in, the
- * session key that makes later logins prompt-free, and the avatar and
- * hub-chain panels that depend on which chain the wallet is on.
+ * Everything the player does with their wallet: connecting, logging in with
+ * the session key it grants, and the avatar and hub-chain panels that depend
+ * on which chain the wallet is on.
  */
 
 export function wireWalletControls(): void {
   dom.connect.onclick = () => void connectWallet();
   dom.mintAvatar.onclick = () => void mintAvatar();
-  dom.enableSession.onclick = () => void enableSession();
-  dom.revokeSession.onclick = () => void revokeSession();
+  dom.forgetSession.onclick = forgetGrant;
 }
 
 async function connectWallet(): Promise<void> {
@@ -31,7 +29,7 @@ async function connectWallet(): Promise<void> {
       Wallet.available() || !devKey
         ? await Wallet.connect()
         : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
-    restoreSession();
+    app.grantKey = null;
     renderHubLabel();
     // The lobby's buttons depend on which chain the wallet turned out to be on.
     renderPayWith();
@@ -44,8 +42,8 @@ async function connectWallet(): Promise<void> {
   }
 }
 
-/** True from sending a session-key login until the server answers it. */
-let sessionLoginPending = false;
+/** True from sending a login under a stored grant until the server answers it. */
+let storedGrantPending = false;
 
 /**
  * The node the dev burner signs through. `?chain=spoke` puts it on the spoke
@@ -61,51 +59,43 @@ export async function authenticate(): Promise<void> {
   const wallet = app.wallet;
   if (!wallet || !app.nonce) return;
 
-  const message = `${AUTH_PREFIX}${app.nonce}`;
   try {
-    // The session key is the whole point of the delegation: reconnects are
-    // routine, and each one would otherwise interrupt the player mid-round.
-    const signature = app.session
-      ? await app.session.signLogin(message)
-      : await wallet.signLogin(app.nonce);
-    sessionLoginPending = app.session !== null;
-    net.send({ type: 'auth', address: wallet.address, signature });
+    // A stored grant logs in with no prompt at all. Only a missing or
+    // expiring one asks the wallet, once, and that one grant then covers
+    // every reconnect and every move until it expires.
+    const stored = GrantedKey.load(wallet.address, app.chainId);
+    const key = stored ?? (await GrantedKey.create(wallet.address, app.chainId, (grant) => wallet.signGrant(grant)));
+    app.grantKey = key;
+    storedGrantPending = stored !== null;
+    const signature = await key.signLogin(app.nonce);
+    net.send({ type: 'auth', address: wallet.address, signature, grant: key.signed });
   } catch (error) {
     console.error('[auth]', error);
-    if (app.session) {
-      dropSession();
-      return;
-    }
     toast(`Login signature failed: ${errorFirstLine(error)}`);
+  } finally {
+    renderSessionPanel();
   }
 }
 
 export function onAuthed(): void {
-  sessionLoginPending = false;
+  storedGrantPending = false;
 }
 
 /**
- * Called when the server refuses a login signature. During a session-key login
- * that means the server no longer accepts the key: the account was
- * re-delegated, the key revoked, or the chain behind it reset (a redeployed
- * fork puts the delegate at the same address, so `Session.load` cannot tell).
- * Returns true when it handled the error by retrying with the wallet.
+ * Called when the server refuses a login. Under a stored grant that usually
+ * means the grant itself: the server's chain or origins changed, or its clock
+ * disagrees about expiry. Drops it and asks the wallet for a new one, once.
+ * Returns true when it handled the error that way.
  */
 export function onLoginRejected(): boolean {
-  if (!sessionLoginPending) return false;
-  sessionLoginPending = false;
-  dropSession();
+  if (!storedGrantPending) return false;
+  storedGrantPending = false;
+  const wallet = app.wallet;
+  if (wallet) GrantedKey.forget(wallet.address, app.chainId);
+  app.grantKey = null;
+  toast('Session key rejected — asking your wallet for a new one.');
   void authenticate();
   return true;
-}
-
-/** A key the chain no longer honours is worse than none: drop it so logins go through the wallet. */
-function dropSession(): void {
-  const wallet = app.wallet;
-  app.session = null;
-  if (wallet) Session.forget(wallet.address, wallet.chainId);
-  renderSessionPanel();
-  toast('Session key rejected — falling back to your wallet.');
 }
 
 /**
@@ -187,108 +177,34 @@ async function mintAvatar(): Promise<void> {
 
 // ------------------------------------------------------------------ sessions
 
-/** How long a granted key lasts. Long enough to cover a sitting, not a month. */
-const SESSION_HOURS = 12;
-
 export function renderSessionPanel(): void {
-  const wallet = app.wallet;
-  const active = app.session;
+  const key = app.grantKey;
+  dom.sessionState.textContent = key ? 'on' : 'off';
+  dom.sessionState.classList.toggle('chain-chip', Boolean(key));
+  dom.forgetSession.classList.toggle('hidden', !key);
 
-  dom.sessionState.textContent = active ? 'on' : 'off';
-  dom.sessionState.classList.toggle('chain-chip', Boolean(active));
-  dom.revokeSession.classList.toggle('hidden', !active);
-
-  if (!wallet) {
-    dom.enableSession.disabled = true;
+  if (!app.wallet) {
     dom.sessionStatus.textContent = 'Connect a wallet to set up.';
     return;
   }
-
-  if (!app.sessionDelegate) {
-    dom.enableSession.disabled = true;
-    dom.sessionStatus.textContent =
-      'This server has no session delegate configured, so logins use your wallet.';
+  if (!key) {
+    dom.sessionStatus.textContent = 'Your wallet is asked for a grant when you log in.';
     return;
   }
-
-  // The server checks a session login against the hub, so the delegation has
-  // to live there: one granted on a spoke would never be honoured.
-  if (wallet.chainId !== app.chainId && !active) {
-    dom.enableSession.disabled = true;
-    dom.sessionStatus.textContent = `Session keys are set up on ${chainInfo(app.chainId).name}. Logins here use your wallet.`;
-    return;
-  }
-
-  if (active) {
-    dom.enableSession.disabled = true;
-    const hours = Math.floor(active.secondsLeft() / 3600);
-    const minutes = Math.floor((active.secondsLeft() % 3600) / 60);
-    dom.sessionStatus.textContent =
-      `Signing in without prompts · expires in ${hours}h ${minutes}m · logins only, it cannot spend`;
-    return;
-  }
-
-  dom.enableSession.disabled = false;
-  dom.sessionStatus.textContent =
-    `One signature now, then ${SESSION_HOURS}h of prompt-free reconnects. ` +
-    'Stakes still go through your wallet.';
+  const left = Math.max(0, key.grant.expiresAt - Math.floor(Date.now() / 1000));
+  const hours = Math.floor(left / 3600);
+  const minutes = Math.floor((left % 3600) / 60);
+  dom.sessionStatus.textContent = `Signing logins and moves · expires in ${hours}h ${minutes}m · it cannot spend`;
 }
 
-/** Picks up a key this browser already holds for the connected account. */
-function restoreSession(): void {
+/**
+ * Drops the key from this browser. The grant itself cannot be revoked, only
+ * outlived: a copy of the key elsewhere stays usable until it expires.
+ */
+function forgetGrant(): void {
   const wallet = app.wallet;
-  if (!wallet || !app.sessionDelegate) {
-    app.session = null;
-    return;
-  }
-  app.session = Session.load(wallet.address, wallet.chainId, app.sessionDelegate);
-}
-
-async function enableSession(): Promise<void> {
-  const wallet = app.wallet;
-  const delegate = app.sessionDelegate;
-  if (!wallet || !delegate) return;
-
-  const validUntil = Math.floor(Date.now() / 1000) + SESSION_HOURS * 3600;
-  const session = Session.create(wallet.address, wallet.chainId, delegate, validUntil);
-
-  try {
-    dom.enableSession.disabled = true;
-    dom.sessionStatus.textContent = 'Confirm the delegation in your wallet…';
-
-    const hash = await wallet.grantSession(delegate, session.address, validUntil);
-    await wallet.waitFor(hash);
-
-    // Stored only now: a key saved before the grant confirmed would fail every
-    // login while a perfectly good wallet sat unused next to it.
-    session.save();
-    app.session = session;
-    toast('Prompt-free logins are on. Reconnects will not prompt your wallet.');
-  } catch (error) {
-    toast(errorFirstLine(error));
-  } finally {
-    renderSessionPanel();
-  }
-}
-
-async function revokeSession(): Promise<void> {
-  const wallet = app.wallet;
-  const session = app.session;
-  if (!wallet || !session) return;
-
-  try {
-    dom.revokeSession.disabled = true;
-    const hash = await wallet.revokeSession(session.address);
-    await wallet.waitFor(hash);
-    toast('Session key revoked.');
-  } catch (error) {
-    toast(errorFirstLine(error));
-  } finally {
-    // Forgotten locally either way: a key the player asked to be rid of should
-    // not keep being offered just because the transaction failed.
-    Session.forget(wallet.address, wallet.chainId);
-    app.session = null;
-    dom.revokeSession.disabled = false;
-    renderSessionPanel();
-  }
+  if (wallet) GrantedKey.forget(wallet.address, app.chainId);
+  app.grantKey = null;
+  renderSessionPanel();
+  toast('Session key forgotten. Your next login asks your wallet for a new one.');
 }

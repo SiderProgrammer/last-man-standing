@@ -4,6 +4,7 @@ import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
 import type { Rules } from './game/rules.js';
+import type { SeatProof, SignedGrant } from './chain/moves.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
@@ -41,8 +42,12 @@ export type RequestErrorCode =
   | 'RATE_LIMITED'
   /** Anything but `auth` before the socket has logged in. */
   | 'NOT_AUTHENTICATED'
-  /** The login signature does not recover to the claimed address. */
+  /** The login signature does not recover to the claimed address, or a move's to the session key. */
   | 'BAD_SIGNATURE'
+  /** A session grant that is expired, for another chain or origin, or not signed by its wallet. */
+  | 'BAD_GRANT'
+  /** A move from a socket that logged in without a session grant, so nothing could sign it. */
+  | 'NO_GRANT'
   | 'NOT_FOUND'
   /** The caller may not see this match. */
   | 'FORBIDDEN'
@@ -64,22 +69,45 @@ export type ErrorCode = MatchErrorCode | RequestErrorCode;
 
 /** Discriminated wire protocol between the PixiJS client and the game server. */
 export type ClientMessage =
-  | { type: 'auth'; address: `0x${string}`; signature: `0x${string}` }
+  | {
+      type: 'auth';
+      address: `0x${string}`;
+      /**
+       * Over `AUTH_PREFIX` and the nonce. With a `grant`, by the grant's
+       * session key; without one, by the wallet itself.
+       */
+      signature: `0x${string}`;
+      /**
+       * The wallet's grant to a browser-held key. Required to play: the key
+       * signs every commit and reveal. A login without one can only watch.
+       */
+      grant?: SignedGrant;
+    }
   | { type: 'lobbies' }
   | { type: 'practice'; bots?: number; difficulty?: BotDifficulty }
   | { type: 'watch'; matchId: `0x${string}` }
   | ({
       type: 'commit';
       commitment: `0x${string}`;
+      /** The session key over `Commit{matchId, round, seat, commitment}`. */
+      signature: `0x${string}`;
       /**
        * Opt-in: the move behind the commitment, for the server to reveal on
        * the player's behalf if their socket drops before the reveal window.
        * It must open `commitment` or the commit is refused. The cost is that
        * the server learns the move a phase earlier than it otherwise would.
+       * Signed as the reveal it stands in for.
        */
-      hold?: { action: ActionValue; target: number; salt: `0x${string}` };
+      hold?: { action: ActionValue; target: number; salt: `0x${string}`; signature: `0x${string}` };
     } & MoveAim)
-  | ({ type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` } & MoveAim)
+  | ({
+      type: 'reveal';
+      action: ActionValue;
+      target: number;
+      salt: `0x${string}`;
+      /** The session key over `Reveal{matchId, round, seat, action, target, salt}`. */
+      signature: `0x${string}`;
+    } & MoveAim)
   /**
    * Asks for a written analysis of a finished match, answered with
    * `analysis.done` or `analysis.error`. Written from the asking wallet's
@@ -153,6 +181,8 @@ export type ServerMessage =
   | {
       type: 'round';
       record: RoundRecord;
+      /** The signatures behind every seat's commit and reveal this round. */
+      proofs: SeatProof[];
       lines: string[];
       /**
        * How long the server holds the next commit clock while clients replay

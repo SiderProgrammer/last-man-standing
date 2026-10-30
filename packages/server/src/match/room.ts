@@ -11,7 +11,9 @@ import {
   type PublicMatchState,
   type RoundRecord,
   type SealedMove,
+  type SeatProof,
   type ServerMessage,
+  type SignedGrant,
 } from '@lms/protocol';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
@@ -21,6 +23,17 @@ import { RequestError } from '../errors.js';
 export interface Client {
   address: `0x${string}` | null;
   send(message: ServerMessage): void;
+}
+
+/**
+ * The signatures behind a move from a player, already checked by the gateway
+ * against the grant's session key.
+ */
+export interface MoveProof {
+  grant: SignedGrant;
+  signature: `0x${string}`;
+  /** With a held commit: the signature over the reveal it stands in for. */
+  holdSignature?: `0x${string}`;
 }
 
 /** Called once a match reaches a signable result. */
@@ -72,6 +85,15 @@ export class Room {
   private settled = false;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
+  /** The reveal signature that came with each held move, by seat. */
+  private readonly heldSignatures = new Map<number, `0x${string}`>();
+  /** This round's commit and reveal signatures, by seat. House bots sign nothing. */
+  private readonly commitSignatures = new Map<number, `0x${string}`>();
+  private readonly revealSignatures = new Map<number, `0x${string}`>();
+  /** Every round's signatures, in round order, alongside `match.history`. */
+  private readonly proofLog: SeatProof[][] = [];
+  /** Every grant a seat played under, by session key. A player may reconnect with a new one mid-match. */
+  private readonly grantLog = new Map<string, SignedGrant>();
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
     this.match = new Match(setup);
@@ -102,6 +124,16 @@ export class Room {
 
   get deadline(): number {
     return this.deadlineAt;
+  }
+
+  /** The signatures behind each resolved round, indexed like `match.history`. */
+  get proofs(): readonly (readonly SeatProof[])[] {
+    return this.proofLog;
+  }
+
+  /** Every grant a seat's moves were signed under. */
+  get grants(): SignedGrant[] {
+    return [...this.grantLog.values()];
   }
 
   seatOf(address: `0x${string}`): number | null {
@@ -156,6 +188,7 @@ export class Room {
     now: number = Date.now(),
     hold?: SealedMove,
     aim?: MoveAim,
+    proof?: MoveProof,
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
@@ -168,16 +201,31 @@ export class Room {
     }
     this.match.submitCommit(seat, commitment);
     if (hold) this.held.set(seat, hold);
+    if (proof) {
+      this.recordGrant(proof.grant);
+      this.commitSignatures.set(seat, proof.signature);
+      if (hold && proof.holdSignature) this.heldSignatures.set(seat, proof.holdSignature);
+    }
     // During the hold the commit is kept but the fast path waits: `tick` opens
     // the reveal once the replay has finished.
     if (this.match.allCommitted() && now >= this.replayUntil) this.openReveal(now);
     else this.broadcastState();
   }
 
-  submitReveal(address: `0x${string}`, move: SealedMove, now: number = Date.now(), aim?: MoveAim): void {
+  submitReveal(
+    address: `0x${string}`,
+    move: SealedMove,
+    now: number = Date.now(),
+    aim?: MoveAim,
+    proof?: MoveProof,
+  ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
     this.match.submitReveal(seat, move);
+    if (proof) {
+      this.recordGrant(proof.grant);
+      this.revealSignatures.set(seat, proof.signature);
+    }
     if (this.match.allRevealed()) this.resolveRound(now);
     else this.broadcastState();
   }
@@ -215,6 +263,10 @@ export class Room {
     }
   }
 
+  private recordGrant(grant: SignedGrant): void {
+    this.grantLog.set(addressKey(grant.grant.sessionKey), grant);
+  }
+
   private requireSeat(address: `0x${string}`): number {
     const seat = this.seatOf(address);
     if (seat === null) throw new RequestError('NOT_SEATED', 'you are not seated in this match');
@@ -232,11 +284,14 @@ export class Room {
     for (const [seat, move] of this.held) {
       try {
         this.match.submitReveal(seat, move);
+        const signature = this.heldSignatures.get(seat);
+        if (signature) this.revealSignatures.set(seat, signature);
       } catch (error) {
         console.warn(`[room] held move for seat ${seat} refused; it sits the round out:`, errorMessage(error));
       }
     }
     this.held.clear();
+    this.heldSignatures.clear();
 
     if (this.match.allRevealed()) {
       this.resolveRound(now);
@@ -251,10 +306,18 @@ export class Room {
 
     const record = this.match.resolve();
     const replayMs = this.options.replayMs ?? 0;
+    const proofs: SeatProof[] = record.moves.map((move) => ({
+      index: move.index,
+      commitSignature: this.commitSignatures.get(move.index) ?? null,
+      revealSignature: move.revealed ? (this.revealSignatures.get(move.index) ?? null) : null,
+    }));
+    this.proofLog.push(proofs);
+    this.commitSignatures.clear();
+    this.revealSignatures.clear();
 
     // One object for the whole table: the gateway serialises a shared message
     // once, however many sockets it goes to.
-    const message = { type: 'round', record, lines: describeRound(record), replayMs } as const;
+    const message = { type: 'round', record, proofs, lines: describeRound(record), replayMs } as const;
     for (const client of this.clients) client.send(message);
 
     // Settlement is never held for a cosmetic: the client defers showing the

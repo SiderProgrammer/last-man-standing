@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
+  Action,
   DEFAULT_RULES,
+  grantTypedData,
   type ClientMessage,
   type LobbyInfo,
   type ServerMessage,
@@ -20,6 +22,7 @@ import type {
   Socket,
 } from '@lms/server';
 import { lastOfType } from './helpers.js';
+import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
 
@@ -554,4 +557,112 @@ describe('gateway match history', () => {
     await socket.deliver({ type: 'history' });
     expect(socket.last('error')?.code).toBe('UNAVAILABLE');
   });
+});
+
+describe('gateway session grants and signed moves', () => {
+  const player = new TestPlayer('gateway', 11155111);
+  const nonceOf = (socket: FakeSocket) => socket.last('hello')?.nonce ?? '';
+  const SALT = `0x${'5a'.repeat(32)}` as const;
+
+  /** Logs `player` in with a grant and opens a practice room; returns the seat's place in round 1. */
+  async function seated() {
+    const { socket, lobby } = harness();
+    await socket.deliver(await player.auth(nonceOf(socket)));
+    await socket.deliver({ type: 'practice', bots: 3 });
+    const state = socket.last('state')?.state;
+    if (!state) throw new Error('no match state');
+    return { socket, lobby, place: { matchId: state.matchId, round: state.round, seat: 0 } };
+  }
+
+  it('logs in with a grant from the wallet and the nonce signed by its key', async () => {
+    const { socket } = harness();
+    await socket.deliver(await player.auth(nonceOf(socket)));
+    expect(socket.last('authed')?.address).toBe(player.address);
+  });
+
+  it('refuses a nonce signed by the wallet instead of the granted key', async () => {
+    const { socket } = harness();
+    const signature = await player.wallet.signMessage({ message: `${AUTH_PREFIX}${nonceOf(socket)}` });
+    await socket.deliver({ type: 'auth', address: player.address, signature, grant: await player.grant() });
+    expect(socket.last('authed')).toBeUndefined();
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
+  });
+
+  it('refuses a grant that is expired, for another chain, or for another wallet', async () => {
+    const cases = [
+      { grant: await player.grant(0, 0), error: /expired/ },
+      { grant: await player.grant(0, 3_600, { chainId: 1 }), error: /chain 1/ },
+      { grant: await player.grant(0, 30 * 24 * 3_600), error: /longer than a week/ },
+      { grant: await player.grant(0, 3_600, { domain: 'evil.test' }), error: /domain/ },
+      { grant: await new TestPlayer('someone else', 11155111).grant(), error: /another wallet/ },
+    ];
+    for (const { grant, error } of cases) {
+      const { socket } = harness();
+      await socket.deliver(await player.auth(nonceOf(socket), grant));
+      expect(socket.last('authed')).toBeUndefined();
+      expect(socket.last('error')).toMatchObject({ code: 'BAD_GRANT', message: expect.stringMatching(error) });
+    }
+  });
+
+  it('refuses a grant its wallet did not sign', async () => {
+    const { socket } = harness();
+    const forged = await player.grant();
+    forged.signature = await player.key.signTypedData(grantTypedData(forged.grant));
+    await socket.deliver(await player.auth(nonceOf(socket), forged));
+    expect(socket.last('error')).toMatchObject({ code: 'BAD_GRANT', message: expect.stringMatching(/not signed/) });
+  });
+
+  it('lets a login without a grant watch but not play', async () => {
+    const { socket } = harness();
+    await login(socket);
+    await socket.deliver({ type: 'practice', bots: 3 });
+    const state = socket.last('state')?.state;
+    if (!state) throw new Error('no match state');
+    const place = { matchId: state.matchId, round: state.round, seat: 0 };
+    await socket.deliver(await new TestPlayer('anyone', 11155111).commit(place, { action: 2, target: 0, salt: SALT }));
+    expect(socket.last('error')?.code).toBe('NO_GRANT');
+  });
+
+  it('takes a commit and reveal signed by the session key, and publishes the signatures', async () => {
+    const { socket, lobby } = await seated();
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    await socket.deliver(await player.commit(place(socket), move));
+    await socket.deliver(await player.reveal(place(socket), move));
+
+    expect(socket.last('error')).toBeUndefined();
+    const round = socket.last('round');
+    expect(round?.proofs[0]).toMatchObject({ index: 0 });
+    expect(round?.proofs[0]?.commitSignature).toMatch(/^0x[0-9a-f]{130}$/);
+    expect(round?.proofs[0]?.revealSignature).toMatch(/^0x[0-9a-f]{130}$/);
+    // House bots sign nothing.
+    expect(round?.proofs[1]).toEqual({ index: 1, commitSignature: null, revealSignature: null });
+    expect(lobby.list()[0]?.grants.map((grant) => grant.grant.sessionKey)).toEqual([player.key.address]);
+  });
+
+  it('refuses a commit the session key did not sign, or signed for another seat', async () => {
+    const { socket } = await seated();
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    const stranger = new TestPlayer('stranger', 11155111);
+    await socket.deliver(await stranger.commit(place(socket), move));
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
+
+    await socket.deliver(await player.commit({ ...place(socket), seat: 1 }, move));
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
+    expect(socket.last('state')?.state.committed).not.toContain(0);
+  });
+
+  it('refuses a held move whose reveal signature does not match it', async () => {
+    const { socket } = await seated();
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    const commit = await player.commit(place(socket), move, true);
+    if (commit.type !== 'commit' || !commit.hold) throw new Error('expected a held commit');
+    await socket.deliver({ ...commit, hold: { ...commit.hold, action: Action.Charge } });
+    expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
+  });
+
+  function place(socket: FakeSocket) {
+    const state = socket.last('state')?.state;
+    if (!state) throw new Error('no match state');
+    return { matchId: state.matchId, round: state.round, seat: 0 };
+  }
 });
