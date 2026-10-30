@@ -2,7 +2,10 @@ import type { Address } from 'viem';
 import { errorMessage, gameEscrowAbi } from '@lms/protocol';
 import { readClient, signerClients } from './viem.js';
 
-/** A match's on-chain state, as `ChainBridge` needs it. */
+/**
+ * A match's on-chain state, as `ChainBridge` needs it: the escrow's `MatchInfo`
+ * joined with the terms record the match was opened on.
+ */
 export interface EscrowMatch {
   stake: bigint;
   minSeats: number;
@@ -13,10 +16,11 @@ export interface EscrowMatch {
   /** Digest of the rule set the match was created under; see `hashRules`. */
   rulesHash: `0x${string}`;
   seed: `0x${string}`;
-  /** Unix seconds after which a live match with no result may be cancelled. */
-  settleDeadline: bigint;
-  /** Unix seconds after which a proposed result may be finalised. */
-  challengeDeadline: bigint;
+  /**
+   * Unix seconds when the current phase ends: the seed's timeout while pending,
+   * the settlement deadline while live, the challenge window while proposed.
+   */
+  deadline: bigint;
 }
 
 export interface MatchCreatedLog {
@@ -109,8 +113,23 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
       );
     },
 
-    getMatch: (matchId) =>
-      client.readContract({ address: escrow, abi: gameEscrowAbi, functionName: 'getMatch', args: [matchId] }),
+    async getMatch(matchId) {
+      const [info, terms] = await Promise.all([
+        client.readContract({ address: escrow, abi: gameEscrowAbi, functionName: 'getMatch', args: [matchId] }),
+        client.readContract({ address: escrow, abi: gameEscrowAbi, functionName: 'getMatchTerms', args: [matchId] }),
+      ]);
+      return {
+        stake: info.stake,
+        minSeats: terms.minSeats,
+        maxSeats: info.maxSeats,
+        seatCount: info.seatCount,
+        status: info.status,
+        joinDeadline: BigInt(info.joinDeadline),
+        rulesHash: terms.rulesHash,
+        seed: info.seed,
+        deadline: BigInt(info.deadline),
+      };
+    },
 
     async getSeats(matchId) {
       return client.readContract({

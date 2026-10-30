@@ -37,7 +37,7 @@ export type MatchErrorCode =
 export type RequestErrorCode =
   /** The frame is not a well-formed message, or is too large. */
   | 'MALFORMED_FRAME'
-  /** Too many messages, logins or payout requests: try again shortly. */
+  /** Too many messages or logins: try again shortly. */
   | 'RATE_LIMITED'
   /** Anything but `auth` before the socket has logged in. */
   | 'NOT_AUTHENTICATED'
@@ -81,12 +81,6 @@ export type ClientMessage =
     } & MoveAim)
   | ({ type: 'reveal'; action: ActionValue; target: number; salt: `0x${string}` } & MoveAim)
   /**
-   * Asks the server to push the authenticated account's escrow balance to it,
-   * paying the gas. `GameEscrow.withdrawFor` only ever pays the account
-   * itself, so this needs no signature beyond the login.
-   */
-  | { type: 'collect' }
-  /**
    * Asks for a written analysis of a finished match, answered with
    * `analysis.done` or `analysis.error`. Written from the asking wallet's
    * seat if it had one.
@@ -129,8 +123,6 @@ export type ServerMessage =
        * Lives on the hub, like the escrow it pays into.
        */
       zap: ZapInfo | null;
-      /** True when the server will pay the gas to push payouts (`collect`). */
-      collect: boolean;
       /**
        * The staking vault and governor, or null when this server
        * has none configured. Both live on the hub, like the escrow whose fees
@@ -189,8 +181,6 @@ export type ServerMessage =
    * Practice matches never settle and never get one.
    */
   | { type: 'settled'; matchId: `0x${string}`; tx: `0x${string}` | null }
-  /** Transaction hash of a payout the server pushed in answer to `collect`. */
-  | { type: 'relayed'; hash: `0x${string}` }
   /**
    * What became of one of this player's cross-chain joins on the hub: seated,
    * refunded there, or parked to be retried. Sent only to that player.

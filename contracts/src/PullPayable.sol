@@ -34,7 +34,16 @@ abstract contract PullPayable is ReentrancyGuardTransient {
     /// @notice Sum of every unwithdrawn balance.
     uint256 public totalOwed;
 
+    /// @notice Smallest balance `withdrawFor` pays out.
+    /// @dev Whoever calls `withdrawFor` for someone else pays the gas, so
+    ///      dust would let anyone drain a relayer that pays it. About 300 times
+    ///      the gas of the call on Base, and below any refund or prize at the
+    ///      minimum stake. `withdraw` has no minimum, so no balance is stuck.
+    uint256 public constant MIN_WITHDRAW_FOR = 0.0001 ether;
+
     event Withdrawn(address indexed account, address indexed to, uint256 amount);
+
+    error BelowMinimumWithdrawal(uint256 amount, uint256 minimum);
 
     /// @notice Withdraws the caller's balance to `to`.
     function withdraw(address to) external nonReentrant returns (uint256 amount) {
@@ -43,11 +52,13 @@ abstract contract PullPayable is ReentrancyGuardTransient {
 
     /// @notice Pays `account`'s balance to `account` itself.
     /// @dev Permissionless, because the recipient is never the caller's choice:
-    ///      the worst anyone can do is pay a player early. That lets a relayer
-    ///      or keeper push a payout to a player who holds no gas on this chain,
-    ///      and it means a session key never needs `withdraw`, whose free `to`
-    ///      would let a leaked key send the whole balance anywhere.
+    ///      the worst anyone can do is pay a player early. That is what a
+    ///      session's gasless withdrawal calls, and it means a session key never
+    ///      needs `withdraw`, whose free `to` would let a leaked key send the
+    ///      whole balance anywhere.
     function withdrawFor(address account) external nonReentrant returns (uint256 amount) {
+        uint256 owed = withdrawable[account];
+        if (owed != 0 && owed < MIN_WITHDRAW_FOR) revert BelowMinimumWithdrawal(owed, MIN_WITHDRAW_FOR);
         amount = _payOut(account, account);
     }
 

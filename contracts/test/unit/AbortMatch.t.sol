@@ -66,14 +66,20 @@ contract AbortMatchTest is Fixtures {
         escrow.abortMatch(matchId, sigs);
     }
 
-    function test_aRemovedAttestorDoesNotCount() public {
-        bytes32 matchId = _liveMatch();
+    /// @dev A match keeps the attestor set it locked under: removing a key
+    ///      changes only the matches that lock afterwards.
+    function test_aRemovedAttestorCountsOnlyForMatchesLockedBefore() public {
+        bytes32 before = _liveMatch();
         vm.prank(owner);
-        config.setAttestor(attestorB, false);
-        bytes memory sigs = _abortSignatures(_twoAttestors(), matchId);
+        config.setAttestorSet(_attestors(attestorA, attestorC, makeAddr("new")), 2);
+        bytes32 afterwards = _liveMatch();
 
+        escrow.abortMatch(before, _abortSignatures(_twoAttestors(), before));
+        assertEq(uint8(escrow.getMatch(before).status), uint8(GameEscrow.MatchStatus.Cancelled));
+
+        bytes memory sigs = _abortSignatures(_twoAttestors(), afterwards);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, attestorB));
-        escrow.abortMatch(matchId, sigs);
+        escrow.abortMatch(afterwards, sigs);
     }
 
     /// @dev Signatures over one match recover to strangers against another.

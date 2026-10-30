@@ -3,9 +3,11 @@ pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {SeatSetLib} from "../../src/libraries/SeatSetLib.sol";
+import {PullPayable} from "../../src/PullPayable.sol";
+import {IRandomnessOracle, IRandomnessConsumer} from "../../src/interfaces/IRandomnessOracle.sol";
 import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
@@ -13,14 +15,41 @@ contract GameEscrowTest is Fixtures {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
         GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
+        GameEscrow.Terms memory terms = escrow.getMatchTerms(matchId);
 
         assertEq(info.stake, STAKE);
-        assertEq(info.feeBps, 500);
-        assertEq(info.minSeats, 4);
         assertEq(info.maxSeats, 4);
         assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Open));
-        assertEq(info.rulesHash, config.rulesHash());
+        assertEq(info.joinDeadline, block.timestamp + 1 hours);
+        assertEq(terms.feeBps, 500);
+        assertEq(terms.minSeats, 4);
+        assertEq(terms.treasury, treasury);
+        assertEq(terms.rulesHash, config.rulesHash());
+        assertEq(terms.challengeWindow, CHALLENGE_WINDOW);
         assertEq(escrow.getPayoutSchedule(matchId)[0], 10_000);
+    }
+
+    /// @dev Lobbies on the same terms share one stored record; a governance
+    ///      change makes the next lobby store a new one.
+    function test_createMatch_sharesTermsUntilTheyChange() public {
+        vm.startPrank(players[0]);
+        bytes32 first = escrow.createMatch(STAKE, 4);
+        bytes32 second = escrow.createMatch(STAKE * 2, 6);
+        vm.stopPrank();
+        assertEq(escrow.getMatch(first).termsId, 1);
+        assertEq(escrow.getMatch(second).termsId, 1);
+        assertEq(escrow.termsCount(), 1);
+
+        ProtocolConfig.Params memory next = config.getParams();
+        next.feeBps = 100;
+        vm.prank(owner);
+        config.setParams(next);
+
+        vm.prank(players[0]);
+        bytes32 third = escrow.createMatch(STAKE, 4);
+        assertEq(escrow.getMatch(third).termsId, 2);
+        assertEq(escrow.getMatchTerms(third).feeBps, 100);
+        assertEq(escrow.getMatchTerms(first).feeBps, 500);
     }
 
     function test_createMatch_rejectsStakeOutOfRange() public {
@@ -92,9 +121,8 @@ contract GameEscrowTest is Fixtures {
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.IncorrectStake.selector, STAKE / 2, STAKE));
         escrow.joinFor{value: STAKE / 2}(matchId, players[1]);
 
-        vm.prank(owner);
-        escrow.pause();
-        vm.expectRevert(GameEscrow.Paused.selector);
+        _pause();
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
         escrow.joinFor{value: STAKE}(matchId, players[1]);
     }
 
@@ -143,6 +171,42 @@ contract GameEscrowTest is Fixtures {
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
     }
 
+    /// @dev A lobby that reached `minSeats` should start, so past its join
+    ///      deadline it can only be locked for a grace period. Otherwise a
+    ///      seated player could race the lock with a cancel.
+    function test_cancel_aQuorateLobbyWaitsOutTheLockGrace() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 6);
+        for (uint256 i = 0; i < 4; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+        uint40 joinDeadline = escrow.getMatch(matchId).joinDeadline;
+
+        vm.warp(joinDeadline + 10 minutes - 1);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.CannotCancelYet.selector, matchId));
+        escrow.cancelMatch(matchId);
+
+        vm.warp(joinDeadline + 10 minutes);
+        escrow.cancelMatch(matchId);
+        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Cancelled));
+    }
+
+    function test_cancel_aLockedLobbyWaitsOutTheRandomnessTimeout() public {
+        bytes32 matchId = _createAndFill(4);
+        escrow.lockMatch(matchId);
+        uint40 deadline = escrow.getMatch(matchId).deadline;
+        assertEq(deadline, block.timestamp + 1 hours);
+
+        vm.warp(deadline - 1);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.CannotCancelYet.selector, matchId));
+        escrow.cancelMatch(matchId);
+
+        vm.warp(deadline);
+        escrow.cancelMatch(matchId);
+        assertEq(escrow.withdrawable(players[0]), STAKE);
+    }
+
     function test_settle_creditsWinnerAndTreasury() public {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x51)));
@@ -151,15 +215,13 @@ contract GameEscrowTest is Fixtures {
         _propose(matchId, ranking);
         GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
         assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Proposed));
-        assertEq(info.challengeDeadline, block.timestamp + CHALLENGE_WINDOW);
+        assertEq(info.deadline, block.timestamp + CHALLENGE_WINDOW);
         // Nothing is paid while the result can still be vetoed.
         assertEq(escrow.withdrawable(ranking[0]), 0);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.challengeDeadline)
-        );
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowOpen.selector, info.deadline));
         escrow.finalize(matchId, ranking);
-        vm.warp(info.challengeDeadline);
+        vm.warp(info.deadline);
         escrow.finalize(matchId, ranking);
 
         info = escrow.getMatch(matchId);
@@ -199,7 +261,7 @@ contract GameEscrowTest is Fixtures {
         shuffled[2] = ranking[2];
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
-        vm.expectRevert(SeatSetLib.NotAPermutation.selector);
+        vm.expectRevert(GameEscrow.NotAPermutation.selector);
         escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
     }
 
@@ -245,6 +307,25 @@ contract GameEscrowTest is Fixtures {
         assertEq(relayer.balance, 0);
         assertEq(escrow.withdrawable(ranking[0]), 0);
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    /// @dev Dust is the player's own to withdraw: whoever calls `withdrawFor`
+    ///      pays its gas, so it refuses a balance below the minimum.
+    function test_withdrawFor_refusesDust_butWithdrawPaysIt() public {
+        address dusty = makeAddr("dusty");
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        bytes32 peer = config.peerFor(421_614);
+        uint256 dust = escrow.MIN_WITHDRAW_FOR() - 1;
+        // A wrong-stake cross-chain join is credited back as is.
+        messenger.deliver{value: dust}(address(escrow), 421_614, peer, abi.encode(matchId, dusty), dust);
+        assertEq(escrow.withdrawable(dusty), dust);
+
+        vm.expectRevert(abi.encodeWithSelector(PullPayable.BelowMinimumWithdrawal.selector, dust, dust + 1));
+        escrow.withdrawFor(dusty);
+
+        vm.prank(dusty);
+        assertEq(escrow.withdraw(dusty), dust);
     }
 
     function test_withdrawFor_revertsOnEmptyBalance() public {
@@ -313,8 +394,7 @@ contract GameEscrowTest is Fixtures {
     function test_crossChainJoin_refundsWhilePaused() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        vm.prank(owner);
-        escrow.pause();
+        _pause();
         _assertRefunded(matchId, makeAddr("remote"), STAKE, GameEscrow.JoinFailure.Paused);
 
         // The refund is an ordinary balance: withdrawable even while paused.
@@ -366,50 +446,15 @@ contract GameEscrowTest is Fixtures {
         _lockAndSeed(matchId, bytes32(uint256(6)));
         address[] memory ranking = _settleAndFinalize(matchId);
 
-        vm.prank(owner);
-        escrow.pause();
+        _pause();
 
         vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.Paused.selector);
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
         escrow.createMatch(STAKE, 4);
 
         vm.prank(ranking[0]);
         escrow.withdraw(ranking[0]);
         assertEq(escrow.withdrawable(ranking[0]), 0);
-    }
-
-    function test_pause_guardianCanPauseButOnlyGovernanceUnpauses() public {
-        address guardian = makeAddr("guardian");
-        vm.prank(owner);
-        config.setGuardian(guardian);
-
-        vm.prank(guardian);
-        escrow.pause();
-        assertTrue(escrow.paused());
-
-        vm.prank(guardian);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        escrow.unpause();
-
-        vm.prank(owner);
-        escrow.unpause();
-        assertFalse(escrow.paused());
-
-        vm.prank(owner);
-        escrow.pause();
-        assertTrue(escrow.paused());
-    }
-
-    function test_pause_rejectsEveryoneElse() public {
-        vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.NotGuardian.selector);
-        escrow.pause();
-
-        vm.prank(owner);
-        escrow.pause();
-        vm.prank(players[0]);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        escrow.unpause();
     }
 
     function test_cancel_liveMatchAfterDeadline() public {
@@ -428,9 +473,57 @@ contract GameEscrowTest is Fixtures {
 
     function test_fulfillRandomness_rejectsNonOracle() public {
         bytes32 matchId = _createAndFill(4);
-        bytes32 requestId = escrow.lockMatch(matchId);
+        escrow.lockMatch(matchId);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotOracle.selector, address(this)));
-        escrow.fulfillRandomness(requestId, bytes32(uint256(1)));
+        escrow.fulfillRandomness(matchId, bytes32(uint256(1)));
+    }
+
+    /// @dev The request is complete before the oracle is called, so an oracle
+    ///      that answers inside `requestRandomness` seeds the match.
+    function test_lockMatch_acceptsAnAnswerInsideTheRequest() public {
+        bytes32 matchId = _createAndFill(4);
+        InstantOracle instant = new InstantOracle();
+        vm.prank(owner);
+        config.setRandomnessOracle(address(instant));
+
+        escrow.lockMatch(matchId);
+        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
+    }
+
+    /// @dev The oracle a match asked is the one that answers it, even after
+    ///      governance points new matches at another.
+    function test_fulfillRandomness_comesFromTheOracleTheMatchAsked() public {
+        bytes32 matchId = _createAndFill(4);
+        bytes32 requestId = escrow.lockMatch(matchId);
+
+        InstantOracle replacement = new InstantOracle();
+        vm.prank(owner);
+        config.setRandomnessOracle(address(replacement));
+
+        vm.prank(address(replacement));
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotOracle.selector, address(replacement)));
+        escrow.fulfillRandomness(matchId, bytes32(uint256(1)));
+
+        oracle.fulfill(requestId, bytes32(uint256(1)));
+        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
+        assertEq(escrow.getMatch(matchId).oracle, address(oracle));
+    }
+
+    function test_fulfillRandomness_rejectsASecondAnswer() public {
+        bytes32 matchId = _createAndFill(4);
+        bytes32 requestId = escrow.lockMatch(matchId);
+        oracle.fulfill(requestId, bytes32(uint256(1)));
+
+        vm.prank(address(oracle));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GameEscrow.WrongStatus.selector,
+                matchId,
+                GameEscrow.MatchStatus.Pending,
+                GameEscrow.MatchStatus.Live
+            )
+        );
+        escrow.fulfillRandomness(matchId, bytes32(uint256(2)));
     }
 
     function test_governanceParamsChange_doesNotAffectOpenMatch() public {
@@ -442,6 +535,14 @@ contract GameEscrowTest is Fixtures {
         vm.prank(owner);
         config.setParams(next);
 
-        assertEq(escrow.getMatch(matchId).feeBps, 500);
+        assertEq(escrow.getMatchTerms(matchId).feeBps, 500);
+    }
+}
+
+/// @dev Answers inside `requestRandomness`, before the caller sees a request id.
+contract InstantOracle is IRandomnessOracle {
+    function requestRandomness(bytes32 context) external returns (bytes32) {
+        IRandomnessConsumer(msg.sender).fulfillRandomness(context, keccak256("instant"));
+        return context;
     }
 }

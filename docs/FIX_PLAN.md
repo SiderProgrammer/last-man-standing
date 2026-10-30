@@ -5,7 +5,8 @@ L1–L4, and the test gaps). It also builds in the design answers given on 2026-
 2026-10-29. A
 coverage table at the end maps each finding to its step.
 
-Phase 1 is implemented on the `design-rework-phase-1-foundations` branch. Nothing after it is.
+Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, and Phase 2 on
+`design-rework-phase-2-core-contracts`, which builds on it. Nothing after that is.
 
 ---
 
@@ -114,6 +115,32 @@ Mechanical work, so later diffs stay readable.
 ---
 
 ## Phase 2: Core contracts on Base
+
+**Done**, one commit per step (2.6 and 2.9 in one, since the cancel rules use the new
+`deadline` field). Where it differs from the table:
+- 2.1 also deploys the VRF adapter for a `VRF_SUBSCRIPTION_ID` and hands it to the
+  timelock. The default timelock delay goes to 3 days and the unstake cooldown to
+  10 days, to satisfy 2.4's check. The server defaults to chain 84532.
+- 2.2: the feed address lives in `ProtocolConfig`; zero turns the check off, because
+  Base Sepolia has no feed. The grace period is 1 h.
+- 2.3: the adapter's request id is the VRF id. A failed delivery keeps the word, and
+  anyone can retry it with `deliver`.
+- 2.4: `setAttestorSet(list, threshold)` replaces `setAttestor` / `setAttestorThreshold`.
+  The delay check covers the whole match: join window, `LOCK_GRACE`,
+  `RANDOMNESS_TIMEOUT`, settle window, challenge window and `DISPUTE_EXTENSION`. It
+  asks the owner for `getMinDelay()`; an owner that does not answer (an EOA, including
+  one with a 7702 delegation) is not checked. The join and settle windows are capped
+  at 30 days.
+- 2.6: `LOCK_GRACE` is 10 min and the randomness timeout is 1 h, both constants.
+- 2.7: the oracle answers `fulfillRandomness(matchId, randomness)`, so the escrow
+  keeps no request map at all.
+- 2.9: `MatchInfo` is 5 slots, with one `deadline` field for the current phase.
+  `createMatch` on stored terms went from 183k to 36k gas; lock, fulfil and settle
+  each cost 2–5k more. About 137k less per match.
+- 2.10: the Yul cost about 1k gas less per settlement (0.1%).
+- 2.11: the minimum (0.0001 ETH) is on `withdrawFor` only; `withdraw` has none, so
+  dust is never stuck.
+- 2.12: on spokes the avatars belong to `SPOKE_OWNER`, the spoke's timelock.
 
 | Step | Work | Findings |
 |---|---|---|

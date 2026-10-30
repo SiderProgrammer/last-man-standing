@@ -306,8 +306,8 @@ warning, and each lobby offers **Stake from BASE**: the first click asks
 `quoteJoin` for the stake plus LayerZero's fee, the second pays it. The row
 then reads *In transit…* until the server reports how the join landed:
 seated, refunded on the hub (with the reason), or parked. Winnings and
-refunds are on the hub, so the payout panel offers the server-paid push
-instead of a balance it cannot read from the spoke.
+refunds are on the hub, so the payout panel asks the player to switch there
+to collect.
 
 On a spoke whose gas token is not ETH (Polygon, BNB Chain, Avalanche), the
 join is paid in that token: the executor prices the hub ETH it delivers in it
@@ -572,7 +572,7 @@ Defaults, all overridable through the deploy environment:
 | Setting | Default | Env |
 | --- | --- | --- |
 | LMS supply | 100,000,000, split as below | `LMS_SUPPLY` |
-| Unstake cooldown | 7 days | `STAKE_COOLDOWN` |
+| Unstake cooldown | 10 days | `STAKE_COOLDOWN` |
 | Staker reward payout | over 7 days | `REWARD_DURATION` |
 | Voting delay / period | 1 day / 5 days | `VOTING_DELAY`, `VOTING_PERIOD` |
 | Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
@@ -869,11 +869,9 @@ withdrawals earn nothing at all. Most L1 protocols leave gas to the user; the
 ones that hide it (UniswapX, CoW Swap) take it back out of the transaction
 itself. So the server accepts no relayed calls, and players send their own.
 
-The one thing the server still pays for is pushing a payout on request
-(`collect` → `GameEscrow.withdrawFor`, `chain/payouts.ts`), for a player who
-staked from a spoke and holds no gas on the hub. It is bounded: `withdrawFor`
-only ever pays the account itself, each credit can be pushed once, and a repeat
-fails simulation before costing anything.
+Payouts are pull-only: the server never sends one. A player withdraws with
+their own wallet. A gasless withdrawal comes back as `withdrawFor` through a
+session (FIX_PLAN 5.3) or an EIP-712 signed withdrawal (6.4).
 
 If prompt-free joins come back, the shape that fits L1 is the one those
 protocols use: the player signs a join intent against their escrow balance, the
@@ -1041,7 +1039,6 @@ Two supporting decisions:
 | `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
 | `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
-| `chain/payouts.ts` | `PayoutPusher`: pushes a player's escrow balance to them through `withdrawFor`, on request |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
@@ -1193,12 +1190,12 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | Variable | Default | Feature it controls |
 | --- | --- | --- |
 | `WS_PORT` | `8787` | Gateway port |
-| `CHAIN_ID` | `11155111` | Hub chain |
+| `CHAIN_ID` | `84532` | Hub chain (Base Sepolia) |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
-| `RPC_URL` | — | Chain bridge, ERC-1271 logins, pushed payouts |
+| `RPC_URL` | — | Chain bridge, ERC-1271 logins |
 | `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
 | `ATTESTOR_PK` | — | Result signing and settlement relay |
-| `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, and pushed payouts |
+| `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, `finalize` and `cancelMatch` |
 | `SESSION_DELEGATE` | zero | EIP-7702 session keys (needs `RPC_URL`) |
 | `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |

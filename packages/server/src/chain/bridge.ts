@@ -180,11 +180,11 @@ export class ChainBridge {
       }
       if (raw.status === MatchStatus.Proposed) {
         entry.proposed = true;
-        await this.maybeFinalize(matchId, raw.challengeDeadline);
+        await this.maybeFinalize(matchId, raw.deadline);
         continue;
       }
       if (entry.abandoned) {
-        await this.maybeCancel(matchId, raw.settleDeadline);
+        await this.maybeCancel(matchId, raw.deadline);
         continue;
       }
       // The escrow pins the rule set a match was created under, and the history
@@ -253,8 +253,8 @@ export class ChainBridge {
   }
 
   /** The fallback for an abandoned match: the permissionless refund at its deadline. */
-  private async maybeCancel(matchId: `0x${string}`, settleDeadline: bigint): Promise<void> {
-    if (BigInt(Math.floor(this.now() / 1000)) < settleDeadline) return;
+  private async maybeCancel(matchId: `0x${string}`, deadline: bigint): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
     if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelled ${matchId}`);
   }
 

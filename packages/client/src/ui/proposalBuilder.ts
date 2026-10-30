@@ -110,7 +110,7 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
   {
     id: 'unpause',
     label: 'Resume play',
-    help: 'Lifts a pause the guardian put in place. Only governance can do this.',
+    help: 'Ends a pause now. A guardian pause also ends by itself after a week.',
     fields: [],
   },
   {

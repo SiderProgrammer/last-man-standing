@@ -73,10 +73,7 @@ contract Fixtures is Test {
 
         vm.startPrank(owner);
         config.setRandomnessOracle(address(oracle));
-        config.setAttestor(attestorA, true);
-        config.setAttestor(attestorB, true);
-        config.setAttestor(attestorC, true);
-        config.setAttestorThreshold(2);
+        config.setAttestorSet(_attestors(attestorA, attestorB, attestorC), 2);
         config.setRulesHash(harness.hashRulesDefault());
         config.setRemoteChain(421_614, address(messenger), bytes32(uint256(uint160(address(0xBEEF)))));
         config.setChallengeWindow(CHALLENGE_WINDOW);
@@ -105,6 +102,12 @@ contract Fixtures is Test {
         escrow.finalize(matchId, ranking);
     }
 
+    /// @dev Pauses the escrow the way governance does, for a day.
+    function _pause() internal {
+        vm.prank(owner);
+        escrow.extendPause(uint64(block.timestamp + 1 days));
+    }
+
     function _createAndFill(uint16 seats) internal returns (bytes32 matchId) {
         vm.prank(players[0]);
         matchId = escrow.createMatch(STAKE, seats);
@@ -130,6 +133,13 @@ contract Fixtures is Test {
         bytes32 structHash = harness.hashMatchResult(matchId, rounds, historyRoot, ranking);
         bytes32 digest = harness.toTypedDataHash(escrow.domainSeparator(), structHash);
         signatures = Attest.signAscending(pks, digest);
+    }
+
+    function _attestors(address a, address b, address c) internal pure returns (address[] memory set) {
+        set = new address[](3);
+        set[0] = a;
+        set[1] = b;
+        set[2] = c;
     }
 
     function _twoAttestors() internal pure returns (uint256[] memory pks) {

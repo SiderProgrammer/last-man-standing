@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
@@ -51,7 +52,7 @@ contract SignatureLibTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pkA, digest);
         v = 26;
         bytes memory badV = abi.encodePacked(r, s, v);
-        vm.expectRevert(SignatureLib.InvalidRecoveryId.selector);
+        vm.expectRevert(ECDSA.ECDSAInvalidSignature.selector);
         harness.recover(digest, badV);
     }
 
@@ -61,7 +62,7 @@ contract SignatureLibTest is Test {
         bytes32 highS = bytes32(n - uint256(s));
         uint8 flipV = v == 27 ? 28 : 27;
         bytes memory malleable = abi.encodePacked(r, highS, flipV);
-        vm.expectRevert(SignatureLib.MalleableSignature.selector);
+        vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureS.selector, highS));
         harness.recover(digest, malleable);
     }
 

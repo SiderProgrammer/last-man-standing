@@ -12,6 +12,7 @@ deploy to mainnet
 test game with a few real players (real wallet)
 record video
 
+add back YUL code?
 add leaderboard with players win ratio?
 in-game prediction market?
 other strikers hitting the same guard deal reduced damage?

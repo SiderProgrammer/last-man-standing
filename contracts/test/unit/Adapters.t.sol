@@ -4,8 +4,6 @@ pragma solidity 0.8.28;
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
-import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
-import {MockVrfCoordinator} from "../../src/mocks/MockVrfCoordinator.sol";
 import {LayerZeroMessenger} from "../../src/adapters/LayerZeroMessenger.sol";
 import {MockLayerZeroEndpoint} from "../../src/mocks/MockLayerZeroEndpoint.sol";
 import {Origin} from "../../src/interfaces/ILayerZeroEndpoint.sol";
@@ -13,59 +11,6 @@ import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
 import {UnknownRequest, UntrustedMessenger, UntrustedPeer} from "../../src/Errors.sol";
 
 contract AdapterTest is Fixtures {
-    function test_vrfAdapterDeliversSeedToEscrow() public {
-        MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter =
-            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
-
-        vm.startPrank(owner);
-        config.setRandomnessOracle(address(adapter));
-        adapter.setConsumer(address(escrow), true);
-        vm.stopPrank();
-
-        bytes32 matchId = _createAndFill(4);
-        bytes32 requestId = escrow.lockMatch(matchId);
-        uint256 vrfId = adapter.vrfIdOf(requestId);
-        coordinator.fulfill(vrfId, uint256(keccak256("vrf")));
-
-        assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
-        assertTrue(escrow.getMatch(matchId).seed != bytes32(0));
-        // A fulfilled request leaves nothing behind.
-        assertEq(adapter.vrfIdOf(requestId), 0);
-        (address consumer,) = adapter.pending(vrfId);
-        assertEq(consumer, address(0));
-    }
-
-    function test_vrfAdapterRefusesUnregisteredConsumers() public {
-        MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter =
-            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
-
-        vm.prank(players[0]);
-        vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.NotConsumer.selector, players[0]));
-        adapter.requestRandomness(bytes32(uint256(1)));
-    }
-
-    function test_vrfAdapterRejectsASecondCallback() public {
-        MockVrfCoordinator coordinator = new MockVrfCoordinator();
-        ChainlinkVrfAdapter adapter =
-            new ChainlinkVrfAdapter(owner, coordinator, bytes32(uint256(1)), 1, 3, 200_000);
-        vm.startPrank(owner);
-        config.setRandomnessOracle(address(adapter));
-        adapter.setConsumer(address(escrow), true);
-        vm.stopPrank();
-
-        bytes32 matchId = _createAndFill(4);
-        uint256 vrfId = adapter.vrfIdOf(escrow.lockMatch(matchId));
-        coordinator.fulfill(vrfId, 1);
-
-        uint256[] memory words = new uint256[](1);
-        words[0] = 2;
-        vm.prank(address(coordinator));
-        vm.expectRevert(abi.encodeWithSelector(UnknownRequest.selector, bytes32(vrfId)));
-        adapter.rawFulfillRandomWords(vrfId, words);
-    }
-
     // --- LayerZero: one endpoint mock plays both chains -------------------
 
     uint32 internal constant HUB_CHAIN = 11_155_111;

@@ -155,4 +155,16 @@ contract PlayerAvatarsTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, ALICE));
         avatars.setBaseUri("ipfs://hijack/");
     }
+
+    function test_ownershipMovesInTwoSteps() public {
+        address next = makeAddr("next");
+        vm.prank(OWNER);
+        avatars.transferOwnership(next);
+        assertEq(avatars.owner(), OWNER);
+        assertEq(avatars.pendingOwner(), next);
+
+        vm.prank(next);
+        avatars.acceptOwnership();
+        assertEq(avatars.owner(), next);
+    }
 }

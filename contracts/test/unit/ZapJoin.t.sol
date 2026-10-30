@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {ZapJoin} from "../../src/periphery/ZapJoin.sol";
 import {PoolKey} from "../../src/interfaces/IPoolManager.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
@@ -195,10 +196,9 @@ contract ZapJoinTest is Fixtures {
     }
 
     function test_revertsWhileEscrowPaused() public {
-        vm.prank(owner);
-        escrow.pause();
+        _pause();
         vm.prank(player);
-        vm.expectRevert(GameEscrow.Paused.selector);
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
         zap.joinWithToken(matchId, _usdcPath(), 2000e18, block.timestamp);
     }
 

@@ -7,16 +7,8 @@ import {UnknownRequest} from "../Errors.sol";
 /// @notice Test double for the randomness oracle.
 /// @dev Fulfilment is always a separate call, as with Chainlink VRF: request
 ///      now, callback later. That window is where the "oracle never answered"
-///      cancellation path lives, and it is also what consumers rely on:
-///      `GameEscrow.lockMatch` records which match a request belongs to only
-///      once `requestRandomness` has returned the id.
-///
-///      There used to be an `autoFulfill` switch that answered inside
-///      `requestRandomness`. Against the escrow that callback arrived before
-///      the request was recorded, so every `lockMatch` reverted with
-///      `UnknownRequest` — on every deployment that enabled it. Off-chain,
-///      `npm run dev:fork` plays the oracle node instead, answering each
-///      request in a later block.
+///      cancellation path lives. Off-chain, `npm run dev:fork` plays the
+///      oracle node, answering each request in a later block.
 contract MockRandomnessOracle is IRandomnessOracle {
     struct Request {
         address consumer;
@@ -52,6 +44,6 @@ contract MockRandomnessOracle is IRandomnessOracle {
         if (request.fulfilled) revert AlreadyFulfilled(requestId);
 
         request.fulfilled = true;
-        IRandomnessConsumer(request.consumer).fulfillRandomness(requestId, randomness);
+        IRandomnessConsumer(request.consumer).fulfillRandomness(request.context, randomness);
     }
 }

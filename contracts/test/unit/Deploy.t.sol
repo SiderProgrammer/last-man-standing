@@ -11,6 +11,7 @@ import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
 import {MockLayerZeroEndpoint} from "../../src/mocks/MockLayerZeroEndpoint.sol";
 import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
+import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
 
 /// @dev Reaches the script's chain-dependent defaults without running it.
 contract DeployHarness is Deploy {
@@ -67,7 +68,7 @@ contract DeployTest is Test {
         assertEq(d.config.pendingOwner(), address(0));
         assertEq(d.stakedLms.owner(), address(d.timelock));
         assertEq(d.feeRouter.owner(), address(d.timelock));
-        assertEq(d.timelock.getMinDelay(), 1 days);
+        assertEq(d.timelock.getMinDelay(), 3 days);
     }
 
     function test_governorProposes_safeOnlyCancels_deployerHoldsNothing() public view {
@@ -85,9 +86,13 @@ contract DeployTest is Test {
         assertEq(d.stakedLms.balanceOf(deployer), 0);
     }
 
-    function test_safeHoldsGuardianAvatarsAndTreasury_behindTheRouter() public view {
+    function test_timelockOwnsTheAvatars() public view {
+        assertEq(d.avatars.owner(), address(d.timelock));
+        assertEq(d.avatars.pendingOwner(), address(0));
+    }
+
+    function test_safeHoldsGuardianAndTreasury_behindTheRouter() public view {
         assertEq(d.config.guardian(), safe);
-        assertEq(d.avatars.owner(), safe);
         assertEq(d.config.treasury(), address(d.feeRouter));
         assertEq(d.feeRouter.treasury(), safe);
         assertEq(d.feeRouter.stakerBps(), 5_000);
@@ -135,16 +140,26 @@ contract DeployTest is Test {
         assertApproxEqAbs(budget, 50_000_000e18, 1e6, "only rounding is left over");
     }
 
-    function test_minimumStakeAndQuorumFloorSuitL1() public view {
-        assertEq(d.config.getParams().minStake, 0.01 ether);
+    function test_minimumStakeAndWindowsSuitBase() public view {
+        assertEq(d.config.getParams().minStake, 0.001 ether);
+        assertEq(d.config.getParams().joinWindow, 10 minutes);
+        assertEq(d.config.getParams().settleWindow, 1 hours);
+        assertEq(d.config.challengeWindow(), 1 hours);
+        assertEq(d.config.sequencerUptimeFeed(), address(0), "no feed on a local node");
+        assertGt(d.timelock.getMinDelay(), d.config.matchLifetime());
+    }
+
+    function test_quorumFloorAppliesWhileLittleIsStaked() public view {
         assertEq(d.governor.quorumFloor(), 1_000_000e18);
         assertEq(d.governor.quorum(block.timestamp - 1), 1_000_000e18, "nothing staked: the floor applies");
     }
 
-    function test_mainnetStartsWithNoFeeShareForStakers() public {
+    function test_baseMainnetStartsWithNoFeeShareForStakers() public {
         DeployHarness harness = new DeployHarness();
         assertEq(harness.defaultStakerBps(), 5_000);
-        vm.chainId(1);
+        vm.chainId(84_532);
+        assertEq(harness.defaultStakerBps(), 5_000);
+        vm.chainId(8453);
         assertEq(harness.defaultStakerBps(), 0);
     }
 
@@ -263,18 +278,39 @@ contract DeployTest is Test {
         assertEq(d.config.rulesHash(), 0x07d102f371d483468baf28515199dc3b888d3604c16f48ae909ab07145044d93);
     }
 
-    /// @dev Nothing in this suite sets `ORACLE`, so off a local node the script
-    ///      must refuse rather than fall back to the anyone-picks-the-seed mock.
+    /// @dev Nothing in this suite sets `ORACLE` or a VRF subscription, so off
+    ///      a local node the script must refuse rather than fall back to the
+    ///      anyone-picks-the-seed mock.
     function test_requiresARealOracleOffALocalChain() public {
-        vm.chainId(11_155_111);
+        vm.chainId(84_532);
         Deploy script = new Deploy();
         vm.expectRevert(Deploy.OracleRequired.selector);
         script.run();
     }
 
+    /// @dev Off a local node the oracle is a VRF adapter on Chainlink's
+    ///      coordinator, with the escrow as its consumer and the timelock as
+    ///      its owner. The Safe owns the subscription; adding the adapter to it
+    ///      is the Safe's step, so nothing here calls the coordinator.
+    function test_onBaseSepolia_deploysAVrfAdapterForTheSubscription() public {
+        vm.chainId(84_532);
+        Deploy.Deployment memory deployment = new DeployOnBaseSepolia().run();
+        ChainlinkVrfAdapter vrf = deployment.vrf;
+
+        assertEq(deployment.oracle, address(vrf));
+        assertEq(deployment.config.randomnessOracle(), address(vrf));
+        assertEq(address(vrf.coordinator()), 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE);
+        assertEq(vrf.keyHash(), 0x9e1344a1247c8a1785d0a4681a27152bffdb43666ae5bf7d14d24a5efd44bf71);
+        assertEq(vrf.subId(), 42);
+        assertEq(vrf.confirmations(), 3);
+        assertTrue(vrf.isConsumer(address(deployment.escrow)));
+        assertEq(vrf.owner(), address(deployment.timelock));
+        assertEq(vrf.pendingOwner(), address(0));
+    }
+
     /// @dev `MOCKS=true` off a local node must be refused.
     function test_refusesTheMocksOffALocalChain() public {
-        vm.chainId(11_155_111);
+        vm.chainId(84_532);
         Deploy script = new DeployWithMocks();
         vm.expectRevert(Deploy.MockOffLocal.selector);
         script.run();
@@ -301,14 +337,13 @@ contract DeployTest is Test {
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
-    function test_guardianPausesAtOnce_butCannotUnpause() public {
+    function test_guardianPausesAtOnce_forAWeek() public {
         vm.prank(safe);
         d.escrow.pause();
         assertTrue(d.escrow.paused());
 
-        vm.prank(safe);
-        vm.expectRevert(GameEscrow.NotGovernance.selector);
-        d.escrow.unpause();
+        vm.warp(block.timestamp + d.escrow.GUARDIAN_PAUSE());
+        assertFalse(d.escrow.paused());
     }
 
     /// @dev The Safe stakes enough of its supply to clear the threshold and
@@ -340,6 +375,17 @@ contract DeployTest is Test {
 
         vm.warp(d.governor.proposalDeadline(id) + 1);
         assertEq(uint8(d.governor.state(id)), uint8(IGovernor.ProposalState.Succeeded));
+    }
+}
+
+/// @dev `Deploy` on Base Sepolia, with a VRF subscription and a team beneficiary.
+contract DeployOnBaseSepolia is Deploy {
+    function _vrfSubscription() internal pure override returns (uint256) {
+        return 42;
+    }
+
+    function _teamBeneficiary(address safe) internal pure override returns (address) {
+        return safe;
     }
 }
 

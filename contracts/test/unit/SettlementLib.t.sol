@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 
 import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
-import {SettlementRef} from "../helpers/SettlementRef.sol";
 
 contract SettlementLibTest is Test {
     SettlementHarness internal harness;
@@ -20,57 +19,41 @@ contract SettlementLibTest is Test {
         assertEq(expected, SettlementLib.MATCH_RESULT_TYPEHASH);
     }
 
-    function test_hashRankingMasksDirtyBits() public view {
-        address a = address(0xA11CE);
-        address b = address(0xB0B);
-
-        address[] memory clean = new address[](2);
-        clean[0] = a;
-        clean[1] = b;
-
-        bytes32 expected = SettlementRef.hashRanking(clean);
-
-        address[] memory dirty = new address[](2);
-        dirty[0] = a;
-        dirty[1] = b;
-        // Dirty the high bits in the calldata encoding by going through a crafted payload.
-        bytes32 dirtyHash = _hashRankingDirty(a, b);
-        assertEq(dirtyHash, expected);
-        assertEq(harness.hashRanking(clean), expected);
-    }
-
-    function test_hashMatchResultMatchesReference() public view {
+    /// @dev EIP-712 encodes an `address[]` member as the hash of its elements,
+    ///      each padded to 32 bytes, written out here word by word.
+    function test_hashMatchResultFollowsEip712() public view {
         address[] memory ranking = new address[](3);
         ranking[0] = address(0x1);
         ranking[1] = address(0x2);
         ranking[2] = address(0x3);
 
-        bytes32 yul = harness.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking);
-        bytes32 ref = SettlementRef.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking);
-        assertEq(yul, ref);
-    }
-
-    function test_toTypedDataHashMatchesManual() public view {
-        bytes32 domain = keccak256("domain");
-        bytes32 structHash = keccak256("struct");
-        bytes32 expected = keccak256(abi.encodePacked(hex"1901", domain, structHash));
-        assertEq(harness.toTypedDataHash(domain, structHash), expected);
-    }
-
-    function _hashRankingDirty(address a, address b) internal view returns (bytes32) {
-        bytes memory payload = abi.encodePacked(
-            bytes32(uint256(uint160(a))) | (bytes32(uint256(0xAA)) << 160),
-            bytes32(uint256(uint160(b))) | (bytes32(uint256(0xBB)) << 160)
+        bytes32 rankingHash =
+            keccak256(abi.encode(bytes32(uint256(0x1)), bytes32(uint256(0x2)), bytes32(uint256(0x3))));
+        bytes32 expected = keccak256(
+            abi.encode(
+                SettlementLib.MATCH_RESULT_TYPEHASH,
+                bytes32(uint256(1)),
+                uint32(9),
+                bytes32(uint256(2)),
+                rankingHash
+            )
         );
-        return this.hashRankingRaw(payload);
+        assertEq(harness.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking), expected);
     }
 
-    function hashRankingRaw(bytes calldata packed) external pure returns (bytes32) {
-        address[] calldata ranking;
-        assembly ("memory-safe") {
-            ranking.offset := packed.offset
-            ranking.length := 2
-        }
-        return SettlementLib.hashRanking(ranking);
+    /// @dev Bits set above an address in calldata are cleaned when the
+    ///      ranking is copied to memory, so the same ranking cannot be signed
+    ///      under two different digests.
+    function test_dirtyRankingCalldataHashesClean() public view {
+        address[] memory ranking = new address[](1);
+        ranking[0] = address(0xA11CE);
+        bytes memory data =
+            abi.encodeCall(harness.hashMatchResult, (bytes32(0), uint32(1), bytes32(0), ranking));
+        // The one element is the last word of the calldata.
+        data[data.length - 32 + 11] = 0xAA;
+
+        (bool ok, bytes memory result) = address(harness).staticcall(data);
+        assertTrue(ok);
+        assertEq(abi.decode(result, (bytes32)), harness.hashMatchResult(bytes32(0), 1, bytes32(0), ranking));
     }
 }

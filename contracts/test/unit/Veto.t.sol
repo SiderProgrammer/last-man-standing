@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ExpiringPause} from "../../src/ExpiringPause.sol";
 
 /// @dev A proposed result waits out the challenge window, during which the
 ///      guardian — or governance — may throw it out and refund every stake.
@@ -71,16 +72,16 @@ contract VetoTest is Fixtures {
         (bytes32 matchId,) = _proposed();
         // Not a player, not an attestor.
         vm.prank(players[1]);
-        vm.expectRevert(GameEscrow.NotGuardian.selector);
+        vm.expectRevert(ExpiringPause.NotGuardian.selector);
         escrow.veto(matchId);
         vm.prank(attestorA);
-        vm.expectRevert(GameEscrow.NotGuardian.selector);
+        vm.expectRevert(ExpiringPause.NotGuardian.selector);
         escrow.veto(matchId);
     }
 
     function test_theWindowClosesTheVeto() public {
         (bytes32 matchId, address[] memory ranking) = _proposed();
-        uint64 deadline = escrow.getMatch(matchId).challengeDeadline;
+        uint40 deadline = escrow.getMatch(matchId).deadline;
         vm.warp(deadline);
 
         vm.prank(guardian);

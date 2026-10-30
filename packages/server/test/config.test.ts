@@ -47,7 +47,7 @@ describe('server configuration', () => {
     const config = loadConfig({});
 
     expect(config.port).toBe(8787);
-    expect(config.chainId).toBe(11155111);
+    expect(config.chainId).toBe(84532);
     expect(config.commitMs).toBe(20_000);
     expect(config.revealMs).toBe(12_000);
     expect(config.rpcUrl).toBe('');

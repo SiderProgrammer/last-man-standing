@@ -99,7 +99,7 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const ENV = z.object({
   NODE_ENV: text(),
   WS_PORT: whole(DEFAULT_SERVER_PORT, 1),
-  CHAIN_ID: whole(11155111, 1),
+  CHAIN_ID: whole(84532, 1),
   COMMIT_MS: whole(20_000, 1),
   REVEAL_MS: whole(12_000, 1),
   REPLAY_MS: whole(2_500),

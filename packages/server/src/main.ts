@@ -18,7 +18,6 @@ import { createStyleBook } from './lobby/styles.js';
 import { relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
-import { createPayoutPusher, nullPayoutPusher } from './chain/payouts.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
@@ -77,19 +76,6 @@ async function main(): Promise<void> {
   const rpc = config.rpcUrl
     ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
     : null;
-
-  // Pays gas for pushing payouts, and for nothing else: players send their own
-  // joins. It holds no authority over any player account — `withdrawFor` only
-  // ever pays the account itself.
-  const payouts =
-    rpc && config.keeperPk && config.onChain
-      ? createPayoutPusher({
-          rpcUrl: config.rpcUrl,
-          chainId: config.chainId,
-          keeperKey: config.keeperPk,
-          escrow: config.escrow,
-        })
-      : nullPayoutPusher;
 
   // Pays into the escrow, so it is only offered alongside one.
   const zap = config.onChain
@@ -150,7 +136,6 @@ async function main(): Promise<void> {
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
-    payouts,
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,
@@ -268,10 +253,6 @@ async function main(): Promise<void> {
       ? `[server] watching escrow ${config.escrow} on chain ${config.chainId}`
       : '[server] no escrow configured: practice lobbies only',
   );
-
-  if (payouts.enabled) {
-    console.log('[server] pushing payouts on request with the keeper key');
-  }
 
   if (zap) {
     console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
