@@ -19,14 +19,14 @@ import { describeRound } from '@lms/engine';
 import { Arena } from '../arena/arena.js';
 import { app, dom, net } from '../context.js';
 import { phasePlan } from '../game/phase.js';
-import { readOpponents } from '../game/reads.js';
+import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
 import { showMatchScreen } from '../ui/chrome.js';
-import { fillSelect } from '../ui/dom.js';
+import { element, fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { gsap } from '../motion.js';
-import { readsTable, targetOptions } from '../ui/views.js';
+import { targetOptions } from '../ui/views.js';
 import { hideResult, showResult } from './result.js';
 import { offerAnalysis, resetAnalysis, wireAnalysisControls } from './analysis.js';
 import { stateBeforeRound } from '../game/rewind.js';
@@ -431,11 +431,40 @@ function renderReads(state: PublicMatchState, you: number | null): void {
   const reads = readOpponents(state, you, app.dossier);
   // A regular's record is worth showing before the first round, too.
   if (reads.length === 0 || (state.history.length === 0 && app.dossier.size === 0)) {
-    dom.reads.innerHTML = '<p class="muted small">Patterns appear once the first round resolves.</p>';
+    dom.reads.replaceChildren(element('p', 'muted small', 'Patterns appear once the first round resolves.'));
     return;
   }
 
-  dom.reads.innerHTML = readsTable(reads);
+  dom.reads.replaceChildren(readsTable(reads));
+}
+
+function readsTable(reads: Read[]): HTMLTableElement {
+  const head = element('tr');
+  for (const label of ['seat', '⚔️', '🛡️', '⚡', 'favours', 'tell']) head.append(element('th', '', label));
+
+  const body = element('tbody');
+  for (const read of reads) {
+    const row = element('tr', read.alive ? '' : 'dead');
+    const favourite = read.favourite === null ? '—' : `#${read.favourite}`;
+    for (const value of [`#${read.seat}`, String(read.strikes), String(read.guards), String(read.charges), favourite]) {
+      row.append(element('td', '', value));
+    }
+    row.append(element('td', 'tell', read.tell));
+    body.append(row);
+    if (read.past) {
+      const past = element('tr', read.alive ? 'past' : 'past dead');
+      const cell = element('td', '', read.past);
+      cell.colSpan = 5;
+      past.append(element('td'), cell);
+      body.append(past);
+    }
+  }
+
+  const thead = element('thead');
+  thead.append(head);
+  const table = element('table');
+  table.append(thead, body);
+  return table;
 }
 
 function appendRound(lines: string[], round: number, eliminated: number[]): void {

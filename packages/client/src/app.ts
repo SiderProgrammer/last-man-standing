@@ -43,6 +43,7 @@ import {
   wireWalletControls,
 } from './wallet/flows.js';
 import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
+import { onRelayError, onRelayed, renderOneClickPanel, wireOneClickControls } from './wallet/oneClick.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:${DEFAULT_SERVER_PORT}`;
 
@@ -70,6 +71,7 @@ export function start(): void {
   net.on(onServerMessage);
   net.connect();
   wireWalletControls();
+  wireOneClickControls();
   wireLobbyControls();
   wireMatchControls();
   wirePayoutControls();
@@ -95,6 +97,7 @@ function onServerMessage(message: ServerMessage): void {
       app.escrow = message.escrow;
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
+      app.relayQuota = message.relayQuota;
       app.receiptSigner = message.receiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
@@ -104,6 +107,7 @@ function onServerMessage(message: ServerMessage): void {
       renderPayWith();
       renderHubLabel();
       renderSessionPanel();
+      renderOneClickPanel();
       void renderAvatarPanel();
       void renderStakingPanel();
       renderGovernanceNav();
@@ -182,6 +186,14 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'analysis.error':
       onAnalysisError(message);
+      break;
+
+    case 'relayed':
+      onRelayed(message);
+      break;
+
+    case 'relay.error':
+      onRelayError(message);
       break;
 
     case 'error':

@@ -31,8 +31,15 @@ export interface AppState {
   escrow: `0x${string}` | null;
   /** Where `PlayerAvatars` lives, per chain. Minting happens on the player's own chain. */
   avatarCollections: AvatarCollectionInfo[];
-  /** 7702 delegate the account may point at, or null if the server cannot verify one. */
+  /** 7702 delegate the account may point at, or null when the server relays no session calls. */
   sessionDelegate: `0x${string}` | null;
+  /** Relayed calls each wallet may make per UTC day. */
+  relayQuota: number;
+  /**
+   * True while the grant key holds a live on-chain session for the wallet, so
+   * joins and collecting winnings go through the relayer with no prompt.
+   */
+  oneClick: boolean;
   /** The key the wallet granted for this login. Signs every commit and reveal. */
   grantKey: GrantedKey | null;
   /** The key the server signs commit receipts with, or null when it issues none. */
@@ -91,6 +98,8 @@ export const app: AppState = {
   escrow: null,
   avatarCollections: [],
   sessionDelegate: null,
+  relayQuota: 0,
+  oneClick: false,
   grantKey: null,
   receiptSigner: null,
   zap: null,

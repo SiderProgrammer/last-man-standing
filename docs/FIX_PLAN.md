@@ -7,8 +7,9 @@ coverage table at the end maps each finding to its step.
 
 Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
 `design-rework-phase-2-core-contracts`, Phase 3 on
-`design-rework-phase-3-governance-and-token`, and Phase 4 on `design-rework-phase-4-verifiability`,
-each building on the last. Nothing after that is.
+`design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
+and Phase 5 on `design-rework-phase-5-sessions`, each building on the last. Nothing after
+that is, except the Privy check in 5.1.
 
 ---
 
@@ -266,6 +267,45 @@ plus three for CI. Where it differs from the table:
 ---
 
 ## Phase 5: Sessions (C1, C2, M7)
+
+**Done**, one commit per step, except that 5.2 and the contract half of 5.3 rewrote the
+same delegate in one commit. Three more: the Slither baseline, the end-to-end check, and
+these notes. Where it differs from the table:
+- 5.1: Phase 4 had landed the grant (see 4.1). Left was `ALLOWED_ORIGINS`: production
+  now refuses to start without it, and `ALLOWED_ORIGINS=*` accepts any origin on purpose
+  (the load-test profile uses that). **The Privy check is not done**: it needs a Privy
+  app on Base Sepolia. `npm run check:one-click` runs the same checklist (an
+  authorization for our delegate, a relayed `join`, the caps, a revoked session, plus
+  ERC-1271 refusing the session key) on a Prague anvil, with a viem local account in
+  place of the embedded wallet, which is what Privy's wallet becomes through
+  `toAccount`. `Wallet.fromAccount` is where it would plug in. Privy is not in the
+  client and not configured for any chain.
+- 5.2: as the table. No ERC-7739.
+- 5.3: the scope is fixed in code, not granted. The delegate takes the escrow as an
+  immutable and allows `join(matchId)` and `withdrawFor(account)` on it, with exactly one
+  word of arguments; the `(target, selector)` allowlist is gone. That moved the storage
+  to a new ERC-7201 namespace (`lms.session.v2`), the EIP-712 domain to version 2, and
+  the frozen digest vector. Caps are per call and in total, set at grant; the client
+  asks for 0.05 and 0.25 ETH. A session lasts at most seven days, and the client grants
+  the session key the login grant already names, until that grant expires.
+  `executeWithSession` is no longer payable, so the stake always comes from the account.
+  `SessionRelay` pays from its own `SESSION_RELAYER_PK` and allows
+  `RELAY_QUOTA_PER_DAY` calls (default 20) per wallet per UTC day, joins and
+  withdrawals together. It also refuses an account delegated to any other code, which
+  would otherwise run on its gas, and names the revert when it refuses. The minimum on
+  `withdrawFor` is the escrow's own, from 2.11. A refused relay falls back to the
+  wallet. The relayer is a plain viem client with viem's nonce manager until 7.3's
+  `TxSender`.
+- 5.4: no P-256. The secp256k1 key is sealed in IndexedDB under an AES-GCM key
+  generated non-extractable; a key Phase 4 left in localStorage is deleted, not
+  migrated. The CSP is a `<meta>` built from the build's environment, so the host has
+  to send `frame-ancestors` itself. `connect-src` admits `data:` and `blob:`, which
+  Pixi fetches, and Pixi's `unsafe-eval` shim keeps `'unsafe-eval'` out. A test keeps
+  `innerHTML` out of the client. Checked in a browser on a dev-mode build: a practice
+  match, signed moves, and a reload that logs in from the sealed key, with no
+  violation.
+- 5.5: the README's Wallets section; the Privy row says it waits on the check. No
+  ERC-4337.
 
 | Step | Work | Findings |
 |---|---|---|

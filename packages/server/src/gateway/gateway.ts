@@ -27,16 +27,17 @@ import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
 import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
+import type { SessionRelay } from '../chain/sessionRelay.js';
 
 /**
  * Checks a login signature against an address.
  *
  * Injected rather than fixed, because the two cases need different machinery.
  * A plain EOA is verified with `ecrecover` and no network at all, which is what
- * practice-only mode runs on. An account that has delegated under EIP-7702
- * signs its logins with a *session key*, so the signature does not recover to
- * the account address and only the account itself can say whether it is valid —
- * an ERC-1271 `isValidSignature` call, which needs an RPC.
+ * practice-only mode runs on. A contract wallet's signature does not recover
+ * to its address, and only the wallet itself can say whether it is valid — an
+ * ERC-1271 `isValidSignature` call, which needs an RPC. A 7702-delegated
+ * account answers that for its own key only, never for a session key.
  */
 export type SignatureVerifier = (args: {
   address: `0x${string}`;
@@ -107,8 +108,11 @@ export interface GatewayOptions {
   escrow?: `0x${string}` | null;
   /** Avatar collections, so the client knows where to mint on its own chain. */
   avatarCollections?: AvatarCollectionInfo[];
-  /** 7702 delegate the client may grant a session key against. */
-  sessionDelegate?: `0x${string}` | null;
+  /**
+   * Submits calls players' session keys signed. Omitted, the server offers no
+   * one-click play, and `hello` names no delegate.
+   */
+  relay?: SessionRelay;
   /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
   zap?: ZapInfo | null;
   /** Spoke chains a player may stake from. Omitted or empty is hub-only. */
@@ -125,8 +129,8 @@ export interface GatewayOptions {
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   /**
    * How login signatures are checked. Defaults to offline `ecrecover`, which
-   * accepts EOAs only; supply an RPC-backed verifier to also accept session
-   * keys from 7702-delegated accounts.
+   * accepts EOAs only; supply an RPC-backed verifier to also accept contract
+   * wallets through ERC-1271.
    */
   verify?: SignatureVerifier;
   /**
@@ -237,7 +241,8 @@ export class Gateway {
       chainId: this.options.chainId,
       escrow: this.options.escrow ?? null,
       avatarCollections: this.options.avatarCollections ?? [],
-      sessionDelegate: this.options.sessionDelegate ?? null,
+      sessionDelegate: this.options.relay?.delegate ?? null,
+      relayQuota: this.options.relay?.quotaPerDay ?? 0,
       zap: this.options.zap ?? null,
       staking: this.options.staking ?? null,
       analyst: this.options.analyst !== undefined,
@@ -375,6 +380,10 @@ export class Gateway {
         await this.review(session, address, message.matchId);
         return;
       }
+      case 'relay': {
+        await this.relay(session, address, message);
+        return;
+      }
       case 'commit': {
         const grant = this.requireGrant(session);
         const room = this.requireRoom(address);
@@ -501,6 +510,31 @@ export class Gateway {
       if (!session.closed) fail(classify(error));
     } finally {
       session.analysis = null;
+    }
+  }
+
+  /**
+   * Relays one session call for the socket's own wallet. Answered on its own
+   * frames, by `id`, because a join takes a block to land and the client may
+   * have more than one in flight.
+   */
+  private async relay(
+    session: Session,
+    address: `0x${string}`,
+    message: Extract<ClientMessage, { type: 'relay' }>,
+  ): Promise<void> {
+    const { id } = message;
+    const relay = this.options.relay;
+    if (!relay) {
+      session.send({ type: 'relay.error', id, code: 'UNAVAILABLE', message: 'this server relays no session calls' });
+      return;
+    }
+    try {
+      const { kind, tx, left } = await relay.relay(address, message.call);
+      session.send({ type: 'relayed', id, kind, tx, left });
+    } catch (error) {
+      const { code, message: reason } = errorFrame(error);
+      session.send({ type: 'relay.error', id, code, message: reason });
     }
   }
 

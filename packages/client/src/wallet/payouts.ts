@@ -1,13 +1,15 @@
 import { chainInfo, errorFirstLine } from '@lms/protocol';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
+import { RelayError, canRelay, relayCollect } from './oneClick.js';
 
 /**
  * Collecting winnings.
  *
  * Settlement only credits a balance in the escrow; nothing reaches a player
- * until they withdraw it, with their own wallet, to their own address. The
- * server never sends a payout.
+ * until they withdraw it to their own address: with their own wallet, or with
+ * one-click play, through `withdrawFor`, which can pay nobody else. The server
+ * never sends a payout of its own accord.
  */
 
 /** Reads what the escrow owes the connected wallet and updates both buttons. */
@@ -43,7 +45,9 @@ export async function renderWinnings(): Promise<void> {
   dom.winnings.textContent = `${owed} ETH`;
   dom.collect.disabled = false;
   dom.resultCollect.classList.remove('hidden');
-  dom.collectStatus.textContent = 'Your wallet will ask you to confirm.';
+  dom.collectStatus.textContent = canRelay()
+    ? 'One click: the server pays the gas.'
+    : 'Your wallet will ask you to confirm.';
 }
 
 export async function collectWinnings(): Promise<void> {
@@ -54,9 +58,11 @@ export async function collectWinnings(): Promise<void> {
   dom.collect.disabled = true;
   dom.resultCollect.disabled = true;
   try {
-    dom.collectStatus.textContent = 'Confirm in your wallet…';
-    const hash = await wallet.withdraw(escrow);
-    await wallet.waitFor(hash);
+    if (!(canRelay() && (await collectByRelay()))) {
+      dom.collectStatus.textContent = 'Confirm in your wallet…';
+      const hash = await wallet.withdraw(escrow);
+      await wallet.waitFor(hash);
+    }
     toast('Winnings collected.');
     await renderWinnings();
   } catch (error) {
@@ -64,6 +70,23 @@ export async function collectWinnings(): Promise<void> {
     await renderWinnings();
   } finally {
     dom.resultCollect.disabled = false;
+  }
+}
+
+/**
+ * Collects through the relayer. False when it refused — under the escrow's
+ * minimum for a relayed withdrawal, or out of today's quota — so the wallet
+ * can collect it itself.
+ */
+async function collectByRelay(): Promise<boolean> {
+  dom.collectStatus.textContent = 'Collecting…';
+  try {
+    await relayCollect();
+    return true;
+  } catch (error) {
+    if (!(error instanceof RelayError)) throw error;
+    toast(`One-click collect refused: ${error.message}. Using your wallet.`);
+    return false;
   }
 }
 

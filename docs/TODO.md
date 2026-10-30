@@ -225,11 +225,11 @@ reason as §1.1: no deployment has been driven end to end.
 - **Avatars.** `AvatarRegistry` is unit-tested including every failure path, and the arena
   rendering was verified against stubbed entries. No `PlayerAvatars` has been deployed, so
   the read → IPFS → texture path has never run against a real token.
-- **Session keys.** `SessionKeyDelegate` is covered by 22 Foundry tests over real
-  `vm.signAndAttachDelegation` delegations, and the digest is pinned to the TypeScript
-  side by frozen vectors. What has *not* been exercised is the browser half: viem's
-  `signAuthorization` against a real wallet, and a session login through the gateway's
-  ERC-1271 check. Needs an Anvil run with `--hardfork prague` or a Pectra testnet.
+- **One-click play.** `SessionKeyDelegate` is covered by 33 Foundry tests over real
+  `vm.signAndAttachDelegation` delegations, and `npm run check:one-click` runs viem's
+  `signAuthorization`, the grant and a relayed join through the server's relay port on a
+  Prague anvil. What has *not* run is Privy's embedded wallet signing the authorization,
+  on Base Sepolia (FIX_PLAN 5.1), and the client's one-click buttons against a node.
 - **Play-mining end to end** has run once by hand on `dev:fork`: a four-seat match
   played to settlement from anvil's dev accounts, the clock moved past the week's
   end, and the browser's **Claim LMS** paid the burner 50 sLMS (0.0005 ETH of fees
@@ -246,7 +246,8 @@ reason as §1.1: no deployment has been driven end to end.
   `ChainBridge` was assigning straight into `Seat.chainId` — a seat staked from Base
   Sepolia would have rendered as "chain 40245".
 - **NFT avatars**, per chain, cosmetic, resolved off the match's critical path.
-- **EIP-7702 session keys**, so reconnecting no longer costs a wallet signature.
+- **EIP-7702 one-click play** for burner and embedded wallets: relayed joins and
+  withdrawals under caps, with the server paying the gas.
 - `.env.example` and a top-level `README.md` now exist.
 - `contracts/.gas-snapshot` is committed; `npm run sol:snapshot:check` fails on drift.
 - Both previously failing Foundry tests are fixed. The gas test now warms the harness

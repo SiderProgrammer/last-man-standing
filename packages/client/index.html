@@ -58,11 +58,29 @@
           <p class="muted small">
             Your wallet signs one grant to a key this browser keeps for a day. The key signs
             your logins and every move you make, so each move is provably yours and a
-            reconnect needs no wallet prompt. It cannot stake, spend or move your winnings.
+            reconnect needs no wallet prompt. On its own it cannot stake or spend; see
+            one-click play below.
           </p>
           <div class="row">
             <button id="forget-session" class="ghost hidden">Forget key</button>
             <span id="session-status" class="muted small">Connect a wallet to set up.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>One-click play</h2>
+            <span id="one-click-state" class="pill">off</span>
+          </div>
+          <p class="muted small">
+            For a burner or embedded wallet: one transaction lets the session key join lobbies
+            and collect your winnings, and the server pays the gas. Stakes still come from your
+            wallet, at most 0.05 ETH a join and 0.25 ETH in all, and only into this game's escrow.
+          </p>
+          <div class="row">
+            <button id="enable-one-click" class="primary" disabled>Turn on</button>
+            <button id="disable-one-click" class="ghost hidden">Turn off</button>
+            <span id="one-click-status" class="muted small">Connect a wallet to set up.</span>
           </div>
         </div>
 

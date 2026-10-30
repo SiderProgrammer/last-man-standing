@@ -17,6 +17,7 @@
     "golden": "tsc --build && node scripts/gen-golden.mjs",
     "load": "tsc --build && node scripts/load-test.mjs",
     "load:server": "tsc --build && node scripts/load-server.mjs",
+    "check:one-click": "tsc --build && node scripts/one-click-check.mjs",
     "clean": "tsc --build --clean",
     "typecheck": "npm run typecheck:src && npm run typecheck:client && npm run typecheck:tests",
     "typecheck:src": "tsc --build --force",

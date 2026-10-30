@@ -94,12 +94,23 @@ describe('server configuration', () => {
   });
 
   it('refuses to run in production without a database unless told to keep memory', () => {
-    expect(() => loadConfig({ NODE_ENV: 'production' })).toThrow(/DATABASE_URL is required in production/);
-    expect(loadConfig({ NODE_ENV: 'production', ARCHIVE: 'memory' }).databaseUrl).toBe('');
-    expect(loadConfig({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://u:p@db/lms' }).databaseUrl).toBe(
+    const origins = { ALLOWED_ORIGINS: 'https://play.example' };
+    expect(() => loadConfig({ NODE_ENV: 'production', ...origins })).toThrow(/DATABASE_URL is required in production/);
+    expect(loadConfig({ NODE_ENV: 'production', ARCHIVE: 'memory', ...origins }).databaseUrl).toBe('');
+    expect(loadConfig({ NODE_ENV: 'production', DATABASE_URL: 'postgresql://u:p@db/lms', ...origins }).databaseUrl).toBe(
       'postgresql://u:p@db/lms',
     );
     expect(() => loadConfig({ ARCHIVE: 'postgres' })).toThrow(/ARCHIVE=postgres needs DATABASE_URL/);
+  });
+
+  it('refuses to run in production without allowed origins unless told to accept any', () => {
+    const production = { NODE_ENV: 'production', ARCHIVE: 'memory' };
+    expect(() => loadConfig(production)).toThrow(/ALLOWED_ORIGINS is required in production/);
+    expect(() => loadConfig({ ...production, ALLOWED_ORIGINS: ' ' })).toThrow(/ALLOWED_ORIGINS is required/);
+    expect(loadConfig({ ...production, ALLOWED_ORIGINS: '*' }).allowedOrigins).toEqual([]);
+    expect(loadConfig({ ...production, ALLOWED_ORIGINS: 'https://play.example' }).allowedOrigins).toEqual([
+      'https://play.example',
+    ]);
   });
 
   it('reads the gateway limits, defaulting to permissive-but-bounded values', () => {

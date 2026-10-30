@@ -15,6 +15,8 @@ const defaults = {
   NODE_ENV: 'production',
   // A load test keeps nothing; production otherwise requires DATABASE_URL.
   ARCHIVE: 'memory',
+  // The generator's sockets send no Origin; production otherwise requires a list.
+  ALLOWED_ORIGINS: '*',
   MAX_CONNECTIONS: String(UNLIMITED),
   MAX_CONNECTIONS_PER_IP: String(UNLIMITED),
   MAX_PRACTICE_ROOMS: String(UNLIMITED),

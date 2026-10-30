@@ -67,13 +67,13 @@ describe('chain chips', () => {
   });
 
   it('counts a chain only when more than one seat came from it', () => {
-    const markup = chainChips(seats(SEPOLIA, SEPOLIA, BASE_SEPOLIA));
-    expect(markup).toContain('SEP ×2');
-    expect(markup).toContain('BASE<');
+    const chips = chainChips(seats(SEPOLIA, SEPOLIA, BASE_SEPOLIA));
+    expect(chips.map((chip) => chip.label)).toEqual(['SEP ×2', 'BASE']);
+    expect(chips[0]?.title).toBe('Sepolia');
   });
 
   it('renders nothing for an empty lobby', () => {
-    expect(chainChips([])).toBe('');
+    expect(chainChips([])).toEqual([]);
   });
 });
 

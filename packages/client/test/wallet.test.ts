@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { toHex } from 'viem';
-import { SESSION_GRANT } from '../src/wallet/wallet.js';
+import { ONE_CLICK_CAPS } from '@lms/protocol';
 import { centreOf, seatPosition, seatRingRadius, stormRing } from '../src/arena/layout.js';
 import { COLORS, hpColor } from '../src/arena/theme.js';
 
-describe('session grant', () => {
-  /**
-   * A session key only signs logins. Players send their own joins on L1, so a
-   * granted key must be able to call nothing and move nothing: anything more
-   * would widen what a leaked key can do for no use.
-   */
-  it('allows no call', () => {
-    expect(SESSION_GRANT.targets).toEqual([]);
-    expect(SESSION_GRANT.selectors).toEqual([]);
+describe('one-click caps', () => {
+  /** The delegate refuses a grant whose per-call cap exceeds its total. */
+  it('are a grant the delegate accepts', () => {
+    expect(ONE_CLICK_CAPS.valueCap).toBeLessThanOrEqual(ONE_CLICK_CAPS.spendCap);
   });
 
-  it('moves no value', () => {
-    expect(SESSION_GRANT.spendCap).toBe(0n);
+  /**
+   * What a leaked key can stake is what the caps say, so they stay small: a
+   * few joins at the hub's 0.001 ETH minimum, never a meaningful balance.
+   */
+  it('cover a join at the minimum stake and stay small', () => {
+    expect(ONE_CLICK_CAPS.valueCap).toBeGreaterThanOrEqual(10n ** 15n);
+    expect(ONE_CLICK_CAPS.spendCap).toBeLessThanOrEqual(10n ** 18n);
   });
 });
 

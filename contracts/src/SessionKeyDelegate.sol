@@ -8,45 +8,55 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
+import {GameEscrow} from "./GameEscrow.sol";
+import {PullPayable} from "./PullPayable.sol";
+
 /// @title SessionKeyDelegate
-/// @notice EIP-7702 delegate that lets a player grant a scoped, expiring key.
+/// @notice EIP-7702 delegate for one-click play: a browser-held key may join
+///         lobbies and collect winnings for the account, within caps, with a
+///         relayer paying the gas.
 ///
 /// @dev Why 7702 rather than a 4337 smart account: in this protocol the address
 ///      *is* the identity. `GameEscrow` keys seats, rankings and payouts by the
 ///      address that staked, and a player's match history is their address.
-///      Moving players onto freshly deployed contract accounts would rewrite
-///      that identity and leave every existing seat behind. A 7702 delegation
-///      keeps the exact same address and merely gives it code.
+///      A 7702 delegation keeps the exact same address and merely gives it code.
 ///
 ///      The account signs one EIP-7702 authorization pointing at this contract
 ///      and, in the same transaction, calls `grantSession` on itself. From then
-///      on a session key held by the browser can log in and act within its
-///      scope without another wallet prompt — which is the entire point, since
-///      the login nonce alone otherwise costs a signature on every reconnect.
+///      on the session key signs calls that anyone may submit, so the player
+///      sees no prompt and pays no gas for a join. The stake itself always
+///      comes from the account's own balance.
 ///
 ///      Storage lives in the delegating account, not here: under 7702 this code
 ///      runs with the EOA as `address(this)`, so every mapping below is
 ///      per-account. This contract is deployed once per chain and holds nothing.
 ///
-///      Scope is enforced on three axes, because a session key that can do
-///      anything is just the account key with extra steps:
-///        * time    — every session expires, and there is no way to grant one that does not;
-///        * value   — a cumulative native-token cap, so a leaked key cannot drain the account;
-///        * calls   — an explicit (target, selector) allowlist, so a key scoped to
-///                    joining matches cannot be used to move an avatar NFT.
+///      Scope is fixed in code rather than granted, because a session key that
+///      can be pointed at anything is the account key with extra steps:
+///        * calls  — `join(matchId)` and `withdrawFor(account)` on `escrow`, and
+///                   nothing else. `withdrawFor` only ever pays the account, so
+///                   a leaked key can stake the player's ETH into lobbies but
+///                   never send it anywhere;
+///        * value  — a cap per call and a cap in total, both set at grant;
+///        * time   — every session expires, within `MAX_SESSION_DURATION`.
+///
+///      Logins are not this contract's business. The game server checks an
+///      off-chain grant the wallet signed, and `isValidSignature` answers for
+///      the account's own key only: a session key never speaks for the account
+///      off-chain, where no cap could bound what it signs.
 ///
 ///      Token receiver hooks. Delegating gives the EOA code, and a token that
 ///      transfers "safely" — `PlayerAvatars.mint` uses `_safeMint` — calls
 ///      `onERC721Received` on any address with code and reverts without it.
-///      Without these hooks, turning on one-click play would stop a player from
-///      ever minting an avatar or receiving a safe-transferred NFT again. A
-///      plain EOA accepts everything, so the delegated one does too.
+///      A plain EOA accepts everything, so the delegated one does too.
 contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
     using ECDSA for bytes32;
 
     struct Session {
         /// @dev Unix seconds. Zero means no session: there is no "never expires".
         uint48 validUntil;
+        /// @dev Most native value one call may move, in wei.
+        uint128 valueCap;
         /// @dev Cumulative native value this key may move, in wei.
         uint128 spendCap;
         uint128 spent;
@@ -56,27 +66,22 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
     ///
     ///      Under 7702 the storage is the player's own account, not this
     ///      contract's. Plain slots 0, 1, 2 would be shared with any other
-    ///      delegate the player ever points their account at — a different
-    ///      wallet's implementation would read our session table as its own
-    ///      state. A namespaced root keeps the two layouts apart.
+    ///      delegate the player ever points their account at. A namespaced
+    ///      root keeps the two layouts apart; v2 because the v1 layout held an
+    ///      allowlist this version does not, and must never read.
     ///
-    /// @custom:storage-location erc7201:lms.session.v1
+    /// @custom:storage-location erc7201:lms.session.v2
     struct Layout {
         mapping(address sessionKey => Session) sessions;
-        /// @dev Bumped on every grant, so each grant starts from an empty
-        ///      allowlist. Permissions are keyed by it, and the ones written
-        ///      under an earlier epoch are simply never read again.
-        mapping(address sessionKey => uint32) epochOf;
-        mapping(
-            address sessionKey
-                => mapping(uint32 epoch => mapping(address target => mapping(bytes4 selector => bool)))
-        ) permitted;
         /// @dev Replay protection for relayed calls, per account.
         uint256 nonce;
     }
 
-    /// @dev `keccak256(abi.encode(uint256(keccak256("lms.session.v1")) - 1)) & ~bytes32(uint256(0xff))`
-    bytes32 private constant LAYOUT_SLOT = 0x07ec1a45952760d8fb956aaf940b8ff509e88f045ea2d46fbee2898cc08df400;
+    /// @dev `keccak256(abi.encode(uint256(keccak256("lms.session.v2")) - 1)) & ~bytes32(uint256(0xff))`
+    bytes32 private constant LAYOUT_SLOT = 0x4aa0ea22fecb5f5d36f8a5cc47e8eb04e47337348195f5e74cf0d206fc2d2300;
+
+    /// @notice The longest a session may run. A leaked key is worth no more than this.
+    uint256 public constant MAX_SESSION_DURATION = 7 days;
 
     bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
     bytes4 private constant ERC1271_INVALID = 0xffffffff;
@@ -89,19 +94,31 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant DOMAIN_NAME = keccak256("LastManStandingSession");
-    bytes32 private constant DOMAIN_VERSION = keccak256("1");
+    bytes32 private constant DOMAIN_VERSION = keccak256("2");
 
-    event SessionGranted(address indexed sessionKey, uint48 validUntil, uint128 spendCap);
+    /// @notice The one contract a session key may call.
+    /// @dev An immutable lives in the code, so it reads the same from every
+    ///      delegating account. A new escrow means a new delegate, and a
+    ///      player re-delegates to use it.
+    GameEscrow public immutable escrow;
+
+    event SessionGranted(address indexed sessionKey, uint48 validUntil, uint128 valueCap, uint128 spendCap);
     event SessionRevoked(address indexed sessionKey);
-    event SessionCallExecuted(address indexed sessionKey, address indexed target, uint256 value);
+    event SessionCallExecuted(address indexed sessionKey, bytes4 indexed selector, uint256 value);
 
     error NotSelf(address caller);
     error SessionExpired(address sessionKey);
-    error SessionNotPermitted(address sessionKey, address target, bytes4 selector);
+    error SessionNotPermitted(address target, bytes4 selector);
+    error ValueCapExceeded(uint256 value, uint128 valueCap);
     error SpendCapExceeded(address sessionKey, uint256 attempted, uint128 remaining);
     error BadNonce(uint256 expected, uint256 supplied);
     error CallFailed(address target, bytes reason);
     error InvalidSession();
+
+    constructor(GameEscrow escrow_) {
+        if (address(escrow_) == address(0)) revert InvalidSession();
+        escrow = escrow_;
+    }
 
     /// @dev Only the account itself. Under 7702 that means a transaction the
     ///      player signed with their own key, addressed to their own address —
@@ -111,59 +128,42 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         _;
     }
 
-    /// @notice Grants a scoped, expiring session key.
-    /// @dev Replaces any earlier grant to the same key outright: the spend
-    ///      allowance restarts at zero and the allowlist is exactly `targets` ×
-    ///      `selectors`. Narrowing a key's scope by re-granting it therefore
-    ///      works, instead of silently keeping every call granted before.
+    /// @notice Grants a session key, replacing any earlier grant to it.
+    /// @dev The spend restarts at zero.
     /// @param sessionKey Address of the key the client will hold.
-    /// @param validUntil Expiry, in unix seconds. Must be in the future.
+    /// @param validUntil Expiry, in unix seconds: in the future, and within
+    ///        `MAX_SESSION_DURATION`.
+    /// @param valueCap Most native value one call may move, in wei.
     /// @param spendCap Cumulative native value the key may move, in wei.
-    /// @param targets Contracts the key may call, paired positionally with `selectors`.
-    /// @param selectors Function selectors the key may call on those contracts.
-    function grantSession(
-        address sessionKey,
-        uint48 validUntil,
-        uint128 spendCap,
-        address[] calldata targets,
-        bytes4[] calldata selectors
-    ) external onlySelf {
-        if (sessionKey == address(0)) revert InvalidSession();
-        if (validUntil <= block.timestamp) revert InvalidSession();
-        if (targets.length != selectors.length) revert InvalidSession();
-
-        Layout storage $ = _layout();
-        $.sessions[sessionKey] = Session({validUntil: validUntil, spendCap: spendCap, spent: 0});
-        uint32 epoch = ++$.epochOf[sessionKey];
-        for (uint256 i = 0; i < targets.length; ++i) {
-            $.permitted[sessionKey][epoch][targets[i]][selectors[i]] = true;
+    function grantSession(address sessionKey, uint48 validUntil, uint128 valueCap, uint128 spendCap)
+        external
+        onlySelf
+    {
+        if (sessionKey == address(0) || sessionKey == address(this)) revert InvalidSession();
+        if (validUntil <= block.timestamp || validUntil > block.timestamp + MAX_SESSION_DURATION) {
+            revert InvalidSession();
         }
+        if (valueCap > spendCap) revert InvalidSession();
 
-        emit SessionGranted(sessionKey, validUntil, spendCap);
+        _layout().sessions[sessionKey] =
+            Session({validUntil: validUntil, valueCap: valueCap, spendCap: spendCap, spent: 0});
+        emit SessionGranted(sessionKey, validUntil, valueCap, spendCap);
     }
 
     /// @notice Ends a session immediately.
-    /// @dev The allowlist needs no clearing: it is inert without a live
-    ///      session, and the next grant starts a fresh epoch anyway.
     function revokeSession(address sessionKey) external onlySelf {
         delete _layout().sessions[sessionKey];
         emit SessionRevoked(sessionKey);
     }
 
-    /// @notice A session's expiry and spend, by key.
+    /// @notice A session's expiry, caps and spend, by key.
     function sessions(address sessionKey)
         external
         view
-        returns (uint48 validUntil, uint128 spendCap, uint128 spent)
+        returns (uint48 validUntil, uint128 valueCap, uint128 spendCap, uint128 spent)
     {
         Session memory session = _layout().sessions[sessionKey];
-        return (session.validUntil, session.spendCap, session.spent);
-    }
-
-    /// @notice Whether the key's current grant may call `selector` on `target`.
-    function permitted(address sessionKey, address target, bytes4 selector) public view returns (bool) {
-        Layout storage $ = _layout();
-        return $.permitted[sessionKey][$.epochOf[sessionKey]][target][selector];
+        return (session.validUntil, session.valueCap, session.spendCap, session.spent);
     }
 
     /// @notice Nonce the next relayed call must carry.
@@ -176,41 +176,28 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         return _layout().sessions[sessionKey].validUntil > block.timestamp;
     }
 
-    /// @notice Executes one call authorised by a session key.
+    /// @notice Executes one escrow call authorised by a session key.
     /// @dev Permissionless to submit: the signature is the authority, so any
-    ///      relayer — the game server, a bundler, the player themselves — can
-    ///      pay the gas. That is what removes the wallet prompt.
+    ///      relayer can pay the gas. Not payable: the value comes from the
+    ///      account's balance, never from whoever submits.
+    /// @param target Must be `escrow`. Signed, so the key says what it meant.
+    /// @param data `join(matchId)`, or `withdrawFor(account)` naming this account.
     function executeWithSession(
         address target,
         uint256 value,
         bytes calldata data,
         uint256 nonce,
         bytes calldata signature
-    ) external payable returns (bytes memory result) {
+    ) external returns (bytes memory result) {
         Layout storage $ = _layout();
         if (nonce != $.nonce) revert BadNonce($.nonce, nonce);
 
-        bytes32 digest =
-            _hashTypedData(keccak256(abi.encode(CALL_TYPEHASH, target, value, keccak256(data), nonce)));
-        address sessionKey = digest.recover(signature);
-
+        address sessionKey = _callDigest(target, value, data, nonce).recover(signature);
         Session storage session = $.sessions[sessionKey];
         if (session.validUntil <= block.timestamp) revert SessionExpired(sessionKey);
 
-        // An empty calldata payload is a plain transfer; it has no selector, and
-        // the zero selector is what such a permission must be granted against.
-        bytes4 selector = data.length >= 4 ? bytes4(data[:4]) : bytes4(0);
-        if (!permitted(sessionKey, target, selector)) {
-            revert SessionNotPermitted(sessionKey, target, selector);
-        }
-
-        if (value > 0) {
-            uint128 remaining = session.spendCap - session.spent;
-            if (value > remaining) revert SpendCapExceeded(sessionKey, value, remaining);
-            // Safe: `value <= remaining <= spendCap`, both uint128.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            session.spent += uint128(value);
-        }
+        bytes4 selector = _checkCall(target, value, data);
+        _spend(session, sessionKey, value);
 
         // Effects before interaction: the nonce advances first, so a target that
         // re-enters cannot replay this same authorisation.
@@ -222,20 +209,17 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         (ok, result) = target.call{value: value}(data);
         if (!ok) revert CallFailed(target, result);
 
-        emit SessionCallExecuted(sessionKey, target, value);
+        emit SessionCallExecuted(sessionKey, selector, value);
     }
 
     /// @inheritdoc IERC1271
-    /// @dev This is what lets the game server accept a login signed by the
-    ///      session key: the gateway verifies against the *account*, and the
-    ///      account answers that the session key spoke for it. Both the root
-    ///      key and any live session key are valid signers — the root key
-    ///      because the account never stops being an EOA under 7702.
+    /// @dev The account's own key only. The game server checks a contract
+    ///      wallet's session grant through here; a delegated EOA's grant
+    ///      recovers to the account offline and never needs to ask.
     function isValidSignature(bytes32 hash, bytes memory signature) external view override returns (bytes4) {
         (address signer, ECDSA.RecoverError error,) = ECDSA.tryRecover(hash, signature);
         if (error != ECDSA.RecoverError.NoError) return ERC1271_INVALID;
-        if (signer == address(this)) return ERC1271_MAGIC;
-        return sessionActive(signer) ? ERC1271_MAGIC : ERC1271_INVALID;
+        return signer == address(this) ? ERC1271_MAGIC : ERC1271_INVALID;
     }
 
     /// @notice The digest a session key must sign to authorise a call.
@@ -246,7 +230,49 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         view
         returns (bytes32)
     {
+        return _callDigest(target, value, data, nonce);
+    }
+
+    function _callDigest(address target, uint256 value, bytes calldata data, uint256 nonce)
+        private
+        view
+        returns (bytes32)
+    {
         return _hashTypedData(keccak256(abi.encode(CALL_TYPEHASH, target, value, keccak256(data), nonce)));
+    }
+
+    /// @dev Counts `value` against both caps, or reverts.
+    function _spend(Session storage session, address sessionKey, uint256 value) private {
+        if (value > session.valueCap) revert ValueCapExceeded(value, session.valueCap);
+        uint128 remaining = session.spendCap - session.spent;
+        if (value > remaining) revert SpendCapExceeded(sessionKey, value, remaining);
+        // Safe: `value <= remaining <= spendCap`, both uint128.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        session.spent += uint128(value);
+    }
+
+    /// @dev The whole scope of a session key. Reverts unless the call is one
+    ///      of the two it may make, with arguments that keep the value with
+    ///      the account. Returns the selector.
+    function _checkCall(address target, uint256 value, bytes calldata data)
+        private
+        view
+        returns (bytes4 selector)
+    {
+        if (data.length >= 4) selector = bytes4(data[:4]);
+        if (target != address(escrow)) revert SessionNotPermitted(target, selector);
+        // Exactly one word of arguments: no trailing bytes for a future
+        // overload, or a lenient decoder, to read differently.
+        if (data.length != 36) revert SessionNotPermitted(target, selector);
+
+        if (selector == GameEscrow.join.selector) return selector;
+        if (selector == PullPayable.withdrawFor.selector) {
+            if (value != 0 || abi.decode(data[4:], (address)) != address(this)) {
+                revert SessionNotPermitted(target, selector);
+            }
+            return selector;
+        }
+        revert SessionNotPermitted(target, selector);
     }
 
     /// @dev Built per call rather than cached in an immutable: under 7702 this

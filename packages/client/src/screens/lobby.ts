@@ -12,10 +12,11 @@ import {
 } from '@lms/protocol';
 import { app, dom, net } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
-import { fillSelect } from '../ui/dom.js';
+import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import {
   crossChainNotice,
+  chainChips,
   lobbySummary,
   payWithOptions,
   planTokenJoin,
@@ -26,6 +27,7 @@ import {
   stakeButtonLabel,
 } from '../ui/views.js';
 import { renderWinnings } from '../wallet/payouts.js';
+import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
 
@@ -93,9 +95,13 @@ export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
     }
   }
   if (open.length === 0 && live.length === 0) {
-    dom.lobbyList.innerHTML = app.escrow
-      ? '<li class="muted small">No staked lobbies yet. Create one above.</li>'
-      : '<li class="muted small">Server is running without an escrow: practice only.</li>';
+    dom.lobbyList.replaceChildren(
+      element(
+        'li',
+        'muted small',
+        app.escrow ? 'No staked lobbies yet. Create one above.' : 'Server is running without an escrow: practice only.',
+      ),
+    );
     return;
   }
 
@@ -107,16 +113,23 @@ export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
 
 function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
   const li = document.createElement('li');
-  const label = document.createElement('span');
-  label.innerHTML = lobbySummary(
-    lobby.matchId,
-    lobby.stake,
-    lobby.seatCount,
-    lobby.maxSeats,
-    lobby.status,
-    lobby.players,
-    short,
+  const label = element('span');
+  const chips = chainChips(lobby.players).map((chip) => {
+    const node = element('span', 'chain-chip', chip.label);
+    node.title = chip.title;
+    node.style.setProperty('--chain', chip.css);
+    return node;
+  });
+  label.append(
+    element('strong', '', short(lobby.matchId)),
+    ' ',
+    element('span', 'muted small', lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status)),
   );
+  if (chips.length > 0) {
+    const row = element('span', 'chain-chips');
+    row.append(...chips);
+    label.append(row);
+  }
 
   const button = document.createElement('button');
   const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
@@ -171,8 +184,18 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.');
 
-  // Always the player's own transaction. The session key only signs logins.
   try {
+    if (canRelay()) {
+      try {
+        await relayJoin(lobby.matchId, BigInt(lobby.stake));
+        return seated(lobby);
+      } catch (error) {
+        // Over the caps, out of today's quota, or a lobby that just filled:
+        // say why, and let the wallet try it as an ordinary transaction.
+        if (!(error instanceof RelayError)) throw error;
+        toast(`One-click join refused: ${error.message}. Using your wallet.`);
+      }
+    }
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
     await wallet.waitFor(hash);
     seated(lobby);
@@ -195,9 +218,8 @@ function seated(lobby: LobbyInfo): void {
 // the player has seen that figure, because the wallet's own prompt for
 // `joinWithToken` shows a contract call, not a price.
 //
-// The player's own transactions, like every other join: the session key only
-// signs logins, and a token approval is exactly the kind of call a prompt-free
-// key should never be able to make anyway.
+// Always the player's own transactions, one-click play or not: a token
+// approval is exactly the kind of call a prompt-free key must never make.
 
 function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): void {
   button.textContent = stakeButtonLabel(lobby.stake, token);

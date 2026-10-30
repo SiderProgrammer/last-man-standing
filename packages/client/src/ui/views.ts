@@ -13,14 +13,15 @@ import {
   type ZapInfo,
   type ZapToken,
 } from '@lms/protocol';
-import type { Read } from '../game/reads.js';
 
 /**
  * Pure builders for everything the panels display.
  *
- * Each takes state and returns rows, options or markup; none of them touches
- * the document. That is what lets the interesting parts of the UI be tested in
- * node, with the DOM writes left as a thin applier layer in `screens/`.
+ * Each takes state and returns rows, options or text; none of them touches
+ * the document, and none returns markup: the screens build nodes from what
+ * these return, so nothing reaches the page through `innerHTML`. That is
+ * what lets the interesting parts of the UI be tested in node, with the DOM
+ * writes left as a thin applier layer in `screens/`.
  */
 
 /** A `<select>` option, as value and label. */
@@ -30,35 +31,6 @@ export function targetOptions(state: PublicMatchState, you: number | null): Opti
   return state.players
     .filter((player) => player.alive && player.index !== you)
     .map((player) => [String(player.index), `#${player.index}`]);
-}
-
-export function readsTable(reads: Read[]): string {
-  const rows = reads
-    .map(
-      (read) => `
-      <tr style="opacity:${read.alive ? 1 : 0.45}">
-        <td>#${read.seat}</td>
-        <td>${read.strikes}</td>
-        <td>${read.guards}</td>
-        <td>${read.charges}</td>
-        <td>${read.favourite === null ? '—' : `#${read.favourite}`}</td>
-        <td class="tell">${read.tell}</td>
-      </tr>${
-        read.past
-          ? `
-      <tr class="past" style="opacity:${read.alive ? 1 : 0.45}"><td></td><td colspan="5">${read.past}</td></tr>`
-          : ''
-      }`,
-    )
-    .join('');
-
-  return `
-    <table>
-      <thead>
-        <tr><th>seat</th><th>⚔️</th><th>🛡️</th><th>⚡</th><th>favours</th><th>tell</th></tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
 }
 
 /**
@@ -73,22 +45,19 @@ export function chainChipCounts(seats: readonly LobbySeat[]): Array<[chainId: nu
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
 }
 
-export function chainChips(seats: readonly LobbySeat[]): string {
-  const counts = chainChipCounts(seats);
-  if (counts.length === 0) return '';
+/** One chip in a lobby row: a chain, and how many seats came from it. */
+export interface ChainChip {
+  label: string;
+  title: string;
+  /** Value for the chip's `--chain` custom property. */
+  css: string;
+}
 
-  const chips = counts
-    .map(([chainId, count]) => {
-      const chain = chainInfo(chainId);
-      const suffix = count > 1 ? ` ×${count}` : '';
-      return (
-        `<span class="chain-chip" style="--chain:${chainCss(chain.color)}" title="${chain.name}">` +
-        `${chain.short}${suffix}</span>`
-      );
-    })
-    .join('');
-
-  return `<span class="chain-chips">${chips}</span>`;
+export function chainChips(seats: readonly LobbySeat[]): ChainChip[] {
+  return chainChipCounts(seats).map(([chainId, count]) => {
+    const chain = chainInfo(chainId);
+    return { label: count > 1 ? `${chain.short} ×${count}` : chain.short, title: chain.name, css: chainCss(chain.color) };
+  });
 }
 
 export interface HubLabel {
@@ -195,21 +164,9 @@ export function avatarPanel(
 }
 
 /** The lobby row's left-hand label. */
-export function lobbySummary(
-  matchId: string,
-  stake: string,
-  seatCount: number,
-  maxSeats: number,
-  status: string,
-  seats: readonly LobbySeat[],
-  shorten: (value: string) => string,
-): string {
-  return (
-    `<strong>${shorten(matchId)}</strong> ` +
-    `<span class="muted small">${formatEther(BigInt(stake))} ETH · ` +
-    `${seatCount}/${maxSeats} seats · ${status}</span>` +
-    chainChips(seats)
-  );
+/** A lobby row's text: its stake, how full it is, and its status. */
+export function lobbySummary(stake: string, seatCount: number, maxSeats: number, status: string): string {
+  return `${formatEther(BigInt(stake))} ETH · ${seatCount}/${maxSeats} seats · ${status}`;
 }
 
 // ------------------------------------------------------------ token payment

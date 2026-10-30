@@ -993,6 +993,10 @@ button.lock-in {
   margin-top: 8px;
 }
 
+.reads tr.dead {
+  opacity: 0.45;
+}
+
 .reads tr.past td {
   color: var(--muted);
   font-size: 11px;

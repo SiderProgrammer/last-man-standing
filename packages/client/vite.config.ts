@@ -1,6 +1,23 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { DEFAULT_SERVER_PORT } from '../protocol/src/ports.js';
+import { contentSecurityPolicy } from './src/csp.js';
+
+/** Puts the production Content-Security-Policy in the page's `<head>`. See `src/csp.ts`. */
+function csp(): Plugin {
+  let policy = '';
+  return {
+    name: 'lms-csp',
+    apply: 'build',
+    configResolved(config) {
+      const env = loadEnv(config.mode, config.envDir || config.root, 'VITE_');
+      policy = contentSecurityPolicy(env, { dev: !config.isProduction });
+    },
+    transformIndexHtml: () => [
+      { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' },
+    ],
+  };
+}
 
 /**
  * The client consumes `@lms/protocol` from source rather than from `dist`, so a
@@ -9,6 +26,7 @@ import { DEFAULT_SERVER_PORT } from '../protocol/src/ports.js';
  * the server and the contracts.
  */
 export default defineConfig({
+  plugins: [csp()],
   resolve: {
     alias: {
       '@lms/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),

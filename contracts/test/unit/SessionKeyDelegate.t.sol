@@ -1,49 +1,33 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
-
 import {SessionKeyDelegate} from "../../src/SessionKeyDelegate.sol";
+import {GameEscrow} from "../../src/GameEscrow.sol";
+import {PullPayable} from "../../src/PullPayable.sol";
 import {PlayerAvatars} from "../../src/PlayerAvatars.sol";
+import {UnknownMatch} from "../../src/Errors.sol";
+import {Fixtures} from "../helpers/Fixtures.sol";
 
-/// @dev Stand-in for whatever the session key is allowed to call.
-contract Target {
-    uint256 public calls;
-    uint256 public received;
-
-    function ping() external payable {
-        ++calls;
-        received += msg.value;
-    }
-
-    function forbidden() external {
-        ++calls;
-    }
-
-    function boom() external pure {
-        revert("nope");
-    }
-}
-
-contract SessionKeyDelegateTest is Test {
+contract SessionKeyDelegateTest is Fixtures {
     SessionKeyDelegate private delegate;
-    Target private target;
 
-    uint256 private constant PLAYER_PK = 0xA11CE;
+    uint256 private constant PLAYER_PK = 0xA11CE5;
     uint256 private constant SESSION_PK = 0x5E5510;
     uint256 private constant STRANGER_PK = 0xBAD;
 
     address private player;
     address private sessionKey;
+    address private relayer;
 
     uint48 private expiry;
 
-    function setUp() public {
-        delegate = new SessionKeyDelegate();
-        target = new Target();
+    function setUp() public override {
+        super.setUp();
+        delegate = new SessionKeyDelegate(escrow);
 
         player = vm.addr(PLAYER_PK);
         sessionKey = vm.addr(SESSION_PK);
+        relayer = makeAddr("relayer");
         expiry = uint48(block.timestamp + 1 days);
 
         vm.deal(player, 10 ether);
@@ -52,16 +36,15 @@ contract SessionKeyDelegateTest is Test {
         vm.signAndAttachDelegation(address(delegate), PLAYER_PK);
     }
 
+    function _account() private view returns (SessionKeyDelegate) {
+        return SessionKeyDelegate(payable(player));
+    }
+
     /// @dev Granting is a call the account makes to itself, which is the one
     ///      deliberate signature the whole design is built around.
-    function _grant(uint128 spendCap) private {
-        address[] memory targets = new address[](1);
-        targets[0] = address(target);
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = Target.ping.selector;
-
+    function _grant(uint128 valueCap, uint128 spendCap) private {
         vm.prank(player);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, spendCap, targets, selectors);
+        _account().grantSession(sessionKey, expiry, valueCap, spendCap);
     }
 
     function _sign(uint256 pk, address to, uint256 value, bytes memory data)
@@ -69,15 +52,41 @@ contract SessionKeyDelegateTest is Test {
         view
         returns (bytes memory)
     {
-        uint256 nonce = SessionKeyDelegate(payable(player)).sessionNonce();
-        bytes32 digest = SessionKeyDelegate(payable(player)).callDigest(to, value, data, nonce);
+        uint256 nonce = _account().sessionNonce();
+        bytes32 digest = _account().callDigest(to, value, data, nonce);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
 
+    /// @dev Signs `data` for the escrow with the session key, and has the relayer submit it.
+    function _relay(uint256 value, bytes memory data) private returns (bytes memory) {
+        bytes memory signature = _sign(SESSION_PK, address(escrow), value, data);
+        uint256 nonce = _account().sessionNonce();
+        vm.prank(relayer);
+        return _account().executeWithSession(address(escrow), value, data, nonce, signature);
+    }
+
+    function _lobby() private returns (bytes32 matchId) {
+        vm.prank(players[0]);
+        matchId = escrow.createMatch(STAKE, 4);
+    }
+
+    function _join(bytes32 matchId) private pure returns (bytes memory) {
+        return abi.encodeCall(GameEscrow.join, (matchId));
+    }
+
+    function _expectNotPermitted(address target, bytes4 selector) private {
+        vm.expectRevert(
+            abi.encodeWithSelector(SessionKeyDelegate.SessionNotPermitted.selector, target, selector)
+        );
+    }
+
+    // --- Delegation ----------------------------------------------------------
+
     function test_delegationGivesTheEoaCodeWithoutChangingItsAddress() public view {
         assertGt(player.code.length, 0);
         assertEq(player, vm.addr(PLAYER_PK));
+        assertEq(address(_account().escrow()), address(escrow));
     }
 
     /// @dev Regression: delegating gives the EOA code, and `_safeMint` rejects
@@ -91,280 +100,324 @@ contract SessionKeyDelegateTest is Test {
         assertEq(avatars.ownerOf(tokenId), player);
     }
 
-    function test_sessionKeyCanMintAnAvatarForTheAccount() public {
-        PlayerAvatars avatars = new PlayerAvatars(address(this), "LMS Avatars", "LMSA", 100, "ipfs://x/");
-        address[] memory targets = new address[](1);
-        targets[0] = address(avatars);
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = PlayerAvatars.mint.selector;
-        vm.prank(player);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 0, targets, selectors);
-
-        bytes memory data = abi.encodeCall(PlayerAvatars.mint, ());
-        bytes memory signature = _sign(SESSION_PK, address(avatars), 0, data);
-        SessionKeyDelegate(payable(player)).executeWithSession(address(avatars), 0, data, 0, signature);
-
-        assertTrue(avatars.hasMinted(player));
+    function test_rejectsADelegateWithNoEscrow() public {
+        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
+        new SessionKeyDelegate(GameEscrow(payable(address(0))));
     }
 
-    function test_grantSessionStoresTheScope() public {
-        _grant(1 ether);
+    // --- Granting ------------------------------------------------------------
 
-        (uint48 validUntil, uint128 spendCap, uint128 spent) =
-            SessionKeyDelegate(payable(player)).sessions(sessionKey);
+    function test_grantSessionStoresTheCaps() public {
+        _grant(1 ether, 3 ether);
+
+        (uint48 validUntil, uint128 valueCap, uint128 spendCap, uint128 spent) =
+            _account().sessions(sessionKey);
         assertEq(validUntil, expiry);
-        assertEq(spendCap, 1 ether);
+        assertEq(valueCap, 1 ether);
+        assertEq(spendCap, 3 ether);
         assertEq(spent, 0);
-        assertTrue(SessionKeyDelegate(payable(player)).sessionActive(sessionKey));
+        assertTrue(_account().sessionActive(sessionKey));
     }
 
     /// @dev The whole security boundary: nobody but the account grants itself keys.
     function test_onlyTheAccountCanGrantASession() public {
-        address[] memory targets = new address[](0);
-        bytes4[] memory selectors = new bytes4[](0);
-
         vm.prank(sessionKey);
         vm.expectRevert(abi.encodeWithSelector(SessionKeyDelegate.NotSelf.selector, sessionKey));
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 0, targets, selectors);
+        _account().grantSession(sessionKey, expiry, 0, 0);
+    }
+
+    function test_onlyTheAccountCanRevokeASession() public {
+        _grant(1 ether, 1 ether);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SessionKeyDelegate.NotSelf.selector, relayer));
+        _account().revokeSession(sessionKey);
     }
 
     function test_rejectsASessionThatNeverExpires() public {
-        address[] memory targets = new address[](0);
-        bytes4[] memory selectors = new bytes4[](0);
+        vm.prank(player);
+        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
+        _account().grantSession(sessionKey, 0, 0, 0);
+    }
+
+    function test_rejectsASessionLongerThanTheMaximum() public {
+        uint48 tooLate = uint48(block.timestamp + _account().MAX_SESSION_DURATION() + 1);
+        vm.prank(player);
+        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
+        _account().grantSession(sessionKey, tooLate, 0, 0);
+
+        vm.prank(player);
+        _account().grantSession(sessionKey, tooLate - 1, 0, 0);
+    }
+
+    function test_rejectsAValueCapAboveTheSpendCap() public {
+        vm.prank(player);
+        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
+        _account().grantSession(sessionKey, expiry, 2 ether, 1 ether);
+    }
+
+    function test_rejectsTheAccountItselfAsASessionKey() public {
+        vm.prank(player);
+        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
+        _account().grantSession(player, expiry, 0, 0);
 
         vm.prank(player);
         vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, 0, 0, targets, selectors);
+        _account().grantSession(address(0), expiry, 0, 0);
     }
 
-    function test_rejectsMismatchedPermissionArrays() public {
-        address[] memory targets = new address[](2);
-        bytes4[] memory selectors = new bytes4[](1);
+    // --- One-click join ------------------------------------------------------
 
-        vm.prank(player);
-        vm.expectRevert(SessionKeyDelegate.InvalidSession.selector);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 0, targets, selectors);
+    function test_aRelayerJoinsALobbyForThePlayer() public {
+        _grant(STAKE, 2 * STAKE);
+        bytes32 matchId = _lobby();
+        uint256 relayerBalance = relayer.balance;
+
+        _relay(STAKE, _join(matchId));
+
+        address[] memory seats = escrow.getSeats(matchId);
+        assertEq(seats.length, 1);
+        assertEq(seats[0], player, "the seat is the account's, not the relayer's");
+        assertEq(player.balance, 10 ether - STAKE, "the stake came from the account");
+        assertEq(relayer.balance, relayerBalance, "the relayer paid gas only");
+        assertEq(_account().sessionNonce(), 1);
+        (,,, uint128 spent) = _account().sessions(sessionKey);
+        assertEq(spent, STAKE);
     }
 
-    // --- Relayed execution -------------------------------------------------
+    function test_rejectsAJoinAboveTheValueCap() public {
+        _grant(STAKE - 1, 2 * STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
 
-    function test_anyoneMayRelayACallTheSessionKeySigned() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
-
-        // A relayer with no relationship to the player submits it: the
-        // signature is the authority, which is what removes the wallet prompt.
-        vm.prank(address(0xDEFEC8));
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
-
-        assertEq(target.calls(), 1);
-        assertEq(SessionKeyDelegate(payable(player)).sessionNonce(), 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(SessionKeyDelegate.ValueCapExceeded.selector, STAKE, STAKE - 1)
+        );
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
     }
 
-    function test_valueComesFromTheAccountAndCountsAgainstTheCap() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0.4 ether, data);
-
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.4 ether, data, 0, signature);
-
-        assertEq(target.received(), 0.4 ether);
-        assertEq(player.balance, 9.6 ether);
-
-        (,, uint128 spent) = SessionKeyDelegate(payable(player)).sessions(sessionKey);
-        assertEq(spent, 0.4 ether);
-    }
-
-    /// @dev A leaked session key must not be able to drain the account.
+    /// @dev A leaked session key must not be able to stake the whole account.
     function test_spendCapIsCumulativeAcrossCalls() public {
-        _grant(0.5 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
+        _grant(STAKE, STAKE + STAKE / 2);
+        _relay(STAKE, _join(_lobby()));
 
-        bytes memory first = _sign(SESSION_PK, address(target), 0.3 ether, data);
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.3 ether, data, 0, first);
-
-        bytes memory second = _sign(SESSION_PK, address(target), 0.3 ether, data);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                SessionKeyDelegate.SpendCapExceeded.selector, sessionKey, 0.3 ether, 0.2 ether
-            )
+            abi.encodeWithSelector(SessionKeyDelegate.SpendCapExceeded.selector, sessionKey, STAKE, STAKE / 2)
         );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.3 ether, data, 1, second);
+        _account().executeWithSession(address(escrow), STAKE, data, 1, signature);
     }
 
-    function test_rejectsACallOutsideTheAllowlist() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.forbidden, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
+    function test_regrantingResetsTheSpentAmountRatherThanAccumulating() public {
+        _grant(STAKE, STAKE);
+        _relay(STAKE, _join(_lobby()));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                SessionKeyDelegate.SessionNotPermitted.selector,
-                sessionKey,
-                address(target),
-                Target.forbidden.selector
-            )
-        );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _grant(STAKE, STAKE);
+
+        (,, uint128 spendCap, uint128 spent) = _account().sessions(sessionKey);
+        assertEq(spendCap, STAKE);
+        assertEq(spent, 0);
     }
 
-    function test_rejectsAPermittedSelectorOnAnUnpermittedTarget() public {
-        _grant(1 ether);
-        Target other = new Target();
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(other), 0, data);
+    // --- One-click collect ---------------------------------------------------
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                SessionKeyDelegate.SessionNotPermitted.selector,
-                sessionKey,
-                address(other),
-                Target.ping.selector
-            )
-        );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(other), 0, data, 0, signature);
+    function test_aRelayerCollectsWinningsToTheAccount() public {
+        _grant(STAKE, STAKE);
+        bytes32 matchId = _lobby();
+        _relay(STAKE, _join(matchId));
+        for (uint256 i = 1; i < 4; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+        _lockAndSeed(matchId, keccak256("seed"));
+        // The seat order is the ranking, so the account wins.
+        _settleAndFinalize(matchId);
+
+        uint256 owed = escrow.withdrawable(player);
+        assertGt(owed, 0);
+        uint256 before = player.balance;
+
+        _relay(0, abi.encodeCall(PullPayable.withdrawFor, (player)));
+
+        assertEq(escrow.withdrawable(player), 0);
+        assertEq(player.balance, before + owed);
     }
+
+    /// @dev `withdrawFor` pays whoever it names; the key may only name the account.
+    function test_rejectsAWithdrawalForSomeoneElse() public {
+        _grant(STAKE, STAKE);
+        bytes memory data = abi.encodeCall(PullPayable.withdrawFor, (relayer));
+        bytes memory signature = _sign(SESSION_PK, address(escrow), 0, data);
+
+        _expectNotPermitted(address(escrow), PullPayable.withdrawFor.selector);
+        _account().executeWithSession(address(escrow), 0, data, 0, signature);
+    }
+
+    function test_rejectsAWithdrawalThatSendsValue() public {
+        _grant(STAKE, STAKE);
+        bytes memory data = abi.encodeCall(PullPayable.withdrawFor, (player));
+        bytes memory signature = _sign(SESSION_PK, address(escrow), 1, data);
+
+        _expectNotPermitted(address(escrow), PullPayable.withdrawFor.selector);
+        _account().executeWithSession(address(escrow), 1, data, 0, signature);
+    }
+
+    // --- Scope ---------------------------------------------------------------
+
+    /// @dev `withdraw(to)` would let a leaked key send the balance anywhere.
+    function test_rejectsAnyOtherEscrowCall() public {
+        _grant(STAKE, STAKE);
+        bytes memory data = abi.encodeCall(PullPayable.withdraw, (relayer));
+        bytes memory signature = _sign(SESSION_PK, address(escrow), 0, data);
+
+        _expectNotPermitted(address(escrow), PullPayable.withdraw.selector);
+        _account().executeWithSession(address(escrow), 0, data, 0, signature);
+    }
+
+    function test_rejectsACallToAnotherContract() public {
+        _grant(STAKE, STAKE);
+        PlayerAvatars avatars = new PlayerAvatars(address(this), "LMS Avatars", "LMSA", 100, "ipfs://x/");
+        bytes memory data = abi.encodeCall(PlayerAvatars.mint, ());
+        bytes memory signature = _sign(SESSION_PK, address(avatars), 0, data);
+
+        _expectNotPermitted(address(avatars), PlayerAvatars.mint.selector);
+        _account().executeWithSession(address(avatars), 0, data, 0, signature);
+    }
+
+    function test_rejectsAJoinWithTrailingBytes() public {
+        _grant(STAKE, STAKE);
+        bytes memory data = abi.encodePacked(_join(_lobby()), uint8(1));
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
+
+        _expectNotPermitted(address(escrow), GameEscrow.join.selector);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
+    }
+
+    function test_rejectsAPlainTransfer() public {
+        _grant(STAKE, STAKE);
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, "");
+
+        _expectNotPermitted(address(escrow), bytes4(0));
+        _account().executeWithSession(address(escrow), STAKE, "", 0, signature);
+    }
+
+    // --- Authority -----------------------------------------------------------
 
     function test_rejectsASignatureFromAKeyWithNoSession() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(STRANGER_PK, address(target), 0, data);
+        _grant(STAKE, STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(STRANGER_PK, address(escrow), STAKE, data);
 
         vm.expectRevert(
             abi.encodeWithSelector(SessionKeyDelegate.SessionExpired.selector, vm.addr(STRANGER_PK))
         );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
     }
 
     function test_rejectsAnExpiredSession() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
+        _grant(STAKE, STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
 
-        vm.warp(expiry + 1);
+        vm.warp(expiry);
         vm.expectRevert(abi.encodeWithSelector(SessionKeyDelegate.SessionExpired.selector, sessionKey));
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
     }
 
     function test_revokedSessionStopsWorkingImmediately() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
+        _grant(STAKE, STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
 
         vm.prank(player);
-        SessionKeyDelegate(payable(player)).revokeSession(sessionKey);
+        _account().revokeSession(sessionKey);
 
-        assertFalse(SessionKeyDelegate(payable(player)).sessionActive(sessionKey));
+        assertFalse(_account().sessionActive(sessionKey));
         vm.expectRevert(abi.encodeWithSelector(SessionKeyDelegate.SessionExpired.selector, sessionKey));
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
     }
 
     /// @dev A relayer that replays a submitted call must not get a second execution.
     function test_aSignatureCannotBeReplayed() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
-
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _grant(STAKE, 2 * STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
 
         vm.expectRevert(abi.encodeWithSelector(SessionKeyDelegate.BadNonce.selector, 1, 0));
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
     }
 
-    function test_regrantingResetsTheSpentAmountRatherThanAccumulating() public {
-        _grant(0.5 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0.4 ether, data);
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.4 ether, data, 0, signature);
+    /// @dev The signature covers the value, so a relayer cannot stake more than was signed.
+    function test_aRelayerCannotChangeTheValue() public {
+        _grant(STAKE, 2 * STAKE);
+        bytes memory data = _join(_lobby());
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
 
-        _grant(0.5 ether);
-
-        (, uint128 spendCap, uint128 spent) = SessionKeyDelegate(payable(player)).sessions(sessionKey);
-        assertEq(spendCap, 0.5 ether);
-        assertEq(spent, 0);
+        // The signature recovers to some other key, which holds no session.
+        vm.expectPartialRevert(SessionKeyDelegate.SessionExpired.selector);
+        _account().executeWithSession(address(escrow), 2 * STAKE, data, 0, signature);
     }
 
-    function test_bubblesUpTheTargetsRevert() public {
-        address[] memory targets = new address[](1);
-        targets[0] = address(target);
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = Target.boom.selector;
-        vm.prank(player);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 0, targets, selectors);
-
-        bytes memory data = abi.encodeCall(Target.boom, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
+    function test_bubblesUpTheEscrowsRevert() public {
+        _grant(STAKE, STAKE);
+        bytes32 unknown = keccak256("no such lobby");
+        bytes memory data = _join(unknown);
+        bytes memory signature = _sign(SESSION_PK, address(escrow), STAKE, data);
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 SessionKeyDelegate.CallFailed.selector,
-                address(target),
-                abi.encodeWithSignature("Error(string)", "nope")
+                address(escrow),
+                abi.encodeWithSelector(UnknownMatch.selector, unknown)
             )
         );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        _account().executeWithSession(address(escrow), STAKE, data, 0, signature);
+        // Reverted whole: neither the nonce nor the spend moved.
+        assertEq(_account().sessionNonce(), 0);
     }
 
-    // --- ERC-1271, which is how the game server accepts a session login ----
-
-    function test_acceptsALoginSignedByALiveSessionKey() public {
-        _grant(0);
-        bytes32 hash = keccak256("Last Man Standing login\nnonce:abc123");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(SESSION_PK, hash);
-
-        assertEq(
-            SessionKeyDelegate(payable(player)).isValidSignature(hash, abi.encodePacked(r, s, v)),
-            bytes4(0x1626ba7e)
-        );
-    }
+    // --- ERC-1271: the account's own key, and nothing else ----------------------
 
     /// @dev Under 7702 the account never stops being an EOA, so its own key
-    ///      must keep working — otherwise a player who clears their browser
-    ///      could not log in at all.
-    function test_acceptsALoginSignedByTheAccountsOwnKey() public view {
-        bytes32 hash = keccak256("Last Man Standing login\nnonce:abc123");
+    ///      must keep working, including for a contract-style check of its grant.
+    function test_acceptsASignatureFromTheAccountsOwnKey() public view {
+        bytes32 hash = keccak256("a session grant");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(PLAYER_PK, hash);
 
-        assertEq(
-            SessionKeyDelegate(payable(player)).isValidSignature(hash, abi.encodePacked(r, s, v)),
-            bytes4(0x1626ba7e)
-        );
+        assertEq(_account().isValidSignature(hash, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
     }
 
-    function test_rejectsALoginFromAStranger() public view {
-        bytes32 hash = keccak256("Last Man Standing login\nnonce:abc123");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(STRANGER_PK, hash);
-
-        assertEq(
-            SessionKeyDelegate(payable(player)).isValidSignature(hash, abi.encodePacked(r, s, v)),
-            bytes4(0xffffffff)
-        );
-    }
-
-    function test_rejectsALoginFromAnExpiredSessionKey() public {
-        _grant(0);
-        bytes32 hash = keccak256("Last Man Standing login\nnonce:abc123");
+    /// @dev Regression: a live session key used to be a valid signer for the
+    ///      account, so anything checking ERC-1271 — a permit, an order, a
+    ///      login — took the key's word for the wallet's, with no cap at all.
+    function test_rejectsASignatureFromALiveSessionKey() public {
+        _grant(STAKE, STAKE);
+        bytes32 hash = keccak256("a session grant");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(SESSION_PK, hash);
 
-        vm.warp(expiry + 1);
-        assertEq(
-            SessionKeyDelegate(payable(player)).isValidSignature(hash, abi.encodePacked(r, s, v)),
-            bytes4(0xffffffff)
-        );
+        assertTrue(_account().sessionActive(sessionKey));
+        assertEq(_account().isValidSignature(hash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
+    }
+
+    function test_rejectsASignatureFromAStranger() public view {
+        bytes32 hash = keccak256("a session grant");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(STRANGER_PK, hash);
+
+        assertEq(_account().isValidSignature(hash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
     }
 
     function test_rejectsAMalformedSignatureWithoutReverting() public view {
-        bytes32 hash = keccak256("Last Man Standing login\nnonce:abc123");
-
-        assertEq(SessionKeyDelegate(payable(player)).isValidSignature(hash, hex"1234"), bytes4(0xffffffff));
+        assertEq(_account().isValidSignature(keccak256("x"), hex"1234"), bytes4(0xffffffff));
     }
+
+    // --- Layout --------------------------------------------------------------
 
     /**
      * Frozen vector, pinned against `sessionCallDigest` in
      * `packages/protocol/test/session.test.ts`. A drift between the two would
      * not corrupt a match, but every relayed call would fail to recover the
-     * session key and players would silently lose prompt-free play.
+     * session key and one-click play would silently stop working.
      */
     function test_callDigestMatchesTheFrozenVector() public {
         address account = address(0xA1);
@@ -374,66 +427,23 @@ contract SessionKeyDelegateTest is Test {
         bytes32 digest = SessionKeyDelegate(payable(account))
             .callDigest(address(0xB2), 1_000_000_000_000_000, hex"deadbeef", 7);
 
-        assertEq(digest, 0xa23e142a5be00813755910b17a5ea68658ea7c7c86e8aec3db159ad4bcf4a476);
-    }
-
-    /// @dev Regression: permissions used to outlive the grant that wrote them,
-    ///      so re-granting a key with a narrower scope kept the wider one.
-    function test_regrantingWithANarrowerScopeDropsTheOldSelectors() public {
-        address[] memory targets = new address[](2);
-        targets[0] = address(target);
-        targets[1] = address(target);
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = Target.ping.selector;
-        selectors[1] = Target.forbidden.selector;
-        vm.prank(player);
-        SessionKeyDelegate(payable(player)).grantSession(sessionKey, expiry, 1 ether, targets, selectors);
-        assertTrue(
-            SessionKeyDelegate(payable(player))
-                .permitted(sessionKey, address(target), Target.forbidden.selector)
-        );
-
-        vm.prank(player);
-        SessionKeyDelegate(payable(player)).revokeSession(sessionKey);
-        _grant(1 ether);
-
-        assertTrue(
-            SessionKeyDelegate(payable(player)).permitted(sessionKey, address(target), Target.ping.selector)
-        );
-        assertFalse(
-            SessionKeyDelegate(payable(player))
-                .permitted(sessionKey, address(target), Target.forbidden.selector)
-        );
-
-        bytes memory data = abi.encodeCall(Target.forbidden, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0, data);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                SessionKeyDelegate.SessionNotPermitted.selector,
-                sessionKey,
-                address(target),
-                Target.forbidden.selector
-            )
-        );
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0, data, 0, signature);
+        assertEq(digest, 0xe0bb7f95c30aa264279556d9c60946f8e8fafb1468bbcd98dc74c8c0b13a5075);
     }
 
     /// @dev The account's low slots belong to whatever else the player may
     ///      delegate to one day; this delegate keeps to its ERC-7201 namespace.
     function test_stateLivesOnlyInTheNamespace() public {
-        _grant(1 ether);
-        bytes memory data = abi.encodeCall(Target.ping, ());
-        bytes memory signature = _sign(SESSION_PK, address(target), 0.1 ether, data);
-        SessionKeyDelegate(payable(player)).executeWithSession(address(target), 0.1 ether, data, 0, signature);
+        _grant(STAKE, STAKE);
+        _relay(STAKE, _join(_lobby()));
 
         for (uint256 slot = 0; slot < 8; ++slot) {
             assertEq(vm.load(player, bytes32(slot)), bytes32(0));
         }
-        bytes32 root = 0x07ec1a45952760d8fb956aaf940b8ff509e88f045ea2d46fbee2898cc08df400;
+        bytes32 root = 0x4aa0ea22fecb5f5d36f8a5cc47e8eb04e47337348195f5e74cf0d206fc2d2300;
         assertEq(
-            root, keccak256(abi.encode(uint256(keccak256("lms.session.v1")) - 1)) & ~bytes32(uint256(0xff))
+            root, keccak256(abi.encode(uint256(keccak256("lms.session.v2")) - 1)) & ~bytes32(uint256(0xff))
         );
-        // `nonce` is the fourth member of the layout.
-        assertEq(uint256(vm.load(player, bytes32(uint256(root) + 3))), 1);
+        // `nonce` is the second member of the layout.
+        assertEq(uint256(vm.load(player, bytes32(uint256(root) + 1))), 1);
     }
 }

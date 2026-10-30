@@ -41,6 +41,10 @@ export function queryDom(doc: Document = document) {
     sessionState: el<HTMLSpanElement>('session-state'),
     sessionStatus: el<HTMLSpanElement>('session-status'),
     forgetSession: el<HTMLButtonElement>('forget-session'),
+    oneClickState: el<HTMLSpanElement>('one-click-state'),
+    oneClickStatus: el<HTMLSpanElement>('one-click-status'),
+    enableOneClick: el<HTMLButtonElement>('enable-one-click'),
+    disableOneClick: el<HTMLButtonElement>('disable-one-click'),
     stakingPanel: el<HTMLDivElement>('staking-panel'),
     stakingRewards: el<HTMLSpanElement>('staking-rewards'),
     claimRewards: el<HTMLButtonElement>('claim-rewards'),
@@ -133,6 +137,22 @@ export function queryDom(doc: Document = document) {
 }
 
 export type Dom = ReturnType<typeof queryDom>;
+
+/**
+ * A new element with a class and text. The one way the client builds markup:
+ * text goes in as `textContent`, never as HTML, so nothing a server or another
+ * player sends can become an element or a script.
+ */
+export function element<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className = '',
+  text = '',
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
 
 /** Replaces a select's options, keeping the current value when it survives. */
 export function fillSelect(select: HTMLSelectElement, options: Array<[string, string]>): void {

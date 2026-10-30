@@ -1,3 +1,6 @@
+// Pixi compiles its shader uploaders with `new Function` unless this is loaded
+// first; the page's Content-Security-Policy allows no `eval` (see `csp.ts`).
+import 'pixi.js/unsafe-eval';
 import { Application, Container, FillGradient, Graphics, Text, type Texture } from 'pixi.js';
 import {
   Action,

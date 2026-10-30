@@ -100,9 +100,9 @@ export class VerifyPool {
  * Local recovery first, the account's own say second.
  *
  * An EOA's login recovers to its address and is settled by the pool with no
- * network at all. Only a signature that does not recover — a 7702 account
- * signing with a session key — goes on to `fallback`, the ERC-1271 call over
- * RPC. Previously every login made that call, which put one RPC request on
+ * network at all. Only a signature that does not recover — a contract wallet's,
+ * such as a Coinbase Smart Wallet — goes on to `fallback`, the ERC-1271 call
+ * over RPC. Previously every login made that call, which put one RPC request on
  * the critical path of every connection.
  */
 export function layeredVerifier<Args>(

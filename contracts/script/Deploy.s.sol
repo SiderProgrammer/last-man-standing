@@ -202,7 +202,7 @@ contract Deploy is Registry {
             vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),
             vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
         );
-        deployment.sessionDelegate = new SessionKeyDelegate();
+        deployment.sessionDelegate = new SessionKeyDelegate(deployment.escrow);
         deployment.zap = _zap(deployment.escrow);
         _governance(deployment, deployer);
         _distribute(deployment, deployer);
