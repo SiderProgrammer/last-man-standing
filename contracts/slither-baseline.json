@@ -14,8 +14,8 @@
   {
     "key": "arbitrary-send-eth|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)",
     "impact": "High",
-    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-226) sends eth to arbitrary user",
-    "triage": "Intended: the delegated account spends its own ETH. Reworked with caps and target checks in FIX_PLAN 5.3."
+    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-209) sends eth to arbitrary user",
+    "triage": "Not arbitrary: _checkCall reverts unless the target is the immutable escrow and the call is join or withdrawFor(account), and the value is the account's own ETH under the session's per-call and total caps."
   },
   {
     "key": "arbitrary-send-eth|function:SpokeEscrow.join|node:SpokeEscrow.join.ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId,hubEscrow,payload,stake)",
@@ -240,9 +240,9 @@
     "triage": "False positive: the call is to the timelock, fixed at deploy; the event only follows it."
   },
   {
-    "key": "reentrancy-events|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)|node:SessionKeyDelegate.executeWithSession.SessionCallExecuted(sessionKey,target,value)",
+    "key": "reentrancy-events|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)|node:SessionKeyDelegate.executeWithSession.SessionCallExecuted(sessionKey,selector,value)",
     "impact": "Low",
-    "summary": "Reentrancy in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-226):",
+    "summary": "Reentrancy in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-209):",
     "triage": "Events after calls to trusted protocol contracts; no state depends on them."
   },
   {
@@ -378,9 +378,9 @@
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
-    "key": "timestamp|function:SessionKeyDelegate.grantSession|node:SessionKeyDelegate.grantSession.validUntil <= block.timestamp",
+    "key": "timestamp|function:SessionKeyDelegate.grantSession|node:SessionKeyDelegate.grantSession.validUntil <= block.timestamp || validUntil > block.timestamp + MAX_SESSION_DURATION",
     "impact": "Low",
-    "summary": "SessionKeyDelegate.grantSession(address,uint48,uint128,address[],bytes4[]) (src/SessionKeyDelegate.sol#124-143) uses timestamp for comparisons",
+    "summary": "SessionKeyDelegate.grantSession(address,uint48,uint128,uint128) (src/SessionKeyDelegate.sol#139-150) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
@@ -477,7 +477,7 @@
     "key": "unused-return|function:SessionKeyDelegate.isValidSignature|node:SessionKeyDelegate.isValidSignature.(signer,error,None) = ECDSA.tryRecover(hash,signature)",
     "impact": "Medium",
     "summary": "SessionKeyDelegate.isValidSignature(bytes32,bytes) (src/SessionKeyDelegate.sol#234-239) ignores return value by (signer,error,None) = ECDSA.tryRecover(hash,signature) (src/SessionKeyDelegate.sol#235)",
-    "triage": "On error tryRecover returns address(0), which never equals the account, so the error code adds nothing. Branch rewritten in FIX_PLAN 5.2."
+    "triage": "Only the third return (the malleability detail) is ignored; the error code is checked and the signer must be the account."
   },
   {
     "key": "unused-return|function:SpokeEscrow.join|node:SpokeEscrow.join.ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId,hubEscrow,payload,stake)",
