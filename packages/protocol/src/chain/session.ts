@@ -22,7 +22,7 @@ const DOMAIN_TYPEHASH = keccak256(
   stringToHex('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
 );
 const DOMAIN_NAME = keccak256(stringToHex('LastManStandingSession'));
-const DOMAIN_VERSION = keccak256(stringToHex('1'));
+const DOMAIN_VERSION = keccak256(stringToHex('2'));
 const CALL_TYPEHASH = keccak256(
   stringToHex('SessionCall(address target,uint256 value,bytes data,uint256 nonce)'),
 );

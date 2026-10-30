@@ -20,7 +20,7 @@ const VECTOR = {
   nonce: 7n,
 } as const;
 
-const EXPECTED = '0xa23e142a5be00813755910b17a5ea68658ea7c7c86e8aec3db159ad4bcf4a476';
+const EXPECTED = '0xe0bb7f95c30aa264279556d9c60946f8e8fafb1468bbcd98dc74c8c0b13a5075';
 
 describe('sessionCallDigest', () => {
   it('matches the frozen vector the Solidity side is pinned to', () => {
