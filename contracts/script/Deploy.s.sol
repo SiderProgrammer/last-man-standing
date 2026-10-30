@@ -24,6 +24,7 @@ import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
 import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
 import {MultisigPhase} from "../src/governance/MultisigPhase.sol";
+import {LiquidityReserve} from "../src/governance/LiquidityReserve.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /// @notice Hub deploy, on Base or Base Sepolia: token-governed config,
@@ -36,7 +37,8 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///         |       (until PHASE_END, then retired)               has passed)           PlayerAvatars
 ///         |                                                                           ChainlinkVrfAdapter
 ///         +- owns the VRF subscription
-///         +- receives the liquidity share of LMS, to seed a pool
+///         +- releases the liquidity share of LMS from `LiquidityReserve`,
+///            to a pool the timelock approves
 ///
 ///        guardian (an EOA): may pause GameEscrow at once, for a week at most,
 ///                           and veto a proposed result, which refunds every stake
@@ -49,7 +51,7 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      share to `StakedLms` as ETH and forwards the rest to the timelock.
 ///
 ///      LMS: split between play-mining, the timelock, the team's vesting
-///      wallet and the Safe; see `_distribute`.
+///      wallet and the liquidity reserve; see `_distribute`.
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
@@ -133,6 +135,7 @@ contract Deploy is Registry {
         FeeRouter feeRouter;
         RewardsDistributor rewards;
         VestingWallet teamVesting;
+        LiquidityReserve liquidityReserve;
         /// @dev Holds the Safe's timelock roles until its fixed end date.
         MultisigPhase multisigPhase;
         address safe;
@@ -226,6 +229,7 @@ contract Deploy is Registry {
         _entry("feeRouter", address(deployment.feeRouter));
         _entry("rewardsDistributor", address(deployment.rewards));
         _entry("teamVesting", address(deployment.teamVesting));
+        _entry("liquidityReserve", address(deployment.liquidityReserve));
         _entry("multisigPhase", address(deployment.multisigPhase));
         _entry("safe", deployment.safe);
         _entry("guardian", deployment.guardian);
@@ -508,20 +512,19 @@ contract Deploy is Registry {
         return block.chainid == BASE_CHAIN_ID ? 0 : 5_000;
     }
 
-    /// @dev Hands out the whole supply, so the deployer ends with none of its
-    ///      own (on a local node, where it is also the Safe, it holds the Safe's):
+    /// @dev Hands out the whole supply, so the deployer ends with none:
     ///
     ///        50%  play-mining     RewardsDistributor, paid to players over four years
     ///        25%  treasury        the timelock: only a passed proposal can spend it
     ///        15%  team            a VestingWallet: nothing for a year, then linear over three
-    ///         5%  liquidity       the Safe, to seed a pool
+    ///         5%  liquidity       a LiquidityReserve: the Safe sends it to a pool the timelock approves
     ///         5%  reserve         the timelock, with the treasury
     ///
-    ///      None of the tokens the timelock, the distributor or the vesting
-    ///      wallet holds is staked, so none of them votes: governance starts
-    ///      with the players, as play-mining pays them. The vesting wallet and
-    ///      the distributor have no way to stake; the timelock could only by a
-    ///      proposal, which needs votes it does not have.
+    ///      None of the tokens the timelock, the distributor, the vesting
+    ///      wallet or the reserve holds is staked, so none of them votes:
+    ///      governance starts with the players, as play-mining pays them. The
+    ///      vesting wallet, the distributor and the reserve have no way to
+    ///      stake; the timelock could only by a proposal.
     function _distribute(Deployment memory deployment, address deployer) private {
         LmsToken lms = deployment.lms;
         uint256 supply = lms.totalSupply();
@@ -538,13 +541,15 @@ contract Deploy is Registry {
         uint256 team = (supply * TEAM_BPS) / BPS;
         lms.transfer(address(deployment.teamVesting), team);
 
-        // Treasury and reserve, and the rounding of the other three. Counted,
-        // not swept from the deployer's balance: on a local node the Safe *is*
-        // the deployer, and a sweep after the Safe's share would take it too.
+        deployment.liquidityReserve = new LiquidityReserve(
+            lms, deployment.safe, address(deployment.stakedLms), address(deployment.timelock)
+        );
         uint256 liquidity = (supply * LIQUIDITY_BPS) / BPS;
+        lms.transfer(address(deployment.liquidityReserve), liquidity);
+
+        // Treasury and reserve, and the rounding of the other three.
         lms.transfer(address(deployment.timelock), supply - play - team - liquidity);
-        lms.transfer(deployment.safe, liquidity);
-        assert(lms.balanceOf(deployer) == (deployer == deployment.safe ? liquidity : 0));
+        assert(lms.balanceOf(deployer) == 0);
     }
 
     function _rewards(Deployment memory deployment) private returns (RewardsDistributor) {

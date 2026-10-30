@@ -119,9 +119,17 @@ contract DeployTest is Test {
         assertEq(d.lms.balanceOf(address(d.rewards)), 50_000_000e18, "play-mining");
         assertEq(d.lms.balanceOf(address(d.timelock)), 30_000_000e18, "treasury and reserve");
         assertEq(d.lms.balanceOf(address(d.teamVesting)), 15_000_000e18, "team");
-        assertEq(d.lms.balanceOf(safe), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(address(d.liquidityReserve)), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(safe), 0, "the Safe holds none of it itself");
         assertEq(d.lms.balanceOf(deployer), 0);
         assertEq(d.stakedLms.totalSupply(), 0, "nobody votes until play-mining pays: no seed either");
+    }
+
+    function test_liquidityReserveIsTheSafes_toReleaseWhereTheTimelockApproves() public view {
+        assertEq(d.liquidityReserve.owner(), address(d.timelock));
+        assertEq(d.liquidityReserve.SAFE(), safe);
+        assertEq(d.liquidityReserve.VAULT(), address(d.stakedLms));
+        assertEq(address(d.liquidityReserve.LMS()), address(d.lms));
     }
 
     function test_teamVestsNothingForAYear_thenLinearlyOverThree() public {
@@ -290,7 +298,7 @@ contract DeployTest is Test {
 
     function test_proposal_unstakedLmsCannotVote() public {
         address holder = makeAddr("holder");
-        vm.prank(safe);
+        vm.prank(address(d.timelock));
         d.lms.transfer(holder, 1_000_000e18);
         vm.warp(block.timestamp + 1);
 
@@ -388,7 +396,10 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
         assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 17);
+        assertEq(
+            vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
+        );
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 18);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
@@ -401,13 +412,16 @@ contract DeployTest is Test {
         assertFalse(d.escrow.paused());
     }
 
-    /// @dev The Safe stakes enough of its supply to clear the threshold and
+    /// @dev The Safe is granted and stakes enough to clear the threshold and
     ///      quorum on its own, proposes, and votes for it. Returns at the end
     ///      of the voting period, with the proposal `Succeeded`.
     function _passGuardianProposal(address newGuardian)
         private
         returns (uint256 id, address[] memory targets, uint256[] memory values, bytes[] memory calls)
     {
+        // From the treasury, as a passed grant would pay it.
+        vm.prank(address(d.timelock));
+        d.lms.transfer(safe, 1_000_000e18);
         vm.startPrank(safe);
         d.lms.approve(address(d.stakedLms), 1_000_000e18);
         d.stakedLms.deposit(1_000_000e18, safe);
