@@ -6,9 +6,9 @@ L1–L4, and the test gaps). It also builds in the design answers given on 2026-
 coverage table at the end maps each finding to its step.
 
 Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
-`design-rework-phase-2-core-contracts`, and Phase 3 on
-`design-rework-phase-3-governance-and-token`, each building on the last. Nothing after that
-is.
+`design-rework-phase-2-core-contracts`, Phase 3 on
+`design-rework-phase-3-governance-and-token`, and Phase 4 on `claude/clever-tesla-17t9rh`,
+each building on the last. Nothing after that is.
 
 ---
 
@@ -207,6 +207,49 @@ plus three for CI. Where it differs from the table:
 ---
 
 ## Phase 4: Verifiability (C3, H6)
+
+**Done**, one commit per step. Where it differs from the table:
+- 4.1 needed 5.1's grant, so the grant landed here: the `SessionGrant` type as 5.1
+  describes it, signed by the wallet, and a login whose nonce the granted key signs.
+  The grant's EIP-712 domain has no chain id (wallets refuse typed data for a chain
+  they are not on, and a spoke player must still log in); `chainId` is a field the
+  server checks, with expiry, a one-week cap, the origin against `ALLOWED_ORIGINS` when
+  set, and the wallet's signature (ERC-1271 over RPC as the fallback). A login without a
+  grant can watch but not play. Move signatures are checked on the verify pool, which
+  now recovers typed data. The browser keeps the grant for a day, which is also what
+  makes reconnects prompt-free, so the 7702 "prompt-free login" panel now shows the
+  grant instead; the delegate stays for 5.3. Left of 5.1: `ALLOWED_ORIGINS` required in
+  production, and the Privy check.
+- 4.2: receipts are signed by the attestor key, or by a per-process key on a server
+  without one; `hello` names the signer. The browser checks each receipt against its
+  own sealed move and keeps it with the salt, plus whether it revealed. The commitment
+  set is broadcast once the window closes and only then (4.4's rolls come from it).
+- 4.3: the hashed `RoundRecord` gains each seat's commitment. The commit and reveal
+  signatures and each commit's receive time sit beside it, in the transcript round's
+  `proofs`, not in the hashed record: each signs data the hash already covers. A
+  receipt's hash is derivable from the commitment and receive time, so it is not stored
+  separately.
+- 4.4: the commitment set is seat-ordered, `NO_COMMITMENT` for a seat that sealed none.
+- 4.5: the transcript hash is keccak256 of the transcript's canonical JSON (keys
+  sorted), and part of the EIP-712 `MatchResult`, so the quorum signs it. The archive
+  write retries with the settlement backoff; if it still fails the match is aborted
+  rather than left to its deadline. No IPFS pin. The two new Postgres columns need a
+  fresh database (no migration tool until 7.2).
+- 4.6: one extension per open dispute; later disputes are recorded, not extended.
+  `dismissDispute` puts the deadline back, or to now if that has passed, and another
+  seat may then dispute. To fit under EIP-170, `MatchCancelled` carries a `CancelReason`
+  enum instead of a string (GameEscrow: 24,327 bytes, 249 under the limit). The escrow
+  invariant handler disputes and dismisses too.
+- 4.7: the seed is read with the rest of the match from `getMatch`, which stores what
+  `MatchStarted` announced. Transcripts are served at `GET /transcripts/<hash>`, staked
+  matches only. The audit is `auditTranscript` in the engine, so a guardian's tooling
+  can use the same code. The evidence bundle is saved to a file for the player to send
+  to the guardian; nothing uploads it yet.
+- 4.8: two transcripts (four and eight seats, with a silent seat and a missed commit),
+  written by `npm run golden`. The Solidity test cannot run the engine; it rebuilds
+  every round hash and the root from seat-indexed arrays in the same file.
+- 4.9: the README gets a Trust model section, and the roles table the operator and the
+  seated player.
 
 | Step | Work | Findings |
 |---|---|---|
