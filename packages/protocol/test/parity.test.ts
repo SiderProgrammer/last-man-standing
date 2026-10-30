@@ -9,6 +9,7 @@ import {
   ZERO_SALT,
   chainHistory,
   commitMove,
+  commitmentSetHash,
   deriveMatchId,
   draw,
   drawBps,
@@ -47,11 +48,13 @@ describe('hash parity with the Solidity mirror', () => {
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(DEFAULT_RULES);
   });
 
-  it('pins a round seed and the draws taken from it', () => {
-    const entropy = roundSeed(keccak256(toHex('seed')), 3, SALTS);
-    expect(entropy).toBe('0x7e4cede4cdb60ef627f7567fdd7c76c76994dedca72d33a26b4e24a27ac577e2');
-    expect(drawBps(entropy, 1)).toBe(91);
-    expect(draw(entropy, 258)).toBe(0x35488afc3fef29f5171659d3e19c131674225566a149e03f8284036d4406df15n);
+  it('pins a commitment set, a round seed and the draws taken from it', () => {
+    const set = commitmentSetHash(COMMITMENTS);
+    expect(set).toBe('0xf18d89b73a8eed2ced885c9152e679820bf8917ea67e7c46a681c6abe5573adc');
+    const entropy = roundSeed(keccak256(toHex('seed')), 3, set);
+    expect(entropy).toBe('0x4d667135737ff4ad6b8b379f133a58cbc0bcca5690cfbb05e8015750afc1ad98');
+    expect(drawBps(entropy, 1)).toBe(4023);
+    expect(draw(entropy, 258)).toBe(0xe2504df953442fd406f6996306c6bcd20bea346d70650cee4541d118af9a7e57n);
   });
 
   it('pins a round hash, salts and commitments included', () => {
@@ -72,13 +75,13 @@ describe('hash parity with the Solidity mirror', () => {
     );
   });
 
-  it('changes the round seed when any one salt changes', () => {
+  it('changes the round seed when any one commitment changes', () => {
     const seed = keccak256(toHex('seed'));
-    const base = roundSeed(seed, 3, SALTS);
-    SALTS.forEach((_, seat) => {
-      const changed = [...SALTS];
+    const base = roundSeed(seed, 3, commitmentSetHash(COMMITMENTS));
+    COMMITMENTS.forEach((_, seat) => {
+      const changed = [...COMMITMENTS];
       changed[seat] = keccak256(toHex(`other:${seat}`));
-      expect(roundSeed(seed, 3, changed)).not.toBe(base);
+      expect(roundSeed(seed, 3, commitmentSetHash(changed))).not.toBe(base);
     });
   });
 
@@ -118,7 +121,7 @@ describe('hash parity with the Solidity mirror', () => {
 
   it('keeps draws inside the basis-point range and reproducible', () => {
     for (let round = 1; round <= 30; round += 1) {
-      const entropy = roundSeed(keccak256(toHex('seed')), round, SALTS);
+      const entropy = roundSeed(keccak256(toHex('seed')), round, commitmentSetHash(COMMITMENTS));
       for (let nonce = 0; nonce < 8; nonce += 1) {
         const roll = drawBps(entropy, nonce);
         expect(roll).toBeGreaterThanOrEqual(0);

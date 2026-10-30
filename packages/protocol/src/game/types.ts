@@ -166,7 +166,7 @@ export interface PublicMatchState {
   matchId: `0x${string}`;
   /**
    * The oracle seed. Public on-chain from `MatchStarted` anyway, and safe to
-   * publish: rolls come from each round's revealed salts, not from this alone.
+   * publish: rolls come from each round's commitments, not from this alone.
    * Together with `rules`, the seats and `history`, it is everything a client
    * needs to replay the match and check the result for itself.
    */

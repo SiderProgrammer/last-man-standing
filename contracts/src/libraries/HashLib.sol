@@ -55,9 +55,16 @@ library HashLib {
         return keccak256(abi.encode(matchId, rulesHash, seed));
     }
 
-    /// @dev Entropy for one round's rolls. Same encoding as `roundSeed` in TS.
-    function roundSeed(bytes32 seed, uint32 round, bytes32[] memory salts) internal pure returns (bytes32) {
-        return keccak256(abi.encode(seed, round, salts));
+    /// @dev Digest of a round's commitments, in seat order with zero for a
+    ///      seat that sealed none. Same encoding as `commitmentSetHash` in TS.
+    function commitmentSetHash(bytes32[] memory commitments) internal pure returns (bytes32) {
+        return keccak256(abi.encode(commitments));
+    }
+
+    /// @dev Entropy for one round's rolls, fixed when the commit window
+    ///      closes. Same encoding as `roundSeed` in TS.
+    function roundSeed(bytes32 seed, uint32 round, bytes32 commitmentSet) internal pure returns (bytes32) {
+        return keccak256(abi.encode(seed, round, commitmentSet));
     }
 
     function deriveMatchId(uint256 chainId, address escrow, uint256 nonce) internal pure returns (bytes32) {

@@ -43,7 +43,7 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      guardian may veto a result, which refunds every stake: disputes are
 ///      decided by that replay and the guardian acting on it, not on-chain.
 ///      The seed is drawn from an oracle after the lobby closes, and each
-///      round's rolls also depend on every player's revealed salt.
+///      round's rolls also depend on every commitment sealed in it.
 ///
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient — or

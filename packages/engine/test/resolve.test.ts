@@ -3,13 +3,14 @@ import {
   Action,
   DEFAULT_RULES,
   draw,
+  commitmentSetHash,
+  commitmentsBySeat,
   roundSeed,
-  saltsBySeat,
   StrikeOutcome,
   ZERO_SALT,
   type PlayerState,
 } from '@lms/protocol';
-import { GUARD_NONCE_BASE, resolveRound, tiebreakKey, type DeclaredMove } from '@lms/engine';
+import { GUARD_NONCE_BASE, entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '@lms/engine';
 import { bytes32, freshStates } from './helpers.js';
 
 const SEED = bytes32('resolve-seed');
@@ -87,10 +88,18 @@ describe('round resolution', () => {
       picks.add(blocked?.striker as number);
 
       // And it is exactly the documented draw.
-      const entropy = roundSeed(SEED, 1, saltsBySeat(3, moves));
+      const entropy = roundSeed(SEED, 1, commitmentSetHash(commitmentsBySeat(3, moves)));
       expect(blocked?.striker).toBe(Number(draw(entropy, GUARD_NONCE_BASE + 2) % 2n));
     }
     expect([...picks].sort()).toEqual([0, 1]);
+  });
+
+  /** Withholding a reveal costs that seat its move; it must not re-roll the round for anyone else. */
+  it('keeps the rolls when a seat withholds its reveal', () => {
+    const moves = [move(0, Action.Strike, 2), move(1, Action.Strike, 2), move(2, Action.Guard)];
+    const withheld = moves.map((entry) => (entry.index === 1 ? { ...entry, revealed: false } : entry));
+    const record = (list: DeclaredMove[]) => resolveRound(R, SEED, 1, freshStates(3), list).record;
+    expect(entropyOf(SEED, 3, record(withheld))).toBe(entropyOf(SEED, 3, record(moves)));
   });
 
   it('makes a charging player take extra damage and loads its next strike', () => {
@@ -217,7 +226,7 @@ describe('round resolution', () => {
       const survivor = next.findIndex((state) => state.alive);
       winners.add(survivor);
 
-      const entropy = roundSeed(SEED, 9, saltsBySeat(2, moves));
+      const entropy = roundSeed(SEED, 9, commitmentSetHash(commitmentsBySeat(2, moves)));
       expect(survivor).toBe(tiebreakKey(entropy, 0) < tiebreakKey(entropy, 1) ? 0 : 1);
     }
     expect([...winners].sort()).toEqual([0, 1]);

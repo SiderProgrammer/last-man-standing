@@ -33,8 +33,10 @@ contract HashLibTest is Test {
     }
 
     function test_roundSeedMatchesTypeScript() public pure {
-        bytes32 roundSeed = HashLib.roundSeed(keccak256("seed"), 3, _salts());
-        assertEq(roundSeed, 0x7e4cede4cdb60ef627f7567fdd7c76c76994dedca72d33a26b4e24a27ac577e2);
+        bytes32 commitmentSet = HashLib.commitmentSetHash(_commitments());
+        assertEq(commitmentSet, 0xf18d89b73a8eed2ced885c9152e679820bf8917ea67e7c46a681c6abe5573adc);
+        bytes32 roundSeed = HashLib.roundSeed(keccak256("seed"), 3, commitmentSet);
+        assertEq(roundSeed, 0x4d667135737ff4ad6b8b379f133a58cbc0bcca5690cfbb05e8015750afc1ad98);
     }
 
     function test_hashRoundMatchesTypeScript() public pure {

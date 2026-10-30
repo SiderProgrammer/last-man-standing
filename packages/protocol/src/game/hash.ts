@@ -55,8 +55,7 @@ export function commitmentsBySeat(
 
 /**
  * Every seat's revealed salt for a round, indexed by seat, with `ZERO_SALT`
- * for any seat that was dead or did not reveal. The one canonical layout used
- * by both the round seed and the round hash.
+ * for any seat that was dead or did not reveal. The layout the round hash uses.
  */
 export function saltsBySeat(
   seats: number,
@@ -123,26 +122,39 @@ export function chainHistory(previous: `0x${string}`, roundHash: `0x${string}`):
   return keccak256(encodeAbiParameters(HISTORY_STEP_ABI, [previous, roundHash]));
 }
 
-const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32[] salts');
+const COMMITMENT_SET_ABI = parseAbiParameters('bytes32[] commitments');
 
 /**
- * Entropy for one round's rolls: the match seed, the round, and every revealed
- * salt, in seat order.
+ * Digest of a round's commitments, in seat order with `NO_COMMITMENT` for a
+ * seat that sealed nothing. Fixed the moment the commit window closes.
+ */
+export function commitmentSetHash(commitments: readonly `0x${string}`[]): `0x${string}` {
+  return keccak256(encodeAbiParameters(COMMITMENT_SET_ABI, [[...commitments]]));
+}
+
+const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32 commitmentSet');
+
+/**
+ * Entropy for one round's rolls: the match seed, the round, and the digest of
+ * every commitment sealed in it (`commitmentSetHash`).
  *
  * The match seed alone is public from the moment the match starts, so rolls
  * keyed on it could be computed before anyone committed — which striker a
- * Guard blocks, and how ties break, would be a lookup table. Mixing in the
- * salts makes each round's rolls depend on every player's secret, so nobody can
- * know them until all reveals are in. A player who withholds a reveal to change
- * a roll forfeits their own move and takes every hit unguarded, which prices
- * that grind honestly.
+ * Guard blocks, and how ties break, would be a lookup table. Each commitment
+ * hides a fresh salt, so nobody can know the rolls until every commitment is
+ * in. And they are fixed at that moment: what happens at reveal cannot move
+ * them. A player who withholds a reveal, or a server that drops one, changes
+ * only that seat's move, never the dice. (Keyed on the revealed salts instead,
+ * a withheld reveal re-rolled the round.)
+ *
+ * The commitments are kept from everyone until the window closes, or the
+ * last to commit could grind their salt against the others' and pick the
+ * rolls. The server sees them as they arrive; it still cannot choose a
+ * player's salt, and with `hold` it is the one party that knows a move before
+ * the reveal.
  */
-export function roundSeed(
-  seed: `0x${string}`,
-  round: number,
-  salts: readonly `0x${string}`[],
-): `0x${string}` {
-  return keccak256(encodeAbiParameters(ROUND_SEED_ABI, [seed, round, [...salts]]));
+export function roundSeed(seed: `0x${string}`, round: number, commitmentSet: `0x${string}`): `0x${string}` {
+  return keccak256(encodeAbiParameters(ROUND_SEED_ABI, [seed, round, commitmentSet]));
 }
 
 const DRAW_ABI = parseAbiParameters('bytes32 roundSeed, uint32 nonce');

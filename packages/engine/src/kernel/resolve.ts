@@ -5,8 +5,9 @@ import {
   exposedDamage,
   isLegalAction,
   NO_COMMITMENT,
+  commitmentSetHash,
+  commitmentsBySeat,
   roundSeed,
-  saltsBySeat,
   stallDamageFor,
   strikeDamageFor,
   strikeHeal,
@@ -65,7 +66,7 @@ export function entropyOf(
   seats: number,
   record: Pick<RoundRecord, 'round' | 'moves'>,
 ): `0x${string}` {
-  return roundSeed(seed, record.round, saltsBySeat(seats, record.moves));
+  return roundSeed(seed, record.round, commitmentSetHash(commitmentsBySeat(seats, record.moves)));
 }
 
 /** Scratch state for one seat while a round is being resolved. */
@@ -94,8 +95,9 @@ interface SeatContext {
  * This is what makes a match independently replayable from its seed and move
  * log.
  *
- * Every roll in the round is drawn from `roundSeed(seed, round, salts)`, which
- * nobody can compute until every reveal is in.
+ * Every roll in the round is drawn from `roundSeed(seed, round, commitments)`,
+ * which nobody can compute until every commitment is in, and which no reveal
+ * can change.
  *
  * A seat is identified by its position in `states`; the `index` field of an
  * incoming state is not trusted. A move its player may not make this round (a
@@ -139,9 +141,11 @@ export function resolveRound(
   const entropy = roundSeed(
     seed,
     round,
-    saltsBySeat(
-      states.length,
-      living.map((context) => ({ index: context.seat, revealed: context.revealed, salt: context.salt })),
+    commitmentSetHash(
+      commitmentsBySeat(
+        states.length,
+        living.map((context) => ({ index: context.seat, commitment: context.commitment })),
+      ),
     ),
   );
 
