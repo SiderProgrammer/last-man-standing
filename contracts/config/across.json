@@ -1,0 +1,14 @@
+{
+  "source": "across-protocol/contracts v5.0.27 (7445f72de17900544605c7e6706c5fb3b3784738), broadcast/deployed-addresses.json; WETH from the Across API's token list",
+  "hub": { "mainnet": 8453, "testnet": 84532 },
+  "chains": {
+    "8453": { "name": "Base", "spokePool": "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64", "weth": "0x4200000000000000000000000000000000000006" },
+    "42161": { "name": "Arbitrum One", "spokePool": "0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A", "weth": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1" },
+    "10": { "name": "OP Mainnet", "spokePool": "0x6f26Bf09B1C792e3228e5467807a900A503c0281", "weth": "0x4200000000000000000000000000000000000006" },
+    "1": { "name": "Ethereum", "spokePool": "0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5", "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" },
+    "84532": { "name": "Base Sepolia", "spokePool": "0x82B564983aE7274c86695917BBf8C99ECb6F0F8F", "weth": "0x4200000000000000000000000000000000000006" },
+    "421614": { "name": "Arbitrum Sepolia", "spokePool": "0x7E63A5f1a8F0B4d0934B2f2327DAED3F6bb2ee75", "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73" },
+    "11155420": { "name": "OP Sepolia", "spokePool": "0x4e8E101924eDE233C13e2D8622DC8aED2872d505", "weth": "0x4200000000000000000000000000000000000006" },
+    "11155111": { "name": "Sepolia", "spokePool": "0x5ef6C01E11889d86803e0B23e3cB3F9E9d97B662", "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14" }
+  }
+}
