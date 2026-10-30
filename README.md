@@ -37,7 +37,7 @@ withdraw    winners pull their balance
 The signed result commits to every round, so anyone holding the published
 history can replay the match with the same pure engine the server runs. Every
 player's browser does that when the match ends. Detection is off-chain; the
-remedy is on-chain: during the challenge window the guardian Safe may `veto` a
+remedy is on-chain: during the challenge window the guardian may `veto` a
 result the replay does not support, refunding every stake. A match that blows
 its deadline, or is lost to a server restart, is cancelled and refunded rather
 than resumed. There is no on-chain fraud proof or attestor slashing — that is a
@@ -53,10 +53,18 @@ Around that core:
 - **Governance** — every parameter lives in `ProtocolConfig`, owned by a
   timelock that `LmsGovernor` proposes to. Votes come from staked LMS (sLMS),
   which also earns the stakers' share of protocol fees in ETH via `FeeRouter`.
-  The Safe keeps a veto and can pause for up to a week, but never trap funds.
+  Until a date fixed in `MultisigPhase`, a Safe can also propose and veto;
+  a separate guardian key can pause for up to a week, but never trap funds.
+  See [Roles](#roles).
 - **Play-mining** — half the LMS supply goes to players over four years, each
-  week shared out by the fees they paid and claimed as sLMS, entirely on-chain
-  through `RewardsDistributor`.
+  week shared out by the fees they paid, entirely on-chain through
+  `RewardsDistributor`. Each week's reward vests over six months in
+  `RewardVesting` and votes only once released and staked. Two caps: 10,000
+  LMS per ETH of fees (the real bound on farming) and a per-wallet cap per
+  week (which stops one wallet taking a quiet week, not sybils).
+- **LMS fee discount** — a seat may pay up to half its fee in LMS at a
+  governance-set rate (`joinWithLms`). The LMS is held with the stake, burned
+  when the match settles and refunded if it does not.
 - **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271. The key only signs logins: every join is the
@@ -75,6 +83,24 @@ cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
 see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
 [docs/TODO.md](docs/TODO.md).
+
+## Roles
+
+Every key and contract with authority, and where it ends. Safe, guardian and
+treasury are three separate addresses; `Deploy.s.sol` refuses to finish if any
+two coincide.
+
+| Role | Held by | Can | Cannot |
+| --- | --- | --- | --- |
+| Timelock | `TimelockController`, 3-day delay | Owns `ProtocolConfig`, `StakedLms`, `FeeRouter`, `RewardsDistributor`, `PlayerAvatars` and the VRF adapter. Every change waits out the delay, which is longer than a whole match. | Act without a queued proposal. |
+| Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
+| Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
+| Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
+| Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
+| Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake. | Redirect a stake, or keep a pause going: only governance extends one. |
+
+This is a testnet project. Real-money play would also need a gambling licence,
+which is out of scope.
 
 ## Layout
 

@@ -16,10 +16,11 @@ import {
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+import {StakedLms} from "./StakedLms.sol";
 
 /// @title LmsGovernor
 /// @notice Token governance: sLMS holders propose and vote; passed proposals
@@ -30,7 +31,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///        sLMS votes --> LmsGovernor --proposes--> TimelockController --owns--> ProtocolConfig,
 ///                                                          ^                    StakedLms, FeeRouter
 ///                                                          |
-///                                             Safe: canceller only (veto)
+///                                   Safe --> MultisigPhase: proposes and vetoes, until phaseEnd
 ///
 ///      Voting power is read from `StakedLms`, never from plain LMS, and at the
 ///      proposal's snapshot, so tokens bought or staked after a proposal is
@@ -45,10 +46,10 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///      already under way, and it is capped at 10% of the LMS supply, so a
 ///      proposal cannot raise it out of reach of everyone who could stake.
 ///
-///      The Safe keeps the timelock's canceller role and can veto anything the
-///      governor queues. That is a training-wheels period, not a permanent
-///      feature: governance can end it with a proposal that calls
-///      `timelock.revokeRole(CANCELLER_ROLE, safe)`.
+///      During the multisig phase the Safe can veto anything the governor
+///      queues, through `MultisigPhase`. That is a training-wheels period, not
+///      a permanent feature: it ends on the date fixed in `MultisigPhase`,
+///      with no vote needed and none able to stop it.
 contract LmsGovernor is
     Governor,
     GovernorSettings,
@@ -100,7 +101,7 @@ contract LmsGovernor is
 
     /// @notice The most `quorumFloor` may be set to: 10% of the LMS supply.
     function maxQuorumFloor() public view returns (uint256) {
-        IERC20 lms = IERC20(IERC4626(address(token())).asset());
+        IERC20 lms = StakedLms(address(token())).underlying();
         return (lms.totalSupply() * MAX_QUORUM_FLOOR_PERCENT) / 100;
     }
 

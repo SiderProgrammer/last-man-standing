@@ -3,7 +3,6 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 import {LmsToken} from "../../src/governance/LmsToken.sol";
@@ -45,18 +44,18 @@ contract StakedLmsTest is Test {
 
     function test_deposit_selfDelegatesSoStakingAloneVotes() public {
         vm.prank(alice);
-        uint256 shares = vault.deposit(100e18, alice);
+        vault.deposit(100e18);
 
-        assertEq(shares, 100e18);
+        assertEq(vault.balanceOf(alice), 100e18, "one sLMS per LMS");
         assertEq(vault.delegates(alice), alice);
         assertEq(vault.getVotes(alice), 100e18);
     }
 
     function test_existingDelegateIsKept() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.delegate(bob);
-        vault.deposit(50e18, alice);
+        vault.deposit(50e18);
         vm.stopPrank();
 
         assertEq(vault.delegates(alice), bob);
@@ -66,7 +65,7 @@ contract StakedLmsTest is Test {
 
     function test_transfer_movesVotes() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vm.prank(alice);
         vault.transfer(bob, 40e18);
 
@@ -79,7 +78,7 @@ contract StakedLmsTest is Test {
         assertEq(vault.CLOCK_MODE(), "mode=timestamp");
 
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         uint256 staked = block.timestamp;
 
         vm.warp(staked + 1);
@@ -93,15 +92,15 @@ contract StakedLmsTest is Test {
 
     // --- One sLMS is one LMS -------------------------------------------------
 
-    function test_aDirectTransferDoesNotMoveTheRate_andCanBeSwept() public {
+    function test_aDirectTransferStakesNothing_andCanBeSwept() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
-        lms.transfer(address(vault), 50e18); // a mistake, or a donation attack
+        vault.deposit(100e18);
+        lms.transfer(address(vault), 50e18); // a mistake, or a donation
 
-        assertEq(vault.totalAssets(), 100e18);
-        assertEq(vault.convertToAssets(100e18), 100e18);
+        assertEq(vault.totalSupply(), 100e18);
         vm.prank(bob);
-        assertEq(vault.deposit(100e18, bob), 100e18, "the next staker gets one share per LMS");
+        vault.deposit(100e18);
+        assertEq(vault.balanceOf(bob), 100e18, "still one sLMS per LMS");
 
         address to = makeAddr("to");
         vm.prank(owner);
@@ -112,7 +111,7 @@ contract StakedLmsTest is Test {
 
     function test_sweepStray_cannotTouchStakedOrUnstaking() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vm.prank(alice);
         vault.requestUnstake(40e18);
 
@@ -130,9 +129,9 @@ contract StakedLmsTest is Test {
 
     function test_rewards_splitProRataAcrossStakers() public {
         vm.prank(alice);
-        vault.deposit(300e18, alice);
+        vault.deposit(300e18);
         vm.prank(bob);
-        vault.deposit(100e18, bob);
+        vault.deposit(100e18);
 
         vault.depositRewards{value: 4 ether}();
         vm.warp(block.timestamp + DURATION);
@@ -143,7 +142,7 @@ contract StakedLmsTest is Test {
 
     function test_rewards_arePaidOutEvenlyOverTheDuration() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 7 ether}();
 
         assertEq(vault.earned(alice), 0, "nothing at the moment of the deposit");
@@ -158,12 +157,12 @@ contract StakedLmsTest is Test {
     ///      split evenly between Bob and Alice, who had been staked all along.
     function test_rewards_stakingRightBeforeAHarvestEarnsOnlyForTheTimeStaked() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vm.warp(block.timestamp + 30 days);
         vm.deal(bob, 2 ether);
 
         vm.startPrank(bob);
-        vault.deposit(100e18, bob);
+        vault.deposit(100e18);
         vault.depositRewards{value: 2 ether}();
         assertEq(vault.earned(bob), 0);
         vault.requestUnstake(100e18);
@@ -176,12 +175,12 @@ contract StakedLmsTest is Test {
 
     function test_rewards_aLateStakerSharesOnlyWhatIsLeft() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 2 ether}();
         vm.warp(block.timestamp + DURATION / 2);
 
         vm.prank(bob);
-        vault.deposit(100e18, bob);
+        vault.deposit(100e18);
         vm.warp(block.timestamp + DURATION / 2);
 
         assertApproxEqAbs(vault.earned(alice), 1.5 ether, DUST);
@@ -190,7 +189,7 @@ contract StakedLmsTest is Test {
 
     function test_rewards_aSecondDepositAddsToWhatIsStillUnpaid() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 1 ether}();
         vm.warp(block.timestamp + DURATION / 2);
 
@@ -208,7 +207,7 @@ contract StakedLmsTest is Test {
         vm.warp(block.timestamp + 3 * DURATION);
 
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         assertEq(
             vault.periodFinish(), block.timestamp + DURATION, "none of it ran out while nobody was staked"
         );
@@ -219,7 +218,7 @@ contract StakedLmsTest is Test {
 
     function test_rewards_pauseWhenEveryoneLeaves_andResumeForTheNextStaker() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 2 ether}();
         vm.warp(block.timestamp + DURATION / 2);
 
@@ -228,7 +227,7 @@ contract StakedLmsTest is Test {
         vm.warp(block.timestamp + 10 days);
 
         vm.prank(bob);
-        vault.deposit(100e18, bob);
+        vault.deposit(100e18);
         vm.warp(block.timestamp + DURATION);
 
         assertApproxEqAbs(vault.earned(alice), 1 ether, DUST);
@@ -237,7 +236,7 @@ contract StakedLmsTest is Test {
 
     function test_rewards_earnedBeforeATransferStayWithTheSender() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 2 ether}();
         vm.warp(block.timestamp + DURATION / 2);
 
@@ -251,9 +250,9 @@ contract StakedLmsTest is Test {
 
     function test_rewards_unstakingKeepsWhatWasEarned_andTheCooldownEarnsNothing() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vm.prank(bob);
-        vault.deposit(100e18, bob);
+        vault.deposit(100e18);
         vault.depositRewards{value: 2 ether}();
         vm.warp(block.timestamp + DURATION / 2);
 
@@ -277,7 +276,7 @@ contract StakedLmsTest is Test {
 
     function test_claimRewards_paysOnce() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.depositRewards{value: 1 ether}();
         vm.warp(block.timestamp + DURATION);
         address to = makeAddr("to");
@@ -316,9 +315,9 @@ contract StakedLmsTest is Test {
         gap2 = uint32(bound(gap2, 0, 2 * DURATION));
 
         vm.prank(alice);
-        vault.deposit(a, alice);
+        vault.deposit(a);
         vm.prank(bob);
-        vault.deposit(b, bob);
+        vault.deposit(b);
         vault.depositRewards{value: r1}();
         vm.warp(block.timestamp + gap1);
         moved = uint96(bound(moved, 0, a));
@@ -338,16 +337,16 @@ contract StakedLmsTest is Test {
 
     // --- Unstake -----------------------------------------------------------
 
-    function test_requestUnstake_burnsSharesAndQueuesTheLms() public {
+    function test_requestUnstake_burnsAndQueuesTheLms() public {
         vm.prank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
 
         vm.prank(alice);
-        uint256 assets = vault.requestUnstake(40e18);
+        uint64 unlock = vault.requestUnstake(40e18);
 
-        assertEq(assets, 40e18);
+        assertEq(unlock, block.timestamp + COOLDOWN);
         assertEq(vault.balanceOf(alice), 60e18);
-        assertEq(vault.totalStaked(), 60e18);
+        assertEq(vault.totalSupply(), 60e18);
         assertEq(vault.totalUnstaking(), 40e18);
         (uint128 pending, uint64 unlockAt) = vault.unstakeOf(alice);
         assertEq(pending, 40e18);
@@ -356,7 +355,7 @@ contract StakedLmsTest is Test {
 
     function test_claim_onlyAfterCooldown() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.requestUnstake(100e18);
 
         vm.expectRevert(
@@ -381,7 +380,7 @@ contract StakedLmsTest is Test {
 
     function test_secondRequest_addsAndRestartsCooldown() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.requestUnstake(40e18);
         vm.warp(block.timestamp + 3 days);
         vault.requestUnstake(60e18);
@@ -394,8 +393,8 @@ contract StakedLmsTest is Test {
 
     function test_requestUnstake_rejectsZeroAndMoreThanBalance() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
-        vm.expectRevert(StakedLms.ZeroShares.selector);
+        vault.deposit(100e18);
+        vm.expectRevert(StakedLms.ZeroAmount.selector);
         vault.requestUnstake(0);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, 100e18, 101e18)
@@ -404,17 +403,23 @@ contract StakedLmsTest is Test {
         vm.stopPrank();
     }
 
-    function test_standardWithdrawAndRedeem_areDisabled() public {
+    function test_deposit_rejectsZero_andAZeroAccount() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
-        assertEq(vault.maxWithdraw(alice), 0);
-        assertEq(vault.maxRedeem(alice), 0);
-
-        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, alice, 1, 0));
-        vault.withdraw(1, alice, alice);
-        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxRedeem.selector, alice, 1, 0));
-        vault.redeem(1, alice, alice);
+        vm.expectRevert(StakedLms.ZeroAmount.selector);
+        vault.deposit(0);
+        vm.expectRevert(ZeroAddress.selector);
+        vault.depositFor(address(0), 1e18);
         vm.stopPrank();
+    }
+
+    /// @dev The sLMS, and so the votes and the rewards, are the account's.
+    function test_depositFor_stakesForSomeoneElse() public {
+        vm.prank(alice);
+        vault.depositFor(bob, 100e18);
+        assertEq(vault.balanceOf(bob), 100e18);
+        assertEq(vault.getVotes(bob), 100e18);
+        assertEq(vault.balanceOf(alice), 0);
+        assertEq(lms.balanceOf(alice), 900e18, "paid by the caller");
     }
 
     // --- depositWithPermit --------------------------------------------------------
@@ -425,9 +430,9 @@ contract StakedLmsTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, 100e18, block.timestamp);
 
         vm.prank(carol);
-        uint256 shares = vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
+        vault.depositWithPermit(100e18, block.timestamp, v, r, s);
 
-        assertEq(shares, 100e18);
+        assertEq(vault.balanceOf(carol), 100e18);
         assertEq(vault.getVotes(carol), 100e18);
         assertEq(lms.allowance(carol, address(vault)), 0);
     }
@@ -440,7 +445,8 @@ contract StakedLmsTest is Test {
         lms.permit(carol, address(vault), 100e18, block.timestamp, v, r, s);
 
         vm.prank(carol);
-        assertEq(vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s), 100e18);
+        vault.depositWithPermit(100e18, block.timestamp, v, r, s);
+        assertEq(vault.balanceOf(carol), 100e18);
     }
 
     function test_depositWithPermit_withABadSignatureAndNoAllowance_reverts() public {
@@ -454,7 +460,7 @@ contract StakedLmsTest is Test {
                 IERC20Errors.ERC20InsufficientAllowance.selector, address(vault), 0, 100e18
             )
         );
-        vault.depositWithPermit(100e18, carol, block.timestamp, v, r, s);
+        vault.depositWithPermit(100e18, block.timestamp, v, r, s);
     }
 
     // --- Governance ----------------------------------------------------------
@@ -476,7 +482,7 @@ contract StakedLmsTest is Test {
 
     function test_setCooldown_leavesPendingRequestsAlone() public {
         vm.startPrank(alice);
-        vault.deposit(100e18, alice);
+        vault.deposit(100e18);
         vault.requestUnstake(100e18);
         vm.stopPrank();
         uint256 requestedAt = block.timestamp;

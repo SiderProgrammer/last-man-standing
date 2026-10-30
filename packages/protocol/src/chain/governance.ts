@@ -13,7 +13,7 @@ export { feeRouterAbi };
 
 /** What the client needs to show the staking panel, sent in `hello`. */
 export interface StakingInfo {
-  /** `StakedLms` on the hub chain. The LMS token is its `asset()`. */
+  /** `StakedLms` on the hub chain. The LMS token is its `underlying()`. */
   vault: `0x${string}`;
   /** `LmsGovernor`, or null when this server indexes no proposals. */
   governor: `0x${string}` | null;
@@ -27,7 +27,8 @@ export interface StakingInfo {
 }
 
 /**
- * The `RewardsDistributor` surface: play-mining, paid by fee epoch as sLMS.
+ * The `RewardsDistributor` surface: play-mining, granted by fee epoch into
+ * `RewardVesting`, where each epoch's share vests over six months.
  * `claimable` loops over a range on-chain, so it is meant for `eth_call`.
  */
 export { rewardsDistributorAbi };
@@ -56,16 +57,3 @@ export { stakedLmsAbi };
 
 /** The parts of `LmsToken` an EIP-2612 permit needs. */
 export { lmsTokenAbi };
-
-/**
- * sLMS to burn so that `amount` LMS leaves the vault.
- *
- * Rounded up so the request covers the amount asked for; an amount at or above
- * the whole position takes all of it, so "unstake everything" never leaves dust.
- */
-export function sharesForUnstake(amount: bigint, shares: bigint, assets: bigint): bigint {
-  if (amount <= 0n || shares === 0n || assets === 0n) return 0n;
-  if (amount >= assets) return shares;
-  const needed = (amount * shares + assets - 1n) / assets;
-  return needed < shares ? needed : shares;
-}

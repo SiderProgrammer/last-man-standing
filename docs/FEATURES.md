@@ -36,7 +36,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | Session keys without changing the player's address — see [Account abstraction](#account-abstraction) |
 | **ERC-721** non-fungible token | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
-| **ERC-4626** tokenised vault | `StakedLms` | A standard staking interface, with the exchange rate fixed at 1:1 — see [Token governance and staking](#token-governance-and-staking) |
+| **ERC-20 wrapper** (`ERC20Wrapper`-style) | `StakedLms` | Stake LMS for sLMS one for one: `deposit`, `requestUnstake`, `claim` — see [Token governance and staking](#token-governance-and-staking) |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
 | **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` | Lets the game server accept a login signed by a session key rather than the account key |
@@ -555,16 +555,19 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100
     |                                   ^
     +--fees per player per week         | LMS --deposit--> sLMS (1:1, ERC20Votes) --votes--> LmsGovernor
          |                              |
-         +--> RewardsDistributor --claim, as sLMS--> each player
+         +--> RewardsDistributor --claim--> RewardVesting --release, after 6 months--> each player
 ```
 
 | Contract | Role |
 | --- | --- |
 | `LmsToken` | Plain fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
-| `StakedLms` | Staking vault whose shares (sLMS) are the voting token, always one per LMS. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
+| `StakedLms` | Stake LMS for sLMS, one for one; sLMS is the voting token. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
 | `LmsGovernor` | OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock, with a minimum quorum. |
 | `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
-| `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and pays each player their share of that week's LMS budget, deposited into `StakedLms` for them. |
+| `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and grants each player their share of that week's LMS budget, as a tranche in `RewardVesting`. |
+| `RewardVesting` | Holds each (player, week) tranche while it vests, linearly over six months from the week's end; `release` pays out liquid LMS. Cannot stake, so vesting LMS never votes. |
+| `MultisigPhase` | Holds the Safe's proposer and canceller roles on the timelock until `phaseEnd`, a date fixed at deploy; then anyone retires it. |
+| `LiquidityReserve` | Holds the 5% liquidity share. Pays out only to a recipient the timelock approves, never the vault or the Safe. |
 | `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
 
 Defaults, all overridable through the deploy environment:
@@ -578,7 +581,9 @@ Defaults, all overridable through the deploy environment:
 | Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
 | Quorum | 4% of staked supply, but never under 1,000,000 sLMS | `QUORUM_PERCENT`, `QUORUM_FLOOR` |
 | Stakers' share of fees | 0% on Ethereum mainnet, 50% elsewhere | `STAKER_FEE_BPS` |
-| Play-mining cap | 100,000 LMS per ETH of fees | `MAX_REWARD_PER_ETH` |
+| Play-mining cap | 10,000 LMS per ETH of fees | `MAX_REWARD_PER_ETH` |
+| Play-mining cap per wallet | 20,000 LMS per week | `MAX_REWARD_PER_WALLET` |
+| End of the multisig phase | a year after the deploy | `MULTISIG_PHASE_END` |
 | First play-mining week | the first full week after the deploy | `REWARDS_FIRST_EPOCH` |
 | Team vesting beneficiary | required off a local node | `TEAM_BENEFICIARY` |
 
@@ -589,8 +594,8 @@ Defaults, all overridable through the deploy environment:
   receipt, so staking alone is enough to vote. Votes are read at the proposal's
   snapshot, so stake bought after a proposal appears cannot vote on it.
 - **A cooldown instead of slashing.** Purpose: commitment without a fraud
-  proof. `requestUnstake` burns the shares immediately (so they stop voting and
-  stop earning) and the LMS is released only after the cooldown. The deploy
+  proof. `requestUnstake` burns the sLMS immediately (so it stops voting and
+  stops earning) and the LMS is released only after the cooldown. The deploy
   script refuses a cooldown that does not outlast `votingPeriod + timelock
   delay`, so whoever voted for a proposal is still staked when it executes.
 - **Fees are paid out in ETH, not used to buy LMS.** Purpose: nothing to
@@ -619,13 +624,36 @@ Defaults, all overridable through the deploy environment:
   the larger of the fraction and `quorumFloor`. The floor is checkpointed like
   the fraction, so changing it never affects a vote in progress, and capped at
   10% of the LMS supply, so it cannot be raised out of everyone's reach.
-- **One sLMS is always one LMS.** Purpose: rule out the ERC-4626 donation
-  ("inflation") attack without a locked seed deposit. `totalAssets` is the LMS
-  actually staked, tracked by the vault, not its token balance, so LMS sent to
-  it directly cannot move the rate; governance can sweep it with `sweepStray`.
+- **A wrapper, not an ERC-4626 vault.** Purpose: no surface that misleads.
+  One sLMS is always one LMS, so there is no exchange rate to manipulate (the
+  4626 donation attack has nothing to act on) and no `withdraw`/`redeem` that
+  could only revert. LMS sent to the contract directly stakes nothing;
+  governance can sweep it with `sweepStray`.
 - **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
   only moves fees to where the router already sends them, so the worst a caller
   can do is pay the gas for everyone else.
+### Paying part of the fee in LMS
+
+`GameEscrow.joinWithLms` · `ProtocolConfig.lmsPerEthDiscount`
+
+A seat can pay up to half its fee (`MAX_DISCOUNT_BPS`) in LMS, at a rate
+governance sets: `lmsPerEthDiscount` LMS buys one ETH off the fee (20,000 by
+default, off on Base mainnet). The seat stakes that much less ETH;
+`quoteLmsDiscount` says how much, and how much of the LMS offered it uses.
+
+- **Held, then burned.** The LMS stays in the escrow against the seat. When
+  the match settles it is burned; when it is cancelled, vetoed or aborted it
+  goes back with the stake. So LMS only leaves supply for a fee that was
+  actually paid.
+- **Prizes do not change.** The prize pool is computed from the full stakes;
+  the discounts come out of the treasury's cut, which is at least the full fee.
+- **Play-mining counts the net fee**, what the seat paid in ETH, so paying in
+  LMS earns proportionally less LMS.
+- **A rate change reaches only later seats.** It is read at join and stored
+  with the seat.
+- **No market price inside the protocol.** The rate is a governance setting,
+  not an oracle; the 50% cap bounds what a bad rate can cost the treasury.
+
 ### The fee keeper
 
 `FeeKeeper` runs in the game server when `FEE_ROUTER` and `KEEPER_PK` are set,
@@ -638,14 +666,14 @@ The deploy script splits the whole supply; the deployer keeps none.
 
 | Share | Bucket | Held by |
 | --- | --- | --- |
-| 50% | Play-mining | `RewardsDistributor`, paid to players over four years |
+| 50% | Play-mining | `RewardsDistributor`, paid to players over four years, each week vesting over six months |
 | 25% | Treasury | The timelock: only a passed proposal can spend it |
 | 15% | Team | An OpenZeppelin `VestingWallet`: nothing for a year, then linear over three |
-| 5% | Liquidity | The Safe, to seed a pool |
+| 5% | Liquidity | `LiquidityReserve`: the Safe sends it to a pool the timelock approves |
 | 5% | Reserve | The timelock, with the treasury |
 
-None of the timelock's, the distributor's or the vesting wallet's tokens is
-staked, so none of them votes. Governance starts with the players, as
+None of the timelock's, the distributor's, the vesting contracts' or the
+reserve's tokens is staked, so none of them votes. Governance starts with the players, as
 play-mining pays them, rather than with the Safe. There is no token sale.
 
 ### Play-mining
@@ -674,20 +702,28 @@ server computes anything and no Merkle root is posted.
   a lobby can decide who wins for nothing. Fees are a real cost, and they go to
   stakers and the treasury. With a fixed budget split by fees, farming defeats
   itself — every extra fee a farmer pays lowers what each fee earns.
-- **A cap per ETH of fees** (`maxRewardPerEth`). In a quiet week the split alone
-  would hand the whole budget to whoever paid the little there was. What the
-  cap leaves unpaid stays in the distributor; governance may sweep it only
-  after claims close, a year after the program ends.
+- **A cap per ETH of fees** (`maxRewardPerEth`, 10,000 LMS). In a quiet week
+  the split alone would hand the whole budget to whoever paid the little there
+  was. This is the real bound on farming: every LMS costs at least 1e-4 ETH of
+  real fees, however many wallets earn it.
+- **A cap per wallet per week** (`maxRewardPerWalletPerEpoch`, 20,000 LMS).
+  It stops one wallet taking a quiet week; it does not stop sybils, who simply
+  use more wallets — the per-ETH cap and vesting do that. What either cap
+  leaves unpaid stays in the distributor; governance may sweep it only after
+  claims close, a year after the program ends.
 - **When.** A week can be claimed the moment it ends. A total only grows while
   its week is the current one, so an ended week's totals — and every player's
   share of it — never change again; a match still in play when the week ends
-  counts in the week it settles. The rate is fixed by the first claim, so a
-  later change to the cap cannot treat two claimants of one week differently,
-  and the claims of a week add up to at most its budget.
-- **Paid as sLMS.** The distributor deposits into `StakedLms` for the player, so
-  rewards vote at once and selling them takes the unstake cooldown first.
+  counts in the week it settles. The rate and the wallet cap are fixed by the
+  first claim, so a later change to a cap cannot treat two claimants of one
+  week differently, and the claims of a week add up to at most its budget.
+- **Vested, then staked to vote.** A claim adds one tranche per week to
+  `RewardVesting`, vesting linearly over six months from the week's end.
+  `release(player, weeks[])` pays out what has vested as liquid LMS; the player
+  stakes it to vote. So a reward neither votes nor sells before it vests.
   `claim(player, weeks[])` takes any number of weeks, so a player can claim
-  rarely, and anyone may claim for anyone — it can only pay the player.
+  rarely, and anyone may claim or release for anyone — both only pay the
+  player.
 
 ### The staking panel
 
@@ -698,19 +734,18 @@ The lobby screen shows a **Stake LMS** panel whenever the server has
   once there is any.
 - **Play-mining**, when the server has `REWARDS_DISTRIBUTOR` set: the LMS
   earned by playing and not yet claimed, and a **Claim LMS** button that claims
-  every week at once, as sLMS. With nothing waiting it says how play earns it.
+  every week at once, into vesting. With nothing waiting it says how play earns it.
 - **Position.** Staked LMS, votes and wallet balance.
 - **Stake** in one transaction: an EIP-2612 permit signature plus
   `depositWithPermit`, instead of an approval and a deposit. The permit is
   attempted rather than required, so a copied signature submitted first cannot
   make the deposit fail.
-- **Unstake** an amount of LMS (converted to sLMS, rounded up so it covers the
-  amount), then a countdown and a **Withdraw** button once the cooldown ends.
+- **Unstake** an amount of LMS (one sLMS each), then a countdown and a **Withdraw** button once the cooldown ends.
 - **Delegate** the stake's votes to another address, and **Back to me** to take
   them back. On L1 every vote costs gas, so most small holders are better off
   handing their votes to someone who votes anyway; the sLMS stays in the wallet
-  and keeps earning. sLMS received later — a play-mining claim, say — follows
-  the delegate already chosen. The zero address is refused, since delegating to
+  and keeps earning. sLMS received later — staked released rewards, say —
+  follows the delegate already chosen. The zero address is refused, since delegating to
   it would switch the votes off.
 
 ### The governance screen
@@ -755,29 +790,31 @@ A **Governance** button in the top bar opens every proposal made to
 the proposal threshold and the minimum quorum to 1,000 sLMS, streams staker
 rewards over an hour instead of a week, stakes 1,000 LMS for each dev player
 (enough to propose), harvests after every match, and makes a demo proposal to
-raise the stakers' fee share to 60%. The operator's stake comes from the Safe's
-liquidity share, since on a local node the operator is the Safe. A play-mining
+raise the stakers' fee share to 60%. The operator's stake is sent from the
+treasury, with the timelock impersonated. A play-mining
 claim needs a match settled in a week that has ended, so it takes moving the
 fork's clock (`evm_increaseTime`) past the end of the week.
 
-### The Safe's veto: when it goes
+### The Safe's powers: when they go
 
-The veto is training wheels. The intended rule, to be carried out by a
-proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)`: once players hold
-more sLMS than the team's 15% allocation, or twelve months after launch,
-whichever comes first. Nothing enforces it on-chain; the governance form has a
-template for the proposal.
+The Safe's proposer and canceller roles are training wheels, and they end on a
+date written into `MultisigPhase` at deploy (a year out by default, two at
+most). The Safe never holds a timelock role itself: it calls `MultisigPhase`,
+which forwards only before `phaseEnd`. After that anyone calls `retire()`,
+which renounces both roles. No vote is needed, and the Safe cannot cancel its
+own removal. Before then it cannot schedule a call on the timelock itself or a
+`transferOwnership`/`renounceOwnership`, so nothing it does can outlast the
+phase on its own.
 
 ### What is missing
 
 - **A quiet start.** Nothing votes at launch: the treasury, reserve, team and
   play-mining tokens are unstaked by design. No proposal can pass until players
-  hold enough sLMS to meet the 1M quorum floor. The cap is what usually
-  decides how long that takes: at 100,000 LMS per ETH, 1M LMS needs 10 ETH of
-  fees paid in settled matches — 200 ETH of stakes at the 5% fee. Only once a
-  week's fees pass about 3.5 ETH does the weekly budget bind instead, and even
-  then it takes three weeks. Until then the guardian can still pause the
-  escrow and veto results, but no parameter can change.
+  hold enough sLMS to meet the 1M quorum floor, and rewards vest for six
+  months first. The cap then decides how long it takes: at 10,000 LMS per ETH,
+  1M LMS needs 100 ETH of fees paid in settled matches — 2,000 ETH of stakes at
+  the 5% fee. Until then the Safe proposes through `MultisigPhase`, and the
+  guardian can still pause the escrow and veto results.
 - **Hub chain only.** Spokes take no fees today; if they ever do, each needs
   its own route back to the hub's router. Play-mining already counts spoke
   players, since their seats are taken on the hub.

@@ -4,7 +4,6 @@ pragma solidity 0.8.28;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -17,10 +16,15 @@ import {Time} from "@openzeppelin/contracts/utils/types/Time.sol";
 import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 
 /// @title StakedLms
-/// @notice Stake LMS, receive sLMS. sLMS is the governance voting token, and
-///         it earns the stakers' share of protocol fees, paid in ETH.
+/// @notice Stake LMS, receive sLMS one for one. sLMS is the governance voting
+///         token, and it earns the stakers' share of protocol fees, paid in ETH.
 ///
-/// @dev One action, three effects:
+/// @dev A plain wrapper, in the style of OpenZeppelin's `ERC20Wrapper`, not an
+///      ERC-4626 vault: one sLMS is always one LMS, so there is no exchange
+///      rate, no share maths and no `withdraw`/`redeem` that only revert. The
+///      surface is what staking does: `deposit`, `requestUnstake`, `claim`.
+///
+///      One action, three effects:
 ///
 ///        - **Votes.** sLMS is `ERC20Votes`; plain LMS has no votes at all, so
 ///          only staked tokens govern. Every account that receives sLMS is
@@ -32,7 +36,7 @@ import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 ///          second of that goes to whoever is staked during it, pro rata.
 ///          Each staker collects theirs with `claimRewards`.
 ///        - **Commits.** Leaving takes `cooldown`. `requestUnstake` burns the
-///          shares at once — so they stop voting and stop earning — and
+///          sLMS at once — so it stops voting and stops earning — and
 ///          `claim` returns the LMS once the cooldown has passed. A voter is
 ///          therefore still exposed when the proposal they voted for executes,
 ///          which is what slashing would otherwise be for. `Deploy` checks that
@@ -62,19 +66,13 @@ import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 ///      the remainder into a decay with the same time constant, at their own
 ///      gas.
 ///
-///      One sLMS is always one LMS. `totalAssets` is the LMS actually staked,
-///      tracked here, not this contract's token balance, so LMS sent here
-///      directly cannot move the exchange rate. That is what rules out the
-///      ERC-4626 donation ("inflation") attack without a locked seed deposit;
-///      stray LMS can be swept by governance.
-///
-///      The standard ERC-4626 `withdraw` and `redeem` are disabled — the spec's
-///      way of doing that is `maxWithdraw`/`maxRedeem` returning zero, which
-///      makes both revert. Leave through `requestUnstake` and `claim`.
+///      The LMS backing sLMS is `totalSupply`; with `totalUnstaking` that is
+///      everything owed. LMS sent here directly is neither, and governance can
+///      sweep it.
 ///
 ///      The clock is a timestamp, so the governor's delays read in seconds and
 ///      behave the same on every chain regardless of block time.
-contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransient {
+contract StakedLms is ERC20Votes, Ownable2Step, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -93,6 +91,8 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     ///      supply staked.
     uint256 private constant PRECISION = 1e27;
 
+    /// @notice The token staked: LMS.
+    IERC20 private immutable _underlying;
     /// @notice Seconds each reward deposit is paid out over.
     uint64 public immutable rewardDuration;
 
@@ -103,8 +103,6 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     /// @notice When `rewardPerShare` was last brought up to date.
     uint64 public lastAccrual;
 
-    /// @notice LMS staked, and so the backing of every sLMS. Not the token balance.
-    uint256 public totalStaked;
     /// @notice LMS held for pending unstakes.
     uint256 public totalUnstaking;
     mapping(address account => Unstake) public unstakeOf;
@@ -119,8 +117,9 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     /// @dev ETH settled to each account and not yet claimed.
     mapping(address account => uint256) private owed;
 
-    event UnstakeRequested(address indexed account, uint256 shares, uint256 assets, uint64 unlockAt);
-    event UnstakeClaimed(address indexed account, address indexed receiver, uint256 assets);
+    event Staked(address indexed from, address indexed account, uint256 amount);
+    event UnstakeRequested(address indexed account, uint256 amount, uint64 unlockAt);
+    event UnstakeClaimed(address indexed account, address indexed receiver, uint256 amount);
     event CooldownUpdated(uint64 previous, uint64 current);
     event RewardsDeposited(address indexed from, uint256 amount, uint256 rewardRate, uint64 periodFinish);
     event RewardsClaimed(address indexed account, address indexed to, uint256 amount);
@@ -128,16 +127,17 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     error CooldownOutOfRange(uint64 cooldown);
     error RewardDurationOutOfRange(uint64 rewardDuration);
-    error ZeroShares();
+    error ZeroAmount();
     error NothingToClaim();
     error StillCoolingDown(uint64 unlockAt);
 
     constructor(IERC20 lms, address owner_, uint64 cooldown_, uint64 rewardDuration_)
         ERC20("Staked LMS", "sLMS")
-        ERC4626(lms)
         EIP712("Staked LMS", "1")
         Ownable(owner_)
     {
+        if (address(lms) == address(0)) revert ZeroAddress();
+        _underlying = lms;
         if (rewardDuration_ < MIN_REWARD_DURATION || rewardDuration_ > MAX_REWARD_DURATION) {
             revert RewardDurationOutOfRange(rewardDuration_);
         }
@@ -147,23 +147,41 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     // ------------------------------------------------------------------ deposit
 
+    /// @notice The token staked: LMS.
+    function underlying() public view returns (IERC20) {
+        return _underlying;
+    }
+
+    /// @notice Stakes `amount` of the caller's LMS for the caller.
+    function deposit(uint256 amount) external {
+        _deposit(msg.sender, amount);
+    }
+
+    /// @notice Stakes `amount` of the caller's LMS for `account`: the sLMS,
+    ///         its votes and its rewards are `account`'s.
+    function depositFor(address account, uint256 amount) external {
+        _deposit(account, amount);
+    }
+
     /// @notice `deposit`, with the allowance granted by an EIP-2612 signature
     ///         instead of a separate `approve` transaction.
     /// @dev The permit is attempted, not required: anyone who sees the
     ///      signature in the mempool can submit it first, which consumes the
     ///      nonce and would make a strict `permit` revert. The allowance then
-    ///      exists anyway, and `deposit` goes through on it; if it does not,
-    ///      `deposit` reverts with the token's own allowance error.
-    function depositWithPermit(
-        uint256 assets,
-        address receiver,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external returns (uint256 shares) {
-        try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) {} catch {}
-        return deposit(assets, receiver);
+    ///      exists anyway, and the deposit goes through on it; if it does not,
+    ///      the deposit reverts with the token's own allowance error.
+    function depositWithPermit(uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external {
+        try IERC20Permit(address(_underlying)).permit(msg.sender, address(this), amount, deadline, v, r, s) {}
+            catch {}
+        _deposit(msg.sender, amount);
+    }
+
+    function _deposit(address account, uint256 amount) private {
+        if (account == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        _underlying.safeTransferFrom(msg.sender, address(this), amount);
+        _mint(account, amount);
+        emit Staked(msg.sender, account, amount);
     }
 
     // ------------------------------------------------------------------ rewards
@@ -249,40 +267,40 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
 
     // ------------------------------------------------------------------ unstake
 
-    /// @notice Starts leaving: burns `shares` now and returns the LMS after the cooldown.
+    /// @notice Starts leaving: burns `amount` sLMS now and returns the LMS
+    ///         after the cooldown.
     /// @dev A second request adds to the first and restarts the cooldown for
     ///      the whole amount. One queue per account keeps `claim` trivial, at
     ///      the price of not being able to stagger exits. Rewards earned up to
     ///      this moment stay claimable; the cooldown earns nothing.
-    /// @return assets LMS claimable once the cooldown has passed.
-    function requestUnstake(uint256 shares) external returns (uint256 assets) {
-        if (shares == 0) revert ZeroShares();
+    /// @return unlockAt When `claim` will pay it.
+    function requestUnstake(uint256 amount) external returns (uint64 unlockAt) {
+        if (amount == 0) revert ZeroAmount();
 
-        assets = previewRedeem(shares);
-        _burn(msg.sender, shares);
-        totalStaked -= assets;
-        totalUnstaking += assets;
+        _burn(msg.sender, amount);
+        totalUnstaking += amount;
 
         Unstake storage pending = unstakeOf[msg.sender];
-        pending.assets += assets.toUint128();
-        uint64 unlockAt = uint64(block.timestamp) + cooldown;
+        pending.assets += amount.toUint128();
+        unlockAt = uint64(block.timestamp) + cooldown;
         pending.unlockAt = unlockAt;
 
-        emit UnstakeRequested(msg.sender, shares, assets, unlockAt);
+        emit UnstakeRequested(msg.sender, amount, unlockAt);
     }
 
     /// @notice Pays out the caller's unstaked LMS once the cooldown has passed.
-    function claim(address receiver) external returns (uint256 assets) {
+    function claim(address receiver) external returns (uint256 amount) {
+        if (receiver == address(0)) revert ZeroAddress();
         Unstake memory pending = unstakeOf[msg.sender];
         if (pending.assets == 0) revert NothingToClaim();
         if (block.timestamp < pending.unlockAt) revert StillCoolingDown(pending.unlockAt);
 
         delete unstakeOf[msg.sender];
-        assets = pending.assets;
-        totalUnstaking -= assets;
-        IERC20(asset()).safeTransfer(receiver, assets);
+        amount = pending.assets;
+        totalUnstaking -= amount;
+        _underlying.safeTransfer(receiver, amount);
 
-        emit UnstakeClaimed(msg.sender, receiver, assets);
+        emit UnstakeClaimed(msg.sender, receiver, amount);
     }
 
     // --------------------------------------------------------------- governance
@@ -296,9 +314,9 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     ///         transfer — to `to`. Staked and unstaking LMS cannot be touched.
     function sweepStray(address to) external onlyOwner returns (uint256 amount) {
         if (to == address(0)) revert ZeroAddress();
-        amount = IERC20(asset()).balanceOf(address(this)) - totalStaked - totalUnstaking;
+        amount = _underlying.balanceOf(address(this)) - totalSupply() - totalUnstaking;
         if (amount == 0) revert NothingToWithdraw();
-        IERC20(asset()).safeTransfer(to, amount);
+        _underlying.safeTransfer(to, amount);
         emit StraySwept(to, amount);
     }
 
@@ -306,33 +324,6 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
         if (cooldown_ < MIN_COOLDOWN || cooldown_ > MAX_COOLDOWN) revert CooldownOutOfRange(cooldown_);
         emit CooldownUpdated(cooldown, cooldown_);
         cooldown = cooldown_;
-    }
-
-    // ------------------------------------------------------------------- ERC4626
-
-    /// @dev The LMS staked, as tracked here. Not `balanceOf(this)`: a direct
-    ///      transfer must not change what a share is worth.
-    function totalAssets() public view override returns (uint256) {
-        return totalStaked;
-    }
-
-    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
-        super._deposit(caller, receiver, assets, shares);
-        totalStaked += assets;
-    }
-
-    /// @dev Disabled: leave through `requestUnstake`.
-    function maxWithdraw(address) public pure override returns (uint256) {
-        return 0;
-    }
-
-    /// @dev Disabled: leave through `requestUnstake`.
-    function maxRedeem(address) public pure override returns (uint256) {
-        return 0;
-    }
-
-    function decimals() public view override(ERC20, ERC4626) returns (uint8) {
-        return super.decimals();
     }
 
     // ------------------------------------------------------------------ ERC20Votes
@@ -349,7 +340,7 @@ contract StakedLms is ERC4626, ERC20Votes, Ownable2Step, ReentrancyGuardTransien
     /// @dev Accrues against the supply as it was, and settles rewards for both
     ///      sides, before any balance moves; then self-delegates a receiver
     ///      that has not chosen a delegate, so staking alone is enough to vote.
-    function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+    function _update(address from, address to, uint256 value) internal override {
         _accrue();
         if (from != address(0)) _settle(from);
         if (to != address(0)) _settle(to);

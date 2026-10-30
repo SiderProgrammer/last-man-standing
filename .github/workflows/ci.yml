@@ -64,6 +64,8 @@ jobs:
         with:
           version: v1.4.3
       - name: forge coverage
+        env:
+          FOUNDRY_PROFILE: coverage
         run: |
           forge coverage --no-match-coverage '(test|script|mocks)/' --report summary --report lcov > coverage.txt
           cat coverage.txt

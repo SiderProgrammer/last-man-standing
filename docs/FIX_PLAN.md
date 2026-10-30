@@ -5,8 +5,10 @@ L1–L4, and the test gaps). It also builds in the design answers given on 2026-
 2026-10-29. A
 coverage table at the end maps each finding to its step.
 
-Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, and Phase 2 on
-`design-rework-phase-2-core-contracts`, which builds on it. Nothing after that is.
+Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
+`design-rework-phase-2-core-contracts`, and Phase 3 on
+`design-rework-phase-3-governance-and-token`, each building on the last. Nothing after that
+is.
 
 ---
 
@@ -160,6 +162,36 @@ Mechanical work, so later diffs stay readable.
 ---
 
 ## Phase 3: Governance and token (H1, C4)
+
+**Done**, one commit per step (3.5 and 3.6 in one, since the caps live in the same claim),
+plus three for CI. Where it differs from the table:
+- 3.1: `phaseEnd` is at most two years out, and a year by default (`MULTISIG_PHASE_END`).
+  `MultisigPhase` also refuses to schedule a call on the timelock itself or a
+  `transferOwnership`/`renounceOwnership` anywhere, the two ways a call scheduled during the
+  phase could keep the Safe in charge after it.
+- 3.2: `TREASURY` is gone; `GUARDIAN` is required off a local node (anvil's tenth account
+  there). The guardian is in the deployment registry.
+- 3.3: the timelock or the Safe releases to an approved recipient. The vault, the Safe and
+  the reserve itself can never be approved.
+- 3.4: `deposit(amount)`, `depositFor(account, amount)`, `depositWithPermit(amount, …)`,
+  `requestUnstake(amount)`, `claim(receiver)`, and `underlying()` for the token. No
+  `totalStaked`: the backing is `totalSupply`.
+- 3.5: tranches vest over 26 weeks. `RewardsDistributor` creates the `RewardVesting` and is
+  its only granter, so there is no setter. `release(player, epochs[])` is open to anyone and
+  pays only the player.
+- 3.6: the wallet cap defaults to 20,000 LMS a week (`MAX_REWARD_PER_WALLET`) and, like the
+  rate, is fixed per epoch by its first claim. Counting only public, matchmade lobbies needs
+  7.9's join tickets: without them every lobby is join-by-id, so that rule lands with 7.9.
+- 3.7: `joinWithLms(matchId, lmsIn)` and `joinWithLmsPermit`, not an overloaded `join`. The
+  seat stakes the stake less the discount (`quoteLmsDiscount`); the prize pool is computed
+  from the full stakes, so the discount comes out of the treasury's cut. Default rate
+  20,000 LMS per ETH, off on Base mainnet. LMS refunds are pushed: the token has no hooks.
+  GameEscrow was already 136 bytes over EIP-170, which failed master's CI; it now compiles
+  alone at 200 optimizer runs (23.7 KB, under 1% more gas). Coverage runs under a profile
+  without that restriction.
+- 3.8: the escrow invariant also joins with LMS and checks the LMS held and burned. Master's
+  Slither job was failing on untriaged findings; the baseline is regenerated with a note for
+  every one.
 
 | Step | Work | Findings |
 |---|---|---|

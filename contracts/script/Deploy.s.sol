@@ -23,6 +23,8 @@ import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
 import {FeeRouter} from "../src/governance/FeeRouter.sol";
 import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
+import {MultisigPhase} from "../src/governance/MultisigPhase.sol";
+import {LiquidityReserve} from "../src/governance/LiquidityReserve.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /// @notice Hub deploy, on Base or Base Sepolia: token-governed config,
@@ -31,19 +33,25 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
 ///                                                           ^  (anyone may execute     StakedLms
-///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
-///         |                                                     has passed)           PlayerAvatars
+///        Safe --> MultisigPhase --proposes, cancels---------+   once the delay         FeeRouter
+///         |       (until phaseEnd, then retired)                has passed)           PlayerAvatars
 ///         |                                                                           ChainlinkVrfAdapter
-///         +- guardian: may pause GameEscrow at once, for a week at most;
-///         |            may veto a proposed result, which refunds every stake
-///         +- receives the liquidity share of LMS, to seed a pool
-///         +- treasury: receives the non-staker share of fees
+///         +- owns the VRF subscription
+///         +- releases the liquidity share of LMS from `LiquidityReserve`,
+///            to a pool the timelock approves
+///
+///        guardian (an EOA): may pause GameEscrow at once, for a week at most,
+///                           and veto a proposed result, which refunds every stake
+///        treasury: the timelock, so spending fees always takes a proposal
+///
+///      Safe, guardian and timelock are three different addresses, and the
+///      script refuses to finish otherwise; see `_assertSeparateRoles`.
 ///
 ///      Fees: the escrow's treasury is `FeeRouter`, which passes the stakers'
-///      share to `StakedLms` as ETH and forwards the rest to the treasury.
+///      share to `StakedLms` as ETH and forwards the rest to the timelock.
 ///
 ///      LMS: split between play-mining, the timelock, the team's vesting
-///      wallet and the Safe; see `_distribute`.
+///      wallet and the liquidity reserve; see `_distribute`.
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
@@ -80,6 +88,9 @@ contract Deploy is Registry {
     /// @dev The hub's home.
     uint256 private constant BASE_CHAIN_ID = 8453;
     uint256 private constant BASE_SEPOLIA_CHAIN_ID = 84_532;
+    /// @dev The guardian on a local node: anvil's tenth default account, so a
+    ///      developer has its key, and never the deployer, which is the Safe.
+    address private constant LOCAL_GUARDIAN = 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720;
 
     /// @dev Chainlink VRF v2.5 on Base: the coordinator and the 2 gwei lane.
     address private constant BASE_VRF_COORDINATOR = 0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634;
@@ -124,7 +135,11 @@ contract Deploy is Registry {
         FeeRouter feeRouter;
         RewardsDistributor rewards;
         VestingWallet teamVesting;
+        LiquidityReserve liquidityReserve;
+        /// @dev Holds the Safe's timelock roles until its fixed end date.
+        MultisigPhase multisigPhase;
         address safe;
+        address guardian;
         address oracle;
         address messenger;
         /// @dev The hub messenger this script deployed, if any; it is also
@@ -148,11 +163,14 @@ contract Deploy is Registry {
     error CooldownTooShort(uint256 cooldown, uint256 votingPeriodPlusDelay);
     error RewardsUnderfunded(uint256 budget, uint256 funded);
     error TeamBeneficiaryRequired();
+    error GuardianRequired();
+    error RolesOverlap(address account);
 
     function run() external returns (Deployment memory deployment) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
         deployment.safe = _safe(deployer);
+        deployment.guardian = _guardian();
         deployment.deployBlock = block.number;
 
         vm.startBroadcast(pk);
@@ -166,9 +184,11 @@ contract Deploy is Registry {
         executors[0] = address(0);
         deployment.timelock = new TimelockController(0, proposers, executors, deployer);
 
-        deployment.config = new ProtocolConfig(deployer, _params(deployment.safe), _payout());
+        // The treasury is a placeholder until `_governance` puts the fee
+        // router there.
+        deployment.config = new ProtocolConfig(deployer, _params(address(deployment.timelock)), _payout());
         _transport(deployment, deployer);
-        _configure(deployment.config, deployment.oracle, deployment.safe, deployer);
+        _configure(deployment.config, deployment.oracle, deployment.guardian, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
         _wireHubMessenger(deployment);
@@ -189,6 +209,7 @@ contract Deploy is Registry {
 
         deployment.config.transferOwnership(address(deployment.timelock));
         _handOver(deployment, deployer);
+        _assertSeparateRoles(deployment);
 
         vm.stopBroadcast();
         _record(registry(deployment));
@@ -207,8 +228,12 @@ contract Deploy is Registry {
         _entry("governor", address(deployment.governor));
         _entry("feeRouter", address(deployment.feeRouter));
         _entry("rewardsDistributor", address(deployment.rewards));
+        _entry("rewardVesting", address(deployment.rewards.vesting()));
         _entry("teamVesting", address(deployment.teamVesting));
+        _entry("liquidityReserve", address(deployment.liquidityReserve));
+        _entry("multisigPhase", address(deployment.multisigPhase));
         _entry("safe", deployment.safe);
+        _entry("guardian", deployment.guardian);
         _entry("randomnessOracle", deployment.oracle);
         _entry("messenger", deployment.messenger);
         return _registry(deployment.deployBlock);
@@ -222,6 +247,30 @@ contract Deploy is Registry {
         if (safe != address(0)) return safe;
         if (block.chainid != LOCAL_CHAIN_ID) revert SafeRequired();
         return deployer;
+    }
+
+    /// @dev `GUARDIAN`: an EOA, ideally a hardware wallet, never the Safe.
+    ///      Required everywhere but a local node, where it defaults to anvil's
+    ///      tenth default account. Virtual so a test can set it without
+    ///      `vm.setEnv`, which every test in the process would see.
+    function _guardian() internal view virtual returns (address guardian) {
+        guardian = vm.envOr("GUARDIAN", address(0));
+        if (guardian != address(0)) return guardian;
+        if (block.chainid != LOCAL_CHAIN_ID) revert GuardianRequired();
+        return LOCAL_GUARDIAN;
+    }
+
+    /// @dev Safe, guardian and treasury (the timelock) are separate, so that
+    ///      no one key can both stop the protocol and change it, and the Safe
+    ///      that proposes cannot also spend. The deployer is checked too: it
+    ///      holds nothing by now, but a role meant to outlive the deploy must
+    ///      not be its.
+    function _assertSeparateRoles(Deployment memory deployment) private pure {
+        address safe = deployment.safe;
+        address guardian = deployment.guardian;
+        address timelock = address(deployment.timelock);
+        if (guardian == safe || guardian == timelock) revert RolesOverlap(guardian);
+        if (safe == timelock) revert RolesOverlap(safe);
     }
 
     /// @dev The mocks are for a local node only. `MockRandomnessOracle.fulfill`
@@ -332,7 +381,7 @@ contract Deploy is Registry {
         hubLz.transferOwnership(address(deployment.timelock));
     }
 
-    function _params(address safe) private view returns (ProtocolConfig.Params memory) {
+    function _params(address treasury) private pure returns (ProtocolConfig.Params memory) {
         return ProtocolConfig.Params({
             feeBps: 500,
             minSeats: 4,
@@ -343,7 +392,7 @@ contract Deploy is Registry {
             settleWindow: 1 hours,
             minStake: 0.001 ether,
             maxStake: 1 ether,
-            treasury: vm.envOr("TREASURY", safe)
+            treasury: treasury
         });
     }
 
@@ -356,7 +405,7 @@ contract Deploy is Registry {
 
     /// @dev Called while the deployer still owns the config, which is what lets
     ///      the initial setup skip the timelock.
-    function _configure(ProtocolConfig config, address oracle, address safe, address deployer) private {
+    function _configure(ProtocolConfig config, address oracle, address guardian, address deployer) private {
         config.setRandomnessOracle(oracle);
 
         address[] memory attestors = _attestors(deployer);
@@ -364,8 +413,8 @@ contract Deploy is Registry {
         config.setAttestorSet(attestors, uint32(vm.envOr("ATTESTOR_THRESHOLD", attestors.length / 2 + 1)));
 
         config.setRulesHash(HashLib.hashRules(_rules()));
-        config.setGuardian(safe);
-        // How long the Safe has to replay a disputed match and veto it.
+        config.setGuardian(guardian);
+        // How long the guardian has to replay a disputed match and veto it.
         config.setChallengeWindow(uint64(vm.envOr("CHALLENGE_WINDOW", uint256(1 hours))));
         config.setSequencerUptimeFeed(
             vm.envOr("SEQUENCER_FEED", block.chainid == BASE_CHAIN_ID ? BASE_SEQUENCER_FEED : address(0))
@@ -446,13 +495,23 @@ contract Deploy is Registry {
             deployment.escrow,
             deployment.stakedLms,
             address(deployment.timelock),
-            deployment.config.treasury(),
+            // The treasury: fees leave it only by a proposal.
+            address(deployment.timelock),
             uint16(vm.envOr("STAKER_FEE_BPS", _defaultStakerBps()))
         );
         // The deployer still owns the config, so this skips the timelock.
         ProtocolConfig.Params memory params = deployment.config.getParams();
         params.treasury = address(deployment.feeRouter);
         deployment.config.setParams(params);
+        deployment.config.setLmsToken(address(deployment.lms));
+        deployment.config.setLmsPerEthDiscount(vm.envOr("LMS_PER_ETH_DISCOUNT", _defaultLmsPerEthDiscount()));
+    }
+
+    /// @dev LMS that buys one ETH off a fee. Off on Base mainnet, like the
+    ///      stakers' share, until there is advice; twice the play-mining rate
+    ///      elsewhere, so mined LMS buys back half the fee that earned it.
+    function _defaultLmsPerEthDiscount() internal view returns (uint256) {
+        return block.chainid == BASE_CHAIN_ID ? 0 : 20_000e18;
     }
 
     /// @dev Nothing on Base mainnet until there is legal advice on paying
@@ -463,20 +522,20 @@ contract Deploy is Registry {
         return block.chainid == BASE_CHAIN_ID ? 0 : 5_000;
     }
 
-    /// @dev Hands out the whole supply, so the deployer ends with none of its
-    ///      own (on a local node, where it is also the Safe, it holds the Safe's):
+    /// @dev Hands out the whole supply, so the deployer ends with none:
     ///
-    ///        50%  play-mining     RewardsDistributor, paid to players over four years
+    ///        50%  play-mining     RewardsDistributor, paid to players over four years, each
+    ///                             week's share vesting over six months
     ///        25%  treasury        the timelock: only a passed proposal can spend it
     ///        15%  team            a VestingWallet: nothing for a year, then linear over three
-    ///         5%  liquidity       the Safe, to seed a pool
+    ///         5%  liquidity       a LiquidityReserve: the Safe sends it to a pool the timelock approves
     ///         5%  reserve         the timelock, with the treasury
     ///
-    ///      None of the tokens the timelock, the distributor or the vesting
-    ///      wallet holds is staked, so none of them votes: governance starts
-    ///      with the players, as play-mining pays them. The vesting wallet and
-    ///      the distributor have no way to stake; the timelock could only by a
-    ///      proposal, which needs votes it does not have.
+    ///      None of the tokens the timelock, the distributor, the vesting
+    ///      wallet or the reserve holds is staked, so none of them votes:
+    ///      governance starts with the players, as play-mining pays them. The
+    ///      vesting wallet, the distributor and the reserve have no way to
+    ///      stake; the timelock could only by a proposal.
     function _distribute(Deployment memory deployment, address deployer) private {
         LmsToken lms = deployment.lms;
         uint256 supply = lms.totalSupply();
@@ -493,25 +552,31 @@ contract Deploy is Registry {
         uint256 team = (supply * TEAM_BPS) / BPS;
         lms.transfer(address(deployment.teamVesting), team);
 
-        // Treasury and reserve, and the rounding of the other three. Counted,
-        // not swept from the deployer's balance: on a local node the Safe *is*
-        // the deployer, and a sweep after the Safe's share would take it too.
+        deployment.liquidityReserve = new LiquidityReserve(
+            lms, deployment.safe, address(deployment.stakedLms), address(deployment.timelock)
+        );
         uint256 liquidity = (supply * LIQUIDITY_BPS) / BPS;
+        lms.transfer(address(deployment.liquidityReserve), liquidity);
+
+        // Treasury and reserve, and the rounding of the other three.
         lms.transfer(address(deployment.timelock), supply - play - team - liquidity);
-        lms.transfer(deployment.safe, liquidity);
-        assert(lms.balanceOf(deployer) == (deployer == deployment.safe ? liquidity : 0));
+        assert(lms.balanceOf(deployer) == 0);
     }
 
     function _rewards(Deployment memory deployment) private returns (RewardsDistributor) {
         uint256 epochLength = deployment.escrow.FEE_EPOCH();
         return new RewardsDistributor(
             deployment.escrow,
-            deployment.stakedLms,
+            deployment.lms,
             address(deployment.timelock),
             // The first full epoch after the deploy, unless told otherwise.
             vm.envOr("REWARDS_FIRST_EPOCH", block.timestamp / epochLength + 1),
             (deployment.lms.totalSupply() * PLAY_MINING_BPS) / BPS,
-            vm.envOr("MAX_REWARD_PER_ETH", uint256(100_000e18))
+            // A farmer needs 1e-4 ETH of real fees per LMS: governance can
+            // raise it once there is a market to compare against.
+            vm.envOr("MAX_REWARD_PER_ETH", uint256(10_000e18)),
+            // About 6% of a first-year week's budget.
+            vm.envOr("MAX_REWARD_PER_WALLET", uint256(20_000e18))
         );
     }
 
@@ -530,6 +595,12 @@ contract Deploy is Registry {
     ///      checks first, for a clearer error.
     function _timelockDelay() private view returns (uint256) {
         return vm.envOr("TIMELOCK_DELAY", uint256(3 days));
+    }
+
+    /// @dev `MULTISIG_PHASE_END`, a Unix timestamp. A year from the deploy by
+    ///      default; `MultisigPhase` refuses anything over two.
+    function _multisigPhaseEnd() private view returns (uint256) {
+        return vm.envOr("MULTISIG_PHASE_END", block.timestamp + 365 days);
     }
 
     /// @dev `ProtocolConfig` is `Ownable2Step`, so `transferOwnership` only
@@ -576,18 +647,19 @@ contract Deploy is Registry {
         timelock.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), 0);
         timelock.executeBatch(targets, values, payloads, bytes32(0), bytes32(0));
 
-        // Revoke before granting, so that on a local node, where the Safe may
-        // be the deployer itself, it keeps the roles it is meant to end with.
         timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
         timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
-        // The governor is the only proposer. It also needs the canceller
-        // role, which `GovernorTimelockControl` uses to cancel its own
+        // The governor proposes. It also needs the canceller role, which `GovernorTimelockControl` uses to cancel its own
         // queued proposals.
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(deployment.governor));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(deployment.governor));
-        // The Safe's veto. Governance can revoke it through the timelock,
-        // which is its own admin once the deployer renounces below.
-        timelock.grantRole(timelock.CANCELLER_ROLE(), safe);
+        // The Safe proposes and vetoes through `MultisigPhase` until its end
+        // date, and never holds a role itself, so the veto ends when the
+        // contract says rather than when governance manages to remove it.
+        MultisigPhase phase = new MultisigPhase(timelock, safe, _multisigPhaseEnd());
+        deployment.multisigPhase = phase;
+        timelock.grantRole(timelock.PROPOSER_ROLE(), address(phase));
+        timelock.grantRole(timelock.CANCELLER_ROLE(), address(phase));
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
     }
 }

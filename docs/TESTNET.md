@@ -19,7 +19,7 @@ than copying one from here.
 
 ```bash
 cd contracts
-DEPLOYER_PK=0x… SAFE=0x… TEAM_BENEFICIARY=0x… \
+DEPLOYER_PK=0x… SAFE=0x… GUARDIAN=0x… TEAM_BENEFICIARY=0x… \
 ORACLE=0x… \
 LZ_ENDPOINT=0x… \
 ATTESTORS=0x…,0x…,0x… ETHERSCAN_API_KEY=… \

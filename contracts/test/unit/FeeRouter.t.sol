@@ -39,7 +39,7 @@ contract FeeRouterTest is Fixtures {
         lms.transfer(staker, 100e18);
         vm.startPrank(staker);
         lms.approve(address(vault), type(uint256).max);
-        vault.deposit(100e18, staker);
+        vault.deposit(100e18);
         vm.stopPrank();
 
         ProtocolConfig.Params memory params = config.getParams();

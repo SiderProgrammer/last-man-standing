@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getAddress } from 'viem';
-import { claimableEpochRange, sharesForUnstake, type StakingInfo } from '@lms/protocol';
+import { claimableEpochRange, type StakingInfo } from '@lms/protocol';
 import {
   formatDuration,
   formatLms,
@@ -22,8 +22,7 @@ const DELEGATE = `0x${'d1'.repeat(20)}` as const;
 function position(overrides: Partial<StakingPosition> = {}): StakingPosition {
   return {
     lmsBalance: 500n * E18,
-    shares: 1_000n * E18,
-    value: 1_000n * E18,
+    staked: 1_000n * E18,
     votes: 1_000n * E18,
     self: ME,
     delegate: ME,
@@ -96,7 +95,7 @@ describe('stakingPanel', () => {
     });
 
     it('has nothing to delegate without a stake', () => {
-      const view = stakingPanel(input({ position: position({ shares: 0n, value: 0n, votes: 0n }) }));
+      const view = stakingPanel(input({ position: position({ staked: 0n, votes: 0n }) }));
       expect(view.delegation).toBe('');
       expect(view.delegateDisabled).toBe(true);
     });
@@ -121,13 +120,13 @@ describe('stakingPanel', () => {
       const view = stakingPanel(
         input({ info: WITH_REWARDS, playRewards: { claimable: 1_250n * E18, epochs: [3n, 4n] } }),
       );
-      expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · claimed as staked LMS');
+      expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · vests over six months once claimed');
       expect(view.claimPlayVisible).toBe(true);
     });
   });
 
   it('only offers what the wallet can do', () => {
-    const empty = stakingPanel(input({ position: position({ shares: 0n, value: 0n, votes: 0n }) }));
+    const empty = stakingPanel(input({ position: position({ staked: 0n, votes: 0n }) }));
     expect(empty.summary).toBe('Nothing staked yet · 500 LMS in wallet');
     expect(empty.unstakeDisabled).toBe(true);
 
@@ -215,19 +214,5 @@ describe('claimableEpochRange', () => {
 
   it('stops at the end of the program', () => {
     expect(claimableEpochRange(10n, WEEK, 208n, 900n * WEEK)).toEqual({ from: 10n, to: 217n });
-  });
-});
-
-describe('sharesForUnstake', () => {
-  it('rounds up so the request covers the amount, and takes everything at or above the position', () => {
-    expect(sharesForUnstake(110n, 100n, 110n)).toBe(100n);
-    expect(sharesForUnstake(500n, 100n, 110n)).toBe(100n);
-    expect(sharesForUnstake(55n, 100n, 110n)).toBe(50n);
-    expect(sharesForUnstake(56n, 100n, 110n)).toBe(51n);
-  });
-
-  it('is zero when there is nothing to unstake', () => {
-    expect(sharesForUnstake(0n, 100n, 110n)).toBe(0n);
-    expect(sharesForUnstake(5n, 0n, 0n)).toBe(0n);
   });
 });

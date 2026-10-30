@@ -22,6 +22,14 @@ contract DeployHarness is Deploy {
     function teamBeneficiary(address safe) external view returns (address) {
         return _teamBeneficiary(safe);
     }
+
+    function defaultLmsPerEthDiscount() external view returns (uint256) {
+        return _defaultLmsPerEthDiscount();
+    }
+
+    function guardian() external view returns (address) {
+        return _guardian();
+    }
 }
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
@@ -30,6 +38,9 @@ contract DeployHarness is Deploy {
 contract DeployTest is Test {
     uint256 private constant DEPLOYER_PK = 0xDE9107;
     string private constant DESCRIPTION = "Move the guardian";
+
+    /// @dev `Deploy`'s default on a local node: anvil's tenth account.
+    address private constant GUARDIAN = 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720;
 
     address private deployer;
     address private safe;
@@ -71,12 +82,15 @@ contract DeployTest is Test {
         assertEq(d.timelock.getMinDelay(), 3 days);
     }
 
-    function test_governorProposes_safeOnlyCancels_deployerHoldsNothing() public view {
+    function test_governorAndMultisigPhasePropose_safeHoldsNoRole_deployerHoldsNothing() public view {
         TimelockController timelock = d.timelock;
+        address phase = address(d.multisigPhase);
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.governor)));
         assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), address(d.governor)));
-        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), safe));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), phase));
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), phase));
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), safe));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), safe));
         assertTrue(timelock.hasRole(timelock.EXECUTOR_ROLE(), address(0)));
 
         assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), deployer));
@@ -91,10 +105,11 @@ contract DeployTest is Test {
         assertEq(d.avatars.pendingOwner(), address(0));
     }
 
-    function test_safeHoldsGuardianAndTreasury_behindTheRouter() public view {
-        assertEq(d.config.guardian(), safe);
+    function test_guardianIsItsOwnKey_andTheTimelockIsTheTreasury_behindTheRouter() public view {
+        assertEq(d.guardian, GUARDIAN);
+        assertEq(d.config.guardian(), GUARDIAN);
         assertEq(d.config.treasury(), address(d.feeRouter));
-        assertEq(d.feeRouter.treasury(), safe);
+        assertEq(d.feeRouter.treasury(), address(d.timelock));
         assertEq(d.feeRouter.stakerBps(), 5_000);
     }
 
@@ -108,9 +123,17 @@ contract DeployTest is Test {
         assertEq(d.lms.balanceOf(address(d.rewards)), 50_000_000e18, "play-mining");
         assertEq(d.lms.balanceOf(address(d.timelock)), 30_000_000e18, "treasury and reserve");
         assertEq(d.lms.balanceOf(address(d.teamVesting)), 15_000_000e18, "team");
-        assertEq(d.lms.balanceOf(safe), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(address(d.liquidityReserve)), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(safe), 0, "the Safe holds none of it itself");
         assertEq(d.lms.balanceOf(deployer), 0);
         assertEq(d.stakedLms.totalSupply(), 0, "nobody votes until play-mining pays: no seed either");
+    }
+
+    function test_liquidityReserveIsTheSafes_toReleaseWhereTheTimelockApproves() public view {
+        assertEq(d.liquidityReserve.owner(), address(d.timelock));
+        assertEq(d.liquidityReserve.safe(), safe);
+        assertEq(d.liquidityReserve.vault(), address(d.stakedLms));
+        assertEq(address(d.liquidityReserve.lms()), address(d.lms));
     }
 
     function test_teamVestsNothingForAYear_thenLinearlyOverThree() public {
@@ -131,9 +154,11 @@ contract DeployTest is Test {
         RewardsDistributor rewards = d.rewards;
         assertEq(rewards.owner(), address(d.timelock));
         assertEq(address(rewards.escrow()), address(d.escrow));
-        assertEq(address(rewards.vault()), address(d.stakedLms));
+        assertEq(address(rewards.lms()), address(d.lms));
+        assertEq(rewards.vesting().distributor(), address(rewards));
         assertEq(rewards.firstEpoch(), block.timestamp / 7 days + 1, "the first full week after the deploy");
-        assertEq(rewards.maxRewardPerEth(), 100_000e18);
+        assertEq(rewards.maxRewardPerEth(), 10_000e18);
+        assertEq(rewards.maxRewardPerWalletPerEpoch(), 20_000e18);
 
         uint256 budget = rewards.totalBudget();
         assertLe(budget, d.lms.balanceOf(address(rewards)));
@@ -152,6 +177,14 @@ contract DeployTest is Test {
     function test_quorumFloorAppliesWhileLittleIsStaked() public view {
         assertEq(d.governor.quorumFloor(), 1_000_000e18);
         assertEq(d.governor.quorum(block.timestamp - 1), 1_000_000e18, "nothing staked: the floor applies");
+    }
+
+    function test_theLmsDiscountIsWired_andOffOnBaseMainnet() public {
+        assertEq(d.config.lmsToken(), address(d.lms));
+        assertEq(d.config.lmsPerEthDiscount(), 20_000e18);
+        DeployHarness harness = new DeployHarness();
+        vm.chainId(8453);
+        assertEq(harness.defaultLmsPerEthDiscount(), 0);
     }
 
     function test_baseMainnetStartsWithNoFeeShareForStakers() public {
@@ -180,6 +213,35 @@ contract DeployTest is Test {
     function test_zapPointsAtEscrowAndPoolManager() public view {
         assertEq(address(d.zap.escrow()), address(d.escrow));
         assertEq(address(d.zap.poolManager()), poolManager);
+    }
+
+    function test_multisigPhaseEndsAYearOut_forTheSafe() public view {
+        assertEq(address(d.multisigPhase.timelock()), address(d.timelock));
+        assertEq(d.multisigPhase.safe(), safe);
+        // `_handOver` moves the dry run's clock from 1 to 2 before it is made.
+        assertApproxEqAbs(d.multisigPhase.phaseEnd(), block.timestamp + 365 days, 1);
+    }
+
+    /// @dev Through `MultisigPhase`, with the same delay as a vote.
+    function test_safeProposesThroughTheMultisigPhase() public {
+        address newGuardian = makeAddr("newGuardian");
+        bytes memory call = abi.encodeCall(d.config.setGuardian, (newGuardian));
+        uint256 delay = d.timelock.getMinDelay();
+        vm.prank(safe);
+        d.multisigPhase.schedule(address(d.config), 0, call, bytes32(0), bytes32(0), delay);
+        vm.warp(block.timestamp + delay);
+        d.timelock.execute(address(d.config), 0, call, bytes32(0), bytes32(0));
+        assertEq(d.config.guardian(), newGuardian);
+    }
+
+    /// @dev Once the phase is over anyone retires it, and governance is left alone.
+    function test_afterThePhase_theSafesRolesAreGone() public {
+        vm.warp(d.multisigPhase.phaseEnd());
+        d.multisigPhase.retire();
+        TimelockController timelock = d.timelock;
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.multisigPhase)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(d.multisigPhase)));
+        assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), address(d.governor)));
     }
 
     function test_safeCannotScheduleDirectly() public {
@@ -229,7 +291,7 @@ contract DeployTest is Test {
         bytes32 salt = bytes20(address(d.governor)) ^ descriptionHash;
         bytes32 operation = d.timelock.hashOperationBatch(targets, values, calls, bytes32(0), salt);
         vm.prank(safe);
-        d.timelock.cancel(operation);
+        d.multisigPhase.cancel(operation);
 
         assertEq(uint8(d.governor.state(id)), uint8(IGovernor.ProposalState.Canceled));
         vm.warp(block.timestamp + d.timelock.getMinDelay());
@@ -245,12 +307,12 @@ contract DeployTest is Test {
             )
         );
         d.governor.execute(targets, values, calls, descriptionHash);
-        assertEq(d.config.guardian(), safe);
+        assertEq(d.config.guardian(), GUARDIAN);
     }
 
     function test_proposal_unstakedLmsCannotVote() public {
         address holder = makeAddr("holder");
-        vm.prank(safe);
+        vm.prank(address(d.timelock));
         d.lms.transfer(holder, 1_000_000e18);
         vm.warp(block.timestamp + 1);
 
@@ -263,13 +325,26 @@ contract DeployTest is Test {
         d.governor.propose(new address[](1), new uint256[](1), new bytes[](1), DESCRIPTION);
     }
 
-    /// @dev A lobby can open straight away, and the Safe that may veto a
-    ///      result during the window is the guardian.
-    function test_settlementIsWiredAndTheSafeMayVeto() public view {
+    /// @dev A lobby can open straight away.
+    function test_settlementIsWired() public view {
         assertTrue(d.config.isComplete());
         assertEq(d.config.challengeWindow(), 1 hours);
         assertTrue(d.config.isAttestor(deployer));
-        assertEq(d.config.guardian(), safe);
+    }
+
+    function test_offALocalChain_theGuardianIsRequired() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.guardian(), GUARDIAN);
+        vm.chainId(84_532);
+        vm.expectRevert(Deploy.GuardianRequired.selector);
+        harness.guardian();
+    }
+
+    /// @dev One key may not hold two roles: here the guardian is the Safe.
+    function test_refusesAGuardianThatIsTheSafe() public {
+        Deploy script = new DeployWithGuardian(safe);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RolesOverlap.selector, safe));
+        script.run();
     }
 
     /// @dev `config/rules.json` → `Deploy` → the deployed hash, pinned to the
@@ -283,7 +358,7 @@ contract DeployTest is Test {
     ///      anyone-picks-the-seed mock.
     function test_requiresARealOracleOffALocalChain() public {
         vm.chainId(84_532);
-        Deploy script = new Deploy();
+        Deploy script = new DeployWithGuardian(makeAddr("guardian"));
         vm.expectRevert(Deploy.OracleRequired.selector);
         script.run();
     }
@@ -333,12 +408,18 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
         assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 15);
+        assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
+        assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
+        assertEq(
+            vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
+        );
+        assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 19);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 
     function test_guardianPausesAtOnce_forAWeek() public {
-        vm.prank(safe);
+        vm.prank(GUARDIAN);
         d.escrow.pause();
         assertTrue(d.escrow.paused());
 
@@ -346,16 +427,19 @@ contract DeployTest is Test {
         assertFalse(d.escrow.paused());
     }
 
-    /// @dev The Safe stakes enough of its supply to clear the threshold and
+    /// @dev The Safe is granted and stakes enough to clear the threshold and
     ///      quorum on its own, proposes, and votes for it. Returns at the end
     ///      of the voting period, with the proposal `Succeeded`.
     function _passGuardianProposal(address newGuardian)
         private
         returns (uint256 id, address[] memory targets, uint256[] memory values, bytes[] memory calls)
     {
+        // From the treasury, as a passed grant would pay it.
+        vm.prank(address(d.timelock));
+        d.lms.transfer(safe, 1_000_000e18);
         vm.startPrank(safe);
         d.lms.approve(address(d.stakedLms), 1_000_000e18);
-        d.stakedLms.deposit(1_000_000e18, safe);
+        d.stakedLms.deposit(1_000_000e18);
         vm.stopPrank();
         // Votes are read one tick in the past.
         vm.warp(block.timestamp + 1);
@@ -387,11 +471,32 @@ contract DeployOnBaseSepolia is Deploy {
     function _teamBeneficiary(address safe) internal pure override returns (address) {
         return safe;
     }
+
+    function _guardian() internal pure override returns (address) {
+        return address(0x6A4D);
+    }
 }
 
 /// @dev `Deploy` as if run with `MOCKS=true`.
 contract DeployWithMocks is Deploy {
     function _mocks(bool) internal pure override returns (bool) {
         return true;
+    }
+
+    function _guardian() internal pure override returns (address) {
+        return address(0x6A4D);
+    }
+}
+
+/// @dev `Deploy` with `GUARDIAN` set to `guardian_`.
+contract DeployWithGuardian is Deploy {
+    address private immutable GUARDIAN_;
+
+    constructor(address guardian_) {
+        GUARDIAN_ = guardian_;
+    }
+
+    function _guardian() internal view override returns (address) {
+        return GUARDIAN_;
     }
 }

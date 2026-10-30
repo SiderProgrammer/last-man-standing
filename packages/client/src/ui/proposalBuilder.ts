@@ -118,8 +118,9 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     label: "Remove the multisig's veto",
     help:
       'Takes the canceller role away from an address, so it can no longer cancel passed proposals ' +
-      'during the timelock delay. This is how governance ends the training-wheels period.',
-    fields: [address('account', 'Address to remove (the Safe)')],
+      'during the timelock delay. The Safe\'s veto, held by MultisigPhase, also ends by itself on its ' +
+      'fixed end date, and until then the Safe can cancel this proposal.',
+    fields: [address('account', 'Address to remove (MultisigPhase)')],
   },
   {
     id: 'addSpoke',

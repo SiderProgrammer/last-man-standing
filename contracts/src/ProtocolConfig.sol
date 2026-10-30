@@ -89,6 +89,14 @@ contract ProtocolConfig is Ownable2Step {
     ///      otherwise come out of the challenge window. See `GameEscrow.finalize`.
     address public sequencerUptimeFeed;
 
+    /// @notice The LMS token, which can pay part of a match fee. Set once.
+    address public lmsToken;
+    /// @notice LMS, in wei, that buys one ETH off a seat's fee. Zero turns the
+    ///         discount off. At most `MAX_DISCOUNT_BPS` of the fee is ever paid
+    ///         this way, whatever the rate.
+    /// @dev Read at join, so a change only reaches seats taken after it.
+    uint256 public lmsPerEthDiscount;
+
     /// @notice Trusted messenger per remote chain, for cross-chain joins.
     mapping(uint32 chainId => address messenger) public messengerFor;
     /// @notice Trusted peer contract per remote chain.
@@ -103,6 +111,8 @@ contract ProtocolConfig is Ownable2Step {
     event GuardianUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
     event SequencerUptimeFeedUpdated(address indexed previous, address indexed current);
+    event LmsTokenSet(address indexed token);
+    event LmsPerEthDiscountUpdated(uint256 previous, uint256 current);
 
     error FeeTooHigh(uint16 feeBps);
     error InvalidSeatRange(uint16 minSeats, uint16 maxSeats);
@@ -116,6 +126,7 @@ contract ProtocolConfig is Ownable2Step {
     error DelayTooShort(uint256 delay, uint256 matchLifetime);
     error InvalidRulesHash();
     error InvalidChallengeWindow(uint64 window);
+    error LmsTokenAlreadySet(address token);
 
     constructor(address owner_, Params memory initialParams, uint16[] memory initialPayoutBps)
         Ownable(owner_)
@@ -240,6 +251,20 @@ contract ProtocolConfig is Ownable2Step {
     function setSequencerUptimeFeed(address feed) external onlyOwner {
         emit SequencerUptimeFeedUpdated(sequencerUptimeFeed, feed);
         sequencerUptimeFeed = feed;
+    }
+
+    /// @notice Sets the LMS token. Once only: the escrow holds LMS against
+    ///         seats, and must burn or refund the same token it took.
+    function setLmsToken(address token) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (lmsToken != address(0)) revert LmsTokenAlreadySet(lmsToken);
+        lmsToken = token;
+        emit LmsTokenSet(token);
+    }
+
+    function setLmsPerEthDiscount(uint256 lmsPerEth) external onlyOwner {
+        emit LmsPerEthDiscountUpdated(lmsPerEthDiscount, lmsPerEth);
+        lmsPerEthDiscount = lmsPerEth;
     }
 
     /// @notice True once everything a lobby needs from the config is set.

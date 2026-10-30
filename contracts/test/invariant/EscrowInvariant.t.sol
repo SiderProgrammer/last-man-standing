@@ -7,6 +7,7 @@ import {BPS_DENOMINATOR} from "../../src/Constants.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
+import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
 import {Fixtures} from "../helpers/Fixtures.sol";
@@ -183,6 +184,24 @@ contract EscrowHandler is Test {
         messenger.deliver(address(escrow), REMOTE_CHAIN, REMOTE_PEER, abi.encode(current, actor), value);
     }
 
+    LmsToken public lms;
+
+    /// @dev Set once by `setUp`, like the messenger.
+    function setLms(LmsToken lms_) external {
+        if (address(lms) == address(0)) lms = lms_;
+    }
+
+    /// @dev A seat paying part of its fee in LMS: anything from a sliver to
+    ///      more than the cap, which only buys the cap.
+    function joinWithLms(uint256 who, uint256 lmsIn) public {
+        if (current == bytes32(0) || address(lms) == address(0)) return;
+        address actor = actors[who % actors.length];
+        lmsIn = bound(lmsIn, 1e18, 50e18);
+        (uint256 discount,) = escrow.quoteLmsDiscount(current, lmsIn);
+        vm.prank(actor);
+        escrow.joinWithLms{value: STAKE - discount}(current, lmsIn);
+    }
+
     /// @dev Anyone pushes an actor's balance to that actor.
     function withdrawFor(uint256 caller, uint256 who) public {
         address account = actors[who % actors.length];
@@ -196,6 +215,8 @@ contract EscrowHandler is Test {
 ///      signing.
 contract EscrowInvariantTest is Fixtures {
     EscrowHandler internal handler;
+    LmsToken internal lms;
+    uint256 internal initialLmsSupply;
 
     function setUp() public override {
         super.setUp();
@@ -207,6 +228,19 @@ contract EscrowInvariantTest is Fixtures {
 
         handler = new EscrowHandler(escrow, oracle, harness, actors, _twoAttestors());
         handler.setMessenger(messenger);
+
+        lms = new LmsToken(address(this), 1_000_000e18);
+        handler.setLms(lms);
+        vm.startPrank(owner);
+        config.setLmsToken(address(lms));
+        config.setLmsPerEthDiscount(20_000e18);
+        vm.stopPrank();
+        for (uint256 i = 0; i < actors.length; ++i) {
+            lms.transfer(actors[i], 10_000e18);
+            vm.prank(actors[i]);
+            lms.approve(address(escrow), type(uint256).max);
+        }
+        initialLmsSupply = lms.totalSupply();
         address guardian = handler.GUARDIAN();
         vm.prank(owner);
         config.setGuardian(guardian);
@@ -235,8 +269,36 @@ contract EscrowInvariantTest is Fixtures {
         }
     }
 
-    /// @dev And it counts exactly the seats of the matches that settled in it:
-    ///      nothing for a match still open, in play, refunded or vetoed.
+    /// @dev The LMS the escrow holds is exactly the discounts of matches that
+    ///      have not ended; what settled matches paid has been burned, and
+    ///      what cancelled ones paid has gone back.
+    function invariant_lmsHeldIsThePendingDiscounts_andTheRestIsBurned() public view {
+        uint256 pending;
+        uint256 burned;
+        for (uint256 m = 0; m < handler.matchCount(); ++m) {
+            bytes32 matchId = handler.matchIds(m);
+            GameEscrow.MatchStatus status = escrow.getMatch(matchId).status;
+            uint256 paid = _discounts(matchId, false);
+            if (status == GameEscrow.MatchStatus.Settled) burned += paid;
+            else if (status != GameEscrow.MatchStatus.Cancelled) pending += paid;
+        }
+        assertEq(lms.balanceOf(address(escrow)), escrow.totalLmsEscrowed());
+        assertEq(escrow.totalLmsEscrowed(), pending);
+        assertEq(initialLmsSupply - lms.totalSupply(), burned);
+    }
+
+    /// @dev Every seat's ETH discount, or with `inEth` false the LMS paid for them.
+    function _discounts(bytes32 matchId, bool inEth) private view returns (uint256 total) {
+        address[] memory seats = escrow.getSeats(matchId);
+        for (uint256 i = 0; i < seats.length; ++i) {
+            GameEscrow.Discount memory seat = escrow.getSeatDiscount(matchId, seats[i]);
+            total += inEth ? seat.eth : seat.lms;
+        }
+    }
+
+    /// @dev And it counts exactly the seats of the matches that settled in it,
+    ///      net of their discounts: nothing for a match still open, in play,
+    ///      refunded or vetoed.
     function invariant_epochFeesCountOnlySettledMatches() public view {
         uint256 seatFee = (uint256(handler.STAKE()) * config.feeBps()) / BPS_DENOMINATOR;
         uint256 expectedTotal;
@@ -248,17 +310,19 @@ contract EscrowInvariantTest is Fixtures {
                 if (handler.settledInEpochPlusOne(matchId) != epoch + 1) continue;
                 GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
                 assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Settled));
-                expected += seatFee * info.seatCount;
+                expected += seatFee * info.seatCount - _discounts(matchId, true);
             }
             assertEq(escrow.epochFees(epoch), expected);
             expectedTotal += expected;
         }
         // No settled match left out: every Settled one was recorded above.
-        uint256 settledSeats;
+        uint256 settledFees;
         for (uint256 m = 0; m < handler.matchCount(); ++m) {
-            GameEscrow.MatchInfo memory info = escrow.getMatch(handler.matchIds(m));
-            if (info.status == GameEscrow.MatchStatus.Settled) settledSeats += info.seatCount;
+            bytes32 matchId = handler.matchIds(m);
+            GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
+            if (info.status != GameEscrow.MatchStatus.Settled) continue;
+            settledFees += seatFee * info.seatCount - _discounts(matchId, true);
         }
-        assertEq(expectedTotal, seatFee * settledSeats);
+        assertEq(expectedTotal, settledFees);
     }
 }

@@ -1,4 +1,4 @@
-import { chainInfo, errorFirstLine, sharesForUnstake } from '@lms/protocol';
+import { chainInfo, errorFirstLine } from '@lms/protocol';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
@@ -23,7 +23,7 @@ export function wireStakingControls(): void {
   dom.unstakeLms.onclick = () => void act('Unstake requested. Your vote stops now.', unstake());
   dom.withdrawUnstaked.onclick = () => void act('Withdrawn to your wallet.', withdraw());
   dom.claimRewards.onclick = () => void act('ETH sent to your wallet.', claimRewards());
-  dom.claimPlayRewards.onclick = () => void act('LMS claimed and staked. It votes from now.', claimPlayRewards());
+  dom.claimPlayRewards.onclick = () => void act('LMS claimed. It vests over six months; stake it once released to vote.', claimPlayRewards());
   dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
   dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
 }
@@ -125,7 +125,8 @@ async function unstake(): Promise<`0x${string}` | null> {
   if (!wallet || !vault || !position) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
-  return wallet.requestUnstake(vault, sharesForUnstake(amount, position.shares, position.value));
+  // One sLMS is one LMS; more than the position unstakes all of it.
+  return wallet.requestUnstake(vault, amount < position.staked ? amount : position.staked);
 }
 
 async function claimRewards(): Promise<`0x${string}` | null> {
@@ -172,7 +173,7 @@ async function withdraw(): Promise<`0x${string}` | null> {
  * stake, or else the whole position to unstake.
  */
 function maxText(current: StakingPosition): string {
-  const wei = current.lmsBalance > 0n ? current.lmsBalance : current.value;
+  const wei = current.lmsBalance > 0n ? current.lmsBalance : current.staked;
   const whole = wei / 10n ** 18n;
   const fraction = (wei % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : `${whole}`;

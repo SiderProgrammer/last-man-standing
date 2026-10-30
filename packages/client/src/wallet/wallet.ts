@@ -386,8 +386,8 @@ export class Wallet {
 
   /** Everything the staking panel shows, read in one round trip. */
   async stakingPosition(vault: Address): Promise<StakingPosition> {
-    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
-    const [lmsBalance, shares, votes, delegate, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
+    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
+    const [lmsBalance, staked, votes, delegate, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [this.address] }),
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
@@ -397,14 +397,9 @@ export class Wallet {
       this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [this.address] }),
       this.rpc.getBlock(),
     ]);
-    const value =
-      shares === 0n
-        ? 0n
-        : await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'convertToAssets', args: [shares] });
     return {
       lmsBalance,
-      shares,
-      value,
+      staked,
       votes,
       self: this.address,
       delegate,
@@ -422,7 +417,7 @@ export class Wallet {
    * transaction instead of an approval and a deposit.
    */
   async stake(vault: Address, amount: bigint): Promise<Hex> {
-    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'asset' });
+    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
     const [name, nonce] = await Promise.all([
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'nonces', args: [this.address] }),
@@ -450,7 +445,7 @@ export class Wallet {
       address: vault,
       abi: stakedLmsAbi,
       functionName: 'depositWithPermit',
-      args: [amount, this.address, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
+      args: [amount, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }
@@ -470,14 +465,14 @@ export class Wallet {
     return this.wallet.writeContract({ ...request, chain: null });
   }
 
-  /** Burns `shares` now and starts the cooldown on what they are worth. */
-  async requestUnstake(vault: Address, shares: bigint): Promise<Hex> {
+  /** Burns `amount` sLMS now and starts the cooldown on the LMS behind it. */
+  async requestUnstake(vault: Address, amount: bigint): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: vault,
       abi: stakedLmsAbi,
       functionName: 'requestUnstake',
-      args: [shares],
+      args: [amount],
     });
     return this.wallet.writeContract({ ...request, chain: null });
   }
@@ -516,7 +511,7 @@ export class Wallet {
     return { claimable, epochs: [...epochs] };
   }
 
-  /** Claims play-mining rewards for `epochs`, paid to this wallet as sLMS. */
+  /** Claims play-mining rewards for `epochs`, vesting to this wallet over six months. */
   async claimPlayRewards(distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
       account: this.address,

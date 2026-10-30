@@ -56,6 +56,8 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
+import { artifactPath } from './artifacts.mjs';
+
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CONTRACTS = fileURLToPath(new URL('../contracts/', import.meta.url));
 
@@ -147,7 +149,7 @@ const LOBBIES = [
  * `forge script` compiles the contracts first.
  */
 const abiOf = (contract) =>
-  JSON.parse(readFileSync(`${CONTRACTS}out/${contract}.sol/${contract}.json`, 'utf8')).abi;
+  JSON.parse(readFileSync(artifactPath(`${CONTRACTS}out/`, contract), 'utf8')).abi;
 /** Staked by the operator: enough to clear the 100,000 sLMS proposal threshold. */
 const OPERATOR_STAKE = '200000';
 /** Staked for each funded player, so they can vote on the demo proposal from the start. */
@@ -303,10 +305,10 @@ async function waitForAnvil(publicClient, chainId = CHAIN_ID, rpc = RPC) {
 
 /** Every variable either deploy script reads; a value left in the shell must not leak in. */
 const DEPLOY_KEYS = [
-  ...['SAFE', 'TREASURY', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
+  ...['SAFE', 'GUARDIAN', 'MULTISIG_PHASE_END', 'ATTESTOR', 'ATTESTORS', 'ATTESTOR_THRESHOLD', 'TIMELOCK_DELAY'],
   ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
   ...['STAKER_FEE_BPS', 'QUORUM_FLOOR', 'REWARD_DURATION', 'TEAM_BENEFICIARY'],
-  ...['REWARDS_FIRST_EPOCH', 'MAX_REWARD_PER_ETH'],
+  ...['REWARDS_FIRST_EPOCH', 'MAX_REWARD_PER_ETH', 'MAX_REWARD_PER_WALLET', 'LMS_PER_ETH_DISCOUNT'],
   ...['ORACLE', 'MESSENGER', 'LZ_ENDPOINT', 'MOCK_LZ', 'RECEIVE_GAS'],
   ...['HUB_CHAIN_ID', 'HUB_EID', 'HUB_ESCROW', 'HUB_MESSENGER', 'SPOKE_OWNER', 'AVATARS'],
 ];
@@ -537,18 +539,31 @@ async function seed(publicClient, escrow) {
 /**
  * Stakes part of the LMS supply: the operator's own stake, enough to propose,
  * and some for each funded player so they can vote and earn from the first
- * match. With no `SAFE` on a local node the operator *is* the Safe and holds
- * the supply.
+ * match. The LMS comes from the treasury, sent as the timelock itself, which
+ * anvil lets us impersonate; on a real deployment that is a grant proposal.
  */
-async function stakeAsOperator(publicClient, lms, vault, holders) {
+async function stakeAsOperator(publicClient, lms, vault, timelock, holders) {
   const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
   const own = parseEther(OPERATOR_STAKE);
   const each = parseEther(PLAYER_STAKE);
+
+  await rpc('anvil_impersonateAccount', [timelock]);
+  await rpc('anvil_setBalance', [timelock, numberToHex(parseEther('1'))]);
+  const asTimelock = createWalletClient({ account: timelock, transport: http(RPC) });
+  const grant = await asTimelock.writeContract({
+    chain: null,
+    address: lms,
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [operator.account.address, own + each * BigInt(holders.length)],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: grant });
+  await rpc('anvil_stopImpersonatingAccount', [timelock]);
   const calls = [
     [lms, erc20Abi, 'approve', [vault, own + each * BigInt(holders.length)]],
-    [vault, abiOf('StakedLms'), 'deposit', [own, operator.account.address]],
+    [vault, abiOf('StakedLms'), 'deposit', [own]],
     // Deposited *for* each player: the shares, and the votes, are theirs.
-    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'deposit', [each, holder]]),
+    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'depositFor', [holder, each]]),
   ];
   for (const [address, abi, functionName, args] of calls) {
     const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });
@@ -659,7 +674,7 @@ async function main() {
 
   log('fork', 'Funding players and opening lobbies…');
   const holders = await seed(publicClient, addresses.GameEscrow);
-  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms, holders);
+  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms, addresses.TimelockController, holders);
   await demoProposal(publicClient, addresses.LmsGovernor, addresses.FeeRouter);
 
   start('server', process.execPath, ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], {

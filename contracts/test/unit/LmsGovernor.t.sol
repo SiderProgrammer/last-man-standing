@@ -94,7 +94,7 @@ contract LmsGovernorTest is Test {
 
     function _stake(uint256 amount) private {
         vm.prank(voter);
-        vault.deposit(amount, voter);
+        vault.deposit(amount);
         vm.warp(block.timestamp + 1);
     }
 }

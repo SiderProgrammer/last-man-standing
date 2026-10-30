@@ -8,7 +8,7 @@
   {
     "key": "arbitrary-send-eth|function:FeeRouter.harvest|node:FeeRouter.harvest.(ok,None) = treasury.call{value: toTreasury}()",
     "impact": "High",
-    "summary": "FeeRouter.harvest() (src/governance/FeeRouter.sol#55-68) sends eth to arbitrary user",
+    "summary": "FeeRouter.harvest() (src/governance/FeeRouter.sol#54-67) sends eth to arbitrary user",
     "triage": "False positive. treasury is owner-set (the timelock), not caller-supplied."
   },
   {
@@ -24,34 +24,16 @@
     "triage": "SpokeEscrow and the messenger stack are deleted in FIX_PLAN 6.2."
   },
   {
-    "key": "assembly|function:HashLib.chainHistory|node:HashLib.chainHistory.",
-    "impact": "Informational",
-    "summary": "HashLib.chainHistory(bytes32,bytes32) (src/libraries/HashLib.sol#58-65) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "assembly|function:HashLib.draw|node:HashLib.draw.",
-    "impact": "Informational",
-    "summary": "HashLib.draw(bytes32,uint32) (src/libraries/HashLib.sol#73-80) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
     "key": "assembly|function:RewardsDistributor.claimable|node:RewardsDistributor.claimable.",
     "impact": "Informational",
-    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#192-214) uses assembly",
+    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#220-242) uses assembly",
     "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
   },
   {
-    "key": "assembly|function:SeatSetLib._clear|node:SeatSetLib._clear.",
+    "key": "assembly|function:RewardVesting.releasableIn|node:RewardVesting.releasableIn.",
     "impact": "Informational",
-    "summary": "SeatSetLib._clear(address[],uint256) (src/libraries/SeatSetLib.sol#67-78) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "assembly|function:SeatSetLib.assertPermutation|node:SeatSetLib.assertPermutation.",
-    "impact": "Informational",
-    "summary": "SeatSetLib.assertPermutation(address[],address[]) (src/libraries/SeatSetLib.sol#27-62) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
+    "summary": "RewardVesting.releasableIn(address,uint256,uint256) (src/governance/RewardVesting.sol#106-123) uses assembly",
+    "triage": "Intended: shrinks a memory array to the entries filled, as RewardsDistributor.claimable does."
   },
   {
     "key": "assembly|function:SessionKeyDelegate._layout|node:SessionKeyDelegate._layout.",
@@ -60,57 +42,33 @@
     "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
   },
   {
-    "key": "assembly|function:SettlementLib.hashMatchResult|node:SettlementLib.hashMatchResult.",
-    "impact": "Informational",
-    "summary": "SettlementLib.hashMatchResult(bytes32,uint32,bytes32,address[]) (src/libraries/SettlementLib.sol#44-62) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "assembly|function:SettlementLib.hashRanking|node:SettlementLib.hashRanking.",
-    "impact": "Informational",
-    "summary": "SettlementLib.hashRanking(address[]) (src/libraries/SettlementLib.sol#24-41) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "assembly|function:SettlementLib.toTypedDataHash|node:SettlementLib.toTypedDataHash.",
-    "impact": "Informational",
-    "summary": "SettlementLib.toTypedDataHash(bytes32,bytes32) (src/libraries/SettlementLib.sol#65-77) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "assembly|function:SignatureLib.recoverAscending|node:SignatureLib.recoverAscending.",
-    "impact": "Informational",
-    "summary": "SignatureLib.recoverAscending(bytes32,bytes) (src/libraries/SignatureLib.sol#37-112) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
-  },
-  {
-    "key": "calls-loop|function:GameEscrow._checkQuorum|node:GameEscrow._checkQuorum.! config.isAttestor(signers[i])",
+    "key": "calls-loop|function:GameEscrow._checkQuorum|node:GameEscrow._checkQuorum.! config.isAttestorAt(version,signers[i])",
     "impact": "Low",
-    "summary": "GameEscrow._checkQuorum(bytes32,bytes) (src/GameEscrow.sol#381-388) has external calls inside a loop: ! config.isAttestor(signers[i]) (src/GameEscrow.sol#386)",
-    "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
+    "summary": "GameEscrow._checkQuorum(uint32,bytes32,bytes) (src/GameEscrow.sol#525-533) has external calls inside a loop: ! config.isAttestorAt(version,signers[i]) (src/GameEscrow.sol#531)",
+    "triage": "Accepted: one view call per signer to the trusted config, bounded by the attestor set."
   },
   {
     "key": "calls-loop|function:RewardsDistributor._currentRate|node:RewardsDistributor._currentRate.fees = escrow.epochFees(epoch)",
     "impact": "Low",
-    "summary": "RewardsDistributor._currentRate(uint256) (src/governance/RewardsDistributor.sol#216-220) has external calls inside a loop: fees = escrow.epochFees(epoch) (src/governance/RewardsDistributor.sol#217)",
+    "summary": "RewardsDistributor._currentRate(uint256) (src/governance/RewardsDistributor.sol#244-248) has external calls inside a loop: fees = escrow.epochFees(epoch) (src/governance/RewardsDistributor.sol#245)",
     "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
   },
   {
-    "key": "calls-loop|function:RewardsDistributor._fixRate|node:RewardsDistributor._fixRate.RateFixed(epoch,escrow.epochFees(epoch),epochBudget(epoch),rate)",
+    "key": "calls-loop|function:RewardsDistributor._fixRate|node:RewardsDistributor._fixRate.RateFixed(epoch,escrow.epochFees(epoch),epochBudget(epoch),rate,walletCap)",
     "impact": "Low",
-    "summary": "RewardsDistributor._fixRate(uint256) (src/governance/RewardsDistributor.sol#223-233) has external calls inside a loop: RateFixed(epoch,escrow.epochFees(epoch),epochBudget(epoch),rate) (src/governance/RewardsDistributor.sol#231)",
-    "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
+    "summary": "RewardsDistributor._fixRate(uint256) (src/governance/RewardsDistributor.sol#251-263) has external calls inside a loop: RateFixed(epoch,escrow.epochFees(epoch),epochBudget(epoch),rate,walletCap) (src/governance/RewardsDistributor.sol#262)",
+    "triage": "Accepted: one view call per epoch to the trusted escrow, bounded by the epochs a claim names."
   },
   {
     "key": "calls-loop|function:RewardsDistributor.claim|node:RewardsDistributor.claim.paid = escrow.feesPaid(player,epoch)",
     "impact": "Low",
-    "summary": "RewardsDistributor.claim(address,uint256[]) (src/governance/RewardsDistributor.sol#168-186) has external calls inside a loop: paid = escrow.feesPaid(player,epoch) (src/governance/RewardsDistributor.sol#176)",
+    "summary": "RewardsDistributor.claim(address,uint256[]) (src/governance/RewardsDistributor.sol#192-214) has external calls inside a loop: paid = escrow.feesPaid(player,epoch) (src/governance/RewardsDistributor.sol#201)",
     "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
   },
   {
     "key": "calls-loop|function:RewardsDistributor.claimable|node:RewardsDistributor.claimable.paid = escrow.feesPaid(player,epoch)",
     "impact": "Low",
-    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#192-214) has external calls inside a loop: paid = escrow.feesPaid(player,epoch) (src/governance/RewardsDistributor.sol#203)",
+    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#220-242) has external calls inside a loop: paid = escrow.feesPaid(player,epoch) (src/governance/RewardsDistributor.sol#231)",
     "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
   },
   {
@@ -126,27 +84,51 @@
     "triage": "Calls go to protocol contracts set at deploy, over bounded loops (seats, attestors, epochs, swap hops)."
   },
   {
-    "key": "divide-before-multiply|function:GameEscrow._recordFees|node:GameEscrow._recordFees.epochFees[epoch] += fee * ranking.length|node:GameEscrow._recordFees.fee = (uint256(info.stake) * info.feeBps) / BPS_DENOMINATOR",
+    "key": "dead-code|function:PullPayable._credit",
+    "impact": "Informational",
+    "summary": "PullPayable._credit(address,uint256) (src/PullPayable.sol#79-82) is never used and should be removed",
+    "triage": "False positive, from GameEscrow's separate compiler profile: Slither also sees PullPayable in a compilation unit without GameEscrow, which is what calls _credit."
+  },
+  {
+    "key": "divide-before-multiply|function:GameEscrow.quoteLmsDiscount|node:GameEscrow.quoteLmsDiscount.fee = (uint256(info.stake) * terms[info.termsId].feeBps) / BPS_DENOMINATOR|node:GameEscrow.quoteLmsDiscount.maxDiscount = (fee * MAX_DISCOUNT_BPS) / BPS_DENOMINATOR",
     "impact": "Medium",
-    "summary": "GameEscrow._recordFees(GameEscrow.MatchInfo,address[]) (src/GameEscrow.sol#413-421) performs a multiplication on the result of a division:",
-    "triage": "Intended: the per-seat fee is truncated once, and epochFees must equal the sum of the per-seat amounts credited to feesPaid."
+    "summary": "GameEscrow.quoteLmsDiscount(bytes32,uint256) (src/GameEscrow.sol#347-361) performs a multiplication on the result of a division:",
+    "triage": "Intended: the seat fee is rounded down exactly as finalize and _recordFees round it, then halved for the cap, so the cap is never above half the fee actually charged."
   },
   {
     "key": "incorrect-equality|function:RewardsDistributor.sweep|node:RewardsDistributor.sweep.amount == 0",
     "impact": "Medium",
-    "summary": "RewardsDistributor.sweep(address) (src/governance/RewardsDistributor.sol#244-252) uses a dangerous strict equality:",
+    "summary": "RewardsDistributor.sweep(address) (src/governance/RewardsDistributor.sol#280-288) uses a dangerous strict equality:",
     "triage": "False positive. amount == 0 only rejects an empty sweep; a donation cannot make it misbehave."
+  },
+  {
+    "key": "incorrect-equality|function:RewardVesting.releasableIn|node:RewardVesting.releasableIn.amount == 0",
+    "impact": "Medium",
+    "summary": "RewardVesting.releasableIn(address,uint256,uint256) (src/governance/RewardVesting.sol#106-123) uses a dangerous strict equality:",
+    "triage": "False positive: `== 0` on an amount computed here to skip empty tranches, not on a balance anyone can move."
+  },
+  {
+    "key": "incorrect-equality|function:RewardVesting.release|node:RewardVesting.release.due == 0",
+    "impact": "Medium",
+    "summary": "RewardVesting.release(address,uint256[]) (src/governance/RewardVesting.sol#127-140) uses a dangerous strict equality:",
+    "triage": "False positive: `== 0` on an amount computed here to skip empty tranches, not on a balance anyone can move."
   },
   {
     "key": "low-level-calls|function:FeeRouter.harvest|node:FeeRouter.harvest.(ok,None) = treasury.call{value: toTreasury}()",
     "impact": "Informational",
-    "summary": "Low level call in FeeRouter.harvest() (src/governance/FeeRouter.sol#55-68):",
+    "summary": "Low level call in FeeRouter.harvest() (src/governance/FeeRouter.sol#54-67):",
     "triage": "Plain ETH transfers and the session call; every result is checked."
+  },
+  {
+    "key": "low-level-calls|function:ProtocolConfig._checkDelay|node:ProtocolConfig._checkDelay.(ok,data) = owner().staticcall(abi.encodeCall(TimelockController.getMinDelay,()))",
+    "impact": "Informational",
+    "summary": "Low level call in ProtocolConfig._checkDelay() (src/ProtocolConfig.sol#326-332):",
+    "triage": "Intended: asks the owner for getMinDelay and treats no answer as no timelock (an EOA, or the deployer before hand-over)."
   },
   {
     "key": "low-level-calls|function:PullPayable._payOut|node:PullPayable._payOut.(ok,None) = to.call{value: amount}()",
     "impact": "Informational",
-    "summary": "Low level call in PullPayable._payOut(address,address) (src/PullPayable.sol#54-65):",
+    "summary": "Low level call in PullPayable._payOut(address,address) (src/PullPayable.sol#65-76):",
     "triage": "Plain ETH transfers and the session call; every result is checked."
   },
   {
@@ -164,20 +146,26 @@
   {
     "key": "low-level-calls|function:StakedLms.claimRewards|node:StakedLms.claimRewards.(ok,None) = to.call{value: amount}()",
     "impact": "Informational",
-    "summary": "Low level call in StakedLms.claimRewards(address) (src/governance/StakedLms.sol#206-217):",
+    "summary": "Low level call in StakedLms.claimRewards(address) (src/governance/StakedLms.sol#224-235):",
     "triage": "Plain ETH transfers and the session call; every result is checked."
   },
   {
     "key": "missing-zero-check|node:LayerZeroMessenger.constructor.app = app_|variable:LayerZeroMessenger.constructor.app_",
     "impact": "Low",
-    "summary": "LayerZeroMessenger.constructor(address,ILayerZeroEndpoint,address,uint128).app_ (src/adapters/LayerZeroMessenger.sol#105) lacks a zero-check on :",
+    "summary": "LayerZeroMessenger.constructor(address,ILayerZeroEndpoint,address,uint128).app_ (src/adapters/LayerZeroMessenger.sol#104) lacks a zero-check on :",
     "triage": "LayerZeroMessenger is deleted in FIX_PLAN 6.2."
   },
   {
     "key": "missing-zero-check|node:ProtocolConfig.setGuardian.guardian = newGuardian|variable:ProtocolConfig.setGuardian.newGuardian",
     "impact": "Low",
-    "summary": "ProtocolConfig.setGuardian(address).newGuardian (src/ProtocolConfig.sol#181) lacks a zero-check on :",
+    "summary": "ProtocolConfig.setGuardian(address).newGuardian (src/ProtocolConfig.sol#236) lacks a zero-check on :",
     "triage": "Owner-only (timelock). Guardian roles are reworked in FIX_PLAN 2.8 and 3.2."
+  },
+  {
+    "key": "missing-zero-check|node:ProtocolConfig.setSequencerUptimeFeed.sequencerUptimeFeed = feed|variable:ProtocolConfig.setSequencerUptimeFeed.feed",
+    "impact": "Low",
+    "summary": "ProtocolConfig.setSequencerUptimeFeed(address).feed (src/ProtocolConfig.sol#251) lacks a zero-check on :",
+    "triage": "Intended: zero turns the sequencer check off, for chains with no feed (Base Sepolia, a local node)."
   },
   {
     "key": "naming-convention|function:IFeeLedger.FEE_EPOCH",
@@ -188,50 +176,68 @@
   {
     "key": "naming-convention|function:StakedLms.CLOCK_MODE",
     "impact": "Informational",
-    "summary": "Function StakedLms.CLOCK_MODE() (src/governance/StakedLms.sol#345-347) is not in mixedCase",
+    "summary": "Function StakedLms.CLOCK_MODE() (src/governance/StakedLms.sol#336-338) is not in mixedCase",
     "triage": "Style only."
   },
   {
-    "key": "reentrancy-benign|function:ChainlinkVrfAdapter.requestRandomness|node:ChainlinkVrfAdapter.requestRandomness.pending[vrfId] = Pending({consumer:msg.sender,ourId:requestId})|node:ChainlinkVrfAdapter.requestRandomness.requestId = keccak256(bytes)(abi.encode(address(this),context,localNonce ++))|node:ChainlinkVrfAdapter.requestRandomness.vrfId = coordinator.requestRandomWords(keyHash,subId,confirmations,callbackGasLimit,1)|node:ChainlinkVrfAdapter.requestRandomness.vrfIdOf[requestId] = vrfId",
+    "key": "reentrancy-benign|function:ChainlinkVrfAdapter.requestRandomness|node:ChainlinkVrfAdapter.requestRandomness.requests[vrfId] = Request({consumer:msg.sender,answered:false,context:context,word:bytes32(0)})|node:ChainlinkVrfAdapter.requestRandomness.vrfId = coordinator.requestRandomWords(VRFV2PlusClient.RandomWordsRequest({keyHash:keyHash,subId:subId,requestConfirmations:confirmations,callbackGasLimit:callbackGasLimit,numWords:1,extraArgs:VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment:true}))}))",
     "impact": "Low",
-    "summary": "Reentrancy in ChainlinkVrfAdapter.requestRandomness(bytes32) (src/oracles/ChainlinkVrfAdapter.sol#74-82):",
-    "triage": "The coordinator is trusted and set at deploy. The adapter is rewritten for VRF v2.5 in FIX_PLAN 2.3."
+    "summary": "Reentrancy in ChainlinkVrfAdapter.requestRandomness(bytes32) (src/oracles/ChainlinkVrfAdapter.sol#86-102):",
+    "triage": "Accepted: the coordinator is Chainlink's, fixed at deploy, and the consumer is the escrow; events after the call only order logs."
   },
   {
-    "key": "reentrancy-benign|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.randomnessRequest[requestId] = matchId|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(config.randomnessOracle()).requestRandomness(matchId)",
+    "key": "reentrancy-benign|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.seatDiscount[matchId][msg.sender] = seat|node:GameEscrow._joinWithLms.totalLmsEscrowed += lmsUsed|node:GameEscrow._seat.matchSeats[matchId].push(player)|node:GameEscrow._seat.seatNumber[matchId][player] = uint256(seat) + 1|node:GameEscrow._seat.seatOrigin[matchId][player] = originChainId|node:GameEscrow._seat.totalEscrowed += paid|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#297-311):",
-    "triage": "Oracle is protocol-configured. Ordering fixed (request id written before the call) in FIX_PLAN 2.7."
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#329-342):",
+    "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
   },
   {
     "key": "reentrancy-benign|function:LayerZeroMessenger.lzReceive|node:LayerZeroMessenger._park.parked[guid] = _deliveryHash(srcChainId,srcApp,payload,value)|node:LayerZeroMessenger._park.totalParked += value|node:LayerZeroMessenger.lzReceive.ICrossChainReceiver(target).receiveMessage{gas: gasleft()() - PARK_GAS,value: msg.value}(srcChainId,srcApp,payload)|node:LayerZeroMessenger.lzReceive._park(guid,srcChainId,srcApp,payload,msg.value,reason)",
     "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#215-240):",
+    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#214-239):",
     "triage": "LayerZeroMessenger is deleted in FIX_PLAN 6.2."
   },
   {
-    "key": "reentrancy-events|function:ChainlinkVrfAdapter.requestRandomness|node:ChainlinkVrfAdapter.requestRandomness.RandomnessRequested(requestId,vrfId,msg.sender)|node:ChainlinkVrfAdapter.requestRandomness.vrfId = coordinator.requestRandomWords(keyHash,subId,confirmations,callbackGasLimit,1)",
+    "key": "reentrancy-events|function:ChainlinkVrfAdapter._deliver|node:ChainlinkVrfAdapter._deliver.DeliveryFailed(vrfId,reason)|node:ChainlinkVrfAdapter._deliver.IRandomnessConsumer(request.consumer).fulfillRandomness(request.context,request.word)|node:ChainlinkVrfAdapter._deliver.RandomnessDelivered(vrfId)",
     "impact": "Low",
-    "summary": "Reentrancy in ChainlinkVrfAdapter.requestRandomness(bytes32) (src/oracles/ChainlinkVrfAdapter.sol#74-82):",
-    "triage": "Events after calls to trusted protocol contracts; no state depends on them."
+    "summary": "Reentrancy in ChainlinkVrfAdapter._deliver(uint256,ChainlinkVrfAdapter.Request) (src/oracles/ChainlinkVrfAdapter.sol#127-134):",
+    "triage": "Accepted: the coordinator is Chainlink's, fixed at deploy, and the consumer is the escrow; events after the call only order logs."
   },
   {
-    "key": "reentrancy-events|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.MatchLocked(matchId,requestId,info.seatCount)|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(config.randomnessOracle()).requestRandomness(matchId)",
+    "key": "reentrancy-events|function:ChainlinkVrfAdapter.requestRandomness|node:ChainlinkVrfAdapter.requestRandomness.RandomnessRequested(vrfId,msg.sender,context)|node:ChainlinkVrfAdapter.requestRandomness.vrfId = coordinator.requestRandomWords(VRFV2PlusClient.RandomWordsRequest({keyHash:keyHash,subId:subId,requestConfirmations:confirmations,callbackGasLimit:callbackGasLimit,numWords:1,extraArgs:VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment:true}))}))",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#297-311):",
-    "triage": "Events after calls to trusted protocol contracts; no state depends on them."
+    "summary": "Reentrancy in ChainlinkVrfAdapter.requestRandomness(bytes32) (src/oracles/ChainlinkVrfAdapter.sol#86-102):",
+    "triage": "Accepted: the coordinator is Chainlink's, fixed at deploy, and the consumer is the escrow; events after the call only order logs."
+  },
+  {
+    "key": "reentrancy-events|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.FeeDiscounted(matchId,msg.sender,discount,lmsUsed)|node:GameEscrow._seat.PlayerJoined(matchId,player,seat,originChainId)|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
+    "impact": "Low",
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#329-342):",
+    "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
+  },
+  {
+    "key": "reentrancy-events|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.MatchLocked(matchId,requestId,info.seatCount)|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(oracle).requestRandomness(matchId)",
+    "impact": "Low",
+    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#438-457):",
+    "triage": "Accepted: every state write precedes the oracle call (FIX_PLAN 2.7); only the event follows it, since it carries the request id the oracle returns."
   },
   {
     "key": "reentrancy-events|function:LayerZeroMessenger.lzReceive|node:LayerZeroMessenger._park.DeliveryParked(guid,srcChainId,srcApp,payload,value,reason)|node:LayerZeroMessenger.lzReceive.ICrossChainReceiver(target).receiveMessage{gas: gasleft()() - PARK_GAS,value: msg.value}(srcChainId,srcApp,payload)|node:LayerZeroMessenger.lzReceive._park(guid,srcChainId,srcApp,payload,msg.value,reason)",
     "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#215-240):",
+    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#214-239):",
     "triage": "Events after calls to trusted protocol contracts; no state depends on them."
   },
   {
     "key": "reentrancy-events|function:LayerZeroMessenger.retry|node:LayerZeroMessenger.retry.DeliveryRetried(guid)|node:LayerZeroMessenger.retry.ICrossChainReceiver(app).receiveMessage{value: value}(srcChainId,srcApp,payload)",
     "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.retry(bytes32,uint32,bytes32,bytes,uint256) (src/adapters/LayerZeroMessenger.sol#246-254):",
+    "summary": "Reentrancy in LayerZeroMessenger.retry(bytes32,uint32,bytes32,bytes,uint256) (src/adapters/LayerZeroMessenger.sol#245-253):",
     "triage": "Events after calls to trusted protocol contracts; no state depends on them."
+  },
+  {
+    "key": "reentrancy-events|function:MultisigPhase.retire|node:MultisigPhase.retire.Retired(block.timestamp)|node:MultisigPhase.retire.timelock.renounceRole(timelock.CANCELLER_ROLE(),address(this))|node:MultisigPhase.retire.timelock.renounceRole(timelock.PROPOSER_ROLE(),address(this))",
+    "impact": "Low",
+    "summary": "Reentrancy in MultisigPhase.retire() (src/governance/MultisigPhase.sol#99-104):",
+    "triage": "False positive: the call is to the timelock, fixed at deploy; the event only follows it."
   },
   {
     "key": "reentrancy-events|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)|node:SessionKeyDelegate.executeWithSession.SessionCallExecuted(sessionKey,target,value)",
@@ -240,58 +246,118 @@
     "triage": "Events after calls to trusted protocol contracts; no state depends on them."
   },
   {
+    "key": "reentrancy-no-eth|function:ChainlinkVrfAdapter._deliver|node:ChainlinkVrfAdapter._deliver.IRandomnessConsumer(request.consumer).fulfillRandomness(request.context,request.word)|node:ChainlinkVrfAdapter._deliver.delete requests[vrfId]",
+    "impact": "Medium",
+    "summary": "Reentrancy in ChainlinkVrfAdapter._deliver(uint256,ChainlinkVrfAdapter.Request) (src/oracles/ChainlinkVrfAdapter.sol#127-134):",
+    "triage": "Accepted: the consumer is the escrow, registered by governance; the request is deleted after the callback only on success, by design, so a failed delivery can be retried with deliver. The callback never reverts (FIX_PLAN 2.3)."
+  },
+  {
+    "key": "timestamp|function:ExpiringPause.extendPause|node:ExpiringPause.extendPause.until <= block.timestamp || until <= pausedUntil",
+    "impact": "Low",
+    "summary": "ExpiringPause.extendPause(uint64) (src/ExpiringPause.sol#66-71) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:ExpiringPause.pause|node:ExpiringPause.pause.block.timestamp < availableAt|node:ExpiringPause.pause.pausedUntil == 0",
+    "impact": "Low",
+    "summary": "ExpiringPause.pause() (src/ExpiringPause.sol#54-62) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:ExpiringPause.paused|node:ExpiringPause.paused.block.timestamp < pausedUntil",
+    "impact": "Low",
+    "summary": "ExpiringPause.paused() (src/ExpiringPause.sol#48-50) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.block.timestamp < until",
+    "impact": "Low",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#584-591) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
     "key": "timestamp|function:GameEscrow._joinFailure|node:GameEscrow._joinFailure.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#592-605) uses timestamp for comparisons",
+    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#832-845) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow._seat|node:GameEscrow._seat.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32) (src/GameEscrow.sol#607-621) uses timestamp for comparisons",
+    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32,uint256) (src/GameEscrow.sol#848-868) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
-    "key": "timestamp|function:GameEscrow.cancelMatch|node:GameEscrow.cancelMatch.block.timestamp < info.joinDeadline|node:GameEscrow.cancelMatch.block.timestamp < info.joinDeadline + info.settleWindow|node:GameEscrow.cancelMatch.block.timestamp < info.settleDeadline",
+    "key": "timestamp|function:GameEscrow.cancelMatch|node:GameEscrow.cancelMatch.block.timestamp < cancellableAt|node:GameEscrow.cancelMatch.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#505-527) uses timestamp for comparisons",
-    "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
+    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#714-737) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
-    "key": "timestamp|function:GameEscrow.finalize|node:GameEscrow.finalize.block.timestamp < info.challengeDeadline",
+    "key": "timestamp|function:GameEscrow.finalize|node:GameEscrow.finalize.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#394-408) uses timestamp for comparisons",
-    "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
+    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#559-582) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.expired = block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#297-311) uses timestamp for comparisons",
+    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#438-457) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
-    "key": "timestamp|function:GameEscrow.veto|node:GameEscrow.veto.block.timestamp >= info.challengeDeadline",
+    "key": "timestamp|function:GameEscrow.veto|node:GameEscrow.veto.block.timestamp >= info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#432-443) uses timestamp for comparisons",
-    "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
+    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#626-637) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:MultisigPhase.constructor|node:MultisigPhase.constructor.phaseEnd_ <= block.timestamp || phaseEnd_ > block.timestamp + MAX_PHASE",
+    "impact": "Low",
+    "summary": "MultisigPhase.constructor(TimelockController,address,uint256) (src/governance/MultisigPhase.sol#48-56) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:MultisigPhase.retire|node:MultisigPhase.retire.block.timestamp < phaseEnd",
+    "impact": "Low",
+    "summary": "MultisigPhase.retire() (src/governance/MultisigPhase.sol#99-104) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:RewardsDistributor.claim|node:RewardsDistributor.claim.block.timestamp < claimableFrom(epoch)|node:RewardsDistributor.claim.block.timestamp >= claimsCloseAt()",
     "impact": "Low",
-    "summary": "RewardsDistributor.claim(address,uint256[]) (src/governance/RewardsDistributor.sol#168-186) uses timestamp for comparisons",
+    "summary": "RewardsDistributor.claim(address,uint256[]) (src/governance/RewardsDistributor.sol#192-214) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:RewardsDistributor.claimable|node:RewardsDistributor.claimable.block.timestamp < claimableFrom(epoch) || isClaimed(player,epoch)|node:RewardsDistributor.claimable.toEpoch < fromEpoch || block.timestamp >= claimsCloseAt()",
     "impact": "Low",
-    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#192-214) uses timestamp for comparisons",
+    "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#220-242) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:RewardsDistributor.sweep|node:RewardsDistributor.sweep.block.timestamp < closesAt",
     "impact": "Low",
-    "summary": "RewardsDistributor.sweep(address) (src/governance/RewardsDistributor.sol#244-252) uses timestamp for comparisons",
+    "summary": "RewardsDistributor.sweep(address) (src/governance/RewardsDistributor.sol#280-288) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
+  },
+  {
+    "key": "timestamp|function:RewardVesting.releasableIn|node:RewardVesting.releasableIn.amount == 0",
+    "impact": "Low",
+    "summary": "RewardVesting.releasableIn(address,uint256,uint256) (src/governance/RewardVesting.sol#106-123) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:RewardVesting.release|node:RewardVesting.release.amount == 0|node:RewardVesting.release.due == 0",
+    "impact": "Low",
+    "summary": "RewardVesting.release(address,uint256[]) (src/governance/RewardVesting.sol#127-140) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:RewardVesting.vested|node:RewardVesting.vested.block.timestamp <= start|node:RewardVesting.vested.elapsed >= VESTING_DURATION",
+    "impact": "Low",
+    "summary": "RewardVesting.vested(address,uint256) (src/governance/RewardVesting.sol#89-96) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.session.validUntil <= block.timestamp",
@@ -314,7 +380,7 @@
   {
     "key": "timestamp|function:StakedLms.claim|node:StakedLms.claim.block.timestamp < pending.unlockAt",
     "impact": "Low",
-    "summary": "StakedLms.claim(address) (src/governance/StakedLms.sol#275-286) uses timestamp for comparisons",
+    "summary": "StakedLms.claim(address) (src/governance/StakedLms.sol#292-304) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
@@ -324,34 +390,76 @@
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
+    "key": "unimplemented-functions|contract:ExpiringPause|function:ExpiringPause._isGovernance|function:ExpiringPause._isGuardian",
+    "impact": "Informational",
+    "summary": "ExpiringPause (src/ExpiringPause.sol#22-85) does not implement functions:",
+    "triage": "False positive, from GameEscrow's separate compiler profile: ExpiringPause is abstract and GameEscrow implements both hooks, in the other compilation unit."
+  },
+  {
+    "key": "uninitialized-local|variable:GameEscrow._assertSeatSet.seen",
+    "impact": "Medium",
+    "summary": "GameEscrow._assertSeatSet(bytes32,uint256,address[]).seen (src/GameEscrow.sol#541) is a local variable never initialized",
+    "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
+  },
+  {
     "key": "uninitialized-local|variable:GameEscrow._distribute.paid",
     "impact": "Medium",
-    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,address[]).paid (src/GameEscrow.sol#450) is a local variable never initialized",
+    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,GameEscrow.Terms,address[],uint256).paid (src/GameEscrow.sol#653) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
+  },
+  {
+    "key": "uninitialized-local|variable:GameEscrow._recordFees.total",
+    "impact": "Medium",
+    "summary": "GameEscrow._recordFees(bytes32,uint128,uint16,address[],bool).total (src/GameEscrow.sol#607) is a local variable never initialized",
+    "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow.cancelMatch.reason",
     "impact": "Medium",
-    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#507) is a local variable never initialized",
+    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#716) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
     "key": "uninitialized-local|variable:ProtocolConfig._setPayoutSchedule.total",
     "impact": "Medium",
-    "summary": "ProtocolConfig._setPayoutSchedule(uint16[]).total (src/ProtocolConfig.sol#245) is a local variable never initialized",
+    "summary": "ProtocolConfig._setPayoutSchedule(uint16[]).total (src/ProtocolConfig.sol#346) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
+  },
+  {
+    "key": "uninitialized-local|variable:RewardVesting.grant.total",
+    "impact": "Medium",
+    "summary": "RewardVesting.grant(address,uint256[],uint256[]).total (src/governance/RewardVesting.sol#70) is a local variable never initialized",
+    "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
+  },
+  {
+    "key": "uninitialized-local|variable:SignatureLib.recoverAscending.previous",
+    "impact": "Medium",
+    "summary": "SignatureLib.recoverAscending(bytes32,bytes).previous (src/libraries/SignatureLib.sol#36) is a local variable never initialized",
+    "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
+  },
+  {
+    "key": "uninitialized-state|function:GameEscrow._joinWithLms|function:GameEscrow._refundAll|function:GameEscrow.finalize|variable:GameEscrow.matchDiscount",
+    "impact": "High",
+    "summary": "GameEscrow.matchDiscount (src/GameEscrow.sol#183) is never initialized. It is used in:",
+    "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
+  },
+  {
+    "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.receiveMessage|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
+    "impact": "High",
+    "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#168) is never initialized. It is used in:",
+    "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
+  },
+  {
+    "key": "unused-return|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.(None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData()",
+    "impact": "Medium",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#584-591) ignores return value by (None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData() (src/GameEscrow.sol#587)",
+    "triage": "Intended: Chainlink's sequencer feed only needs answer and startedAt; the round ids and updatedAt carry nothing for it."
   },
   {
     "key": "unused-return|function:LmsGovernor._updateQuorumFloor|node:LmsGovernor._updateQuorumFloor._quorumFloorHistory.push(clock(),SafeCast.toUint208(newQuorumFloor))",
     "impact": "Medium",
-    "summary": "LmsGovernor._updateQuorumFloor(uint256) (src/governance/LmsGovernor.sol#112-118) ignores return value by _quorumFloorHistory.push(clock(),SafeCast.toUint208(newQuorumFloor)) (src/governance/LmsGovernor.sol#116)",
+    "summary": "LmsGovernor._updateQuorumFloor(uint256) (src/governance/LmsGovernor.sol#113-119) ignores return value by _quorumFloorHistory.push(clock(),SafeCast.toUint208(newQuorumFloor)) (src/governance/LmsGovernor.sol#117)",
     "triage": "Checkpoint push returns the old and new values, which are not needed."
-  },
-  {
-    "key": "unused-return|function:RewardsDistributor.claim|node:RewardsDistributor.claim.vault.deposit(reward,player)",
-    "impact": "Medium",
-    "summary": "RewardsDistributor.claim(address,uint256[]) (src/governance/RewardsDistributor.sol#168-186) ignores return value by vault.deposit(reward,player) (src/governance/RewardsDistributor.sol#184)",
-    "triage": "Shares minted are not needed. claim stops depositing into the vault in FIX_PLAN 3.5."
   },
   {
     "key": "unused-return|function:SessionKeyDelegate.isValidSignature|node:SessionKeyDelegate.isValidSignature.(signer,error,None) = ECDSA.tryRecover(hash,signature)",

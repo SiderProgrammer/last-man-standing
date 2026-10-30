@@ -11,10 +11,8 @@ import { ZERO_ADDRESS, sameAddress, type StakingInfo } from '@lms/protocol';
 export interface StakingPosition {
   /** Unstaked LMS in the wallet. */
   lmsBalance: bigint;
-  /** sLMS held. */
-  shares: bigint;
-  /** What those shares redeem for, in LMS. Always equal to `shares`: one sLMS is one LMS. */
-  value: bigint;
+  /** LMS staked: the sLMS held, one for one. */
+  staked: bigint;
   /** Votes this wallet casts: its own stake, unless delegated away, plus any delegated to it. */
   votes: bigint;
   /** The wallet itself, to tell self-delegation from delegating away. */
@@ -102,11 +100,11 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
     ...playRewardsLine(input.info, input.playRewards ?? null),
     ...delegationLine(position),
     summary:
-      position.shares > 0n
-        ? `Staked ${formatLms(position.value)} LMS · ${formatLms(position.votes)} votes · ${formatLms(position.lmsBalance)} LMS in wallet`
+      position.staked > 0n
+        ? `Staked ${formatLms(position.staked)} LMS · ${formatLms(position.votes)} votes · ${formatLms(position.lmsBalance)} LMS in wallet`
         : `Nothing staked yet · ${formatLms(position.lmsBalance)} LMS in wallet`,
     stakeDisabled: position.lmsBalance === 0n,
-    unstakeDisabled: position.shares === 0n,
+    unstakeDisabled: position.staked === 0n,
     pending:
       position.pending.assets === 0n
         ? { text: '', withdrawVisible: false }
@@ -137,7 +135,7 @@ function playRewardsLine(
   }
   const weeks = rewards.epochs.length;
   return {
-    playRewards: `${formatLms(rewards.claimable)} LMS earned by playing, over ${weeks} week${weeks === 1 ? '' : 's'} · claimed as staked LMS`,
+    playRewards: `${formatLms(rewards.claimable)} LMS earned by playing, over ${weeks} week${weeks === 1 ? '' : 's'} · vests over six months once claimed`,
     claimPlayVisible: true,
   };
 }
@@ -150,7 +148,7 @@ function playRewardsLine(
 function delegationLine(
   position: StakingPosition,
 ): Pick<StakingPanel, 'delegation' | 'delegateDisabled' | 'undelegateVisible'> {
-  if (position.shares === 0n) return { delegation: '', delegateDisabled: true, undelegateVisible: false };
+  if (position.staked === 0n) return { delegation: '', delegateDisabled: true, undelegateVisible: false };
   if (sameAddress(position.delegate, position.self)) {
     return {
       delegation: 'You vote with your own stake. Voting costs gas on L1: you can hand your votes to a delegate instead.',
