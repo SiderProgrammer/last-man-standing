@@ -8,6 +8,7 @@ import {
   historySeed,
   isLegalAction,
   MatchPhase,
+  NO_COMMITMENT,
   type ActionValue,
   type MatchErrorCode,
   type MatchPhaseValue,
@@ -183,6 +184,7 @@ export class Match {
       target: move.action === Action.Strike ? move.target : 0,
       revealed: true,
       salt: move.salt,
+      commitment,
     });
   }
 
@@ -222,6 +224,7 @@ export class Match {
           target: 0,
           revealed: false,
           salt: ZERO_SALT,
+          commitment: this.commitments.get(seat) ?? NO_COMMITMENT,
         },
     );
 

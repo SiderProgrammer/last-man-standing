@@ -35,6 +35,24 @@ export function commitMove(
 /** Salt recorded for a seat that revealed nothing this round. */
 export const ZERO_SALT = `0x${'0'.repeat(64)}` as const;
 
+/** Commitment recorded for a seat that sealed nothing this round. */
+export const NO_COMMITMENT = ZERO_SALT;
+
+/**
+ * Every seat's commitment for a round, indexed by seat, with `NO_COMMITMENT`
+ * for any seat that was dead or did not commit.
+ */
+export function commitmentsBySeat(
+  seats: number,
+  moves: ReadonlyArray<{ index: number; commitment: `0x${string}` }>,
+): `0x${string}`[] {
+  const commitments: `0x${string}`[] = new Array<`0x${string}`>(seats).fill(NO_COMMITMENT);
+  for (const move of moves) {
+    if (move.index >= 0 && move.index < seats) commitments[move.index] = move.commitment;
+  }
+  return commitments;
+}
+
 /**
  * Every seat's revealed salt for a round, indexed by seat, with `ZERO_SALT`
  * for any seat that was dead or did not reveal. The one canonical layout used
@@ -52,7 +70,7 @@ export function saltsBySeat(
 }
 
 const ROUND_ABI = parseAbiParameters(
-  'uint32 round, uint8[] actions, uint8[] targets, bytes32[] salts, uint32[] hpAfter, uint8[] eliminated',
+  'uint32 round, uint8[] actions, uint8[] targets, bytes32[] salts, bytes32[] commitments, uint32[] hpAfter, uint8[] eliminated',
 );
 
 /**
@@ -61,7 +79,10 @@ const ROUND_ABI = parseAbiParameters(
  * The salts are part of it because they are part of the outcome: they decide
  * every roll in the round. A history root that left them out would let a
  * quorum publish different salts after the fact, and a replay could no
- * longer re-derive the rolls the root was signed over.
+ * longer re-derive the rolls the root was signed over. The commitments are
+ * part of it so the signed root pins what every seat sealed, revealed or not:
+ * each reveal can be checked against its commitment, and a commitment a
+ * player holds a receipt for cannot be left out without the root changing.
  */
 export function hashRound(
   round: number,
@@ -75,9 +96,10 @@ export function hashRound(
     targets[move.index] = move.action === Action.Strike ? move.target : 0;
   }
   const salts = saltsBySeat(seats, record.moves);
+  const commitments = commitmentsBySeat(seats, record.moves);
   const hpAfter = record.hpAfter.map((hp) => (hp > 0 ? hp : 0));
   return keccak256(
-    encodeAbiParameters(ROUND_ABI, [round, actions, targets, salts, hpAfter, [...record.eliminated]]),
+    encodeAbiParameters(ROUND_ABI, [round, actions, targets, salts, commitments, hpAfter, [...record.eliminated]]),
   );
 }
 

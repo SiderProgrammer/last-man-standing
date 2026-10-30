@@ -17,7 +17,8 @@ const R = DEFAULT_RULES;
 const HEAL = Math.floor((R.strikeDamage * R.strikeHealBps) / 10_000);
 
 function move(index: number, action: DeclaredMove['action'], target = 0, saltLabel = 'a'): DeclaredMove {
-  return { index, action, target, revealed: true, salt: bytes32(`salt:${saltLabel}:${index}`) };
+  const salt = bytes32(`salt:${saltLabel}:${index}`);
+  return { index, action, target, revealed: true, salt, commitment: bytes32(`commitment:${salt}`) };
 }
 
 /** Fresh states with one seat's fields overridden. */

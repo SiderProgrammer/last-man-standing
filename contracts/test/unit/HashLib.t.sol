@@ -50,8 +50,8 @@ contract HashLibTest is Test {
         eliminated[0] = 1;
 
         assertEq(
-            HashLib.hashRound(3, actions, targets, _salts(), hpAfter, eliminated),
-            0xf7eedecb9cbe6f45b5073a84a3ccd9768a9b16d1181979c49ae825f749ae94c4
+            HashLib.hashRound(3, actions, targets, _salts(), _commitments(), hpAfter, eliminated),
+            0xf0e024d960c9b3f12a0464761e7f50f2cec8ec60ccd49e62ccc83acd1829a3a3
         );
     }
 
@@ -65,5 +65,13 @@ contract HashLibTest is Test {
         salts = new bytes32[](3);
         salts[0] = keccak256("s0");
         salts[2] = keccak256("s2");
+    }
+
+    /// @dev Seat 1 committed, and did not reveal.
+    function _commitments() private pure returns (bytes32[] memory commitments) {
+        commitments = new bytes32[](3);
+        commitments[0] = keccak256("c0");
+        commitments[1] = keccak256("c1");
+        commitments[2] = keccak256("c2");
     }
 }

@@ -100,6 +100,7 @@ export function moveLogFromHistory(history: readonly RoundRecord[]): DeclaredMov
       target: move.target,
       revealed: move.revealed,
       salt: move.salt,
+      commitment: move.commitment,
     })),
   );
 }

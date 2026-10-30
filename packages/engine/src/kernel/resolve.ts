@@ -4,6 +4,7 @@ import {
   draw,
   exposedDamage,
   isLegalAction,
+  NO_COMMITMENT,
   roundSeed,
   saltsBySeat,
   stallDamageFor,
@@ -27,6 +28,8 @@ export interface DeclaredMove {
   revealed: boolean;
   /** Salt the move was revealed under; `ZERO_SALT` when it was not revealed. */
   salt: `0x${string}`;
+  /** The seat's commitment this round; `NO_COMMITMENT` when it sealed none. */
+  commitment: `0x${string}`;
 }
 
 export interface RoundResolution {
@@ -73,6 +76,7 @@ interface SeatContext {
   target: number;
   revealed: boolean;
   salt: `0x${string}`;
+  commitment: `0x${string}`;
   /** Damage accumulated from strikes and reflections this round. */
   incoming: number;
   /** HP regained from landed strikes this round. */
@@ -113,6 +117,7 @@ export function resolveRound(
     target: 0,
     revealed: false,
     salt: ZERO_SALT,
+    commitment: NO_COMMITMENT,
     incoming: 0,
     healing: 0,
     hp: state.hp,
@@ -122,6 +127,7 @@ export function resolveRound(
   for (const move of moves) {
     const context = contexts[move.index];
     if (context === undefined || !context.before.alive) continue;
+    context.commitment = move.commitment;
     if (!move.revealed || !isLegalAction(move.action, context.before)) continue;
     context.action = move.action;
     context.target = move.action === Action.Strike ? move.target : 0;
@@ -248,6 +254,7 @@ export function resolveRound(
       target: context.action === Action.Strike ? context.target : 0,
       revealed: context.revealed,
       salt: context.salt,
+      commitment: context.commitment,
     })),
     strikes,
     stallDamage: stall,

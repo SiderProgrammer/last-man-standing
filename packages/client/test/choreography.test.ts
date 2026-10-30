@@ -27,6 +27,7 @@ function record(fields: Partial<RoundRecord> & Pick<RoundRecord, 'hpAfter'>): Ro
       target: 0,
       revealed: true,
       salt: ZERO_SALT,
+      commitment: ZERO_SALT,
     })),
     strikes: [],
     stallDamage: 0,
@@ -231,8 +232,8 @@ describe('choreograph', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT },
-          { index: 1, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT },
+          { index: 0, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
+          { index: 1, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
         ],
         stallDamage: 8,
         // A seat already low loses only what it had; the client learns that
@@ -254,8 +255,8 @@ describe('choreograph', () => {
     const timeline = choreograph(
       record({
         moves: [
-          { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT },
-          { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
+          { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
+          { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT, commitment: ZERO_SALT },
         ],
         hpAfter: [100, 100],
       }),
@@ -299,6 +300,7 @@ describe('choreograph', () => {
           target: (index + 1) % 8,
           revealed: true,
           salt: ZERO_SALT,
+          commitment: ZERO_SALT,
         })),
         strikes,
         stallDamage: 40,

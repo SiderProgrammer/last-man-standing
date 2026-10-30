@@ -35,6 +35,7 @@ export function round(number: number, moves: MoveSpec[], hpAfter: number[]): Rou
       target: move.target ?? 0,
       revealed: move.revealed ?? true,
       salt: ZERO_SALT,
+      commitment: ZERO_SALT,
     })),
     strikes: [],
     stallDamage: 0,

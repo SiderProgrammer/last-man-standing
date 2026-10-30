@@ -37,16 +37,18 @@ library HashLib {
     }
 
     /// @dev Everything is indexed by seat. `salts` holds zero for a seat that
-    ///      was dead or did not reveal.
+    ///      was dead or did not reveal, `commitments` zero for one that was
+    ///      dead or did not commit.
     function hashRound(
         uint32 round,
         uint8[] memory actions,
         uint8[] memory targets,
         bytes32[] memory salts,
+        bytes32[] memory commitments,
         uint32[] memory hpAfter,
         uint8[] memory eliminated
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(round, actions, targets, salts, hpAfter, eliminated));
+        return keccak256(abi.encode(round, actions, targets, salts, commitments, hpAfter, eliminated));
     }
 
     function historySeed(bytes32 matchId, bytes32 rulesHash, bytes32 seed) internal pure returns (bytes32) {

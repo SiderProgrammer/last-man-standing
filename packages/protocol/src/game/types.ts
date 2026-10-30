@@ -114,8 +114,8 @@ export interface RoundRecord {
   round: number;
   /**
    * Declared move of every player that was alive at the start of the round,
-   * with the salt it was revealed under (`ZERO_SALT` if it was not revealed).
-   * The salts are published so anyone can recompute the round's rolls.
+   * with the salt it was revealed under (`ZERO_SALT` if it was not revealed)
+   * and the commitment it was sealed under.
    */
   moves: Array<{
     index: number;
@@ -123,6 +123,13 @@ export interface RoundRecord {
     target: number;
     revealed: boolean;
     salt: `0x${string}`;
+    /**
+     * The commitment the seat sealed this round, or `NO_COMMITMENT` if it
+     * sealed none. Published for every seat, revealed or not, so a reveal can
+     * be checked against what was committed, and so a commitment the server
+     * took cannot later vanish from the record.
+     */
+    commitment: `0x${string}`;
   }>;
   strikes: StrikeRecord[];
   /**

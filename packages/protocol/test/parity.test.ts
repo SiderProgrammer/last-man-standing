@@ -20,6 +20,8 @@ import {
 
 /** Seat 1 did not reveal, so its salt is zero. Same as `_salts()` in `HashLib.t.sol`. */
 const SALTS = [keccak256(toHex('s0')), ZERO_SALT, keccak256(toHex('s2'))];
+/** Seat 1 committed and did not reveal. Same as `_commitments()` in `HashLib.t.sol`. */
+const COMMITMENTS = [keccak256(toHex('c0')), keccak256(toHex('c1')), keccak256(toHex('c2'))];
 
 /**
  * Frozen cross-language vectors.
@@ -52,13 +54,13 @@ describe('hash parity with the Solidity mirror', () => {
     expect(draw(entropy, 258)).toBe(0x35488afc3fef29f5171659d3e19c131674225566a149e03f8284036d4406df15n);
   });
 
-  it('pins a round hash, salts included', () => {
+  it('pins a round hash, salts and commitments included', () => {
     const record = {
       round: 3,
       moves: [
-        { index: 0, action: Action.Strike, target: 2, revealed: true, salt: SALTS[0] as `0x${string}` },
-        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
-        { index: 2, action: Action.Guard, target: 0, revealed: true, salt: SALTS[2] as `0x${string}` },
+        { index: 0, action: Action.Strike, target: 2, revealed: true, salt: SALTS[0] as `0x${string}`, commitment: COMMITMENTS[0] as `0x${string}` },
+        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT, commitment: COMMITMENTS[1] as `0x${string}` },
+        { index: 2, action: Action.Guard, target: 0, revealed: true, salt: SALTS[2] as `0x${string}`, commitment: COMMITMENTS[2] as `0x${string}` },
       ],
       strikes: [],
       stallDamage: 12,
@@ -66,7 +68,7 @@ describe('hash parity with the Solidity mirror', () => {
       hpAfter: [95, 0, 66],
     };
     expect(hashRound(3, 3, record)).toBe(
-      '0xf7eedecb9cbe6f45b5073a84a3ccd9768a9b16d1181979c49ae825f749ae94c4',
+      '0xf0e024d960c9b3f12a0464761e7f50f2cec8ec60ccd49e62ccc83acd1829a3a3',
     );
   });
 
