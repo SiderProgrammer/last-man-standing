@@ -178,6 +178,13 @@ export function loadConfig(
       'invalid server configuration:\n  DATABASE_URL is required in production; set ARCHIVE=memory to run without one',
     );
   }
+  // A session grant names the page that asked for it, and a page on another
+  // origin could otherwise ask a player's wallet for one this server honours.
+  if (e.NODE_ENV === 'production' && !e.ALLOWED_ORIGINS.trim()) {
+    throw new ConfigError(
+      'invalid server configuration:\n  ALLOWED_ORIGINS is required in production; set ALLOWED_ORIGINS=* to accept any origin',
+    );
+  }
   if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
     throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
   }
@@ -205,12 +212,14 @@ export function loadConfig(
     loginTimeoutMs: e.LOGIN_TIMEOUT_MS,
     /**
      * Comma-separated `Origin`s the WebSocket handshake accepts, e.g.
-     * `https://play.example.com`. Blank accepts any origin, which is what
-     * local development wants and production should not.
+     * `https://play.example.com`. The same list bounds the origin a session
+     * grant may name. Blank accepts any origin, which is what local
+     * development wants; production refuses to start without it, and `*`
+     * says any origin is intended.
      */
     allowedOrigins: e.ALLOWED_ORIGINS.split(',')
       .map((origin) => origin.trim())
-      .filter(Boolean),
+      .filter((origin) => origin && origin !== '*'),
     /**
      * Take the client IP from `X-Forwarded-For` instead of the socket. Only
      * behind a proxy that sets it: otherwise any client can claim any IP and
