@@ -7,7 +7,7 @@ coverage table at the end maps each finding to its step.
 
 Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
 `design-rework-phase-2-core-contracts`, Phase 3 on
-`design-rework-phase-3-governance-and-token`, and Phase 4 on `claude/clever-tesla-17t9rh`,
+`design-rework-phase-3-governance-and-token`, and Phase 4 on `design-rework-phase-4-verifiability`,
 each building on the last. Nothing after that is.
 
 ---
