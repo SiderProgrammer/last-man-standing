@@ -46,6 +46,13 @@ fail_on_revert = false
 call_override = false
 shrink_run_limit = 5_000
 
+# Coverage builds unoptimised, where the size limit does not apply, and its
+# source maps lose GameEscrow under a second compiler profile. Run with:
+# FOUNDRY_PROFILE=coverage forge coverage
+[profile.coverage]
+additional_compiler_profiles = []
+compilation_restrictions = []
+
 # Deeper campaign for CI / pre-release. Run with: FOUNDRY_PROFILE=deep forge test
 [profile.deep.fuzz]
 runs = 20_000
