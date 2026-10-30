@@ -385,12 +385,13 @@ export const feeRouterAbi = [
 
 /** `RewardsDistributor`. */
 export const rewardsDistributorAbi = [
-  {"type":"constructor","inputs":[{"name":"escrow_","type":"address","internalType":"contract IFeeLedger"},{"name":"vault_","type":"address","internalType":"contract StakedLms"},{"name":"owner_","type":"address","internalType":"address"},{"name":"firstEpoch_","type":"uint256","internalType":"uint256"},{"name":"totalBudget_","type":"uint256","internalType":"uint256"},{"name":"maxRewardPerEth_","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
+  {"type":"constructor","inputs":[{"name":"escrow_","type":"address","internalType":"contract IFeeLedger"},{"name":"lms_","type":"address","internalType":"contract IERC20"},{"name":"owner_","type":"address","internalType":"address"},{"name":"firstEpoch_","type":"uint256","internalType":"uint256"},{"name":"totalBudget_","type":"uint256","internalType":"uint256"},{"name":"maxRewardPerEth_","type":"uint256","internalType":"uint256"},{"name":"maxRewardPerWalletPerEpoch_","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
   {"type":"error","name":"AlreadyClaimed","inputs":[{"name":"epoch","type":"uint256","internalType":"uint256"}]},
   {"type":"error","name":"ClaimsClosed","inputs":[]},
   {"type":"error","name":"ClaimsStillOpen","inputs":[{"name":"closesAt","type":"uint256","internalType":"uint256"}]},
   {"type":"error","name":"EpochNotClaimable","inputs":[{"name":"epoch","type":"uint256","internalType":"uint256"}]},
   {"type":"error","name":"MaxRewardPerEthTooHigh","inputs":[{"name":"maxRewardPerEth","type":"uint256","internalType":"uint256"}]},
+  {"type":"error","name":"MaxRewardPerWalletTooHigh","inputs":[{"name":"maxRewardPerWalletPerEpoch","type":"uint256","internalType":"uint256"}]},
   {"type":"error","name":"NothingToClaim","inputs":[]},
   {"type":"error","name":"NothingToWithdraw","inputs":[]},
   {"type":"error","name":"OwnableInvalidOwner","inputs":[{"name":"owner","type":"address","internalType":"address"}]},
@@ -399,9 +400,10 @@ export const rewardsDistributorAbi = [
   {"type":"error","name":"SafeERC20FailedOperation","inputs":[{"name":"token","type":"address","internalType":"address"}]},
   {"type":"error","name":"ZeroAddress","inputs":[]},
   {"type":"event","name":"MaxRewardPerEthUpdated","inputs":[{"name":"previous","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"current","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},
+  {"type":"event","name":"MaxRewardPerWalletPerEpochUpdated","inputs":[{"name":"previous","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"current","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},
   {"type":"event","name":"OwnershipTransferred","inputs":[{"name":"previousOwner","type":"address","indexed":true,"internalType":"address"},{"name":"newOwner","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},
   {"type":"event","name":"OwnershipTransferStarted","inputs":[{"name":"previousOwner","type":"address","indexed":true,"internalType":"address"},{"name":"newOwner","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},
-  {"type":"event","name":"RateFixed","inputs":[{"name":"epoch","type":"uint256","indexed":true,"internalType":"uint256"},{"name":"epochFees","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"budget","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"rate","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},
+  {"type":"event","name":"RateFixed","inputs":[{"name":"epoch","type":"uint256","indexed":true,"internalType":"uint256"},{"name":"epochFees","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"budget","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"rate","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"walletCap","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},
   {"type":"event","name":"RewardsClaimed","inputs":[{"name":"player","type":"address","indexed":true,"internalType":"address"},{"name":"caller","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"epochs","type":"uint256[]","indexed":false,"internalType":"uint256[]"}],"anonymous":false},
   {"type":"event","name":"Swept","inputs":[{"name":"to","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},
   {"type":"function","name":"acceptOwnership","inputs":[],"outputs":[],"stateMutability":"nonpayable"},
@@ -419,17 +421,19 @@ export const rewardsDistributorAbi = [
   {"type":"function","name":"isClaimed","inputs":[{"name":"player","type":"address","internalType":"address"},{"name":"epoch","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},
   {"type":"function","name":"lms","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract IERC20"}],"stateMutability":"view"},
   {"type":"function","name":"maxRewardPerEth","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
+  {"type":"function","name":"maxRewardPerWalletPerEpoch","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
   {"type":"function","name":"owner","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},
   {"type":"function","name":"pendingOwner","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},
   {"type":"function","name":"PROGRAM_EPOCHS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
   {"type":"function","name":"PROGRAM_YEARS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
-  {"type":"function","name":"rateOf","inputs":[{"name":"epoch","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"rate","type":"uint256","internalType":"uint256"},{"name":"fixed_","type":"bool","internalType":"bool"}],"stateMutability":"view"},
+  {"type":"function","name":"rateOf","inputs":[{"name":"epoch","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"rate","type":"uint256","internalType":"uint256"},{"name":"walletCap","type":"uint256","internalType":"uint256"},{"name":"fixed_","type":"bool","internalType":"bool"}],"stateMutability":"view"},
   {"type":"function","name":"renounceOwnership","inputs":[],"outputs":[],"stateMutability":"nonpayable"},
   {"type":"function","name":"setMaxRewardPerEth","inputs":[{"name":"maxRewardPerEth_","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setMaxRewardPerWalletPerEpoch","inputs":[{"name":"maxRewardPerWalletPerEpoch_","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
   {"type":"function","name":"sweep","inputs":[{"name":"to","type":"address","internalType":"address"}],"outputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
   {"type":"function","name":"totalBudget","inputs":[],"outputs":[{"name":"total","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
   {"type":"function","name":"transferOwnership","inputs":[{"name":"newOwner","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},
-  {"type":"function","name":"vault","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract StakedLms"}],"stateMutability":"view"},
+  {"type":"function","name":"vesting","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract RewardVesting"}],"stateMutability":"view"},
 ] as const;
 
 /** `StakedLms`. */

@@ -23,7 +23,7 @@ export function wireStakingControls(): void {
   dom.unstakeLms.onclick = () => void act('Unstake requested. Your vote stops now.', unstake());
   dom.withdrawUnstaked.onclick = () => void act('Withdrawn to your wallet.', withdraw());
   dom.claimRewards.onclick = () => void act('ETH sent to your wallet.', claimRewards());
-  dom.claimPlayRewards.onclick = () => void act('LMS claimed and staked. It votes from now.', claimPlayRewards());
+  dom.claimPlayRewards.onclick = () => void act('LMS claimed. It vests over six months; stake it once released to vote.', claimPlayRewards());
   dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
   dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
 }

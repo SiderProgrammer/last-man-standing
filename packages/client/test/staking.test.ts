@@ -120,7 +120,7 @@ describe('stakingPanel', () => {
       const view = stakingPanel(
         input({ info: WITH_REWARDS, playRewards: { claimable: 1_250n * E18, epochs: [3n, 4n] } }),
       );
-      expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · claimed as staked LMS');
+      expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · vests over six months once claimed');
       expect(view.claimPlayVisible).toBe(true);
     });
   });

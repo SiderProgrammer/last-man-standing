@@ -228,6 +228,7 @@ contract Deploy is Registry {
         _entry("governor", address(deployment.governor));
         _entry("feeRouter", address(deployment.feeRouter));
         _entry("rewardsDistributor", address(deployment.rewards));
+        _entry("rewardVesting", address(deployment.rewards.vesting()));
         _entry("teamVesting", address(deployment.teamVesting));
         _entry("liquidityReserve", address(deployment.liquidityReserve));
         _entry("multisigPhase", address(deployment.multisigPhase));
@@ -514,7 +515,8 @@ contract Deploy is Registry {
 
     /// @dev Hands out the whole supply, so the deployer ends with none:
     ///
-    ///        50%  play-mining     RewardsDistributor, paid to players over four years
+    ///        50%  play-mining     RewardsDistributor, paid to players over four years, each
+    ///                             week's share vesting over six months
     ///        25%  treasury        the timelock: only a passed proposal can spend it
     ///        15%  team            a VestingWallet: nothing for a year, then linear over three
     ///         5%  liquidity       a LiquidityReserve: the Safe sends it to a pool the timelock approves
@@ -556,12 +558,16 @@ contract Deploy is Registry {
         uint256 epochLength = deployment.escrow.FEE_EPOCH();
         return new RewardsDistributor(
             deployment.escrow,
-            deployment.stakedLms,
+            deployment.lms,
             address(deployment.timelock),
             // The first full epoch after the deploy, unless told otherwise.
             vm.envOr("REWARDS_FIRST_EPOCH", block.timestamp / epochLength + 1),
             (deployment.lms.totalSupply() * PLAY_MINING_BPS) / BPS,
-            vm.envOr("MAX_REWARD_PER_ETH", uint256(100_000e18))
+            // A farmer needs 1e-4 ETH of real fees per LMS: governance can
+            // raise it once there is a market to compare against.
+            vm.envOr("MAX_REWARD_PER_ETH", uint256(10_000e18)),
+            // About 6% of a first-year week's budget.
+            vm.envOr("MAX_REWARD_PER_WALLET", uint256(20_000e18))
         );
     }
 

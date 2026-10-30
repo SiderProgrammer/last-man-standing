@@ -57,8 +57,11 @@ Around that core:
   a separate guardian key can pause for up to a week, but never trap funds.
   See [Roles](#roles).
 - **Play-mining** — half the LMS supply goes to players over four years, each
-  week shared out by the fees they paid and claimed as sLMS, entirely on-chain
-  through `RewardsDistributor`.
+  week shared out by the fees they paid, entirely on-chain through
+  `RewardsDistributor`. Each week's reward vests over six months in
+  `RewardVesting` and votes only once released and staked. Two caps: 10,000
+  LMS per ETH of fees (the real bound on farming) and a per-wallet cap per
+  week (which stops one wallet taking a quiet week, not sybils).
 - **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271. The key only signs logins: every join is the

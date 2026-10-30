@@ -27,7 +27,8 @@ export interface StakingInfo {
 }
 
 /**
- * The `RewardsDistributor` surface: play-mining, paid by fee epoch as sLMS.
+ * The `RewardsDistributor` surface: play-mining, granted by fee epoch into
+ * `RewardVesting`, where each epoch's share vests over six months.
  * `claimable` loops over a range on-chain, so it is meant for `eth_call`.
  */
 export { rewardsDistributorAbi };

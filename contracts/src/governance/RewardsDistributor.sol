@@ -9,11 +9,11 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {NothingToWithdraw, ZeroAddress} from "../Errors.sol";
 import {IFeeLedger} from "../interfaces/IFeeLedger.sol";
-import {StakedLms} from "./StakedLms.sol";
+import {RewardVesting} from "./RewardVesting.sol";
 
 /// @title RewardsDistributor
 /// @notice Play-mining: hands out the players' share of the LMS supply in
-///         proportion to the fees they paid, already staked as sLMS.
+///         proportion to the fees they paid, vesting over six months.
 ///
 /// @dev Runs on-chain end to end. `GameEscrow` keeps two running totals per
 ///      fee epoch — what each player paid and what everyone paid — and this
@@ -30,20 +30,27 @@ import {StakedLms} from "./StakedLms.sol";
 ///      earns, and the fees themselves are real ETH that goes to stakers and
 ///      the treasury. In a quiet epoch the split alone would hand the whole
 ///      budget to whoever paid the little there was, so the rate is also
-///      capped at `maxRewardPerEth`. What the cap leaves unpaid stays here.
+///      capped at `maxRewardPerEth`, and what one wallet earns in an epoch at
+///      `maxRewardPerWalletPerEpoch`. What the caps leave unpaid stays here.
+///
+///      The per-wallet cap does not stop a farmer with many wallets; the
+///      per-ETH cap does that, since every wallet's reward is paid for in real
+///      fees. The per-wallet cap only stops one wallet taking a quiet epoch.
 ///
 ///      **When.** An epoch can be claimed as soon as it ends. The escrow counts
 ///      a fee in the epoch its match *settles* in — only a settled match pays
 ///      its fee — so an ended epoch's totals never change again, and every
-///      player's share of it is final. The rate is fixed by the first claim,
-///      so a later change to the cap cannot treat two claimants of one epoch
-///      differently. Each claim is a share of the epoch's fees times a rate
-///      of at most budget / fees, so the claims of an epoch add up to at most
-///      its budget.
+///      player's share of it is final. The rate and the wallet cap are fixed
+///      by the first claim, so a later change to a cap cannot treat two
+///      claimants of one epoch differently. Each claim is a share of the
+///      epoch's fees times a rate of at most budget / fees, so the claims of
+///      an epoch add up to at most its budget.
 ///
-///      **Paid as sLMS.** Rewards are deposited into `StakedLms` for the
-///      player, never sent as LMS. They vote straight away, and selling them
-///      takes the unstake cooldown first.
+///      **Vested.** A claim pays nothing out at once: it adds the epoch's
+///      reward to `vesting`, a `RewardVesting` this contract creates, as a
+///      tranche that vests linearly over six months from the moment the epoch
+///      ended. The player releases it as liquid LMS and stakes it to vote, so
+///      nothing votes, or can be sold, before it vests.
 ///
 ///      Claims close `CLAIM_WINDOW` after the program's last epoch can be
 ///      claimed. Only then may governance sweep what is left — the cap's
@@ -59,14 +66,17 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     ///      `100_000e18` is 100,000 LMS for every ETH paid in fees.
     uint256 private constant RATE_SCALE = 1e18;
 
+    /// @dev An epoch's terms, fixed by its first claim.
     struct Rate {
         bool fixed_;
-        uint248 value;
+        uint120 value;
+        uint128 walletCap;
     }
 
     IFeeLedger public immutable escrow;
     IERC20 public immutable lms;
-    StakedLms public immutable vault;
+    /// @notice Where claims vest. Created by, and granted to only by, this contract.
+    RewardVesting public immutable vesting;
     /// @notice First epoch of the program.
     uint256 public immutable firstEpoch;
     /// @notice Budget of each epoch in the program's first year, in LMS wei.
@@ -77,17 +87,24 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     /// @notice Most LMS one ETH of fees can earn, scaled by 1e18. Applies to
     ///         epochs whose rate is not fixed yet.
     uint256 public maxRewardPerEth;
+    /// @notice Most LMS one wallet can earn in one epoch. Applies to epochs
+    ///         whose terms are not fixed yet.
+    uint256 public maxRewardPerWalletPerEpoch;
 
     mapping(uint256 epoch => Rate) private rates;
     /// @dev One bit per epoch: bit `e % 256` of word `e / 256`.
     mapping(address player => mapping(uint256 word => uint256 bits)) private claimedBits;
 
-    event RateFixed(uint256 indexed epoch, uint256 epochFees, uint256 budget, uint256 rate);
+    event RateFixed(
+        uint256 indexed epoch, uint256 epochFees, uint256 budget, uint256 rate, uint256 walletCap
+    );
     event RewardsClaimed(address indexed player, address indexed caller, uint256 amount, uint256[] epochs);
     event MaxRewardPerEthUpdated(uint256 previous, uint256 current);
+    event MaxRewardPerWalletPerEpochUpdated(uint256 previous, uint256 current);
     event Swept(address indexed to, uint256 amount);
 
     error MaxRewardPerEthTooHigh(uint256 maxRewardPerEth);
+    error MaxRewardPerWalletTooHigh(uint256 maxRewardPerWalletPerEpoch);
     error EpochNotClaimable(uint256 epoch);
     error AlreadyClaimed(uint256 epoch);
     error NothingToClaim();
@@ -98,27 +115,27 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     ///        contract must hold this much; `Deploy` funds it in the same run.
     constructor(
         IFeeLedger escrow_,
-        StakedLms vault_,
+        IERC20 lms_,
         address owner_,
         uint256 firstEpoch_,
         uint256 totalBudget_,
-        uint256 maxRewardPerEth_
+        uint256 maxRewardPerEth_,
+        uint256 maxRewardPerWalletPerEpoch_
     ) Ownable(owner_) {
-        if (address(escrow_) == address(0) || address(vault_) == address(0)) {
+        if (address(escrow_) == address(0) || address(lms_) == address(0)) {
             revert ZeroAddress();
         }
 
         escrow = escrow_;
-        vault = vault_;
-        lms = vault_.underlying();
+        lms = lms_;
         epochLength = escrow_.FEE_EPOCH();
+        vesting = new RewardVesting(lms_, epochLength);
         firstEpoch = firstEpoch_;
         // Year y pays (3/4)^y of the first year's rate, so the four years sum
         // to 52 * (1 + 3/4 + 9/16 + 27/64) = 52 * 175/64 first-year epochs.
         firstYearEpochBudget = (totalBudget_ * 64) / (EPOCHS_PER_YEAR * 175);
         _setMaxRewardPerEth(maxRewardPerEth_);
-
-        lms.forceApprove(address(vault_), type(uint256).max);
+        _setMaxRewardPerWalletPerEpoch(maxRewardPerWalletPerEpoch_);
     }
 
     // ------------------------------------------------------------------- budget
@@ -147,12 +164,18 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
         return claimableFrom(firstEpoch + PROGRAM_EPOCHS - 1) + CLAIM_WINDOW;
     }
 
-    /// @notice What one wei of fees paid in `epoch` earns, scaled by 1e18: the
-    ///         fixed rate once there is one, otherwise what it would be now.
-    function rateOf(uint256 epoch) public view returns (uint256 rate, bool fixed_) {
+    /// @notice What one wei of fees paid in `epoch` earns, scaled by 1e18, and
+    ///         the most one wallet earns in it: fixed once claimed from,
+    ///         otherwise what they would be now.
+    function rateOf(uint256 epoch) public view returns (uint256 rate, uint256 walletCap, bool fixed_) {
         Rate memory stored = rates[epoch];
-        if (stored.fixed_) return (stored.value, true);
-        return (_currentRate(epoch), false);
+        if (stored.fixed_) return (stored.value, stored.walletCap, true);
+        return (_currentRate(epoch), maxRewardPerWalletPerEpoch, false);
+    }
+
+    /// @dev What `paid` wei of fees earns one wallet, at `rate` and under `walletCap`.
+    function _reward(uint256 paid, uint256 rate, uint256 walletCap) private pure returns (uint256) {
+        return Math.min(Math.mulDiv(paid, rate, RATE_SCALE), walletCap);
     }
 
     function isClaimed(address player, uint256 epoch) public view returns (bool) {
@@ -161,13 +184,15 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
 
     // ------------------------------------------------------------------- claims
 
-    /// @notice Pays `player` their rewards for `epochs`, staked as sLMS.
-    /// @dev Open to anyone: the reward can only ever go to `player`, as sLMS,
-    ///      so claiming for someone else just pays their gas. Epochs with no
+    /// @notice Grants `player` their rewards for `epochs`, one vesting
+    ///         tranche per epoch.
+    /// @dev Open to anyone: the reward can only ever vest to `player`, so
+    ///      claiming for someone else just pays their gas. Epochs with no
     ///      fees paid are skipped, and stay unclaimed.
     function claim(address player, uint256[] calldata epochs) external nonReentrant returns (uint256 reward) {
         if (block.timestamp >= claimsCloseAt()) revert ClaimsClosed();
 
+        uint256[] memory amounts = new uint256[](epochs.length);
         for (uint256 i = 0; i < epochs.length; ++i) {
             uint256 epoch = epochs[i];
             if (block.timestamp < claimableFrom(epoch)) revert EpochNotClaimable(epoch);
@@ -177,11 +202,14 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
             if (paid == 0) continue;
 
             claimedBits[player][epoch >> 8] |= 1 << (epoch & 0xff);
-            reward += Math.mulDiv(paid, _fixRate(epoch), RATE_SCALE);
+            Rate memory terms = _fixRate(epoch);
+            amounts[i] = _reward(paid, terms.value, terms.walletCap);
+            reward += amounts[i];
         }
         if (reward == 0) revert NothingToClaim();
 
-        vault.depositFor(player, reward);
+        lms.safeTransfer(address(vesting), reward);
+        vesting.grant(player, epochs, amounts);
         emit RewardsClaimed(player, msg.sender, reward, epochs);
     }
 
@@ -202,8 +230,8 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
             if (block.timestamp < claimableFrom(epoch) || isClaimed(player, epoch)) continue;
             uint256 paid = escrow.feesPaid(player, epoch);
             if (paid == 0) continue;
-            (uint256 rate,) = rateOf(epoch);
-            uint256 reward = Math.mulDiv(paid, rate, RATE_SCALE);
+            (uint256 rate, uint256 walletCap,) = rateOf(epoch);
+            uint256 reward = _reward(paid, rate, walletCap);
             if (reward == 0) continue;
             total += reward;
             epochs[count++] = epoch;
@@ -219,17 +247,19 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
         return Math.min(Math.mulDiv(epochBudget(epoch), RATE_SCALE, fees), maxRewardPerEth);
     }
 
-    /// @dev The epoch's rate, fixing it on first use.
-    function _fixRate(uint256 epoch) private returns (uint256) {
-        Rate memory stored = rates[epoch];
-        if (stored.fixed_) return stored.value;
+    /// @dev The epoch's rate and wallet cap, fixing both on first use.
+    function _fixRate(uint256 epoch) private returns (Rate memory stored) {
+        stored = rates[epoch];
+        if (stored.fixed_) return stored;
 
         uint256 rate = _currentRate(epoch);
-        // Safe: at most `maxRewardPerEth`, which is checked to fit.
+        uint256 walletCap = maxRewardPerWalletPerEpoch;
+        // Safe: at most `maxRewardPerEth` and `maxRewardPerWalletPerEpoch`,
+        // which are checked to fit.
         // forge-lint: disable-next-line(unsafe-typecast)
-        rates[epoch] = Rate({fixed_: true, value: uint248(rate)});
-        emit RateFixed(epoch, escrow.epochFees(epoch), epochBudget(epoch), rate);
-        return rate;
+        stored = Rate({fixed_: true, value: uint120(rate), walletCap: uint128(walletCap)});
+        rates[epoch] = stored;
+        emit RateFixed(epoch, escrow.epochFees(epoch), epochBudget(epoch), rate, walletCap);
     }
 
     // --------------------------------------------------------------- governance
@@ -238,6 +268,12 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     ///         is not fixed yet.
     function setMaxRewardPerEth(uint256 maxRewardPerEth_) external onlyOwner {
         _setMaxRewardPerEth(maxRewardPerEth_);
+    }
+
+    /// @notice Changes the most LMS one wallet can earn in an epoch, for
+    ///         epochs whose terms are not fixed yet.
+    function setMaxRewardPerWalletPerEpoch(uint256 maxRewardPerWalletPerEpoch_) external onlyOwner {
+        _setMaxRewardPerWalletPerEpoch(maxRewardPerWalletPerEpoch_);
     }
 
     /// @notice Sends what is left to `to`, once claims have closed.
@@ -252,8 +288,14 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     }
 
     function _setMaxRewardPerEth(uint256 maxRewardPerEth_) private {
-        if (maxRewardPerEth_ > type(uint248).max) revert MaxRewardPerEthTooHigh(maxRewardPerEth_);
+        if (maxRewardPerEth_ > type(uint120).max) revert MaxRewardPerEthTooHigh(maxRewardPerEth_);
         emit MaxRewardPerEthUpdated(maxRewardPerEth, maxRewardPerEth_);
         maxRewardPerEth = maxRewardPerEth_;
+    }
+
+    function _setMaxRewardPerWalletPerEpoch(uint256 cap) private {
+        if (cap > type(uint128).max) revert MaxRewardPerWalletTooHigh(cap);
+        emit MaxRewardPerWalletPerEpochUpdated(maxRewardPerWalletPerEpoch, cap);
+        maxRewardPerWalletPerEpoch = cap;
     }
 }

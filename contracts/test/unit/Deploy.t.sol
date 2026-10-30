@@ -150,9 +150,11 @@ contract DeployTest is Test {
         RewardsDistributor rewards = d.rewards;
         assertEq(rewards.owner(), address(d.timelock));
         assertEq(address(rewards.escrow()), address(d.escrow));
-        assertEq(address(rewards.vault()), address(d.stakedLms));
+        assertEq(address(rewards.lms()), address(d.lms));
+        assertEq(rewards.vesting().DISTRIBUTOR(), address(rewards));
         assertEq(rewards.firstEpoch(), block.timestamp / 7 days + 1, "the first full week after the deploy");
-        assertEq(rewards.maxRewardPerEth(), 100_000e18);
+        assertEq(rewards.maxRewardPerEth(), 10_000e18);
+        assertEq(rewards.maxRewardPerWalletPerEpoch(), 20_000e18);
 
         uint256 budget = rewards.totalBudget();
         assertLe(budget, d.lms.balanceOf(address(rewards)));
@@ -399,7 +401,8 @@ contract DeployTest is Test {
         assertEq(
             vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
         );
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 18);
+        assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 19);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

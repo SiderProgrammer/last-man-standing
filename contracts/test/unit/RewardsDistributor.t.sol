@@ -8,6 +8,7 @@ import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {StakedLms} from "../../src/governance/StakedLms.sol";
 import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
+import {RewardVesting} from "../../src/governance/RewardVesting.sol";
 
 contract RewardsDistributorTest is Fixtures {
     uint256 private constant EPOCH = 7 days;
@@ -15,19 +16,23 @@ contract RewardsDistributorTest is Fixtures {
     uint256 private constant FIRST_YEAR_BUDGET = 1_000e18;
     uint256 private constant TOTAL_BUDGET = 142_187.5e18;
     /// @dev High enough never to bind unless a test lowers it.
-    uint256 private constant NO_CAP = 1e40;
+    uint256 private constant NO_CAP = type(uint120).max;
+    uint256 private constant NO_WALLET_CAP = type(uint128).max;
+    uint256 private constant VESTING = 26 weeks;
     /// @dev 5% of the fixtures' 1 ETH stake.
     uint256 private constant SEAT_FEE = 0.05 ether;
 
     LmsToken private lms;
     StakedLms private vault;
     RewardsDistributor private rewards;
+    RewardVesting private vesting;
 
     function setUp() public override {
         super.setUp();
         lms = new LmsToken(address(this), 1_000_000e18);
         vault = new StakedLms(lms, owner, 7 days, 7 days);
-        rewards = new RewardsDistributor(escrow, vault, owner, 0, TOTAL_BUDGET, NO_CAP);
+        rewards = new RewardsDistributor(escrow, lms, owner, 0, TOTAL_BUDGET, NO_CAP, NO_WALLET_CAP);
+        vesting = rewards.vesting();
         lms.transfer(address(rewards), TOTAL_BUDGET);
     }
 
@@ -45,7 +50,8 @@ contract RewardsDistributorTest is Fixtures {
     }
 
     function test_budget_isZeroBeforeTheProgramStarts() public {
-        RewardsDistributor later = new RewardsDistributor(escrow, vault, owner, 10, TOTAL_BUDGET, NO_CAP);
+        RewardsDistributor later =
+            new RewardsDistributor(escrow, lms, owner, 10, TOTAL_BUDGET, NO_CAP, NO_WALLET_CAP);
         assertEq(later.epochBudget(9), 0);
         assertEq(later.epochBudget(10), FIRST_YEAR_BUDGET);
     }
@@ -54,15 +60,18 @@ contract RewardsDistributorTest is Fixtures {
 
     /// @dev Two matches: players 0–3, then 0 and 4–6. Player 0 paid two of the
     ///      epoch's eight seat fees, so takes a quarter of its budget.
-    function test_claim_splitsTheBudgetByFeesPaid_andPaysItStaked() public {
+    function test_claim_splitsTheBudgetByFeesPaid_andVestsIt() public {
         _playTwoMatches();
         vm.warp(rewards.claimableFrom(0));
 
         assertEq(_claim(players[0]), 250e18);
         assertEq(_claim(players[1]), 125e18);
-        assertEq(vault.balanceOf(players[0]), 250e18, "paid as sLMS");
-        assertEq(lms.balanceOf(players[0]), 0, "never as LMS");
-        assertEq(vault.getVotes(players[0]), 250e18, "and it votes straight away");
+        (uint128 amount, uint128 released) = vesting.trancheOf(players[0], 0);
+        assertEq(amount, 250e18, "one tranche for the epoch");
+        assertEq(released, 0);
+        assertEq(lms.balanceOf(address(vesting)), 375e18, "held while it vests");
+        assertEq(lms.balanceOf(players[0]), 0, "nothing liquid yet");
+        assertEq(vault.getVotes(players[0]), 0, "and no votes");
     }
 
     function test_claim_everyoneTogetherGetsExactlyTheBudget() public {
@@ -123,8 +132,10 @@ contract RewardsDistributorTest is Fixtures {
         vm.prank(stranger);
         rewards.claim(players[1], _epochs(0));
 
-        assertEq(vault.balanceOf(players[1]), 125e18);
-        assertEq(vault.balanceOf(stranger), 0);
+        (uint128 amount,) = vesting.trancheOf(players[1], 0);
+        assertEq(amount, 125e18);
+        (amount,) = vesting.trancheOf(stranger, 0);
+        assertEq(amount, 0);
     }
 
     function test_claim_manyEpochsAtOnce() public {
@@ -204,6 +215,117 @@ contract RewardsDistributorTest is Fixtures {
         assertEq(epochs.length, 0);
     }
 
+    /// @dev Player 0 paid 0.1 ETH of week 0's fees: a quarter of its budget,
+    ///      250 LMS, unless one wallet may earn less.
+    function test_claim_theWalletCapLimitsOneWallet_andTheRestStays() public {
+        vm.prank(owner);
+        rewards.setMaxRewardPerWalletPerEpoch(200e18);
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(0));
+
+        assertEq(_claim(players[0]), 200e18, "capped");
+        assertEq(_claim(players[1]), 125e18, "under the cap: untouched");
+        assertEq(lms.balanceOf(address(rewards)), TOTAL_BUDGET - 325e18);
+    }
+
+    /// @dev Like the rate: fixed by the first claim of the epoch.
+    function test_theWalletCapIsFixedByTheEpochsFirstClaim() public {
+        vm.prank(owner);
+        rewards.setMaxRewardPerWalletPerEpoch(200e18);
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(0));
+        _claim(players[1]);
+
+        vm.prank(owner);
+        rewards.setMaxRewardPerWalletPerEpoch(NO_WALLET_CAP);
+        (, uint256 walletCap, bool fixed_) = rewards.rateOf(0);
+        assertTrue(fixed_);
+        assertEq(walletCap, 200e18);
+        assertEq(_claim(players[0]), 200e18, "the cap the epoch was fixed with");
+    }
+
+    // --- Vesting -----------------------------------------------------------
+
+    /// @dev From the moment the epoch ended, not the moment it was claimed.
+    function test_vesting_isLinearOverSixMonthsFromTheEpochsEnd() public {
+        _playTwoMatches();
+        uint256 start = rewards.claimableFrom(0);
+        vm.warp(start);
+        _claim(players[0]);
+        assertEq(vesting.vestingStart(0), start);
+        assertEq(vesting.releasable(players[0], 0), 0);
+
+        vm.warp(start + VESTING / 4);
+        assertEq(vesting.release(players[0], _epochs(0)), 62.5e18);
+        assertEq(lms.balanceOf(players[0]), 62.5e18, "liquid LMS");
+
+        vm.warp(start + VESTING);
+        assertEq(vesting.release(players[0], _epochs(0)), 187.5e18);
+        assertEq(lms.balanceOf(players[0]), 250e18);
+
+        vm.warp(start + 2 * VESTING);
+        vm.expectRevert(RewardVesting.NothingToRelease.selector);
+        vesting.release(players[0], _epochs(0));
+    }
+
+    function test_vesting_aLateClaimHasAlreadyVested() public {
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(0) + VESTING);
+        _claim(players[0]);
+        assertEq(vesting.releasable(players[0], 0), 250e18);
+    }
+
+    /// @dev Only once released and staked by the player does a reward vote.
+    function test_vesting_nothingVotesUntilReleasedAndStaked() public {
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(0));
+        _claim(players[0]);
+        assertEq(vault.getVotes(address(vesting)), 0);
+        assertEq(vault.getVotes(players[0]), 0);
+
+        vm.warp(block.timestamp + VESTING);
+        vesting.release(players[0], _epochs(0));
+        vm.startPrank(players[0]);
+        lms.approve(address(vault), 250e18);
+        vault.deposit(250e18);
+        vm.stopPrank();
+        assertEq(vault.getVotes(players[0]), 250e18);
+    }
+
+    /// @dev Anyone may release, but only ever to the player.
+    function test_vesting_releaseByAnyone_paysThePlayer() public {
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(0) + VESTING);
+        _claim(players[1]);
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vesting.release(players[1], _epochs(0));
+        assertEq(lms.balanceOf(players[1]), 125e18);
+        assertEq(lms.balanceOf(stranger), 0);
+    }
+
+    function test_vesting_releasableIn_showsWhatAndWhere() public {
+        _playTwoMatches();
+        vm.warp(EPOCH);
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(1));
+        uint256[] memory both = new uint256[](2);
+        both[1] = 1;
+        rewards.claim(players[0], both);
+
+        vm.warp(rewards.claimableFrom(1) + VESTING);
+        (uint256 total, uint256[] memory epochs) = vesting.releasableIn(players[0], 0, 5);
+        assertEq(total, 500e18);
+        assertEq(epochs.length, 2);
+        assertEq(vesting.release(players[0], epochs), 500e18);
+        assertEq(vesting.totalReleased(), vesting.totalGranted());
+    }
+
+    function test_vesting_onlyTheDistributorGrants() public {
+        vm.expectRevert(abi.encodeWithSelector(RewardVesting.NotDistributor.selector, address(this)));
+        vesting.grant(players[0], _epochs(0), _epochs(1));
+    }
+
     // --- Governance --------------------------------------------------------
 
     function test_setMaxRewardPerEth_ownerOnly_andLeavesFixedRatesAlone() public {
@@ -218,6 +340,19 @@ contract RewardsDistributorTest is Fixtures {
         vm.prank(owner);
         rewards.setMaxRewardPerEth(1);
         assertEq(_claim(players[1]), 125e18);
+    }
+
+    function test_setMaxRewardPerWalletPerEpoch_ownerOnly_andBounded() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, players[0]));
+        vm.prank(players[0]);
+        rewards.setMaxRewardPerWalletPerEpoch(1);
+
+        uint256 tooHigh = uint256(type(uint128).max) + 1;
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardsDistributor.MaxRewardPerWalletTooHigh.selector, tooHigh)
+        );
+        rewards.setMaxRewardPerWalletPerEpoch(tooHigh);
     }
 
     function test_sweep_onlyOnceClaimsHaveClosed() public {

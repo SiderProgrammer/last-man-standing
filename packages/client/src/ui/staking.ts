@@ -135,7 +135,7 @@ function playRewardsLine(
   }
   const weeks = rewards.epochs.length;
   return {
-    playRewards: `${formatLms(rewards.claimable)} LMS earned by playing, over ${weeks} week${weeks === 1 ? '' : 's'} · claimed as staked LMS`,
+    playRewards: `${formatLms(rewards.claimable)} LMS earned by playing, over ${weeks} week${weeks === 1 ? '' : 's'} · vests over six months once claimed`,
     claimPlayVisible: true,
   };
 }

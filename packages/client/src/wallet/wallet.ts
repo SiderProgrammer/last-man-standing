@@ -511,7 +511,7 @@ export class Wallet {
     return { claimable, epochs: [...epochs] };
   }
 
-  /** Claims play-mining rewards for `epochs`, paid to this wallet as sLMS. */
+  /** Claims play-mining rewards for `epochs`, vesting to this wallet over six months. */
   async claimPlayRewards(distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
       account: this.address,
