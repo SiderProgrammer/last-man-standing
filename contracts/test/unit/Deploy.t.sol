@@ -86,9 +86,13 @@ contract DeployTest is Test {
         assertEq(d.stakedLms.balanceOf(deployer), 0);
     }
 
-    function test_safeHoldsGuardianAvatarsAndTreasury_behindTheRouter() public view {
+    function test_timelockOwnsTheAvatars() public view {
+        assertEq(d.avatars.owner(), address(d.timelock));
+        assertEq(d.avatars.pendingOwner(), address(0));
+    }
+
+    function test_safeHoldsGuardianAndTreasury_behindTheRouter() public view {
         assertEq(d.config.guardian(), safe);
-        assertEq(d.avatars.owner(), safe);
         assertEq(d.config.treasury(), address(d.feeRouter));
         assertEq(d.feeRouter.treasury(), safe);
         assertEq(d.feeRouter.stakerBps(), 5_000);

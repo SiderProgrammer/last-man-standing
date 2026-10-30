@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @title PlayerAvatars
@@ -21,7 +21,16 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 ///      not. A cosmetic that could change a result would be pay-to-win; a
 ///      cosmetic that entered the hash chain would break replay for anyone who
 ///      did not also hold the token metadata.
-contract PlayerAvatars is ERC721, Ownable {
+///
+///      Owned by the chain's timelock, like everything else with an owner: the
+///      owner can only change the metadata URI, but that is still a change
+///      players should see coming. Ownership moves in two steps, so it cannot
+///      be handed to an address that cannot take it.
+///
+///      Minting is free and one per wallet, which stops one wallet taking the
+///      whole supply but not someone with many wallets. The art is cosmetic,
+///      so that is accepted; the README says so.
+contract PlayerAvatars is ERC721, Ownable2Step {
     using Strings for uint256;
 
     /// @notice Hard ceiling on the collection, fixed at deployment.

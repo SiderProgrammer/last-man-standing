@@ -17,7 +17,7 @@ import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
 ///
 ///        SpokeEscrow ----sends through----> LayerZeroMessenger --peer--> hub messenger
 ///             \_ both owned by SPOKE_OWNER (the spoke's timelock) _/
-///        PlayerAvatars, owned by SAFE
+///        PlayerAvatars, owned by SPOKE_OWNER too
 ///
 ///      The spoke side is wired here, while the deployer still owns it. The
 ///      hub side cannot be: the hub's config and messenger belong to its
@@ -112,7 +112,7 @@ contract DeploySpoke is Registry {
 
         if (vm.envOr("AVATARS", true)) {
             d.avatars = new PlayerAvatars(
-                safe,
+                d.owner,
                 "LMS Avatars",
                 "LMSA",
                 vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),

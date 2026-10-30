@@ -84,7 +84,7 @@ contract DeploySpokeTest is Fixtures {
         // On a local node, with no SPOKE_OWNER, the deployer keeps both.
         assertEq(d.owner, vm.addr(DEPLOYER_PK));
         assertEq(d.spoke.owner(), d.owner);
-        assertEq(d.avatars.owner(), safe);
+        assertEq(d.avatars.owner(), d.owner);
     }
 
     function test_registeredSpokeSeatsAPlayer() public {

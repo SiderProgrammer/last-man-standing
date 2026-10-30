@@ -61,7 +61,9 @@ Around that core:
   EIP-7702 so reconnecting does not prompt the wallet; the server checks the
   session login with ERC-1271. The key only signs logins: every join is the
   player's own transaction.
-- **Avatars** — a cosmetic ERC-721 collection, deployed per chain.
+- **Avatars** — a cosmetic ERC-721 collection, deployed per chain and owned by
+  its timelock. Minting is free and limited to one per wallet, which stops one
+  wallet taking the supply but not someone with many wallets.
 - **Match analyst** — after a match, Gemini writes a post-match analysis for
   the sidebar, with key moments checked against the published
   rounds and clickable to replay. Commentary only: it reads the archive after

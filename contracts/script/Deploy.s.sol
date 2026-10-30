@@ -32,12 +32,12 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///        sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
 ///                                                           ^  (anyone may execute     StakedLms
 ///        Safe --cancels (veto)------------------------------+   once the delay         FeeRouter
-///         |                                                     has passed)
+///         |                                                     has passed)           PlayerAvatars
+///         |                                                                           ChainlinkVrfAdapter
 ///         +- guardian: may pause GameEscrow at once, for a week at most;
 ///         |            may veto a proposed result, which refunds every stake
 ///         +- receives the liquidity share of LMS, to seed a pool
 ///         +- treasury: receives the non-staker share of fees
-///         +- owns PlayerAvatars directly: cosmetic, holds no funds, needs no delay
 ///
 ///      Fees: the escrow's treasury is `FeeRouter`, which passes the stakers'
 ///      share to `StakedLms` as ETH and forwards the rest to the treasury.
@@ -176,7 +176,7 @@ contract Deploy is Registry {
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
         deployment.avatars = new PlayerAvatars(
-            deployment.safe,
+            address(deployment.timelock),
             "LMS Avatars",
             "LMSA",
             vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),
