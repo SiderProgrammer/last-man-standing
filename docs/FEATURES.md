@@ -36,7 +36,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | Session keys without changing the player's address — see [Account abstraction](#account-abstraction) |
 | **ERC-721** non-fungible token | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
-| **ERC-4626** tokenised vault | `StakedLms` | A standard staking interface, with the exchange rate fixed at 1:1 — see [Token governance and staking](#token-governance-and-staking) |
+| **ERC-20 wrapper** (`ERC20Wrapper`-style) | `StakedLms` | Stake LMS for sLMS one for one: `deposit`, `requestUnstake`, `claim` — see [Token governance and staking](#token-governance-and-staking) |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
 | **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` | Lets the game server accept a login signed by a session key rather than the account key |
@@ -561,7 +561,7 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100
 | Contract | Role |
 | --- | --- |
 | `LmsToken` | Plain fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
-| `StakedLms` | Staking vault whose shares (sLMS) are the voting token, always one per LMS. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
+| `StakedLms` | Stake LMS for sLMS, one for one; sLMS is the voting token. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
 | `LmsGovernor` | OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock, with a minimum quorum. |
 | `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
 | `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and pays each player their share of that week's LMS budget, deposited into `StakedLms` for them. |
@@ -589,8 +589,8 @@ Defaults, all overridable through the deploy environment:
   receipt, so staking alone is enough to vote. Votes are read at the proposal's
   snapshot, so stake bought after a proposal appears cannot vote on it.
 - **A cooldown instead of slashing.** Purpose: commitment without a fraud
-  proof. `requestUnstake` burns the shares immediately (so they stop voting and
-  stop earning) and the LMS is released only after the cooldown. The deploy
+  proof. `requestUnstake` burns the sLMS immediately (so it stops voting and
+  stops earning) and the LMS is released only after the cooldown. The deploy
   script refuses a cooldown that does not outlast `votingPeriod + timelock
   delay`, so whoever voted for a proposal is still staked when it executes.
 - **Fees are paid out in ETH, not used to buy LMS.** Purpose: nothing to
@@ -619,10 +619,11 @@ Defaults, all overridable through the deploy environment:
   the larger of the fraction and `quorumFloor`. The floor is checkpointed like
   the fraction, so changing it never affects a vote in progress, and capped at
   10% of the LMS supply, so it cannot be raised out of everyone's reach.
-- **One sLMS is always one LMS.** Purpose: rule out the ERC-4626 donation
-  ("inflation") attack without a locked seed deposit. `totalAssets` is the LMS
-  actually staked, tracked by the vault, not its token balance, so LMS sent to
-  it directly cannot move the rate; governance can sweep it with `sweepStray`.
+- **A wrapper, not an ERC-4626 vault.** Purpose: no surface that misleads.
+  One sLMS is always one LMS, so there is no exchange rate to manipulate (the
+  4626 donation attack has nothing to act on) and no `withdraw`/`redeem` that
+  could only revert. LMS sent to the contract directly stakes nothing;
+  governance can sweep it with `sweepStray`.
 - **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
   only moves fees to where the router already sends them, so the worst a caller
   can do is pay the gas for everyone else.

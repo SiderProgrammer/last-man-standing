@@ -559,9 +559,9 @@ async function stakeAsOperator(publicClient, lms, vault, timelock, holders) {
   await rpc('anvil_stopImpersonatingAccount', [timelock]);
   const calls = [
     [lms, erc20Abi, 'approve', [vault, own + each * BigInt(holders.length)]],
-    [vault, abiOf('StakedLms'), 'deposit', [own, operator.account.address]],
+    [vault, abiOf('StakedLms'), 'deposit', [own]],
     // Deposited *for* each player: the shares, and the votes, are theirs.
-    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'deposit', [each, holder]]),
+    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'depositFor', [holder, each]]),
   ];
   for (const [address, abi, functionName, args] of calls) {
     const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });

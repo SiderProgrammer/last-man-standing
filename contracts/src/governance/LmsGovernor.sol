@@ -16,10 +16,11 @@ import {
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+import {StakedLms} from "./StakedLms.sol";
 
 /// @title LmsGovernor
 /// @notice Token governance: sLMS holders propose and vote; passed proposals
@@ -100,7 +101,7 @@ contract LmsGovernor is
 
     /// @notice The most `quorumFloor` may be set to: 10% of the LMS supply.
     function maxQuorumFloor() public view returns (uint256) {
-        IERC20 lms = IERC20(IERC4626(address(token())).asset());
+        IERC20 lms = StakedLms(address(token())).underlying();
         return (lms.totalSupply() * MAX_QUORUM_FLOOR_PERCENT) / 100;
     }
 

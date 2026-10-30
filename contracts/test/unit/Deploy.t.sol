@@ -424,7 +424,7 @@ contract DeployTest is Test {
         d.lms.transfer(safe, 1_000_000e18);
         vm.startPrank(safe);
         d.lms.approve(address(d.stakedLms), 1_000_000e18);
-        d.stakedLms.deposit(1_000_000e18, safe);
+        d.stakedLms.deposit(1_000_000e18);
         vm.stopPrank();
         // Votes are read one tick in the past.
         vm.warp(block.timestamp + 1);

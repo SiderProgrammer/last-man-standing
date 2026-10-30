@@ -110,7 +110,7 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
 
         escrow = escrow_;
         vault = vault_;
-        lms = IERC20(vault_.asset());
+        lms = vault_.underlying();
         epochLength = escrow_.FEE_EPOCH();
         firstEpoch = firstEpoch_;
         // Year y pays (3/4)^y of the first year's rate, so the four years sum
@@ -181,7 +181,7 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
         }
         if (reward == 0) revert NothingToClaim();
 
-        vault.deposit(reward, player);
+        vault.depositFor(player, reward);
         emit RewardsClaimed(player, msg.sender, reward, epochs);
     }
 
