@@ -36,12 +36,14 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      taking stakes, fixing an unpredictable seed before play starts,
 ///      accepting a result signed by a quorum of attestors, and paying out.
 ///
-///      Trust model. A result is signed by a quorum of allowlisted attestors
-///      and then waits out a challenge window before it pays. The signed
-///      digest commits to a history root, which commits to every round, so
-///      anyone holding the published rounds can replay the match off-chain and
-///      see whether the result follows from them. During the window the
-///      guardian may veto a result, which refunds every stake: disputes are
+///      Trust model: verifiable, not enforced. A result is signed by a quorum
+///      of allowlisted attestors and then waits out a challenge window before
+///      it pays. The signed digest commits to a history root, which commits to
+///      every round, and to the hash of the archived transcript, which holds
+///      every player's signed moves; anyone can fetch it by that hash and
+///      replay the match off-chain. During the window a seated player may
+///      `dispute`, which holds the payout back `DISPUTE_EXTENSION`, and the
+///      guardian may `veto` a result, which refunds every stake: disputes are
 ///      decided by that replay and the guardian acting on it, not on-chain.
 ///      The seed is drawn from an oracle after the lobby closes, and each
 ///      round's rolls also depend on every commitment sealed in it.

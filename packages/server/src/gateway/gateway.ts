@@ -164,9 +164,11 @@ const UNKNOWN_IP = 'unknown';
 /**
  * Translates socket frames into room calls.
  *
- * Login is a plain signed nonce rather than a session cookie: the wallet is
- * the identity, and the signature proves control of the address that staked
- * on-chain. Nothing here trusts a client-supplied address on its own.
+ * Login is a signed nonce rather than a session cookie: the wallet is the
+ * identity. With a session grant, the wallet's signature over the grant proves
+ * control of the address that staked, and the granted key's signature over the
+ * nonce proves this socket holds the key; that key then signs every move.
+ * Nothing here trusts a client-supplied address on its own.
  *
  * Every limit is enforced here rather than in `main.ts`, so the tests exercise
  * the same code the server runs. The transport supplies only what it alone

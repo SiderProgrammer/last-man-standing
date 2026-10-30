@@ -28,20 +28,57 @@ same public history everyone else can see.
 join        players stake on the hub, or on a spoke chain that bridges the stake over
 lockMatch   the seat list is final; randomness is requested (permissionless)
 seeded      the oracle delivers the seed; the server opens the room
-play        commit → reveal → resolve, round by round, off-chain
-settle      a quorum of attestor signatures proposes the ranking and history root
-finalize    once the challenge window closes unvetoed, payouts are credited
+play        signed commit → signed reveal → resolve, round by round, off-chain
+archive     the server stores the full transcript, and only then settles
+settle      a quorum of attestor signatures proposes the ranking, history root and transcript hash
+dispute     any seated player may object during the challenge window (+48 h)
+finalize    once the window closes unvetoed, payouts are credited
 withdraw    winners pull their balance
 ```
 
-The signed result commits to every round, so anyone holding the published
-history can replay the match with the same pure engine the server runs. Every
-player's browser does that when the match ends. Detection is off-chain; the
-remedy is on-chain: during the challenge window the guardian may `veto` a
-result the replay does not support, refunding every stake. A match that blows
-its deadline, or is lost to a server restart, is cancelled and refunded rather
-than resumed. There is no on-chain fraud proof or attestor slashing — that is a
-deliberate trust level while the rules are still moving.
+## Trust model
+
+**Verifiable, not enforced.** One operator runs the server and, today, holds
+the attestor key; a separate guardian can veto. The chain does not check a
+single move. What it does is make the operator's every claim checkable:
+
+- Your wallet grants your browser a key once; that key signs every commit and
+  reveal. The server can drop a move, but not make one up or change one.
+- The server signs a receipt for every commit it takes. The round's rolls come
+  from the seed and the full set of commitments, so they are fixed before
+  anyone reveals, and dropping a reveal cannot re-roll them.
+- Before it settles, the server archives the transcript: every round, every
+  signature, every grant. `settle` carries its hash, the attestors sign it, and
+  the escrow stores it. A transcript that cannot be archived is never settled;
+  the match is aborted and refunded instead.
+- When the result is proposed, your browser reads the escrow, fetches the
+  transcript by that hash, checks every signature and your own moves and
+  receipts, and replays it to the stored root. If it does not hold up, one
+  click disputes it: the payout waits 48 hours, and the evidence is saved for
+  the guardian.
+
+What you still trust, stated plainly:
+
+- **The guardian decides disputes.** It can veto (refund everyone) or dismiss.
+  A guardian that does neither lets the result pay out when the 48 hours end:
+  that is the liveness assumption. A compromised guardian can void honest
+  results, but never redirect a stake.
+- **The operator can refund any live match.** `abortMatch` needs only the
+  attestor quorum, which is the operator. It cannot take a stake, only send
+  every stake back.
+- **The attestors are not yet independent.** A quorum is one key today, so its
+  signature says what the operator says. The transcript is what makes that
+  checkable.
+- **The server can censor.** It can refuse a commit before receipting it, or
+  drop a reveal. A receipted commit that goes missing, or a sent reveal counted
+  as missing, is provable; a commit refused outright is not.
+- **Held moves are not secret.** "Reveal for me if I disconnect" hands the
+  server your move at commit time, the one case where it knows a move before
+  the reveal.
+
+There is no on-chain fraud proof or attestor slashing; that is a deliberate
+trust level while the rules are still moving. A match that blows its deadline,
+or is lost to a server restart, is cancelled and refunded rather than resumed.
 
 Around that core:
 
@@ -65,10 +102,12 @@ Around that core:
 - **LMS fee discount** — a seat may pay up to half its fee in LMS at a
   governance-set rate (`joinWithLms`). The LMS is held with the stake, burned
   when the match settles and refunded if it does not.
-- **Session keys** — players delegate their EOA to `SessionKeyDelegate` under
-  EIP-7702 so reconnecting does not prompt the wallet; the server checks the
-  session login with ERC-1271. The key only signs logins: every join is the
-  player's own transaction.
+- **Session grants** — a player's wallet signs one EIP-712 `SessionGrant`
+  (SIWE-shaped: origin, chain, expiry) naming a key the browser keeps for a
+  day. The key signs the login nonce and every commit and reveal, so
+  reconnects need no prompt and every move is provably the player's. The
+  grant cannot stake or spend: every join is the player's own transaction.
+  Contract wallets' grants are checked with ERC-1271.
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain and owned by
   its timelock. Minting is free and limited to one per wallet, which stops one
   wallet taking the supply but not someone with many wallets.
@@ -97,7 +136,9 @@ two coincide.
 | Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
 | Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
-| Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake. | Redirect a stake, or keep a pause going: only governance extends one. |
+| Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
+| Operator | Runs the game server; holds the attestor key and the receipt key | Plays each match; signs its result and proposes it with the transcript hash; aborts a live match it cannot finish, refunding every seat; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
+| Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
 
 This is a testnet project. Real-money play would also need a gambling licence,
 which is out of scope.
