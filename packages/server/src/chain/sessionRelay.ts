@@ -1,6 +1,17 @@
-import { createPublicClient, createWalletClient, http, nonceManager, type Address, type Hex } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  createPublicClient,
+  createWalletClient,
+  decodeErrorResult,
+  http,
+  nonceManager,
+  type Address,
+  type Hex,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  gameEscrowAbi,
   isDelegatedTo,
   sessionCallKind,
   sessionKeyDelegateAbi,
@@ -95,7 +106,7 @@ export class SessionRelay {
         throw new RequestError('RELAY_REFUSED', 'this wallet has not turned on one-click play');
       }
       const tx = await this.options.port.submit(account, call).catch((error: unknown) => {
-        throw new RequestError('RELAY_REFUSED', `the call would fail: ${firstLine(error)}`);
+        throw new RequestError('RELAY_REFUSED', `the call would fail: ${revertReason(error)}`);
       });
       return { kind, tx, left: this.left(account) };
     } catch (error) {
@@ -116,9 +127,31 @@ export class SessionRelay {
   }
 }
 
-function firstLine(error: unknown): string {
+/**
+ * Why a call would revert, for the player: the delegate's or the escrow's
+ * error name where viem decoded one (`ValueCapExceeded`, `SessionExpired`,
+ * `MatchFull`), and the first line of the message otherwise.
+ */
+export function revertReason(error: unknown): string {
+  if (error instanceof BaseError) {
+    const reverted = error.walk((cause) => cause instanceof ContractFunctionRevertedError);
+    if (reverted instanceof ContractFunctionRevertedError && reverted.data) {
+      const { errorName, args } = reverted.data;
+      // `CallFailed` wraps the escrow's own revert, which says more.
+      return (errorName === 'CallFailed' ? escrowErrorName(args?.[1]) : undefined) ?? errorName;
+    }
+  }
   const message = error instanceof Error ? ((error as { shortMessage?: string }).shortMessage ?? error.message) : String(error);
   return message.split('\n')[0] ?? message;
+}
+
+function escrowErrorName(reason: unknown): string | undefined {
+  if (typeof reason !== 'string' || reason.length < 10) return undefined;
+  try {
+    return decodeErrorResult({ abi: gameEscrowAbi, data: reason as Hex }).errorName;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
