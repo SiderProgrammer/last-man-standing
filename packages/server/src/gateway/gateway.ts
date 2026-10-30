@@ -16,7 +16,6 @@ import {
 } from '@lms/protocol';
 import type { Lobby } from '../lobby/lobby.js';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
-import type { PayoutPusher } from '../chain/payouts.js';
 import { RequestError } from '../errors.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
@@ -68,9 +67,6 @@ export interface Peer {
 
 const OPEN = 1;
 
-/** One `collect` per connection per window: each one can cost the keeper gas. */
-const COLLECT_COOLDOWN_MS = 30_000;
-
 /** Matches per `history` page. */
 export const HISTORY_PAGE = 20;
 
@@ -86,7 +82,6 @@ interface Session extends Client {
   /** Misbehaviour; empty closes the socket. */
   readonly strikes: TokenBucket;
   loginFailures: number;
-  lastCollectAt: number;
   closed: boolean;
   /** The analysis being written for this socket, if any; aborted if it closes. */
   analysis: AbortController | null;
@@ -109,8 +104,6 @@ export interface GatewayOptions {
   hubMessenger?: `0x${string}` | null;
   /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
-  /** Pushes payouts on request. Omitted, players withdraw themselves. */
-  payouts?: PayoutPusher;
   /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
   archive?: MatchArchive;
   /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
@@ -193,7 +186,6 @@ export class Gateway {
       moves: new TokenBucket(l.moveRate, l.moveBurst, now),
       strikes: new TokenBucket(l.strikeRate, l.strikeBurst, now),
       loginFailures: 0,
-      lastCollectAt: Number.NEGATIVE_INFINITY,
       closed: false,
       analysis: null,
     };
@@ -208,7 +200,6 @@ export class Gateway {
       avatarCollections: this.options.avatarCollections ?? [],
       sessionDelegate: this.options.sessionDelegate ?? null,
       zap: this.options.zap ?? null,
-      collect: this.options.payouts?.enabled ?? false,
       staking: this.options.staking ?? null,
       analyst: this.options.analyst !== undefined,
       spokes: this.options.spokes ?? [],
@@ -322,19 +313,6 @@ export class Gateway {
       }
       case 'watch': {
         this.options.lobby.attach(message.matchId, session);
-        return;
-      }
-      case 'collect': {
-        const payouts = this.options.payouts;
-        if (!payouts?.enabled) throw new RequestError('UNAVAILABLE', 'this server does not push payouts');
-        if (now - session.lastCollectAt < COLLECT_COOLDOWN_MS) {
-          throw new RequestError('RATE_LIMITED', 'a payout was just requested; give it a moment');
-        }
-        session.lastCollectAt = now;
-        // Always the authenticated account: `withdrawFor` pays the account
-        // itself, so there is nothing else a client could ask for here.
-        const hash = await payouts.collect(address);
-        session.send({ type: 'relayed', hash });
         return;
       }
       case 'analyze': {

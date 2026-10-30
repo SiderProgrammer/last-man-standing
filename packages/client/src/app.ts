@@ -97,7 +97,6 @@ function onServerMessage(message: ServerMessage): void {
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
       app.hubMessenger = message.hubMessenger ?? null;
-      app.collect = message.collect;
       app.staking = message.staking;
       app.analyst = message.analyst ?? false;
       renderPayWith();
@@ -161,12 +160,6 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'review':
       onReview(message);
-      break;
-
-    case 'relayed':
-      // The only transaction the server sends for a player: a pushed payout.
-      toast(`Payout sent without a wallet prompt · ${short(message.hash)}`);
-      void app.wallet?.waitFor(message.hash).then(renderWinnings, renderWinnings);
       break;
 
     case 'crossChain':

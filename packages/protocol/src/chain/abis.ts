@@ -4,6 +4,7 @@
 export const gameEscrowAbi = [
   {"type":"constructor","inputs":[{"name":"config_","type":"address","internalType":"contract ProtocolConfig"}],"stateMutability":"nonpayable"},
   {"type":"error","name":"AlreadyJoined","inputs":[{"name":"matchId","type":"bytes32","internalType":"bytes32"},{"name":"player","type":"address","internalType":"address"}]},
+  {"type":"error","name":"BelowMinimumWithdrawal","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"},{"name":"minimum","type":"uint256","internalType":"uint256"}]},
   {"type":"error","name":"CannotCancelYet","inputs":[{"name":"matchId","type":"bytes32","internalType":"bytes32"}]},
   {"type":"error","name":"ChallengeWindowClosed","inputs":[{"name":"deadline","type":"uint40","internalType":"uint40"}]},
   {"type":"error","name":"ChallengeWindowOpen","inputs":[{"name":"deadline","type":"uint40","internalType":"uint40"}]},
@@ -85,6 +86,7 @@ export const gameEscrowAbi = [
   {"type":"function","name":"joinFor","inputs":[{"name":"matchId","type":"bytes32","internalType":"bytes32"},{"name":"player","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"payable"},
   {"type":"function","name":"lockMatch","inputs":[{"name":"matchId","type":"bytes32","internalType":"bytes32"}],"outputs":[{"name":"requestId","type":"bytes32","internalType":"bytes32"}],"stateMutability":"nonpayable"},
   {"type":"function","name":"matchNonce","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
+  {"type":"function","name":"MIN_WITHDRAW_FOR","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
   {"type":"function","name":"pause","inputs":[],"outputs":[],"stateMutability":"nonpayable"},
   {"type":"function","name":"paused","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},
   {"type":"function","name":"pausedUntil","inputs":[],"outputs":[{"name":"","type":"uint64","internalType":"uint64"}],"stateMutability":"view"},

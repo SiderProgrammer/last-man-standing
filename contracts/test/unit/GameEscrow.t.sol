@@ -6,6 +6,7 @@ import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {PullPayable} from "../../src/PullPayable.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "../../src/interfaces/IRandomnessOracle.sol";
 import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
 
@@ -306,6 +307,25 @@ contract GameEscrowTest is Fixtures {
         assertEq(relayer.balance, 0);
         assertEq(escrow.withdrawable(ranking[0]), 0);
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    /// @dev Dust is the player's own to withdraw: whoever calls `withdrawFor`
+    ///      pays its gas, so it refuses a balance below the minimum.
+    function test_withdrawFor_refusesDust_butWithdrawPaysIt() public {
+        address dusty = makeAddr("dusty");
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        bytes32 peer = config.peerFor(421_614);
+        uint256 dust = escrow.MIN_WITHDRAW_FOR() - 1;
+        // A wrong-stake cross-chain join is credited back as is.
+        messenger.deliver{value: dust}(address(escrow), 421_614, peer, abi.encode(matchId, dusty), dust);
+        assertEq(escrow.withdrawable(dusty), dust);
+
+        vm.expectRevert(abi.encodeWithSelector(PullPayable.BelowMinimumWithdrawal.selector, dust, dust + 1));
+        escrow.withdrawFor(dusty);
+
+        vm.prank(dusty);
+        assertEq(escrow.withdraw(dusty), dust);
     }
 
     function test_withdrawFor_revertsOnEmptyBalance() public {

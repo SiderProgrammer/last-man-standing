@@ -62,7 +62,6 @@ const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
 const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   auth: z.object({ type: z.literal('auth'), address, signature }),
   lobbies: z.object({ type: z.literal('lobbies') }),
-  collect: z.object({ type: z.literal('collect') }),
   practice: z.object({
     type: z.literal('practice'),
     // The lobby clamps to the rules' seat range; this only rules out garbage.

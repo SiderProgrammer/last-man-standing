@@ -47,8 +47,6 @@ export interface AppState {
   inTransit: Set<string>;
   /** The hub `LayerZeroMessenger`, for the "Add a spoke chain" proposal. */
   hubMessenger: `0x${string}` | null;
-  /** True when the server pays the gas to push payouts. */
-  collect: boolean;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   /** True when the server can write match analyses. */
@@ -96,7 +94,6 @@ export const app: AppState = {
   spokes: [],
   inTransit: new Set(),
   hubMessenger: null,
-  collect: false,
   staking: null,
   analyst: false,
   match: null,

@@ -171,8 +171,7 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.');
 
-  // Always the player's own transaction: on L1 a relayed join would be the
-  // server paying L1 gas for it. The session key only signs logins.
+  // Always the player's own transaction. The session key only signs logins.
   try {
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
     await wallet.waitFor(hash);

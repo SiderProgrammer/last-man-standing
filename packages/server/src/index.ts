@@ -56,12 +56,6 @@ export {
   type ViemEscrowReaderOptions,
 } from './chain/escrowReader.js';
 export {
-  createPayoutPusher,
-  nullPayoutPusher,
-  type PayoutPusher,
-  type PayoutPusherOptions,
-} from './chain/payouts.js';
-export {
   AvatarRegistry,
   parseCollections,
   type AvatarCollection,
