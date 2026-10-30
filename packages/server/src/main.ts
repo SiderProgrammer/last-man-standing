@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
-import { MAX_CLIENT_FRAME_BYTES } from '@lms/protocol';
+import { MAX_CLIENT_FRAME_BYTES, errorMessage } from '@lms/protocol';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Heartbeat } from './gateway/heartbeat.js';
@@ -14,6 +14,7 @@ import { peerFrom } from './gateway/peer.js';
 import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
+import { transcriptResponse } from './lobby/transcripts.js';
 import { createStyleBook } from './lobby/styles.js';
 import { generatePrivateKey } from 'viem/accounts';
 import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
@@ -169,14 +170,24 @@ async function main(): Promise<void> {
   });
 
   const http = createServer((request, response) => {
-    const route = proposalsResponse(proposals, request.url ?? '');
-    if (route) {
-      // Read by the client from its own origin, which is not this one.
+    // Both read by the client from its own origin, which is not this one.
+    const answer = (route: { status: number; body: string }) => {
       response.writeHead(route.status, {
         'content-type': 'application/json',
         'access-control-allow-origin': '*',
       });
       response.end(route.body);
+    };
+    const route = proposalsResponse(proposals, request.url ?? '');
+    if (route) {
+      answer(route);
+      return;
+    }
+    if ((request.url ?? '').startsWith('/transcripts/')) {
+      transcriptResponse(archive, request.url ?? '').then(
+        (found) => answer(found ?? { status: 404, body: '{}' }),
+        (error: unknown) => answer({ status: 500, body: JSON.stringify({ error: errorMessage(error) }) }),
+      );
       return;
     }
     if (request.url === '/health') {

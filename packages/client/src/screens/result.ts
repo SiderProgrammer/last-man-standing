@@ -1,8 +1,18 @@
-import type { MatchResult, PublicMatchState, ServerMessage } from '@lms/protocol';
+import {
+  PRACTICE_CHAIN_ID,
+  canonicalJson,
+  errorFirstLine,
+  type MatchResult,
+  type PublicMatchState,
+  type ServerMessage,
+} from '@lms/protocol';
 import { app, dom } from '../context.js';
-import { matchesChain, verifyMatch, type Verification } from '../game/verify.js';
-import { showLobbyScreen } from '../ui/chrome.js';
+import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain, type EvidenceBundle, type Verification } from '../game/verify.js';
+import { forgetMatch, recallMatch } from '../game/salts.js';
+import { writeRaw } from '../io/storage.js';
+import { showLobbyScreen, toast } from '../ui/chrome.js';
 import { ordinal, short } from '../ui/format.js';
+import type { Wallet } from '../wallet/wallet.js';
 import { renderWinnings } from '../wallet/payouts.js';
 
 /**
@@ -12,6 +22,10 @@ import { renderWinnings } from '../wallet/payouts.js';
 
 let verification: Verification | null = null;
 let shownFor: `0x${string}` | null = null;
+/** The game server's HTTP origin, which serves transcripts by hash. */
+let serverOrigin = '';
+/** What a dispute of the result on screen would submit, once the chain check has failed. */
+let evidence: EvidenceBundle | null = null;
 
 export function showResult(
   state: PublicMatchState,
@@ -40,6 +54,13 @@ export function showResult(
 
   verification = verify(state, message.result);
   renderVerification();
+  evidence = null;
+  dom.resultDispute.classList.add('hidden');
+  // A practice match never reaches the chain, so the replay is the whole
+  // check. A staked match keeps its moves until the chain check passes: they
+  // are the evidence if it does not.
+  const practice = state.players.every((player) => player.chainId === PRACTICE_CHAIN_ID);
+  if (practice && verification.ok) forgetMatch(state.matchId);
   void renderWinnings();
 }
 
@@ -58,21 +79,82 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
 
   const wallet = app.wallet;
   const escrow = app.escrow;
-  if (!wallet || !escrow || wallet.chainId !== app.chainId || !verification) return;
+  if (!wallet || !escrow || wallet.chainId !== app.chainId) return;
   try {
     await wallet.waitFor(message.tx);
-    const root = await wallet.settledRoot(escrow, message.matchId);
-    const onChain = matchesChain(verification, root);
-    setVerifyPill(onChain ? 'chain-ok' : 'chain-bad');
-    if (!onChain) {
-      dom.resultDetail.textContent =
-        `The escrow stored ${short(root)}, not the root this browser replayed. ` +
-        'The guardian can veto the result, refunding every stake, until the challenge window closes.';
-    }
+    await checkChain(wallet, escrow, message.matchId);
   } catch {
     // The local check already stands on its own; a failed read just leaves it at that.
   }
   void renderWinnings();
+}
+
+/**
+ * The full check: the transcript the escrow names, audited against the
+ * escrow and this browser's own moves. Passing, the stored moves are no
+ * longer needed; failing, they are the evidence, and the Dispute button
+ * offers to submit them.
+ */
+async function checkChain(wallet: Wallet, escrow: `0x${string}`, matchId: `0x${string}`): Promise<void> {
+  const chain = await wallet.matchRecord(escrow, matchId);
+  if (/^0x0+$/.test(chain.transcriptHash)) return;
+  const own = app.you !== null ? { seat: app.you, moves: recallMatch(matchId) } : undefined;
+  const { audit } = await verifyOnChain({
+    chain,
+    server: serverOrigin,
+    ...(own ? { own } : {}),
+    verifyWallet: (args) => wallet.verifyTyped(args),
+  });
+  if (shownFor !== matchId) return;
+
+  if (audit.ok) {
+    setVerifyPill('chain-ok');
+    dom.resultDetail.textContent =
+      `Checked the transcript the escrow stored (${short(chain.transcriptHash)}): every signature, ` +
+      `${own ? 'your own moves, ' : ''}and a replay to the root ${short(chain.historyRoot)}.`;
+    forgetMatch(matchId);
+    return;
+  }
+  setVerifyPill('chain-bad');
+  dom.resultDetail.textContent = `The transcript the escrow names does not hold up: ${audit.problems.join('; ')}.`;
+  if (own) {
+    evidence = evidenceBundle(matchId, chain.transcriptHash, audit, own);
+    dom.resultDispute.classList.remove('hidden');
+    dom.resultDispute.disabled = false;
+  }
+}
+
+/**
+ * Disputes the result on screen. The evidence is saved to a file first —
+ * the dispute records only its hash, and the guardian needs the file — then
+ * the dispute is sent, holding the payout back 48 hours.
+ */
+async function disputeResult(): Promise<void> {
+  const wallet = app.wallet;
+  const escrow = app.escrow;
+  const bundle = evidence;
+  if (!wallet || !escrow || !bundle) return;
+  const hash = evidenceHash(bundle);
+  const json = canonicalJson(bundle);
+  writeRaw(`lms.evidence.${bundle.matchId}`, json);
+  download(`dispute-${bundle.matchId.slice(0, 10)}.json`, json);
+  try {
+    dom.resultDispute.disabled = true;
+    await wallet.waitFor(await wallet.dispute(escrow, bundle.matchId, hash));
+    dom.resultDispute.textContent = 'Disputed';
+    toast('Disputed. The payout waits 48 hours more while the guardian looks. Send them the file you just saved.');
+  } catch (error) {
+    dom.resultDispute.disabled = false;
+    toast(errorFirstLine(error));
+  }
+}
+
+function download(name: string, text: string): void {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 const MEDALS = ['🏆', '🥈', '🥉'];
@@ -102,7 +184,9 @@ export function hideResult(): void {
   dom.resultPanel.classList.add('hidden');
 }
 
-export function wireResultControls(): void {
+export function wireResultControls(origin: string): void {
+  serverOrigin = origin;
+  dom.resultDispute.onclick = () => void disputeResult();
   dom.resultBack.onclick = () => {
     hideResult();
     showLobbyScreen();
@@ -143,12 +227,12 @@ const VERIFY_PILL: Record<VerifyState, { label: string; ok: boolean; hint: strin
   'chain-ok': {
     label: 'verified against chain',
     ok: true,
-    hint: 'The history root the escrow stored on-chain matches the one this browser replayed. Payouts follow that root.',
+    hint: 'This browser fetched the transcript the escrow stored, checked every player\'s signatures and your own moves, and replayed it to the root the escrow holds. Payouts follow that root.',
   },
   'chain-bad': {
     label: 'chain disagrees',
     ok: false,
-    hint: 'The escrow stored a different history root from the one this browser replayed.',
+    hint: 'The transcript the escrow names does not hold up. You can dispute the result while the challenge window is open.',
   },
 };
 

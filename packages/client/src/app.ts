@@ -73,7 +73,7 @@ export function start(): void {
   wireLobbyControls();
   wireMatchControls();
   wirePayoutControls();
-  wireResultControls();
+  wireResultControls(httpOrigin(SERVER_URL));
   wireHelpControls();
   wireHistoryControls();
   wireStakingControls();

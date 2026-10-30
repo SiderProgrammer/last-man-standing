@@ -366,6 +366,17 @@ button.primary:hover:not(:disabled) {
   box-shadow: 0 0 18px -4px rgba(82, 209, 164, 0.7);
 }
 
+button.danger {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
 button.ghost {
   background: transparent;
   padding: 4px 10px;

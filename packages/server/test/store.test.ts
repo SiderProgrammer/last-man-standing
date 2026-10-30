@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
-import { Lobby, MemoryArchive, nullRelayer, type ArchivedMatch } from '@lms/server';
+import { Lobby, MemoryArchive, nullRelayer, transcriptResponse, type ArchivedMatch } from '@lms/server';
 import { bytes32, setupWithBots, transcriptOf } from './helpers.js';
 
 function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
@@ -106,5 +106,24 @@ describe('archiving a finished match', () => {
     // Without the seed nothing could replay it later, so the history could not reopen it.
     expect(saved?.seed).toBe(setup.seed);
     expect(saved?.finishedAt).toEqual(expect.any(Number));
+  });
+});
+
+describe('transcript route', () => {
+  it('serves a staked match\'s transcript by its hash, and nothing else', async () => {
+    const archive = new MemoryArchive();
+    const staked = { ...entry(bytes32('staked')), staked: true };
+    const practice = entry(bytes32('practice'));
+    await archive.save(staked);
+    await archive.save(practice);
+
+    const found = await transcriptResponse(archive, `/transcripts/${staked.transcriptHash}`);
+    expect(found?.status).toBe(200);
+    expect(JSON.parse(found?.body ?? '')).toEqual(staked.transcript);
+    // Practice matches are their player's own.
+    expect((await transcriptResponse(archive, `/transcripts/${practice.transcriptHash}`))?.status).toBe(404);
+    expect((await transcriptResponse(archive, `/transcripts/${bytes32('unknown')}`))?.status).toBe(404);
+    expect((await transcriptResponse(archive, '/transcripts/nope'))?.status).toBe(400);
+    expect(await transcriptResponse(archive, '/health')).toBeNull();
   });
 });

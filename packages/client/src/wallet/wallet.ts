@@ -12,8 +12,10 @@ import {
   type Hex,
   type LocalAccount,
   type PublicClient,
+  type TypedDataDefinition,
   type WalletClient,
 } from 'viem';
+import type { ChainRecord } from '@lms/engine';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { PlayRewards, StakingPosition } from '../ui/staking.js';
 import type { ProposalLive } from '../ui/governance.js';
@@ -326,14 +328,49 @@ export class Wallet {
   }
 
   /** History root the escrow stored when the match settled; zero before that. */
-  async settledRoot(escrow: Address, matchId: Hex): Promise<Hex> {
-    const info = await this.rpc.readContract({
+  /**
+   * What the escrow holds about a proposed match: everything a transcript is
+   * checked against, read from the chain rather than from the server.
+   */
+  async matchRecord(escrow: Address, matchId: Hex): Promise<ChainRecord> {
+    const at = { address: escrow, abi: gameEscrowAbi, args: [matchId] } as const;
+    const [info, seats, terms] = await Promise.all([
+      this.rpc.readContract({ ...at, functionName: 'getMatch' }),
+      this.rpc.readContract({ ...at, functionName: 'getSeats' }),
+      this.rpc.readContract({ ...at, functionName: 'getMatchTerms' }),
+    ]);
+    return {
+      seed: info.seed,
+      rulesHash: terms.rulesHash,
+      seats,
+      rounds: info.rounds,
+      historyRoot: info.historyRoot,
+      rankingHash: info.rankingHash,
+      transcriptHash: info.transcriptHash,
+    };
+  }
+
+  /**
+   * Checks a wallet's signature over typed data through the chain, so a
+   * grant from a contract wallet (ERC-1271) verifies too.
+   */
+  verifyTyped(args: TypedDataDefinition & { address: Address; signature: Hex }): Promise<boolean> {
+    return this.rpc.verifyTypedData(args).catch(() => false);
+  }
+
+  /**
+   * Disputes a proposed result: its payout waits 48 hours more while the
+   * guardian looks at the evidence whose hash this records.
+   */
+  async dispute(escrow: Address, matchId: Hex, evidenceHash: Hex): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
       address: escrow,
       abi: gameEscrowAbi,
-      functionName: 'getMatch',
-      args: [matchId],
+      functionName: 'dispute',
+      args: [matchId, evidenceHash],
     });
-    return info.historyRoot;
+    return this.wallet.writeContract({ ...request, chain: null });
   }
 
   async withdrawableEth(escrow: Address): Promise<string> {

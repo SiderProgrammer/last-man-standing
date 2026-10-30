@@ -20,7 +20,7 @@ import { Arena } from '../arena/arena.js';
 import { app, dom, net } from '../context.js';
 import { phasePlan } from '../game/phase.js';
 import { readOpponents } from '../game/reads.js';
-import { forgetMatch, freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
+import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
 import { showMatchScreen } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';
@@ -138,7 +138,8 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
     'round-head',
   );
   if (winner !== undefined) arena?.showWinner(winner);
-  forgetMatch(message.result.matchId);
+  // The sealed moves are kept until the result panel has verified the match:
+  // if it does not verify, they are the evidence.
   lockControls('Match finished.');
   if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
   offerAnalysis(message.result.matchId);

@@ -280,6 +280,7 @@
             <button id="result-verify-why" class="link small">What does “verified” mean?</button>
             <p id="result-settle" class="muted small"></p>
             <div class="row">
+              <button id="result-dispute" class="danger hidden" title="Holds back the payout 48 hours while the guardian checks your evidence">Dispute result</button>
               <button id="result-collect" class="primary hidden">Collect winnings</button>
               <button id="result-analyse" class="hidden">Analyse match</button>
               <button id="result-back" class="ghost">Back to lobby</button>
@@ -345,17 +346,32 @@
               match its hash is rejected.
             </li>
             <li>
+              <strong>Signed by you.</strong> Your wallet grants this browser a key once, and that
+              key signs every commit and reveal. The server can drop a move, but it cannot make one
+              up or change one, and when it takes your commit it signs a receipt you keep.
+            </li>
+            <li>
               <strong>Dice nobody can see coming.</strong> Every roll (which striker a Guard blocks,
-              how an exact tie breaks) comes from the seed mixed with every player's revealed salt. No one,
-              the server included, can know the rolls before every move is locked.
+              how an exact tie breaks) comes from the seed mixed with every player's locked-in
+              commitment. No one, the server included, can know the rolls before every move is
+              locked, and nothing done at the reveal can change them.
             </li>
           </ul>
           <h4>Staked matches go one step further</h4>
           <p>
-            The escrow stores the history root that payouts follow. Once settlement lands, this
-            page reads that root from the chain and compares it with its own. A match then shows
-            <span class="pill ok">verified against chain</span>. If the chain disagrees, the
-            guardian can veto the result during the challenge window, which refunds every stake.
+            Before it settles, the server archives the full transcript: every round, every
+            signature, every grant. The escrow stores its hash along with the history root that
+            payouts follow. Once settlement lands, this page reads the escrow, fetches the
+            transcript by that hash, and checks it: that it is the one stored, that the seed,
+            rules and seats are the escrow's, that every move carries its player's signature,
+            that your own moves and receipts are all there, and that it replays to the stored root.
+            A match then shows <span class="pill ok">verified against chain</span>.
+          </p>
+          <p>
+            If it does not, a <strong>Dispute</strong> button appears. Disputing holds the payout
+            back 48 hours and saves your evidence to a file for the guardian, who can veto the
+            result and refund every stake. A guardian that does nothing lets the result pay out
+            when the 48 hours end.
           </p>
           <h4>What it does not prove</h4>
           <ul>
