@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { concatHex, encodeAbiParameters, hashDomain, hashTypedData, keccak256, parseAbiParameters, toHex } from 'viem';
 import {
   MATCH_ABORT_TYPES,
+  MATCH_RESULT_TYPES,
   matchResultDomain,
+  matchResultMessage,
+  type Transcript,
   Action,
   DEFAULT_RULES,
   ZERO_SALT,
@@ -168,5 +171,25 @@ describe('abort typed data', () => {
     expect(hashTypedData({ domain, types: MATCH_ABORT_TYPES, primaryType: 'MatchAbort', message: { matchId } })).toBe(
       expected,
     );
+  });
+});
+
+describe('result typed data', () => {
+  /**
+   * The digest the attestors sign for the four-seat golden match, under a
+   * fixed domain. `GoldenTranscript.t.sol` rebuilds it from the same file with
+   * `SettlementLib` and the escrow's domain formula and asserts the same
+   * literal, so a drift in the type string or the encoding fails one side.
+   */
+  it('pins a MatchResult digest shared with the Solidity suite', () => {
+    const file = new URL('../../../contracts/test/fixtures/golden/four-seats.json', import.meta.url);
+    const golden = JSON.parse(readFileSync(file, 'utf8')) as { transcriptHash: `0x${string}`; transcript: Transcript };
+    const digest = hashTypedData({
+      domain: matchResultDomain(84532, '0x000000000000000000000000000000000000e5c0'),
+      types: MATCH_RESULT_TYPES,
+      primaryType: 'MatchResult',
+      message: matchResultMessage({ ...golden.transcript.result, transcriptHash: golden.transcriptHash }),
+    });
+    expect(digest).toBe('0x528978564a977acf0690f2ba7d70962cf87faeca405ebdd98290e32f54577255');
   });
 });

@@ -1,0 +1,1575 @@
+{
+  "transcriptHash": "0x7481e9445b60a2706bd3c20051b3d745d5652c7a179ecc15fcec82e2d3b4ee44",
+  "transcript": {
+    "version": 1,
+    "matchId": "0xddd0aa1183dcf3def5ee07a02ebbac71babbd5766c4a628eb66e2fe786f81c7a",
+    "chainId": 84532,
+    "seed": "0xd0b7ef59097542249b7c306db6bd45a21a4ce751eae6c677584dc60a9c283230",
+    "rules": {
+      "minPlayers": 4,
+      "maxPlayers": 8,
+      "startingHp": 100,
+      "strikeDamage": 25,
+      "strikeHealBps": 5000,
+      "guardReflectDamage": 34,
+      "chargeBonusDamage": 34,
+      "chargeExposureBps": 2500,
+      "stallGraceRounds": 2,
+      "stallDamage": 8,
+      "maxRounds": 30
+    },
+    "seats": [
+      {
+        "index": 0,
+        "address": "0x8AD8eE1544b6ad5420381ac79B074507F5a6225a",
+        "chainId": 84532
+      },
+      {
+        "index": 1,
+        "address": "0xEbBf00c78A34525626D68fFc8A8Fe3DAa9912208",
+        "chainId": 84532
+      },
+      {
+        "index": 2,
+        "address": "0xA82422A73eb6aC50Ffb3B0E9389efEea8AfdFD63",
+        "chainId": 84532
+      },
+      {
+        "index": 3,
+        "address": "0xEB2F760544881dad5D370e0a7A0d8e718f669800",
+        "chainId": 84532
+      }
+    ],
+    "botSeats": [],
+    "receiptSigner": "0x21eb81190c9932409D1De128684F2e9d484432E7",
+    "grants": [
+      {
+        "grant": {
+          "wallet": "0x8AD8eE1544b6ad5420381ac79B074507F5a6225a",
+          "sessionKey": "0xE75be93512cb600F3887C0cCB2137b8DB0F862c0",
+          "domain": "play.lastmanstanding.test",
+          "uri": "https://play.lastmanstanding.test",
+          "chainId": 84532,
+          "issuedAt": 1800000000,
+          "expiresAt": 1800086400,
+          "nonce": "0xd392170ffdbabcd0b809ef42d2b70aa66ed4d3f58325fc0e751607454b92c468"
+        },
+        "signature": "0xac35b6666faf0a76e72e815f89bc873d9b555e78fc21c64136e13d108875f1ce4d5ccf2e4b6c377ff1a0ee16c1f6bf3f3211ee3d41e70613545eb9a042de43121c"
+      },
+      {
+        "grant": {
+          "wallet": "0xEbBf00c78A34525626D68fFc8A8Fe3DAa9912208",
+          "sessionKey": "0xB40D193e5A5A7dE028f11a76bCe96A171bfC4eE6",
+          "domain": "play.lastmanstanding.test",
+          "uri": "https://play.lastmanstanding.test",
+          "chainId": 84532,
+          "issuedAt": 1800000000,
+          "expiresAt": 1800086400,
+          "nonce": "0x5c8d3f4c45af80b9dc1cefa8485813ec717bdbb45d28f2395d5657d4cd3c4519"
+        },
+        "signature": "0xeb3d3676676a1f821c07a27a207fac76e29e4febaf3018ef2821e67040b05ca15c6e0574e8894e6d9e32475f132fde63a8fcbedb6eed10e04b2b0a177d70b9471b"
+      },
+      {
+        "grant": {
+          "wallet": "0xA82422A73eb6aC50Ffb3B0E9389efEea8AfdFD63",
+          "sessionKey": "0xE145831E5F767b7fe530F28EC03DD310D0bB9a84",
+          "domain": "play.lastmanstanding.test",
+          "uri": "https://play.lastmanstanding.test",
+          "chainId": 84532,
+          "issuedAt": 1800000000,
+          "expiresAt": 1800086400,
+          "nonce": "0xde6071ce08701117ed230bd586d8d0976d76e0c41f0c1fdc9587df29a0aeea09"
+        },
+        "signature": "0x5bc36f3a581d93637a7bd8b5cab1c020b8c65c783543c6b5ed08f90c22dae9956fcb1663a100eb8b7e4d0412b8834fe0a0c99c16b54549e301d2eb7fddde43121c"
+      },
+      {
+        "grant": {
+          "wallet": "0xEB2F760544881dad5D370e0a7A0d8e718f669800",
+          "sessionKey": "0x6225828539F20741342d452369599b6f0f8Cc83e",
+          "domain": "play.lastmanstanding.test",
+          "uri": "https://play.lastmanstanding.test",
+          "chainId": 84532,
+          "issuedAt": 1800000000,
+          "expiresAt": 1800086400,
+          "nonce": "0x7f09736b44b58bef37903202494945f354ce11ce8ce8f343a74660eeb533ce6f"
+        },
+        "signature": "0x115fdd799f6802ecf7ec06036d443bdb46d7323203fcb291208ee5b8ae1e55bc1cc338eb47b50557d80da403576925043845fa781ad3108acc628f184dd399d01b"
+      }
+    ],
+    "rounds": [
+      {
+        "record": {
+          "round": 1,
+          "moves": [
+            {
+              "index": 0,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x0866a9c67627d897f372fba058b452dafa91d665576e6a0ba62336d1f782eca4",
+              "commitment": "0x9bdfdf4d4a1afa1e6c67edd8415c9f0dd17df01efa8a5b6f470de67b969be087"
+            },
+            {
+              "index": 1,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xdff0fbb797808770acdc1b42617c7f53a7a875d903d31f4fc1fe6832bb24f770",
+              "commitment": "0x7827d56e4da56916f0d321ff177670dcec109026cfc5fa29016eda275246b990"
+            },
+            {
+              "index": 2,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xd595a31b5708bc4c9b378d802fb839519f04657f9f1374fa55f5d2fe29559ce1",
+              "commitment": "0x1b843ad781e63f5c189c7a5508439f29b2f17a5beb6c3be4110409cc0809913f"
+            },
+            {
+              "index": 3,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xac9c92c7008170ec29bf02bf6cacf0514dcf49267b835482f64afcfc88ae5d85",
+              "commitment": "0xc3ab41b16427c0469756f3ead33e1c33e9dbb19d3e93b2495f730c90f6628917"
+            }
+          ],
+          "strikes": [],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            100,
+            100,
+            100,
+            100
+          ],
+          "hash": "0x874494f4a776844933a5d4807407bc0768d42f016969f9ce0c2cdd285d7c7c75"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x05ad3c3bfda551a35596a666182a5e2ac03581b19422b6a9d1340eb9d95fe2b01f8e79cf261d039edcc9809328f723fb1de8b41a17c16ec39c9373bbb2f0d95c1b",
+            "revealSignature": "0xafa62aa12493d095fefd7049ff3a8a66c4c70ede7335154f47ec0e0f00195f9e5ab8ca3ccb4948ef24b8953f262f25350da8c7bd4441ac63cb175a439d2f47141c",
+            "receivedAt": 1800000010000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0x042c81d1b7a386627b1e4b6cedb633c208216e2001cd16cbc62af100c4aa638717d85c701d333804b0c77495d516cbe9de60a377df037424f9d7777d5d2333fb1c",
+            "revealSignature": "0x21f282332b092eb0102daa42385b0c95e73745bb2432e661a24df658eda1b432739bf91ecccbab31926779bb3503ca2e6553c8091d20fe4b84ac874d897371001c",
+            "receivedAt": 1800000010001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0xe81bb9efa921ddfd7f7f3880e8d3aa755655c1a3c0a3bb418b30a7b6e3e667185e6ac19a3ab6fda71cde402b3b4e3f0f019c5d2325c3b1a9bf25204735d95ede1b",
+            "revealSignature": "0xa303179961ff8354eaac22e908d620f0431acd3228313dc8d2618cc52993f5c92f51472fffe025768623f6043b2d96aa451db3122965d7c6ec59d15d8167f1621c",
+            "receivedAt": 1800000010002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x2bd1bc03f24daa6d54b7f5237fcd208fee2915ae21ec6b0f6ad8a0549395413140a805e81771574f53eeb9dcd22bdde9aba9b9c6995522b683bd67bc671109791c",
+            "revealSignature": "0x768b2e20375c9bc88648a7fc2387f4fdc594977be0141aae99adcdd70f8ad50c4219ad11177c63e905c5c2c8b1d4b04b45b8d73038098e155320c357463ddee01c",
+            "receivedAt": 1800000010003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 2,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0xb7e3c2172bdca73b0bab2fe358dd8d8a08dae29977fb417af4430da3ca8b1ad5",
+              "commitment": "0x80b9677a2aa6fe9d4c2ba52d37496f80028ab1ebcb095a677cc3a76b25468cce"
+            },
+            {
+              "index": 1,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xcf966fb2ad1004d6855d9df9e809ecc8e773bc5428843f1c4589bff75d32b2ce",
+              "commitment": "0x3d58b00a4af0fce0a9ea31d4d74988134b94a6c4c7fbdc8f4eaa21019f127193"
+            },
+            {
+              "index": 2,
+              "action": 1,
+              "target": 3,
+              "revealed": true,
+              "salt": "0xe1bd7a8fb679faf0d5431e8c3a94ec41e31d8564e746482c93f1add37b70ffa2",
+              "commitment": "0x975e76743e4bf1035fba134aaf9f4de42602de4025d66abe4a4d67a6b371e552"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x78b784e87402e6dadebf6284d557c195526b0ee57d98dad4db576833586b9fc3"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 2,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            },
+            {
+              "striker": 2,
+              "target": 3,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            100,
+            100,
+            70,
+            41
+          ],
+          "hash": "0x3b45703bcfef5060d517c5cb9594b12ce5c86fbb7936b1c947747b22f21a597d"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x6a34377876ff1449036dc4f5c3ecaba8b0d5c6200fbc9d9887c13b5fc30e79f123375a3e3301d35389c13a2739eb41f7b72fe7acfabb6e7e9f44f6375b5cf9d41b",
+            "revealSignature": "0xb2e33e8bf29a12a95e54040fe1a5ceefc8a177206102dcdbbefbad9a168afc8e0824aca9300e547dc419f38c81cdd39ed5aec4879a5a65a6ff19ebbba7a138f81b",
+            "receivedAt": 1800000020000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xfe708847fe4a5a6c545327c033a93c9d2896dee6d76e5e096bc4abdf11b781b2497fcbfae501de131fccb8d1b153a4d7f4ba0d367819688d5f93c1f75c2769f81c",
+            "revealSignature": "0x431f120637abdfe5baf6da0d4b48bb2d52d585d4de0e4ec2f90e340f26bd7bc656a9a6cf61f552f9958d5d1f7858e9efae7dd27a1aff139f4046887b45f4ce311c",
+            "receivedAt": 1800000020001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0x2034e40d473339f3a3bd6e83924e3b2d294f72b52549a9db95e785558658481f01c6b08b8064073202c6b042d6559f13deb08a51d2820aa469224ecfeaef02041c",
+            "revealSignature": "0x4d7b9ebee1735d454d405ba8e25ab38cc166877c9c2e6d9735f9ab7f20eb9f55587e97d35ae1a38985ca72433867509db2194ffc961a83d3e135d5e98a21d4da1c",
+            "receivedAt": 1800000020002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x2e0db721b40485aba87ad008a37a62b24718de23d3b1083ac0a31730621d98e9173ebf3c24cf265b9b88ba92246a84a28e59e7882d970a8b697df4ca3ebac8ce1c",
+            "revealSignature": null,
+            "receivedAt": 1800000020003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 3,
+          "moves": [
+            {
+              "index": 0,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x45357f202f006211638472ed1bed546908bf277c4b094dc4c954dabc0b361880",
+              "commitment": "0x29d17317099dfbc8f22576a8cb2f5ca45a237d38034ecc4ffccf7f67a705877d"
+            },
+            {
+              "index": 1,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0x8dae5253cfcac63ce82172b8b430689bc9bae02323b434966a0dcb163dbc7c7a",
+              "commitment": "0x13d987fcd2dd51e9b0e8bbe15522e9d648638ab16a426346b140faa00b295635"
+            },
+            {
+              "index": 2,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xfc3dcc0e53fd7805f901b67fee47854d7b3b09689b45879d453d310d632979af",
+              "commitment": "0x3a0b8be2a75d9ba66ac2362c489ccf9e423d0eed876bef52901f00b928a7e899"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x902e7f914715d63382473eb4366daf4b9f07259ae825a8011a2d1bc214e30264"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 1,
+              "target": 2,
+              "outcome": "guarded",
+              "charged": true,
+              "damage": 0,
+              "heal": 0,
+              "reflected": 34
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            100,
+            66,
+            70,
+            41
+          ],
+          "hash": "0x2cb0ae19e6816978a9edfd45ceede8ee859979ea108ad169d7d9ff25d9931cd5"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x956a0a7ff0600d53f9113f83022960f566d926f83e2d0a9c4813d48d7dcd6e6905a2378bf24659abc45ebb210ae9737ccc38ec246fa832397f8688e4defa6ca11b",
+            "revealSignature": "0xd7338870556f1eb869b53e45f827ecb2c536dba9783f45f1b57e982b125a51bd379ad27d80d47e0151d478e1db7240c28d3f13fd4886dd1a8c685c0b7be14bd71b",
+            "receivedAt": 1800000030000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xfcc4a5ccded45957c59ebbb088060a5c7cabff9bd735870252bce5c0efc3cca8269e16c5560c20c177f2c0c3241ae297b04c64103de62fa5b4c0e0bd83ce5d881c",
+            "revealSignature": "0xd812d105dff21152c51949a90ebf6381e21bbe4e35f95621ac3da035e47cedff6989e68f76ae1d80376af65ef91e0d9d22f6af0e8504cd20c6b56c21eb760b3c1b",
+            "receivedAt": 1800000030001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0xb25d1881841753de57d013e6da71ec84dbb4792c875e01172328e9b6d8c864654c1522123f4a28ece732a4bf41c5592d27319d6c000e776dad132e00bd99adf91c",
+            "revealSignature": "0x39cdb0651bfab91fc9675c5697f9b6549f8048b42d1a38a758ad6c13629f33b73e546cc5e147744f9789f909b71a1301aeaf35cb3a16443384af5207df94b8891c",
+            "receivedAt": 1800000030002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x8705fe1dc6af604f0b2af0c4696cb490ff062a09ba0fd7f3172048c038b889872ed3a13c3671733f3f1a73c803a201c86fc91acdf223d0c63373ab868318f0b91c",
+            "revealSignature": null,
+            "receivedAt": 1800000030003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 4,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0x962b0e664fdad7d255047d1fd524cf5db487b9d400fea079cc21166561090f7a",
+              "commitment": "0x8f29b451625ccf395aa2e9ae961d7e812124404b885c549f0d48ff6f3554414b"
+            },
+            {
+              "index": 1,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xae9779d181c1e3c3621fe34fa8099d7e3bbfe0ea9e3dc52cafa39c537b9da920",
+              "commitment": "0x51c1dc0621a36ebf10c635a1c97f4c772104988791cbf9d2412b9f37a9530064"
+            },
+            {
+              "index": 2,
+              "action": 1,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x38146cbddcbf302f68d90aaf8f5d08891aa97985bd2e26f565056504e9a40409",
+              "commitment": "0xf7cdf7e53c0da1789b5f5b8b4e0af7435703c0569aa422f81de7a5e95b2bf982"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x919e5456000be1af0feeeaf0b451c5141ba9b9bb1b0e2a070a802ed1b26f933a"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 2,
+              "outcome": "hit",
+              "charged": false,
+              "damage": 25,
+              "heal": 12,
+              "reflected": 0
+            },
+            {
+              "striker": 2,
+              "target": 0,
+              "outcome": "hit",
+              "charged": false,
+              "damage": 25,
+              "heal": 12,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            87,
+            66,
+            57,
+            41
+          ],
+          "hash": "0x893f2f59e2435edb4ba58c3ee349c86ee460e7c515b6ef7fdd047d057115c77a"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x357ef066f94d0d9ba26bae566e335021e8278a05b9d735824edee71e9b074cde2bf53a8e7dc4487caa3904a75d336d553b2a5d41df2aaedca6c35ec0cc19cbae1c",
+            "revealSignature": "0x750f81beab456012718ad8ed9e06f0720c935f6579027506a15613f7fa737f36256185d38aefbd9aa4788dd6d122599067a2539749e30c1d7f81553b16e77e281b",
+            "receivedAt": 1800000040000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xc8a149fcbcd530994a09b1ae50757c0756e75496bdf2b6895a85b551bdb55efd31e5c8f7d2ad9f569f59fbe2f03ec661f38308dfa930f9cf39c8ee67debdbe031c",
+            "revealSignature": "0xacf453be7447ab9fce10a5e135b3b71bb55555bed8b118f2f4b39e26b3ddd74950fa29cd77d38ca9fac0c935c67fe964f8b24a2742ea2dfe3bdf30aa9f29c8d91b",
+            "receivedAt": 1800000040001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0x0eaab6e7d0852c87fd477ffe5754c29caf6da2ee4fda6501fd8112db5fd09d6751ba79d166d545793b36df2f7104689c2ad3c504ca94a58a5c8d6b096f1c3f6c1c",
+            "revealSignature": "0x7a2fd92ade4a028d2907dcaa73082f1a2677648684ed39f2377513448216395138541c6b46e0c428cdf00ff5489f27ecc123eea28c4763fe7fb7f826375d64621b",
+            "receivedAt": 1800000040002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x937edbb375b0e75f350f75be846118c953cfeefe11a85842a6b076e31955e80a11d5c56946d86e89c6a8b5d36b1992a4dccad044018ebdda43e9e6a28f3ff0441b",
+            "revealSignature": null,
+            "receivedAt": 1800000040003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 5,
+          "moves": [
+            {
+              "index": 0,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xe05832d13f5cbb4a705409793726e5d281b864250f2bd6b6477310c51b1b3731",
+              "commitment": "0x91d751828697bc7d60dfd14590c6c08a37786985c9858fe1cc9335490b2be0ff"
+            },
+            {
+              "index": 1,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0x70a294b1a20ca4eca241c7c76215ff2880f2f82d990ffcde005fa9405b998009",
+              "commitment": "0xff0a70ea9d7bc965d59c06bb6d18da922c0d61ad2d9faa25fc76d597f1ec7100"
+            },
+            {
+              "index": 2,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x801ec50ddf1066fc09b2e85f5a8a05ad550c7a4ad27cfc4e35dc8a44380da3b5",
+              "commitment": "0xa569b8105c778536b119be1813c27117a923b5e3fa89017a0493a7375c34ef03"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0xdad50a8f2a5bae7defc84e580e25d12b5785632071619b254242928005e1359d"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 1,
+              "target": 2,
+              "outcome": "guarded",
+              "charged": false,
+              "damage": 0,
+              "heal": 0,
+              "reflected": 34
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            87,
+            32,
+            57,
+            41
+          ],
+          "hash": "0xccd9c36d76984e72064bc11e3d79c72da9b9effa5e74a9fd25721144b4cab8d5"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x70810525d3011b585e89fe8e83af50a5dfdd9c383e8dd8691c42ce4e1a8925407a44b06cdf1acfcb11cadb1be8619c270e44022bb8a010bd3cd125e7bfc8d3d41b",
+            "revealSignature": "0x26dfdc587b24e290a4445d099d018dc8ae98c97c036b87ea218fcb6caf8ee0f424711fb0b346bb8b430eb4908d5284557a53e968b6646e59225e0418ad305e1c1c",
+            "receivedAt": 1800000050000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xc552dc3f28ae500ed8371b3e98c3f804c318c2ba2cac64cbb174b9e8ab21fa1a1a4b0336ccbb58104e625f33af19dfbfc4e77e46ccf8389ffe69ec9916cfb8681c",
+            "revealSignature": "0x9cf8bede6b1c9831d33b5c97960d4bacf7d50c13952111bdbdb3abd5a28f7d4e6e0db7d81a125a636a369d9646771d171f15b05ebae8db4dce6e7abb3a94213c1b",
+            "receivedAt": 1800000050001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0x544f0b19f1712f40ec8c6ceaeae69fb185eee718581ee127c95ae6221615d40242086678df39cb2826c98d1b62a4218aff2579347589608260796f30266ff8f91b",
+            "revealSignature": "0x05b9ad4d8d79e538d812f195215742b06a945563f29c58623aa23633376fe3fc2bc1a8b2dfa3fd8a27fb42624d4b94714879d7bf60690cd1c51e9cc75572e7901c",
+            "receivedAt": 1800000050002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0xfcbea3eab4dde65e2db8f91940ae045be73b502de2ce6c4e4515b2873f3eabd16c43b07de1771d904306b40081fc84f5639f81447b583b58922619d3486656d21c",
+            "revealSignature": null,
+            "receivedAt": 1800000050003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 6,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0x03327f6eef9c0242a0a62800cb96f28b1a6849bf62e82221e41c86dc22d34617",
+              "commitment": "0x8ad3bf7d78ceb7bb0979b80802c3cb894529fec613da6430299f6ae8a258f0cc"
+            },
+            {
+              "index": 1,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x3913dd597e7f8d2daa8eba8aa51706c34d7059b45c15fb49517c7defd3cbcd98",
+              "commitment": "0xf6b2c706f40c9ea1fa97683a33f1d42afe6a88cea516bf908b675cb39b82d4bb"
+            },
+            {
+              "index": 2,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xe530d26a9fb5d036fb07d3e9ebb183d5dd3a8a2c2e166f096c99ad55cfc8e114",
+              "commitment": "0x3fe0eab60a8986162394594ae53698744136bcabbed9855d1878468ed08c028e"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x1a938497a077d24742b4f5bd42494ba5167adead9bdfba20bcab806c0313ef02"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 2,
+              "outcome": "hit",
+              "charged": false,
+              "damage": 31,
+              "heal": 15,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            100,
+            32,
+            26,
+            41
+          ],
+          "hash": "0x9b9b02e6f55d2f4bfaa0ddc0974bc902cfc717365e96961fa7203f1e94fba997"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x93d720d2a0a62998ac50f77a1eec877bb702b6226d8d043aa6607284a771855b24d3b50fbe1de240ddc67a43dc2829af5df6cd7d087a1f22d0c54bd47795935d1c",
+            "revealSignature": "0x87c84445f1f96e2869f0990f1693121e04b5247dae36f3d1b5755244eed2c63e192f79ac60b595fcfde310fbe850386c3e0dd38e0830ee34fd1a1e98abbf830c1c",
+            "receivedAt": 1800000060000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0x00eb9274f95455e1e383e2c4ead4ec7d1cb3c221e98968d9670d138f0738a0285cbb4707d0d76363ab4a71fb7f3a665f62f66131945ec3623414cd6f086fb3871b",
+            "revealSignature": "0x1ecf47bf5a21bce7f6f578910f8ecc998b3dba82b2fe813b96b7177a2850dab517dce2fc3d8cb91576b385a05f2a6d9012124aa2bc65ebd87709a9713654ed741b",
+            "receivedAt": 1800000060001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0x24cd7e73ac544d7b9d2dfc33938010ca50ba588af1d89415a56b9fbc35b4b69973e3c43f972c1b3d1b1278e80a0ab95de7aeaef8078ef3a72a0408f0b74806621c",
+            "revealSignature": "0x39f55e7895ff24c7c2e2fd1305a3540cfd40e88848f858945dc9cd44a9e1ecfa2e19bfa015c5720ef41afacde20ea24737b4d0e80252ec238939848173b316271c",
+            "receivedAt": 1800000060002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x9268427e3d63a77730e8a720086eeb3978189d5747f12e9f4bdd02a2ca67072567af0aa5881b736d5366871daba1b1bf7c5989295cf9eb18ed9994f56a6c7f6f1b",
+            "revealSignature": null,
+            "receivedAt": 1800000060003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 7,
+          "moves": [
+            {
+              "index": 0,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x4fcfc2affaa69026439d691cf30239563be97aca1a196d13feb3854f3d3338c4",
+              "commitment": "0x7acdede0e5ad548e9f744eb68b2f72db32dce91ed8b237bdced3161e92d2fe29"
+            },
+            {
+              "index": 1,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x8c7cf0197956e0286ee2c3399e0e44844ff615c10b8251cb2b7d230cc749acd4",
+              "commitment": "0x67a72641982898a275a4506c64cf052552260f280d878a91e316e27662d8151a"
+            },
+            {
+              "index": 2,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x844a6d670b2a894102fd84c9dd8254e3ad7874627aecac067a912bc99a5a7345",
+              "commitment": "0xba2f36185dc2769ae6472160a8b641d67e3a6eccf9235d4d382a24760d84d953"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0xbd56a81e367dbd20b832ab02c57054de59adcb0297cfb665ec04c98775667685"
+            }
+          ],
+          "strikes": [],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            100,
+            32,
+            26,
+            41
+          ],
+          "hash": "0xbcff9d21e379eb1c53269fc2bc6758c8a428a650fe87937c89638a9e0f89ad3d"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x0829e158f392da81df92ed6dfcd841f0b148a3eb13fdea5eac159d8837fb5a821c2e3ad4ee01555791a205e0cc5935eb68ffa0b463ae8de1e3aca76b098fde4f1c",
+            "revealSignature": "0x12c29fbaa2ffb0c641bc77cdf2c01b4d7cecb7b69d741bc1fce4e3ad02a0a33a6e027db8592ffc97573a24d13a8283b46217ae38ed042f3f20cb4190e5c777db1c",
+            "receivedAt": 1800000070000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xeaa8410dffb03384124fe5890cda8ae3a7a077746acf9b8a88dfd79cd947d33422cdee73ca916414c6e2c2fed9aff8ff1761a6190de9c2b75cebf9ae5eb4d5e91c",
+            "revealSignature": "0xeb4e984be429a0998e28528b18e3dd708b1d970ee7cca5a3223b4094a67f3bfa51fd28fbf935c0b738bab0ea0c9eab28c557a8c67574590847e6fd4a00673d661b",
+            "receivedAt": 1800000070001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0x534a83d5cdcf0657a09adafb498030df8169da71b129b85102d886336f1745b90e74aaaaea79002a432e1220a20d32791d8e5310058a90389e612e0c1603344e1c",
+            "revealSignature": "0x360086e76ef264cc4a225e9e0a82c358aeb832219c4eb501129c513102e8156833396960702b883526df0fd098cf6d8d469235403e527eb94a813a0820b111661c",
+            "receivedAt": 1800000070002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x22d896b7892bb28af72342f4c6e31fa352af36f57c613a92ec69ed95707cf3ef3e9f0decf93f51975c2350c8161d6a991a698af12d610276399acc380216614f1c",
+            "revealSignature": null,
+            "receivedAt": 1800000070003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 8,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 1,
+              "revealed": true,
+              "salt": "0xf225d6386f29974e55cbe716515f812526186df69b03999eecc03226708ad31c",
+              "commitment": "0xa6c6bc02fd04b9d71b5c5ed0673700f031ca09b119d15e5c9d8b80db45bd8e2d"
+            },
+            {
+              "index": 1,
+              "action": 1,
+              "target": 2,
+              "revealed": true,
+              "salt": "0x4c8cfa44e6ec27e6de906873680d9ef149c10eed3ad5d4711db1523f95505752",
+              "commitment": "0x7d79168440c1bc1a6c9a8d2a1b5d11d7df29376aafa2e6b3fec2e22e2332e97b"
+            },
+            {
+              "index": 2,
+              "action": 1,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x22389631f9017408d71c128681dfee37c3e50019a80184cb2c5e56b7b0889791",
+              "commitment": "0x4d1626866d5e976e32f4f5b7f8eb1223e35bc5587e33b5a318c2501abcfde499"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x85016762a580d76100c89a5c35e0190631d575989c5f84d6ffe5712716b2adf8"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 1,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            },
+            {
+              "striker": 1,
+              "target": 2,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            },
+            {
+              "striker": 2,
+              "target": 0,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [
+            2
+          ],
+          "hpAfter": [
+            70,
+            2,
+            0,
+            41
+          ],
+          "hash": "0x3e8eea10e2a17f469cf46154cbcabb3aad4c9123dbc324a44670584ce9204a04"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0xe3d2b2823201132d9fa39526a18e95f18158c7d00bfbcb58f8a24babda87de92039dc8a34d3b099660ad2b14afa58580cce1a2277cefc08b65605ee312b9752c1c",
+            "revealSignature": "0x8e8d432e1fde689c16650840b98bd0c3600e0f2d2e740fbd61685c84c76c3f470cfd069a1f39ea95b035ce0b3e5a5594d82560a1eb59774a6571e197b81473eb1c",
+            "receivedAt": 1800000080000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0xf805046d3886d97fbbf06d68e2948586cb043051c6ecb6acc507c81d068de94f380cfde87d51c86a97e6ee2d81fca3f45e566b7b6c72e31c253261fe8aee38f11c",
+            "revealSignature": "0xe8bc204d9cd28e1a6d5e0f37f40748ac5b2b470c1fd960fd9c88e8639339448618b1b3450739296c882d75902bba3c015e32b81f147fa9c8ee9e255843d2e2da1b",
+            "receivedAt": 1800000080001
+          },
+          {
+            "index": 2,
+            "commitSignature": "0xc19a3eff59ad9beaa0cdc8f366c1ea0fb39f95d7efbbd905c3ddd02ba60f5c3b4cdba84cc1331b30d0ff42bae82dfe94439dd36471fa806868555783c0125a1e1c",
+            "revealSignature": "0x509ead0f4cd01b76af7a5ba8b1b29db8141b099c2b4315bc152bfd86c92caf8872a4260d8cc5374def20e1d8777b7b7a5e2336817640183b5be66f758a9710f31c",
+            "receivedAt": 1800000080002
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x5aff8072e65bae8fa6fc1d63b1ea48bd10a2dd33595a0b739397593a8374c1074bedba7d0ce864bcb6d7f500fc12e14b277ff34cf1155875f88c46cc43b7cd771b",
+            "revealSignature": null,
+            "receivedAt": 1800000080003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 9,
+          "moves": [
+            {
+              "index": 0,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x9d573fc2cd935d4fcae9c7912950d5aefd8d4388bab135cea1315000057e66b8",
+              "commitment": "0xc259dddc443ac30b09e8005f2036db610d932af8dd00c1fddbf2496a2202a2f7"
+            },
+            {
+              "index": 1,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x94631398ab8b69be8c6c35c33b45599a98267e379bd6a60fe0c307144ea8b2fe",
+              "commitment": "0xfc2d6acbd488441a96dcd779c67ae54cb6f0943abbf50681f45d18150284763b"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x8fe21c85076fdd227ea022ea8947db18498dbe8258cc87079777cc2dc2e56e5a"
+            }
+          ],
+          "strikes": [],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            70,
+            2,
+            0,
+            41
+          ],
+          "hash": "0xbb1975d1726b7095dd3601474557acf6d640495261d1f1e2a4230e38f7ea9ead"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x25a1bf09768921d187dcf9932e37279476c505cb449649dfd2d93cccaa0177515225d703888186cd7712600109ee02e482d05c500dc08c40612e3c8ac0a90e311b",
+            "revealSignature": "0x5875ca944e7c774508d0e4e67cef64cb439e4393c0c0d5c4f5f11df3122c74bc4b324405785419fa93f3fa74c3be904524867053fb559308b6879208ff06bf0f1b",
+            "receivedAt": 1800000090000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0x7607057789fdf0bb7a149e679ec063429bf47b8ceecd95a278543a651934fcd63679aa6fc07370d409e5682505267e49b796d5a3e6814a95178743de0eb56d041b",
+            "revealSignature": "0xf19a98db7883d5d7e15a9b9add7afc411f5c67076bf037f8a75f8f35f64414010e0d338840df4cd432e5308c98e7d6a352d40143bf7e6ddafd7b9ca3647531c21b",
+            "receivedAt": 1800000090001
+          },
+          {
+            "index": 3,
+            "commitSignature": "0xe5cacd90ff9b7207700c22ca1c6cedac2ea9056f1daf6762e2d67715bca9311064613f1d9f879879ead59cbe66287ecd8fe66508812557d5aa421155400f3c3c1c",
+            "revealSignature": null,
+            "receivedAt": 1800000090003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 10,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 1,
+              "revealed": true,
+              "salt": "0x680730da57371e3d8d6c5c18b24bc8248fd5256af2699446934189a3841a57c5",
+              "commitment": "0xaa8a97de427d23f71c5e22b3ee2d993e1bf4f9d87550f72b0ed393e1e8745e6f"
+            },
+            {
+              "index": 1,
+              "action": 1,
+              "target": 0,
+              "revealed": true,
+              "salt": "0x76467ebcae8d6b45114c2da15202a4d649acb07994a603d6c7f32a779ce02bf7",
+              "commitment": "0x5c315db9ea99715b74f6ca95f7ec044a2cfd8fbff8e4c162361a64364b182b36"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0xafd008cb75de64e30869f44c5f7f717bb357067189cee7441c30f0534ae568be"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 1,
+              "outcome": "hit",
+              "charged": false,
+              "damage": 25,
+              "heal": 12,
+              "reflected": 0
+            },
+            {
+              "striker": 1,
+              "target": 0,
+              "outcome": "hit",
+              "charged": false,
+              "damage": 25,
+              "heal": 12,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [
+            1
+          ],
+          "hpAfter": [
+            57,
+            0,
+            0,
+            41
+          ],
+          "hash": "0xc1961c7db9f53887f4c5a9dda4401fb3a724fff1ca946e7d7378d10d6f4018cd"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0xd64bd9a3330d42897f9b3da0ebb27dfe52fd674c9483950ac7b770916c920af439304a01a1d10854acf00d2fcc73029485b081081da3786004ae586cd6e4dbba1b",
+            "revealSignature": "0x4cb8e09d8d0172dcfab14f954d35c7ac6f70dacaa4cab4f2527480fcc87041cd530ea8b371aad8da52cb8d3351881013a55a0d905073c1b619a1315a1685cb8c1c",
+            "receivedAt": 1800000100000
+          },
+          {
+            "index": 1,
+            "commitSignature": "0x442ad9166bc922e5cb516809df087bc8fab6eae8a104cc168287087660d5c47e433625c3ce433a2b406c1049506bc2d5aade773d7d329f3f3875da1bda9b61541b",
+            "revealSignature": "0x31af5abf4b5e76da273738ff4d928753606f9d6a1daeebbf9b9d9e050b7dc38c7a41a6fc5d5a9ee46cacf33d6eee946fe0aa70486a4e437b80dbfafa8628b5b11b",
+            "receivedAt": 1800000100001
+          },
+          {
+            "index": 3,
+            "commitSignature": "0xd5ee258a3db3f8f59feb91dd9ceab0a13e1b4e71dbd7732cd4f6c22740cf25a4164e1dc3c0897dddf29d8fa5e187a25d3da7ef36465de1c2a8f98603a33898711b",
+            "revealSignature": null,
+            "receivedAt": 1800000100003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 11,
+          "moves": [
+            {
+              "index": 0,
+              "action": 2,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xc03e55527e3b9d0af1491f6f68a3a7072662ac11f41ab420dab1a62248f546fd",
+              "commitment": "0x1790026649b704e8cab2625d56473dd7ab9504b7183e5014215eb5479224601f"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x4b6a01d07ba405ae0018b20ae6842f067b00c85e10f4299fdc2e9d01599c9eb8"
+            }
+          ],
+          "strikes": [],
+          "stallDamage": 0,
+          "eliminated": [],
+          "hpAfter": [
+            57,
+            0,
+            0,
+            41
+          ],
+          "hash": "0xf9fede4e5ca88385c94d5c532ea9606b8652d65dd1c35d65520bac36876c1089"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0xd4438b0a1dc7232be394ea7d08efde64ec4cf63f07caed45a7f6a035d2c2b0123e1d912eccffa2f4bbc5d98e49656f7b91b6e936be0281a940f28d4613d8bd3e1b",
+            "revealSignature": "0xba0e1cc30a3d67fd41c19981381aca903b535e8ec05533ba92f51ce4819cc4d219148b090dde140c037b5b924197965a6c6f5443c22777c0ee9a2f770346b6231b",
+            "receivedAt": 1800000110000
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x5f66fe6dafb68355a6703d07b146117fee9eb24f2264f9613192497d4fd0cfee04b00e7412ff289d2c533045828dce0b9284477db8f5d982168f2dacf28832ba1b",
+            "revealSignature": null,
+            "receivedAt": 1800000110003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 12,
+          "moves": [
+            {
+              "index": 0,
+              "action": 3,
+              "target": 0,
+              "revealed": true,
+              "salt": "0xfa90b1a1b179885f84d32c0466810a55f4ac8a5f56282e2781a3cafa3c5e4636",
+              "commitment": "0xb493f44b6d1a85152c8287c4150040852016f865ff806511f63d32f345189752"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0x86a5eb0fa379a5766543a6f5b3291249e9f364ec29f6bd4b3c4026dd0ea4a05a"
+            }
+          ],
+          "strikes": [],
+          "stallDamage": 8,
+          "eliminated": [],
+          "hpAfter": [
+            49,
+            0,
+            0,
+            33
+          ],
+          "hash": "0x9a66231df7ee81d1023aa79483a1f5f50a0f003322c8c16a626c4738de832bb8"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0x6a53f82e88aa147b2f27eef109ad460c688d0b38593e134f4f847e44949d4012419e5f68ba9ec49d7c8ad30c8fa42995d789c037671418702adbda8d6eccaeb01b",
+            "revealSignature": "0x19db5d9c403e2d5e5fb8663432f4a0e2c0761bd954a74e149a5b67d792f044d55581376f6bcaaa9d3877448959d2ed984ef7a377c528f86abe489ace808bdc8c1c",
+            "receivedAt": 1800000120000
+          },
+          {
+            "index": 3,
+            "commitSignature": "0x1860a63df88b24936cdea2a4bbe3b780dc322589b47457be852b994d906981de6208be3318729d4cb5e9fa398a293b9040b6dcf829fd4140f623957b08c6b0be1c",
+            "revealSignature": null,
+            "receivedAt": 1800000120003
+          }
+        ]
+      },
+      {
+        "record": {
+          "round": 13,
+          "moves": [
+            {
+              "index": 0,
+              "action": 1,
+              "target": 3,
+              "revealed": true,
+              "salt": "0xb0fe750feb94236a29ef6da0d29e37e758167822987b2bec5df76bf52458d264",
+              "commitment": "0x2575839908179881f525ef54b135105a50b1decdd44617bb1d716d57897f5966"
+            },
+            {
+              "index": 3,
+              "action": 0,
+              "target": 0,
+              "revealed": false,
+              "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "commitment": "0xa325078ecbd5ecfc8bfc68d9c8c8723827c999ad7c29a11727239b86f714a514"
+            }
+          ],
+          "strikes": [
+            {
+              "striker": 0,
+              "target": 3,
+              "outcome": "hit",
+              "charged": true,
+              "damage": 59,
+              "heal": 29,
+              "reflected": 0
+            }
+          ],
+          "stallDamage": 0,
+          "eliminated": [
+            3
+          ],
+          "hpAfter": [
+            78,
+            0,
+            0,
+            0
+          ],
+          "hash": "0x4b3a49d8d9a07fc8c16f4a206565fc393b17012152a62f84402bb1f7a4bda7a7"
+        },
+        "proofs": [
+          {
+            "index": 0,
+            "commitSignature": "0xaaca409c1cc75d6514f6b2ede8009f0cce194d319c9fb345e6d7f151cf23eb25397fb3a170abe1a154edda25fd702bf829a97f985b7bae42d07c443846c1d0581b",
+            "revealSignature": "0x9c65546fce75d67bff48530ba4eebfaaffddcb3c95c87478cb9d923d6d96e1ce0bf1c7466ef750f46a6e3a404158381426be66ca03e70e19ab40fdac03e900111b",
+            "receivedAt": 1800000130000
+          },
+          {
+            "index": 3,
+            "commitSignature": "0xf29f6c7d2e7806a5582921402d16a81c5695275c9b262e30c4a35b0a3697e132262a5a5b2283930160fdf9cf00973ab840c08cfe446293a69aa2e72c2595c2da1c",
+            "revealSignature": null,
+            "receivedAt": 1800000130003
+          }
+        ]
+      }
+    ],
+    "result": {
+      "matchId": "0xddd0aa1183dcf3def5ee07a02ebbac71babbd5766c4a628eb66e2fe786f81c7a",
+      "rounds": 13,
+      "historyRoot": "0x244a13608cf7970238b69d8e15a9df878e50ddfb8c24da56c4ec6b4d3e59cba3",
+      "ranking": [
+        "0x8AD8eE1544b6ad5420381ac79B074507F5a6225a",
+        "0xEB2F760544881dad5D370e0a7A0d8e718f669800",
+        "0xEbBf00c78A34525626D68fFc8A8Fe3DAa9912208",
+        "0xA82422A73eb6aC50Ffb3B0E9389efEea8AfdFD63"
+      ]
+    }
+  },
+  "chain": {
+    "rulesHash": "0x07d102f371d483468baf28515199dc3b888d3604c16f48ae909ab07145044d93",
+    "historySeed": "0xbc797996d1ac9991eaea70818fb925181560fc402cecbf3479afb715a61b7f55",
+    "roundCount": 13,
+    "rounds": [
+      {
+        "round": 1,
+        "actions": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "targets": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x0866a9c67627d897f372fba058b452dafa91d665576e6a0ba62336d1f782eca4",
+          "0xdff0fbb797808770acdc1b42617c7f53a7a875d903d31f4fc1fe6832bb24f770",
+          "0xd595a31b5708bc4c9b378d802fb839519f04657f9f1374fa55f5d2fe29559ce1",
+          "0xac9c92c7008170ec29bf02bf6cacf0514dcf49267b835482f64afcfc88ae5d85"
+        ],
+        "commitments": [
+          "0x9bdfdf4d4a1afa1e6c67edd8415c9f0dd17df01efa8a5b6f470de67b969be087",
+          "0x7827d56e4da56916f0d321ff177670dcec109026cfc5fa29016eda275246b990",
+          "0x1b843ad781e63f5c189c7a5508439f29b2f17a5beb6c3be4110409cc0809913f",
+          "0xc3ab41b16427c0469756f3ead33e1c33e9dbb19d3e93b2495f730c90f6628917"
+        ],
+        "hpAfter": [
+          100,
+          100,
+          100,
+          100
+        ],
+        "eliminated": [],
+        "hash": "0x874494f4a776844933a5d4807407bc0768d42f016969f9ce0c2cdd285d7c7c75"
+      },
+      {
+        "round": 2,
+        "actions": [
+          1,
+          2,
+          1,
+          0
+        ],
+        "targets": [
+          2,
+          0,
+          3,
+          0
+        ],
+        "salts": [
+          "0xb7e3c2172bdca73b0bab2fe358dd8d8a08dae29977fb417af4430da3ca8b1ad5",
+          "0xcf966fb2ad1004d6855d9df9e809ecc8e773bc5428843f1c4589bff75d32b2ce",
+          "0xe1bd7a8fb679faf0d5431e8c3a94ec41e31d8564e746482c93f1add37b70ffa2",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x80b9677a2aa6fe9d4c2ba52d37496f80028ab1ebcb095a677cc3a76b25468cce",
+          "0x3d58b00a4af0fce0a9ea31d4d74988134b94a6c4c7fbdc8f4eaa21019f127193",
+          "0x975e76743e4bf1035fba134aaf9f4de42602de4025d66abe4a4d67a6b371e552",
+          "0x78b784e87402e6dadebf6284d557c195526b0ee57d98dad4db576833586b9fc3"
+        ],
+        "hpAfter": [
+          100,
+          100,
+          70,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0x3b45703bcfef5060d517c5cb9594b12ce5c86fbb7936b1c947747b22f21a597d"
+      },
+      {
+        "round": 3,
+        "actions": [
+          2,
+          1,
+          2,
+          0
+        ],
+        "targets": [
+          0,
+          2,
+          0,
+          0
+        ],
+        "salts": [
+          "0x45357f202f006211638472ed1bed546908bf277c4b094dc4c954dabc0b361880",
+          "0x8dae5253cfcac63ce82172b8b430689bc9bae02323b434966a0dcb163dbc7c7a",
+          "0xfc3dcc0e53fd7805f901b67fee47854d7b3b09689b45879d453d310d632979af",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x29d17317099dfbc8f22576a8cb2f5ca45a237d38034ecc4ffccf7f67a705877d",
+          "0x13d987fcd2dd51e9b0e8bbe15522e9d648638ab16a426346b140faa00b295635",
+          "0x3a0b8be2a75d9ba66ac2362c489ccf9e423d0eed876bef52901f00b928a7e899",
+          "0x902e7f914715d63382473eb4366daf4b9f07259ae825a8011a2d1bc214e30264"
+        ],
+        "hpAfter": [
+          100,
+          66,
+          70,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0x2cb0ae19e6816978a9edfd45ceede8ee859979ea108ad169d7d9ff25d9931cd5"
+      },
+      {
+        "round": 4,
+        "actions": [
+          1,
+          2,
+          1,
+          0
+        ],
+        "targets": [
+          2,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x962b0e664fdad7d255047d1fd524cf5db487b9d400fea079cc21166561090f7a",
+          "0xae9779d181c1e3c3621fe34fa8099d7e3bbfe0ea9e3dc52cafa39c537b9da920",
+          "0x38146cbddcbf302f68d90aaf8f5d08891aa97985bd2e26f565056504e9a40409",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x8f29b451625ccf395aa2e9ae961d7e812124404b885c549f0d48ff6f3554414b",
+          "0x51c1dc0621a36ebf10c635a1c97f4c772104988791cbf9d2412b9f37a9530064",
+          "0xf7cdf7e53c0da1789b5f5b8b4e0af7435703c0569aa422f81de7a5e95b2bf982",
+          "0x919e5456000be1af0feeeaf0b451c5141ba9b9bb1b0e2a070a802ed1b26f933a"
+        ],
+        "hpAfter": [
+          87,
+          66,
+          57,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0x893f2f59e2435edb4ba58c3ee349c86ee460e7c515b6ef7fdd047d057115c77a"
+      },
+      {
+        "round": 5,
+        "actions": [
+          2,
+          1,
+          2,
+          0
+        ],
+        "targets": [
+          0,
+          2,
+          0,
+          0
+        ],
+        "salts": [
+          "0xe05832d13f5cbb4a705409793726e5d281b864250f2bd6b6477310c51b1b3731",
+          "0x70a294b1a20ca4eca241c7c76215ff2880f2f82d990ffcde005fa9405b998009",
+          "0x801ec50ddf1066fc09b2e85f5a8a05ad550c7a4ad27cfc4e35dc8a44380da3b5",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x91d751828697bc7d60dfd14590c6c08a37786985c9858fe1cc9335490b2be0ff",
+          "0xff0a70ea9d7bc965d59c06bb6d18da922c0d61ad2d9faa25fc76d597f1ec7100",
+          "0xa569b8105c778536b119be1813c27117a923b5e3fa89017a0493a7375c34ef03",
+          "0xdad50a8f2a5bae7defc84e580e25d12b5785632071619b254242928005e1359d"
+        ],
+        "hpAfter": [
+          87,
+          32,
+          57,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0xccd9c36d76984e72064bc11e3d79c72da9b9effa5e74a9fd25721144b4cab8d5"
+      },
+      {
+        "round": 6,
+        "actions": [
+          1,
+          2,
+          3,
+          0
+        ],
+        "targets": [
+          2,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x03327f6eef9c0242a0a62800cb96f28b1a6849bf62e82221e41c86dc22d34617",
+          "0x3913dd597e7f8d2daa8eba8aa51706c34d7059b45c15fb49517c7defd3cbcd98",
+          "0xe530d26a9fb5d036fb07d3e9ebb183d5dd3a8a2c2e166f096c99ad55cfc8e114",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x8ad3bf7d78ceb7bb0979b80802c3cb894529fec613da6430299f6ae8a258f0cc",
+          "0xf6b2c706f40c9ea1fa97683a33f1d42afe6a88cea516bf908b675cb39b82d4bb",
+          "0x3fe0eab60a8986162394594ae53698744136bcabbed9855d1878468ed08c028e",
+          "0x1a938497a077d24742b4f5bd42494ba5167adead9bdfba20bcab806c0313ef02"
+        ],
+        "hpAfter": [
+          100,
+          32,
+          26,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0x9b9b02e6f55d2f4bfaa0ddc0974bc902cfc717365e96961fa7203f1e94fba997"
+      },
+      {
+        "round": 7,
+        "actions": [
+          3,
+          3,
+          2,
+          0
+        ],
+        "targets": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x4fcfc2affaa69026439d691cf30239563be97aca1a196d13feb3854f3d3338c4",
+          "0x8c7cf0197956e0286ee2c3399e0e44844ff615c10b8251cb2b7d230cc749acd4",
+          "0x844a6d670b2a894102fd84c9dd8254e3ad7874627aecac067a912bc99a5a7345",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x7acdede0e5ad548e9f744eb68b2f72db32dce91ed8b237bdced3161e92d2fe29",
+          "0x67a72641982898a275a4506c64cf052552260f280d878a91e316e27662d8151a",
+          "0xba2f36185dc2769ae6472160a8b641d67e3a6eccf9235d4d382a24760d84d953",
+          "0xbd56a81e367dbd20b832ab02c57054de59adcb0297cfb665ec04c98775667685"
+        ],
+        "hpAfter": [
+          100,
+          32,
+          26,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0xbcff9d21e379eb1c53269fc2bc6758c8a428a650fe87937c89638a9e0f89ad3d"
+      },
+      {
+        "round": 8,
+        "actions": [
+          1,
+          1,
+          1,
+          0
+        ],
+        "targets": [
+          1,
+          2,
+          0,
+          0
+        ],
+        "salts": [
+          "0xf225d6386f29974e55cbe716515f812526186df69b03999eecc03226708ad31c",
+          "0x4c8cfa44e6ec27e6de906873680d9ef149c10eed3ad5d4711db1523f95505752",
+          "0x22389631f9017408d71c128681dfee37c3e50019a80184cb2c5e56b7b0889791",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0xa6c6bc02fd04b9d71b5c5ed0673700f031ca09b119d15e5c9d8b80db45bd8e2d",
+          "0x7d79168440c1bc1a6c9a8d2a1b5d11d7df29376aafa2e6b3fec2e22e2332e97b",
+          "0x4d1626866d5e976e32f4f5b7f8eb1223e35bc5587e33b5a318c2501abcfde499",
+          "0x85016762a580d76100c89a5c35e0190631d575989c5f84d6ffe5712716b2adf8"
+        ],
+        "hpAfter": [
+          70,
+          2,
+          0,
+          41
+        ],
+        "eliminated": [
+          2
+        ],
+        "hash": "0x3e8eea10e2a17f469cf46154cbcabb3aad4c9123dbc324a44670584ce9204a04"
+      },
+      {
+        "round": 9,
+        "actions": [
+          2,
+          2,
+          0,
+          0
+        ],
+        "targets": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x9d573fc2cd935d4fcae9c7912950d5aefd8d4388bab135cea1315000057e66b8",
+          "0x94631398ab8b69be8c6c35c33b45599a98267e379bd6a60fe0c307144ea8b2fe",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0xc259dddc443ac30b09e8005f2036db610d932af8dd00c1fddbf2496a2202a2f7",
+          "0xfc2d6acbd488441a96dcd779c67ae54cb6f0943abbf50681f45d18150284763b",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x8fe21c85076fdd227ea022ea8947db18498dbe8258cc87079777cc2dc2e56e5a"
+        ],
+        "hpAfter": [
+          70,
+          2,
+          0,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0xbb1975d1726b7095dd3601474557acf6d640495261d1f1e2a4230e38f7ea9ead"
+      },
+      {
+        "round": 10,
+        "actions": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "targets": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0x680730da57371e3d8d6c5c18b24bc8248fd5256af2699446934189a3841a57c5",
+          "0x76467ebcae8d6b45114c2da15202a4d649acb07994a603d6c7f32a779ce02bf7",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0xaa8a97de427d23f71c5e22b3ee2d993e1bf4f9d87550f72b0ed393e1e8745e6f",
+          "0x5c315db9ea99715b74f6ca95f7ec044a2cfd8fbff8e4c162361a64364b182b36",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0xafd008cb75de64e30869f44c5f7f717bb357067189cee7441c30f0534ae568be"
+        ],
+        "hpAfter": [
+          57,
+          0,
+          0,
+          41
+        ],
+        "eliminated": [
+          1
+        ],
+        "hash": "0xc1961c7db9f53887f4c5a9dda4401fb3a724fff1ca946e7d7378d10d6f4018cd"
+      },
+      {
+        "round": 11,
+        "actions": [
+          2,
+          0,
+          0,
+          0
+        ],
+        "targets": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0xc03e55527e3b9d0af1491f6f68a3a7072662ac11f41ab420dab1a62248f546fd",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x1790026649b704e8cab2625d56473dd7ab9504b7183e5014215eb5479224601f",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x4b6a01d07ba405ae0018b20ae6842f067b00c85e10f4299fdc2e9d01599c9eb8"
+        ],
+        "hpAfter": [
+          57,
+          0,
+          0,
+          41
+        ],
+        "eliminated": [],
+        "hash": "0xf9fede4e5ca88385c94d5c532ea9606b8652d65dd1c35d65520bac36876c1089"
+      },
+      {
+        "round": 12,
+        "actions": [
+          3,
+          0,
+          0,
+          0
+        ],
+        "targets": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0xfa90b1a1b179885f84d32c0466810a55f4ac8a5f56282e2781a3cafa3c5e4636",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0xb493f44b6d1a85152c8287c4150040852016f865ff806511f63d32f345189752",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x86a5eb0fa379a5766543a6f5b3291249e9f364ec29f6bd4b3c4026dd0ea4a05a"
+        ],
+        "hpAfter": [
+          49,
+          0,
+          0,
+          33
+        ],
+        "eliminated": [],
+        "hash": "0x9a66231df7ee81d1023aa79483a1f5f50a0f003322c8c16a626c4738de832bb8"
+      },
+      {
+        "round": 13,
+        "actions": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "targets": [
+          3,
+          0,
+          0,
+          0
+        ],
+        "salts": [
+          "0xb0fe750feb94236a29ef6da0d29e37e758167822987b2bec5df76bf52458d264",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "commitments": [
+          "0x2575839908179881f525ef54b135105a50b1decdd44617bb1d716d57897f5966",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0xa325078ecbd5ecfc8bfc68d9c8c8723827c999ad7c29a11727239b86f714a514"
+        ],
+        "hpAfter": [
+          78,
+          0,
+          0,
+          0
+        ],
+        "eliminated": [
+          3
+        ],
+        "hash": "0x4b3a49d8d9a07fc8c16f4a206565fc393b17012152a62f84402bb1f7a4bda7a7"
+      }
+    ]
+  }
+}

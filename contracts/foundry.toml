@@ -18,7 +18,12 @@ compilation_restrictions = [{ paths = "src/GameEscrow.sol", max_optimizer_runs =
 deny = "warnings"
 # `Deploy` reads the rule set from `config/rules.json`, and on a broadcast
 # writes the deployment registry to `deployments/<chainId>.json`.
-fs_permissions = [{ access = "read", path = "./config" }, { access = "read-write", path = "./deployments" }]
+# The golden transcripts in `test/fixtures` are read by `GoldenTranscript.t.sol`.
+fs_permissions = [
+    { access = "read", path = "./config" },
+    { access = "read-write", path = "./deployments" },
+    { access = "read", path = "./test/fixtures" },
+]
 
 # `forge script ... --broadcast --verify` verifies on the explorer. Etherscan's
 # v2 API takes one key for every chain it covers, Basescan included.
