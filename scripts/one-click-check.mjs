@@ -24,7 +24,7 @@
  * Starts its own anvil on CHECK_ANVIL_PORT (default 8599) and stops it after.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
@@ -211,14 +211,27 @@ async function waitForNode() {
 
 /** The real deploy script, against the fresh node. */
 function deploy() {
-  // Only what the script needs: a developer's `.env` must not change the deploy.
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DEPLOYER_PK: DEPLOYER_KEY };
-  const result = spawnSync('forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast', '--slow'], {
-    cwd: CONTRACTS,
-    env: { ...env, SystemRoot: process.env.SystemRoot },
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) throw new Error(`deploy failed:\n${result.stdout}\n${result.stderr}`);
-  const registry = JSON.parse(readFileSync(`${CONTRACTS}deployments/${CHAIN_ID}.json`, 'utf8'));
-  return { escrow: registry.contracts.escrow, delegate: registry.contracts.sessionDelegate };
+  // The broadcast writes the chain's registry and run log, which `dev:fork`
+  // also uses for 31337, and `Deploy.t.sol` expects no registry there at all.
+  // Whatever was there before is put back.
+  const written = [`${CONTRACTS}deployments/${CHAIN_ID}.json`, `${CONTRACTS}broadcast/Deploy.s.sol/${CHAIN_ID}/run-latest.json`];
+  const before = written.map((file) => (existsSync(file) ? readFileSync(file) : null));
+  try {
+    // Only what forge needs: a developer's `.env` must not change the deploy.
+    const env = { DEPLOYER_PK: DEPLOYER_KEY };
+    for (const name of ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot']) if (process.env[name]) env[name] = process.env[name];
+    const result = spawnSync('forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast', '--slow'], {
+      cwd: CONTRACTS,
+      env,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) throw new Error(`deploy failed:\n${result.stdout}\n${result.stderr}`);
+    const registry = JSON.parse(readFileSync(written[0], 'utf8'));
+    return { escrow: registry.contracts.escrow, delegate: registry.contracts.sessionDelegate };
+  } finally {
+    written.forEach((file, index) => {
+      if (before[index]) writeFileSync(file, before[index]);
+      else rmSync(file, { force: true });
+    });
+  }
 }
