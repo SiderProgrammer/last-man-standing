@@ -106,8 +106,14 @@ Around that core:
   (SIWE-shaped: origin, chain, expiry) naming a key the browser keeps for a
   day. The key signs the login nonce and every commit and reveal, so
   reconnects need no prompt and every move is provably the player's. The
-  grant cannot stake or spend: every join is the player's own transaction.
-  Contract wallets' grants are checked with ERC-1271.
+  grant alone cannot stake or spend. Contract wallets' grants are checked with
+  ERC-1271. The key is kept in IndexedDB, sealed under a non-extractable
+  WebCrypto key, and the page ships a strict Content-Security-Policy.
+- **One-click play** — a burner or embedded wallet delegates to
+  `SessionKeyDelegate` (EIP-7702) once and grants its session key a capped
+  session: `join` and `withdrawFor` on the escrow only, 0.05 ETH a join and
+  0.25 ETH in all. Joins and collecting winnings then need no prompt, and the
+  server pays the gas, up to a daily quota per wallet. See [Wallets](#wallets).
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain and owned by
   its timelock. Minting is free and limited to one per wallet, which stops one
   wallet taking the supply but not someone with many wallets.
@@ -122,6 +128,36 @@ cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
 see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
 [docs/TODO.md](docs/TODO.md).
+
+## Wallets
+
+Every wallet logs in the same way: it signs one session grant, and the browser's
+session key signs logins and moves from then on. What differs is whether joins
+and collecting winnings can be one click.
+
+| Wallet | Logins and moves | Joins on Base | Collecting winnings | Joins from a spoke |
+| --- | --- | --- | --- | --- |
+| Burner (`VITE_DEV_KEY`, dev builds only) | Session key, no prompt | One click, relayed | One click, relayed | Its own transaction on the spoke |
+| Privy embedded wallet | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
+| Injected (MetaMask, Rabby) | Session key, no prompt | Its own transaction | Its own transaction | Its own transaction on the spoke |
+| Coinbase Smart Wallet | Session key; the grant is checked through ERC-1271 | Its own transaction | Its own transaction | Its own transaction on the spoke |
+
+One-click play needs a wallet that can sign an EIP-7702 authorization for *our*
+delegate. An injected wallet will not be asked for one, and a smart wallet
+already has code of its own. Privy is not wired into the client yet: the plan
+is to adopt it only if its embedded wallet signs that authorization on Base
+Sepolia, and fall back to Turnkey, or to the normal flow, if it does not
+(FIX_PLAN 5.1). The contracts are the same either way. `npm run
+check:one-click` runs the whole one-click path on a local Prague anvil, with a
+plain local account standing in for the embedded wallet.
+
+The server relays only when `SESSION_RELAYER_PK` is set, and refuses a relayed
+call that is outside the session's scope, comes from an account delegated
+anywhere else, would revert, or is over the wallet's `RELAY_QUOTA_PER_DAY`. The
+client then falls back to the wallet's own transaction.
+
+ERC-4337 (`validateUserOp`), so that smart wallets get one-click play too, is a
+stretch goal and not built.
 
 ## Roles
 
@@ -139,6 +175,8 @@ two coincide.
 | Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
 | Operator | Runs the game server; holds the attestor key and the receipt key | Plays each match; signs its result and proposes it with the transcript hash; aborts a live match it cannot finish, refunding every seat; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
 | Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
+| Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
+| Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, or exceed a session's caps. |
 
 This is a testnet project. Real-money play would also need a gambling licence,
 which is out of scope.
@@ -230,7 +268,7 @@ Point the server at the deployment with `RPC_URL`, `ESCROW_ADDRESS` and
 `ATTESTOR_PK`, and restart it. It watches the escrow, locks lobbies once they
 fill, opens a room when the randomness oracle seeds the match, submits the
 signed result, finalises it once the challenge window closes, and cancels a
-match that can no longer finish. The optional features — session keys, token
+match that can no longer finish. The optional features — one-click play, token
 payment, avatars, the fee keeper, staking and governance screens, a Postgres
 archive — each switch on with their own variables; `.env.example` documents
 every one.
@@ -256,6 +294,7 @@ npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
 npm run abis                # regenerate packages/protocol/src/chain/abis.ts after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
+npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of the above, plus

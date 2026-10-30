@@ -34,12 +34,12 @@ A quick index, since most of these are the reason a given file exists at all.
 | **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `protocol/eip712.ts`, `protocol/moves.ts` | Attestors sign results, wallets sign session grants and session keys sign every move as a readable structure, not an opaque digest, and the domain binds a signature to one contract or chain |
 | **EIP-1153** transient storage | `SeatSetLib` | A scratch set that self-clears at end of transaction, turning the settlement permutation check from quadratic to linear |
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
-| **EIP-7702** EOA code delegation | `SessionKeyDelegate` | Session keys without changing the player's address — see [Account abstraction](#account-abstraction) |
+| **EIP-7702** EOA code delegation | `SessionKeyDelegate` | One-click joins and withdrawals without changing the player's address — see [Account abstraction](#account-abstraction) |
 | **ERC-721** non-fungible token | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
 | **ERC-20 wrapper** (`ERC20Wrapper`-style) | `StakedLms` | Stake LMS for sLMS one for one: `deposit`, `requestUnstake`, `claim` — see [Token governance and staking](#token-governance-and-staking) |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
-| **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature`, the gateway's grant check | Lets the game server accept a session grant signed by a contract wallet |
+| **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the game server accept a session grant signed by a contract wallet |
 | **ERC-4337** account abstraction | *considered, not used* | Rejected because it would change every player's address; reasoning in [Account abstraction](#account-abstraction) |
 | **LayerZero v2** messaging | `LayerZeroMessenger` | Concrete transport behind the chain-agnostic messenger interface |
 | **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | Concrete source behind the chain-agnostic randomness interface |
@@ -437,8 +437,8 @@ with* picker. Joining with a token takes two clicks:
 - **Two clicks, not one.** The wallet's prompt for `joinWithToken` shows a
   contract call, not a price, so the player sees and accepts the ceiling in the
   game's own UI first.
-- **Never through the session key.** Its scope is the escrow and the avatar
-  collection. A token approval is exactly the kind of call a prompt-free key
+- **Never through the session key.** Its scope is `join` and `withdrawFor` on
+  the escrow. A token approval is exactly the kind of call a prompt-free key
   should not be able to make.
 - **USDT-safe approvals.** USDT returns nothing from `approve` and refuses to
   move one non-zero allowance to another, while every join leaves its unused
@@ -854,22 +854,20 @@ nothing.
 
 ## Account abstraction
 
-`contracts/src/SessionKeyDelegate.sol` · **Unit-tested**
+`contracts/src/SessionKeyDelegate.sol`, `server/chain/sessionRelay.ts`, `client/wallet/oneClick.ts` · **Unit-tested, end-to-end on anvil**
 
 ### The problem
 
 Playing should not mean approving a transaction every few minutes. Logins and
 moves are covered by the session grant above; what remains is joins and
-withdrawals, each a wallet transaction. The delegate below is for making those
-one click; the client does not offer it until that exists, and the login role
-it used to have is gone.
+collecting winnings, each a wallet transaction with its own gas. One-click play
+makes those a click, with the server paying the gas.
 
 ### Why EIP-7702 and not ERC-4337
 
 In this protocol **the address is the identity**. `GameEscrow` keys seats,
-rankings and payouts by the address that staked, and `seatOrigin` records where
-it staked from. Migrating players onto freshly deployed ERC-4337 smart accounts
-would change every one of those addresses and strand existing seats.
+rankings and payouts by the address that staked. Migrating players onto freshly
+deployed ERC-4337 smart accounts would change every one of those addresses.
 
 An EIP-7702 authorization keeps the exact same address and merely gives it code:
 
@@ -877,86 +875,94 @@ An EIP-7702 authorization keeps the exact same address and merely gives it code:
 0xef0100 || delegateAddress      ← the account's code after delegation
 ```
 
+### Who gets it
+
+Only a wallet that can sign an authorization for *our* delegate: the dev
+burner, and an embedded wallet wrapped as a viem local account (`toAccount`).
+An injected wallet cannot be asked for one, so MetaMask, Rabby and Coinbase
+Smart Wallet keep the normal flow, and so does every join from a spoke. The
+README has the full matrix.
+
 ### How it works
 
-1. The player signs one authorization pointing their EOA at `SessionKeyDelegate`
-   and, in the same transaction, calls `grantSession` **on themselves** — a call
-   that only resolves because the authorization in that same transaction put the
-   code there.
-2. The browser generates and stores a session key locally.
-3. That key could sign login nonces with no wallet prompt; the session grant
-   now does that for every wallet.
-
-Joins, mints and every other transaction are the player's own, through their
-wallet: see [Logins only, on L1](#logins-only-on-l1).
+1. The player turns it on: one transaction, signed by the wallet, carries the
+   authorization pointing the EOA at `SessionKeyDelegate` and a call to
+   `grantSession` **on itself** — a call that only resolves because the
+   authorization in that same transaction put the code there. The key granted
+   is the browser's session key, and the session ends when its grant does.
+2. To join, the key signs `SessionCall{target, value, data, nonce}` for
+   `join(matchId)`, and the client sends it to the server as a `relay` frame.
+3. `SessionRelay` checks it and submits `executeWithSession` from its own key.
+   The seat, and the stake, are the account's; the gas is the relayer's.
+4. Collecting winnings is the same, with `withdrawFor(account)`.
 
 Storage lives in the *delegating account*, not in the delegate: under 7702 the
 delegate's code runs with the EOA as `address(this)`. One deployment per chain
 serves every player and holds nothing itself.
 
-### Scope — three axes, all enforced on-chain
+### Scope — fixed in code, capped at grant
 
 A session key that can do anything is just the account key with extra steps.
 
-| Axis | Enforcement | Purpose |
+| Limit | Enforcement | Purpose |
 | --- | --- | --- |
-| **Time** | `validUntil`, with no "never expires" option | A forgotten key stops working on its own |
-| **Value** | Cumulative `spendCap` in native token | A leaked key cannot drain the account |
-| **Calls** | Explicit `(target, selector)` allowlist | A key scoped to joining matches cannot move the player's avatar NFT |
+| **Calls** | `join(matchId)` and `withdrawFor(account)` on the escrow, an immutable of the delegate; exactly one word of arguments | A leaked key can stake into lobbies but never send ETH anywhere: `withdrawFor` pays only the account |
+| **Per call** | `valueCap`, 0.05 ETH from the client | One join cannot stake the balance |
+| **In total** | `spendCap`, 0.25 ETH from the client | A leaked key's whole reach |
+| **Time** | `validUntil`, in the future and at most seven days out | A forgotten key stops working on its own |
+| **Who pays** | `executeWithSession` is not payable | The stake always comes from the account |
 
-The client grants an empty allowlist and a spend cap of zero
-(`SESSION_GRANT` in `wallet/wallet.ts`): the key can call nothing and move
-nothing, so a leaked one can log in as the player until it expires, and do
-nothing else.
+### ERC-1271: the account's own key only
 
-### ERC-1271: how the server accepts a session login
+`isValidSignature` answers for the root key and nothing else. It used to accept
+any live session key too, which meant anything that checks ERC-1271 — a permit,
+an order, a login — took the key's word for the wallet's, with no cap. The
+server checks the off-chain grant instead, and uses ERC-1271 for contract
+wallets' grants.
 
-A session-key signature does not recover to the account address, so `ecrecover`
-alone cannot verify it. `SessionKeyDelegate.isValidSignature` answers for the
-account: valid for the root key (the account never stops being an EOA under
-7702) and for any live session key.
+### The relayer guards its own gas
 
-The gateway's verifier is therefore injected — offline `ecrecover` in
-practice-only mode, an RPC-backed ERC-1271 check when an RPC exists. The server
-will not advertise a delegate it cannot verify against, because a session login
-the gateway would reject is worse than not offering one.
+The delegate protects the player; `SessionRelay` protects the server's gas. It
+submits only a call that:
 
-### Logins only, on L1
+- the delegate would accept (`sessionCallKind` mirrors its check, before any
+  RPC);
+- comes from an account delegated to **our** delegate, since the call runs as
+  the account's code and any other code would run on the server's gas;
+- simulates cleanly, so a revert costs a read;
+- fits the wallet's `RELAY_QUOTA_PER_DAY`, taken before the first await so two
+  racing calls cannot share the last slot, and handed back if the call fails.
 
-The delegate can do more than the client asks of it: `executeWithSession` lets
-anyone submit a call a session key signed, so a server could pay the gas for
-prompt-free joins. It is not used. The hub is Ethereum L1, and a sponsored call
-there is the operator paying L1 gas for it — a relayed join costs roughly
-120–150k gas, about what the fee on a minimum-stake match earns, and mints and
-withdrawals earn nothing at all. Most L1 protocols leave gas to the user; the
-ones that hide it (UniswapX, CoW Swap) take it back out of the transaction
-itself. So the server accepts no relayed calls, and players send their own.
-
-Payouts are pull-only: the server never sends one. A player withdraws with
-their own wallet. A gasless withdrawal comes back as `withdrawFor` through a
-session (FIX_PLAN 5.3) or an EIP-712 signed withdrawal (6.4).
-
-If prompt-free joins come back, the shape that fits L1 is the one those
-protocols use: the player signs a join intent against their escrow balance, the
-keeper batches a match's intents into one transaction, and the gas comes out of
-the pot alongside the fee.
+It pays from `SESSION_RELAYER_PK`, a key holding only gas money. A refusal names
+the revert (`ValueCapExceeded`, `SessionExpired`, or the escrow's error inside
+`CallFailed`), and the client then uses the wallet.
 
 ### Digest parity
 
 `sessionCallDigest` in `protocol/session.ts` mirrors the delegate's EIP-712
 hashing and is pinned to it by frozen vectors on **both** sides, exactly as the
-commit hashes are. Nothing in the client signs calls today, but the delegate
-still accepts them, so the vectors stay: a drift would silently break any
-relayer added later.
+commit hashes are. `sessionCallTypedData` is what the key signs, and a test
+checks it hashes to the same digest.
 
 The verifying contract in the domain is the **account**, never the delegate:
 under 7702 the delegate's code runs as the account, so a digest naming the
 shared implementation would be equally valid against every player who delegated
 to it.
 
-> **Status.** 22 Foundry tests cover real `vm.signAndAttachDelegation`
-> delegations. The browser half — viem's `signAuthorization` against a real
-> wallet — needs Anvil on `--hardfork prague` or a Pectra testnet.
+### Key storage and the page
+
+The key is secp256k1, which WebCrypto cannot hold, so it is kept in IndexedDB
+sealed with an AES-GCM key generated non-extractable (`io/keystore.ts`). A copy
+of the site's storage holds only ciphertext. Script in the page could still use
+the key, so the production build carries a Content-Security-Policy that allows
+no script but the bundle's own, no `eval`, and no origin it does not name
+(`csp.ts`), and the client never builds markup from data.
+
+> **Status.** 33 Foundry tests cover real `vm.signAndAttachDelegation`
+> delegations against the real escrow. `npm run check:one-click` runs the whole
+> path on a Prague anvil with the real deploy and the server's relay port. Not
+> yet checked: Privy's embedded wallet signing the authorization on Base
+> Sepolia (FIX_PLAN 5.1).
 
 ---
 
@@ -1153,9 +1159,10 @@ Two supporting decisions:
 | `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
 | `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
 | **`wallet/`** | **The player's account** |
-| `wallet/flows.ts` | Connect, login, session keys, avatar and hub-chain panels |
+| `wallet/flows.ts` | Connect, login with the session grant, avatar and hub-chain panels |
 | `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
-| `wallet/session.ts` | The browser's login-only session key: load, grant, sign logins |
+| `wallet/grant.ts` | The browser's session key and its grant: sign logins, moves and relayed calls |
+| `wallet/oneClick.ts` | One-click play: the on-chain session, relayed joins and collects |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
@@ -1261,7 +1268,9 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
 | `ATTESTOR_PK` | — | Result signing and settlement relay |
 | `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, `finalize` and `cancelMatch` |
-| `SESSION_DELEGATE` | zero | EIP-7702 session keys (needs `RPC_URL`) |
+| `SESSION_DELEGATE` | registry | One-click play (needs `RPC_URL`, an escrow and `SESSION_RELAYER_PK`) |
+| `SESSION_RELAYER_PK` | — | Pays relayed gas |
+| `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |
 | `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |
 | `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Avatar metadata resolution |
