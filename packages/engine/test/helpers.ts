@@ -71,11 +71,14 @@ export function playMatch(
     const living = match.alive;
     const chosen = new Map<number, Move>();
 
+    const commitments = new Map<number, `0x${string}`>();
     for (const seat of living) {
       const move = strategy(seat, match);
       chosen.set(seat, move);
       const salt = bytes32(`salt:${setup.matchId}:${round}:${seat}`);
-      match.submitCommit(seat, commitMove(setup.matchId, round, seat, { ...move, salt }));
+      const commitment = commitMove(setup.matchId, round, seat, { ...move, salt });
+      commitments.set(seat, commitment);
+      match.submitCommit(seat, commitment);
     }
 
     match.openRevealPhase();
@@ -84,7 +87,14 @@ export function playMatch(
     for (const seat of living) {
       const move = chosen.get(seat) as Move;
       if (silentSeats.has(seat)) {
-        revealedMoves.push({ index: seat, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT });
+        revealedMoves.push({
+          index: seat,
+          action: Action.None,
+          target: 0,
+          revealed: false,
+          salt: ZERO_SALT,
+          commitment: commitments.get(seat) as `0x${string}`,
+        });
         continue;
       }
       const salt = bytes32(`salt:${setup.matchId}:${round}:${seat}`);
@@ -95,6 +105,7 @@ export function playMatch(
         target: move.action === Action.Strike ? move.target : 0,
         revealed: true,
         salt,
+        commitment: commitments.get(seat) as `0x${string}`,
       });
     }
 

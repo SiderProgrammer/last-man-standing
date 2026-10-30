@@ -123,7 +123,7 @@ describe('room lifecycle', () => {
   it('runs to a single winner and reports a signable result', () => {
     let finished: { rounds: number; ranking: readonly string[] } | null = null;
     const instance = room(4, 'complete', {
-      onFinished: (result) => {
+      onFinished: ({ result }) => {
         finished = { rounds: result.rounds, ranking: result.ranking };
       },
     });

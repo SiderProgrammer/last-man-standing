@@ -14,8 +14,9 @@ contract SettlementLibTest is Test {
     }
 
     function test_typehashMatchesString() public pure {
-        bytes32 expected =
-            keccak256("MatchResult(bytes32 matchId,uint32 rounds,bytes32 historyRoot,address[] ranking)");
+        bytes32 expected = keccak256(
+            "MatchResult(bytes32 matchId,uint32 rounds,bytes32 historyRoot,bytes32 transcriptHash,address[] ranking)"
+        );
         assertEq(expected, SettlementLib.MATCH_RESULT_TYPEHASH);
     }
 
@@ -35,10 +36,16 @@ contract SettlementLibTest is Test {
                 bytes32(uint256(1)),
                 uint32(9),
                 bytes32(uint256(2)),
+                bytes32(uint256(3)),
                 rankingHash
             )
         );
-        assertEq(harness.hashMatchResult(bytes32(uint256(1)), 9, bytes32(uint256(2)), ranking), expected);
+        assertEq(
+            harness.hashMatchResult(
+                bytes32(uint256(1)), 9, bytes32(uint256(2)), bytes32(uint256(3)), ranking
+            ),
+            expected
+        );
     }
 
     /// @dev Bits set above an address in calldata are cleaned when the
@@ -48,12 +55,15 @@ contract SettlementLibTest is Test {
         address[] memory ranking = new address[](1);
         ranking[0] = address(0xA11CE);
         bytes memory data =
-            abi.encodeCall(harness.hashMatchResult, (bytes32(0), uint32(1), bytes32(0), ranking));
+            abi.encodeCall(harness.hashMatchResult, (bytes32(0), uint32(1), bytes32(0), bytes32(0), ranking));
         // The one element is the last word of the calldata.
         data[data.length - 32 + 11] = 0xAA;
 
         (bool ok, bytes memory result) = address(harness).staticcall(data);
         assertTrue(ok);
-        assertEq(abi.decode(result, (bytes32)), harness.hashMatchResult(bytes32(0), 1, bytes32(0), ranking));
+        assertEq(
+            abi.decode(result, (bytes32)),
+            harness.hashMatchResult(bytes32(0), 1, bytes32(0), bytes32(0), ranking)
+        );
     }
 }

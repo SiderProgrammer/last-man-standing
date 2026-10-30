@@ -31,7 +31,7 @@ A quick index, since most of these are the reason a given file exists at all.
 
 | Standard | Where | Why it is used |
 | --- | --- | --- |
-| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `protocol/eip712.ts` | Attestors and players sign a readable structure, not an opaque digest, and the domain binds a signature to one contract and one chain |
+| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `protocol/eip712.ts`, `protocol/moves.ts` | Attestors sign results, wallets sign session grants and session keys sign every move as a readable structure, not an opaque digest, and the domain binds a signature to one contract or chain |
 | **EIP-1153** transient storage | `SeatSetLib` | A scratch set that self-clears at end of transaction, turning the settlement permutation check from quadratic to linear |
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | Session keys without changing the player's address — see [Account abstraction](#account-abstraction) |
@@ -39,7 +39,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **ERC-20 wrapper** (`ERC20Wrapper`-style) | `StakedLms` | Stake LMS for sLMS one for one: `deposit`, `requestUnstake`, `claim` — see [Token governance and staking](#token-governance-and-staking) |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
-| **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` | Lets the game server accept a login signed by a session key rather than the account key |
+| **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature`, the gateway's grant check | Lets the game server accept a session grant signed by a contract wallet |
 | **ERC-4337** account abstraction | *considered, not used* | Rejected because it would change every player's address; reasoning in [Account abstraction](#account-abstraction) |
 | **LayerZero v2** messaging | `LayerZeroMessenger` | Concrete transport behind the chain-agnostic messenger interface |
 | **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | Concrete source behind the chain-agnostic randomness interface |
@@ -57,7 +57,7 @@ A quick index, since most of these are the reason a given file exists at all.
 6. [Paying in any token](#paying-in-any-token)
 7. [Governance](#governance)
 8. [Token governance and staking](#token-governance-and-staking)
-9. [Account abstraction](#account-abstraction)
+9. [Session grants](#session-grants) and [account abstraction](#account-abstraction)
 10. [Identity and avatars](#identity-and-avatars)
 11. [Gas engineering in Yul](#gas-engineering-in-yul)
 12. [The off-chain engine](#the-off-chain-engine)
@@ -148,11 +148,19 @@ Three details carry most of the weight:
 - **The salt is per player per round**, persisted to `localStorage` before it is
   sent. Purpose: a refresh between commit and reveal would otherwise leave a
   commitment the player can no longer open, costing them the round.
+- **Every commit and reveal is signed** by the key the player's wallet granted
+  (`Commit` / `Reveal` typed data), and the server answers each commit with a
+  signed `CommitReceipt`. Purpose: the server can drop a move but not invent or
+  alter one, and a dropped move the player holds a receipt for is provable.
+- **The round's rolls come from the commitment set**, published when the commit
+  window closes. Purpose: they are fixed before anyone reveals, so withholding
+  or dropping a reveal cannot re-roll the round.
 
 ### The history root
 
-Each resolved round is hashed and chained into a running root, seeded with the
-rules hash. Purpose: a result can only be verified against the rule set it was
+Each resolved round — every seat's action, target, salt and commitment, HP and
+eliminations — is hashed and chained into a running root, seeded with the rules
+hash. Purpose: a result can only be verified against the rule set it was
 actually played under, and the signed result commits to the entire match rather
 than just the final ranking.
 
@@ -165,12 +173,13 @@ than just the final ranking.
 
 ### What it does
 
-The server plays the match, then signs an EIP-712 `MatchResult`
-(`matchId`, `rounds`, `historyRoot`, `ranking`) under the domain
-`LastManStanding` v1. A quorum of attestor signatures is submitted to `settle`,
-which verifies them and *proposes* the result. It pays out through `finalize`
-once the challenge window has closed; until then the guardian may `veto` it,
-refunding every stake.
+The server plays the match, archives its transcript, then signs an EIP-712
+`MatchResult` (`matchId`, `rounds`, `historyRoot`, `transcriptHash`, `ranking`)
+under the domain `LastManStanding` v1. A quorum of attestor signatures is
+submitted to `settle`, which verifies them and *proposes* the result, storing
+the transcript hash. It pays out through `finalize` once the challenge window
+has closed; until then a seated player may `dispute` it (48 h more) and the
+guardian may `veto` it, refunding every stake, or dismiss the dispute.
 
 ### Why it is built this way
 
@@ -190,16 +199,20 @@ refunding every stake.
 
 ### Trust model, stated plainly
 
-The quorum is trusted for the **ordering** of a result, not its **contents**.
-Because the signed digest commits to the history root, anyone holding the seed
-and the published move log can replay the match and *show* a signed result was
-fabricated. Every player's browser runs that replay when the match ends.
+Verifiable, not enforced. Because the signed digest commits to the history
+root and the transcript hash, anyone can fetch the transcript by that hash,
+check every player's signatures, replay the match and *show* a signed result
+was fabricated. Every player's browser does that once the result is proposed,
+and offers to dispute it if it does not hold up.
 
-Acting on it is the guardian's job, not the contract's: during the challenge
-window the Safe can `veto` a result the replay does not support, and every
-stake is refunded. There is no on-chain replay and no slashing — a deliberate
-choice while the rules are still changing, since an on-chain verifier means
-keeping a second, Solidity copy of the kernel bit-for-bit identical.
+Acting on it is the guardian's job, not the contract's: a dispute holds the
+payout back 48 hours, and the guardian vetoes (every stake refunded) or
+dismisses. A guardian that does neither lets the result finalise: the liveness
+assumption. There is no on-chain replay and no slashing — a deliberate choice
+while the rules are still changing, since an on-chain verifier means keeping a
+second, Solidity copy of the kernel bit-for-bit identical. Today the quorum is
+the operator's one key, and `abortMatch` lets it refund any live match; see the
+README's trust model.
 
 ---
 
@@ -826,17 +839,30 @@ phase on its own.
 
 ---
 
+## Session grants
+
+`packages/protocol/src/chain/moves.ts` · `packages/client/src/wallet/grant.ts` · **Unit-tested**
+
+The wallet signs one EIP-712 `SessionGrant` naming a key the browser keeps for
+a day. The key signs the login nonce on every connect and every commit and
+reveal, so a reconnect costs no prompt and every move in a transcript is
+provably its player's. The grant is shaped like a SIWE message (domain, uri,
+chain, issue and expiry, nonce) and has no chain id in its EIP-712 domain, so a
+wallet sitting on a spoke can still sign it. The server checks the wallet's
+signature with ERC-1271 for a contract wallet. The key can stake or spend
+nothing.
+
 ## Account abstraction
 
-`contracts/src/SessionKeyDelegate.sol` · `packages/client/src/wallet/session.ts` · **Unit-tested**
+`contracts/src/SessionKeyDelegate.sol` · **Unit-tested**
 
 ### The problem
 
-Playing should not mean approving a transaction every few minutes. The dominant
-cost is not the stake — it is the **login**. The gateway authenticates with a
-signed nonce and issues a fresh one per connection, so every reconnect (a
-dropped socket, a refresh, a laptop waking up) prompts the wallet, often in the
-middle of a round with a commit clock running.
+Playing should not mean approving a transaction every few minutes. Logins and
+moves are covered by the session grant above; what remains is joins and
+withdrawals, each a wallet transaction. The delegate below is for making those
+one click; the client does not offer it until that exists, and the login role
+it used to have is gone.
 
 ### Why EIP-7702 and not ERC-4337
 
@@ -858,11 +884,11 @@ An EIP-7702 authorization keeps the exact same address and merely gives it code:
    that only resolves because the authorization in that same transaction put the
    code there.
 2. The browser generates and stores a session key locally.
-3. That key signs login nonces with no wallet prompt.
+3. That key could sign login nonces with no wallet prompt; the session grant
+   now does that for every wallet.
 
-That is all the client uses it for. Joins, mints and every other transaction
-are the player's own, through their wallet: see
-[Logins only, on L1](#logins-only-on-l1).
+Joins, mints and every other transaction are the player's own, through their
+wallet: see [Logins only, on L1](#logins-only-on-l1).
 
 Storage lives in the *delegating account*, not in the delegate: under 7702 the
 delegate's code runs with the EOA as `address(this)`. One deployment per chain
@@ -940,8 +966,10 @@ to it.
 
 `packages/server/src/gateway/gateway.ts` · **Live**
 
-The server issues a random nonce on connect; the wallet signs
-`Last Man Standing login\nnonce:<nonce>`; the server recovers the address.
+The server issues a random nonce on connect; the key the wallet granted (see
+[Session grants](#session-grants)) signs `Last Man Standing login\nnonce:<nonce>`;
+the server checks the grant's wallet signature and that the key signed the
+nonce.
 
 Purpose: the wallet *is* the account — no passwords, no session store, no
 registration — and it is the same address that staked on-chain, so the server

@@ -33,8 +33,10 @@ contract HashLibTest is Test {
     }
 
     function test_roundSeedMatchesTypeScript() public pure {
-        bytes32 roundSeed = HashLib.roundSeed(keccak256("seed"), 3, _salts());
-        assertEq(roundSeed, 0x7e4cede4cdb60ef627f7567fdd7c76c76994dedca72d33a26b4e24a27ac577e2);
+        bytes32 commitmentSet = HashLib.commitmentSetHash(_commitments());
+        assertEq(commitmentSet, 0xf18d89b73a8eed2ced885c9152e679820bf8917ea67e7c46a681c6abe5573adc);
+        bytes32 roundSeed = HashLib.roundSeed(keccak256("seed"), 3, commitmentSet);
+        assertEq(roundSeed, 0x4d667135737ff4ad6b8b379f133a58cbc0bcca5690cfbb05e8015750afc1ad98);
     }
 
     function test_hashRoundMatchesTypeScript() public pure {
@@ -50,8 +52,8 @@ contract HashLibTest is Test {
         eliminated[0] = 1;
 
         assertEq(
-            HashLib.hashRound(3, actions, targets, _salts(), hpAfter, eliminated),
-            0xf7eedecb9cbe6f45b5073a84a3ccd9768a9b16d1181979c49ae825f749ae94c4
+            HashLib.hashRound(3, actions, targets, _salts(), _commitments(), hpAfter, eliminated),
+            0xf0e024d960c9b3f12a0464761e7f50f2cec8ec60ccd49e62ccc83acd1829a3a3
         );
     }
 
@@ -65,5 +67,13 @@ contract HashLibTest is Test {
         salts = new bytes32[](3);
         salts[0] = keccak256("s0");
         salts[2] = keccak256("s2");
+    }
+
+    /// @dev Seat 1 committed, and did not reveal.
+    function _commitments() private pure returns (bytes32[] memory commitments) {
+        commitments = new bytes32[](3);
+        commitments[0] = keccak256("c0");
+        commitments[1] = keccak256("c1");
+        commitments[2] = keccak256("c2");
     }
 }

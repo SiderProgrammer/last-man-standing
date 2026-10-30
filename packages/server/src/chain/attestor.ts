@@ -6,8 +6,10 @@ import {
   addressKey,
   matchResultDomain,
   matchResultMessage,
-  type MatchResult,
+  receiptTypedData,
+  type AttestedResult,
 } from '@lms/protocol';
+import type { ReceiptSigner } from '../gateway/gateway.js';
 import { gameEscrowAbi } from '@lms/protocol';
 import { config, type ServerConfig } from '../config.js';
 import { signerClients } from './viem.js';
@@ -21,7 +23,7 @@ import { signerClients } from './viem.js';
  */
 export async function signResult(
   privateKey: Hex,
-  result: MatchResult,
+  result: AttestedResult,
   chainId: number,
   escrow: Address,
 ): Promise<Hex> {
@@ -32,6 +34,19 @@ export async function signResult(
     primaryType: 'MatchResult',
     message: matchResultMessage(result),
   });
+}
+
+/**
+ * Signs commit receipts with `privateKey`. The server uses the attestor key
+ * where it has one: then the escrow's attestor set is what vouches for the
+ * receipts, and a player can check a receipt against the chain.
+ */
+export function receiptSigner(privateKey: Hex, chainId: number): ReceiptSigner {
+  const account = privateKeyToAccount(privateKey);
+  return {
+    address: account.address,
+    sign: (receipt) => account.signTypedData(receiptTypedData(chainId, receipt)),
+  };
 }
 
 /**
@@ -51,7 +66,7 @@ export interface Relayer {
    * window closes unvetoed; `ChainBridge` finalises it then.
    * No-op when unconfigured.
    */
-  settle(result: MatchResult): Promise<Hex | null>;
+  settle(result: AttestedResult): Promise<Hex | null>;
   /**
    * Signs and submits an abort for a live match this server cannot finish,
    * refunding every seat at once. Null when unconfigured; the escrow then
@@ -116,7 +131,7 @@ export function createRelayer(options: {
         address: options.escrow,
         abi: gameEscrowAbi,
         functionName: 'settle',
-        args: [result.matchId, result.rounds, result.historyRoot, result.ranking, signatures],
+        args: [result.matchId, result.rounds, result.historyRoot, result.transcriptHash, result.ranking, signatures],
       });
       return walletClient.writeContract(request);
     },

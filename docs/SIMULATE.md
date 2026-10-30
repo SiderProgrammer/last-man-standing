@@ -31,7 +31,7 @@ the gateway — is `npm test`.
 ## 2. In the browser (`npm run dev:fork`)
 
 Covered by the UI: practice matches, staking in ETH, paying in USDC / USDT /
-DAI through Uniswap v4, prompt-free logins (EIP-7702 session keys), avatar
+DAI through Uniswap v4, prompt-free logins (session grants), avatar
 minting, the staking panel's ETH and play-mining claims, and a staked match once
 its lobby fills.
 

@@ -253,7 +253,7 @@ contract GameEscrowTest is Fixtures {
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, vm.addr(0xDEAD)));
-        escrow.settle(matchId, 3, historyRoot, ranking, bad);
+        escrow.settle(matchId, 3, historyRoot, TRANSCRIPT_HASH, ranking, bad);
 
         address[] memory shuffled = new address[](4);
         shuffled[0] = ranking[0];
@@ -262,7 +262,37 @@ contract GameEscrowTest is Fixtures {
         shuffled[3] = treasury; // not a seat
         bytes memory sigs = _signResult(_twoAttestors(), matchId, 3, historyRoot, shuffled);
         vm.expectRevert(GameEscrow.NotAPermutation.selector);
-        escrow.settle(matchId, 3, historyRoot, shuffled, sigs);
+        escrow.settle(matchId, 3, historyRoot, TRANSCRIPT_HASH, shuffled, sigs);
+    }
+
+    function test_settle_storesAndEmitsTheTranscriptHash() public {
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(4)));
+        address[] memory ranking = _rankingOf(matchId);
+
+        vm.expectEmit(true, true, false, false, address(escrow));
+        emit GameEscrow.ResultProposed(matchId, HISTORY_ROOT, ROUNDS, TRANSCRIPT_HASH, ranking, 0);
+        _propose(matchId, ranking);
+        assertEq(escrow.getMatch(matchId).transcriptHash, TRANSCRIPT_HASH);
+    }
+
+    /// @dev The attestors sign over the transcript hash: a relayer cannot
+    ///      swap in a different transcript under their signatures.
+    function test_settle_rejectsATranscriptHashTheQuorumDidNotSign() public {
+        // One signature, so it recovers to one stranger rather than to two
+        // that may come out in either order.
+        vm.prank(owner);
+        config.setAttestorSet(_attestors(attestorA, attestorB, attestorC), 1);
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(5)));
+        address[] memory ranking = _rankingOf(matchId);
+        uint256[] memory one = new uint256[](1);
+        one[0] = ATTESTOR_PK_A;
+        bytes memory sigs = _signResult(one, matchId, ROUNDS, HISTORY_ROOT, ranking);
+
+        vm.expectPartialRevert(GameEscrow.NotAnAttestor.selector);
+        escrow.settle(matchId, ROUNDS, HISTORY_ROOT, keccak256("another transcript"), ranking, sigs);
+        escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, sigs);
     }
 
     function test_settle_rejectsSingleAttestorWhenThresholdIsTwo() public {
@@ -273,7 +303,7 @@ contract GameEscrowTest is Fixtures {
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _signResult(one, matchId, 1, keccak256("r"), ranking);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.QuorumNotMet.selector, uint256(1), uint32(2)));
-        escrow.settle(matchId, 1, keccak256("r"), ranking, sigs);
+        escrow.settle(matchId, 1, keccak256("r"), TRANSCRIPT_HASH, ranking, sigs);
     }
 
     function test_withdraw_paysRecipient() public {

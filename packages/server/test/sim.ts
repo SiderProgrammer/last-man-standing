@@ -1,5 +1,5 @@
-import { keccak256, toHex } from 'viem';
-import { mulberry32, type Link } from '@lms/harness';
+import { hashTypedData, keccak256, toHex, type TypedDataDefinition } from 'viem';
+import { mulberry32, type BotSigner, type Link } from '@lms/harness';
 import { Gateway, Lobby, MemoryArchive, nullRelayer, type Relayer, type Socket } from '@lms/server';
 
 /**
@@ -13,7 +13,7 @@ import { Gateway, Lobby, MemoryArchive, nullRelayer, type Relayer, type Socket }
 
 /** Lets pending promise chains (signing, verifying, dispatch) run to completion. */
 export async function settle(): Promise<void> {
-  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
 export class VirtualClock {
@@ -198,18 +198,24 @@ export class SimNetwork {
 }
 
 /**
- * The simulation's stand-in for a login signature. Real recovery goes through
- * a dynamic import whose timing is not under the virtual clock's control, so
- * it would make runs irreproducible; the gateway's real verification is
- * covered by its own tests. Pass `sign: simSigner(address)` to a bot.
+ * The simulation's stand-in for a signature. Real recovery goes through a
+ * dynamic import whose timing is not under the virtual clock's control, so it
+ * would make runs irreproducible; the gateway's real verification is covered
+ * by its own tests. Pass `signer: simSigner` to a bot.
  */
 export function simSignature(address: string, message: string): `0x${string}` {
   return keccak256(toHex(`${address.toLowerCase()}|${message}`));
 }
 
-export function simSigner(address: string): (message: string) => Promise<`0x${string}`> {
-  return async (message) => simSignature(address, message);
+/** `simSignature` over typed data, by its digest. */
+export function simTypedSignature(address: string, data: TypedDataDefinition): `0x${string}` {
+  return simSignature(address, hashTypedData(data));
 }
+
+export const simSigner: BotSigner = {
+  message: async (key, message) => simSignature(key.address, message),
+  typed: async (key, data) => simTypedSignature(key.address, data),
+};
 
 export interface WorldOptions {
   commitMs?: number;
@@ -251,6 +257,11 @@ export function world(seed = 1, options: WorldOptions = {}) {
       directory: () => ({ open: [], live: [] }),
       limits: { maxConnectionsPerIp: 10_000, connectBurstPerIp: 10_000, loginBurstPerIp: 10_000 },
       verify: async ({ address, message, signature }) => signature === simSignature(address, message),
+      verifyGrant: async ({ address, signature, ...data }) => signature === simTypedSignature(address, data),
+      verifyKey: {
+        message: async ({ address, message, signature }) => signature === simSignature(address, message),
+        typed: async ({ address, signature, ...data }) => signature === simTypedSignature(address, data),
+      },
     });
     return { lobby, gateway };
   };

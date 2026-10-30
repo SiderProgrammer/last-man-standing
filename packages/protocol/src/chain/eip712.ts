@@ -13,9 +13,20 @@ export const MATCH_RESULT_TYPES = {
     { name: 'matchId', type: 'bytes32' },
     { name: 'rounds', type: 'uint32' },
     { name: 'historyRoot', type: 'bytes32' },
+    { name: 'transcriptHash', type: 'bytes32' },
     { name: 'ranking', type: 'address[]' },
   ],
 } as const;
+
+/**
+ * A result as the attestors sign it: the engine's result, plus the hash of
+ * the archived transcript it came from (`hashTranscript`). Signing the hash
+ * is what makes the archive part of the result: the escrow stores it, and a
+ * transcript that does not hash to it is not this match's.
+ */
+export interface AttestedResult extends MatchResult {
+  transcriptHash: `0x${string}`;
+}
 
 /**
  * What the attestor quorum signs to abort a live match the server can no
@@ -38,11 +49,12 @@ export function matchResultDomain(
 }
 
 /** Payload shape expected by `signTypedData`. */
-export function matchResultMessage(result: MatchResult) {
+export function matchResultMessage(result: AttestedResult) {
   return {
     matchId: result.matchId,
     rounds: result.rounds,
     historyRoot: result.historyRoot,
+    transcriptHash: result.transcriptHash,
     ranking: result.ranking,
   };
 }

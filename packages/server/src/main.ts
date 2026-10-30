@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
-import { MAX_CLIENT_FRAME_BYTES } from '@lms/protocol';
+import { MAX_CLIENT_FRAME_BYTES, errorMessage } from '@lms/protocol';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Heartbeat } from './gateway/heartbeat.js';
@@ -14,8 +14,10 @@ import { peerFrom } from './gateway/peer.js';
 import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { createArchive } from './lobby/store.js';
+import { transcriptResponse } from './lobby/transcripts.js';
 import { createStyleBook } from './lobby/styles.js';
-import { relayerFromEnv } from './chain/attestor.js';
+import { generatePrivateKey } from 'viem/accounts';
+import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
@@ -35,6 +37,9 @@ const HEARTBEAT_MS = 30_000;
 async function main(): Promise<void> {
   const archive = await createArchive(config.databaseUrl);
   const relayer = relayerFromEnv();
+  // The attestor key where there is one. A practice-only server has none,
+  // and signs with a key of its own that lasts as long as the process.
+  const receipts = receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId);
 
   const avatarCollections = parseCollections(config.avatarCollections);
   const avatars = new AvatarRegistry({
@@ -52,6 +57,8 @@ async function main(): Promise<void> {
     avatars,
     styles,
     maxPracticeRooms: config.maxPracticeRooms,
+    chainId: config.chainId,
+    receiptSigner: receipts.address,
   });
 
 
@@ -134,6 +141,10 @@ async function main(): Promise<void> {
     directory: () => bridge?.directory() ?? { open: [], live: [] },
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
+    // A contract wallet's grant can only be checked by asking the wallet.
+    verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
+    verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
+    receipts,
     // Only offered when logins can actually be verified on-chain.
     sessionDelegate: rpc && config.sessionDelegate !== ZERO_ADDRESS ? config.sessionDelegate : null,
     ...(analyst ? { analyst } : {}),
@@ -159,14 +170,24 @@ async function main(): Promise<void> {
   });
 
   const http = createServer((request, response) => {
-    const route = proposalsResponse(proposals, request.url ?? '');
-    if (route) {
-      // Read by the client from its own origin, which is not this one.
+    // Both read by the client from its own origin, which is not this one.
+    const answer = (route: { status: number; body: string }) => {
       response.writeHead(route.status, {
         'content-type': 'application/json',
         'access-control-allow-origin': '*',
       });
       response.end(route.body);
+    };
+    const route = proposalsResponse(proposals, request.url ?? '');
+    if (route) {
+      answer(route);
+      return;
+    }
+    if ((request.url ?? '').startsWith('/transcripts/')) {
+      transcriptResponse(archive, request.url ?? '').then(
+        (found) => answer(found ?? { status: 404, body: '{}' }),
+        (error: unknown) => answer({ status: 500, body: JSON.stringify({ error: errorMessage(error) }) }),
+      );
       return;
     }
     if (request.url === '/health') {

@@ -45,7 +45,7 @@ contract AbortMatchTest is Fixtures {
 
         bytes memory sigs = _abortSignatures(_twoAttestors(), matchId);
         vm.expectEmit(true, false, false, true, address(escrow));
-        emit GameEscrow.MatchCancelled(matchId, "aborted by attestors");
+        emit GameEscrow.MatchCancelled(matchId, GameEscrow.CancelReason.AbortedByAttestors);
         escrow.abortMatch(matchId, sigs);
 
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Cancelled));

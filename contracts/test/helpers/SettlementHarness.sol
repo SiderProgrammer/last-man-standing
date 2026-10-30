@@ -18,12 +18,14 @@ import {SignatureLib} from "../../src/libraries/SignatureLib.sol";
 ///      them compile `GameEscrow`, `SpokeEscrow` and two mocks
 ///      to test a hashing function.
 contract SettlementHarness {
-    function hashMatchResult(bytes32 matchId, uint32 rounds, bytes32 historyRoot, address[] calldata ranking)
-        external
-        pure
-        returns (bytes32)
-    {
-        return SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking);
+    function hashMatchResult(
+        bytes32 matchId,
+        uint32 rounds,
+        bytes32 historyRoot,
+        bytes32 transcriptHash,
+        address[] calldata ranking
+    ) external pure returns (bytes32) {
+        return SettlementLib.hashMatchResult(matchId, rounds, historyRoot, transcriptHash, ranking);
     }
 
     function toTypedDataHash(bytes32 domainSeparator, bytes32 structHash) external pure returns (bytes32) {

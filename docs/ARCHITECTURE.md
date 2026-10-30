@@ -139,9 +139,13 @@ a later round or claimed by another seat, and the target is forced to zero for e
 action but Strike so the hash does not leak whether you intended to strike.
 
 The match seed is delivered by a randomness oracle *after* the lobby locks, and every
-roll also mixes in the round's revealed salts. Neither the server nor a player can pick
-moves against known rolls, and anyone holding the seed and the published salts can
-replay every roll in the match.
+roll also mixes in the round's full set of commitments: `roundSeed(seed, round,
+commitmentSetHash(commitments by seat))`. Each commitment hides a fresh salt, so nobody
+can know the rolls before every commitment is in, and from then on nothing at the reveal
+can move them: a withheld or dropped reveal costs that seat its move, never re-rolls the
+round. The set stays hidden until the commit window closes, or the last to commit could
+grind a salt against the others'. Anyone holding the seed and the published commitments
+can replay every roll in the match.
 
 ---
 
@@ -217,19 +221,20 @@ instead of drifting silently.
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
 | **`match/`** | **One live match** |
-| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop) |
+| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop), each round's signatures and receive times, and the transcript it hands the lobby at the end |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
 | `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
-| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
+| `lobby/store.ts` | Match archive, transcripts included: in-memory by default, Postgres when `DATABASE_URL` is set |
+| `lobby/transcripts.ts` | `GET /transcripts/<hash>`: a staked match's transcript, by the hash the escrow stored |
 | **`gateway/`** | **The socket boundary** |
-| `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
+| `gateway/gateway.ts` | Session registry, login under a session grant, move-signature checks, commit receipts, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
 | **`chain/`** | **Everything that talks to a chain** |
 | `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
-| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
+| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle`; signs commit receipts |
 | `chain/relayer.ts` | Submits and pays for calls a player's session key authorised |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
@@ -248,9 +253,18 @@ Three deliberate design choices make this testable:
   adopt-once — is exercised against a fake instead of an RPC. `ChainBridge.start` still
   takes a URL and builds the real one, so nothing at the composition root changed.
 
-Login is a signed nonce: the server issues a random nonce on connect, the wallet signs
-`Last Man Standing login\nnonce:<nonce>`, and the server recovers the address. The
-wallet *is* the identity, and it is the same address that staked on-chain.
+Login is a session grant plus a signed nonce. The wallet signs one EIP-712
+`SessionGrant{wallet, sessionKey, domain, uri, chainId, issuedAt, expiresAt, nonce}`,
+shaped like a SIWE message so a wallet binds it to the page asking; the browser keeps
+the grant and its key for a day. On every connect the server issues a random nonce and
+the *key* signs `Last Man Standing login\nnonce:<nonce>`. The server checks the grant
+(its chain, its expiry, at most a week, its origin against `ALLOWED_ORIGINS`, and the
+wallet's signature, through ERC-1271 for a contract wallet) and that the key signed the
+nonce. From then on every commit and reveal must be signed by that key as EIP-712
+`Commit` / `Reveal` typed data naming the match, round and seat, and each accepted commit
+is answered with a signed `CommitReceipt`. The wallet *is* the identity, and it is the
+same address that staked on-chain. A login with a plain wallet signature and no grant
+still works, for watching; it cannot play.
 
 `ChainBridge` converges on the chain's view through a single polling loop rather than a
 web of event subscriptions: it discovers lobbies from `MatchCreated`, re-reads each
@@ -477,9 +491,10 @@ Players wear cosmetic NFT avatars in the arena. Three decisions shape the design
 ### Account abstraction: EIP-7702, not ERC-4337
 
 The goal is that playing does not mean approving a transaction every few minutes.
-The dominant cost is not the stake — it is the login: the gateway authenticates with a
-signed nonce and issues a fresh one per connection, so every reconnect (a dropped socket,
-a refresh, a laptop waking mid-match) prompts the wallet while a commit clock is running.
+Logins and moves no longer need the delegation for that: the session grant above makes
+every reconnect prompt-free for every kind of wallet. The delegation's remaining purpose
+is one-click joins and withdrawals, relayed and paid for by the server, and the client
+does not offer it until that exists. What follows is the delegate as deployed.
 
 **Why 7702 rather than a smart account.** In this protocol the address *is* the identity:
 `GameEscrow` keys seats, rankings and payouts by the address that staked, and
@@ -519,29 +534,59 @@ not corrupt a match, but every relayed call would silently stop recovering the s
 
 ### Trust model
 
-A result is signed by a quorum of allowlisted attestors and is *proposed*, not paid. The
-signed root commits to every round's actions, targets, salts, HP and eliminations, so
-anyone holding the published rounds can replay the match with the same pure kernel the
-server runs and see whether the result follows from them. Every player's browser does
-exactly that at the end of a match (`client/src/game/verify.ts`) and compares its root
-with the one the escrow stored.
+**Verifiable, not enforced.** One operator runs the server and, today, holds the only
+attestor key; a separate guardian key can veto. Nothing on-chain checks a move. What the
+protocol does instead is make every claim the operator makes checkable by anyone, and give
+a seated player a way to object in time.
 
-Detection is off-chain; the remedy is on-chain. For `challengeWindow` after `settle`, the
-guardian Safe (or governance) may `veto` the result, which refunds every stake. Once the
-window closes unvetoed, anyone may `finalize` it. So a dispute is decided by the Safe,
-backed by a replay anyone can run for free — not by the contract. A compromised guardian
-can void honest results, but every player keeps their stake; it can never redirect one.
+- **Moves are signed.** Each player's wallet grants a browser-held key, and that key signs
+  every commit and reveal for a named match, round and seat. The server can drop a move;
+  it cannot invent or alter one without a key it does not have.
+- **Commits are receipted.** The server signs a `CommitReceipt` for every commit it takes
+  (with the attestor key, so the escrow's attestor set vouches for it). The commitment set
+  is published when the window closes, and the round's rolls are drawn from it, so a
+  dropped reveal cannot re-roll the round.
+- **The transcript is archived first.** At the end of a match the server stores the full
+  transcript — setup, every round record, every signature, every grant — and only then
+  settles. `settle` carries the transcript's hash; it is part of the EIP-712 `MatchResult`
+  the attestors sign, and the escrow stores and emits it. A transcript that cannot be
+  archived is never settled: the match is aborted and refunded.
+- **The browser checks it against the chain.** Once the result is proposed, every
+  player's browser reads the escrow (seed, rules digest, seats, root, ranking hash,
+  transcript hash), fetches the transcript by its hash (`GET /transcripts/<hash>`), and
+  runs `auditTranscript`: the hash matches, the replay reaches the stored root and ranking,
+  every reveal opens its commitment, every move is signed by a key its seat's wallet
+  granted, and the player's own moves and receipts are all accounted for.
+- **A player can dispute.** If the audit fails, `dispute(matchId, evidenceHash)` — any
+  seated player, once each, inside the challenge window — pushes the payout back by
+  `DISPUTE_EXTENSION` (48 h). The evidence bundle (the problems, the player's sealed moves,
+  salts and receipts) goes to the guardian, who replays the transcript and calls `veto`
+  (every stake refunded) or `dismissDispute` (the deadline goes back to where it was).
+  Neither `dispute`, `veto`, `dismissDispute` nor `finalize` is ever paused.
+
+What stays trusted:
+
+- **The guardian decides disputes, and liveness rests on it doing so.** A guardian that
+  neither vetoes nor dismisses lets the result finalise when the extension runs out. A
+  compromised guardian can void honest results, but every player keeps their stake; it can
+  never redirect one.
+- **`abortMatch` lets the operator refund any live match.** It needs only the attestor
+  quorum, which is the operator today. It can send every stake back early; it cannot take
+  one.
+- **The attestors are not yet independent.** The quorum is one key, so the signed result
+  says what the server says. The transcript is what makes that checkable, and the escrow
+  enforces the quorum either way, so independent attestors are a deployment change.
+- **Censorship is only partly provable.** A receipted commit missing from the transcript,
+  or a sent reveal counted as missing, is evidence. A commit the server refuses before
+  receipting it is not.
+- **Held moves are visible to the server.** With "reveal for me if I disconnect", the
+  server learns the move at commit time: the one case where it knows a move before the
+  reveal.
 
 This is a deliberate trust level for a testnet and a low-stake early mainnet. An on-chain
 fraud proof — a Solidity port of the kernel that replays a challenged match and slashes
 bonded attestors — was built and removed: it doubled every rule change while the rules
 are still moving. It is in git history (`fadf583`) for when the rules are frozen.
-
-What stays trusted beyond that: the quorum could invent a player's *move*. The published salt must
-open the player's commitment, but commitments are exchanged off-chain, so a forged move
-replayed faithfully looks valid. Everything downstream of the moves is enforced. The
-seed is drawn after the lobby closes, and each round's rolls also depend on every
-player's revealed salt, so nobody can choose moves against known rolls.
 
 ### Cross-chain model
 

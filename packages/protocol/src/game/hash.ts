@@ -35,10 +35,27 @@ export function commitMove(
 /** Salt recorded for a seat that revealed nothing this round. */
 export const ZERO_SALT = `0x${'0'.repeat(64)}` as const;
 
+/** Commitment recorded for a seat that sealed nothing this round. */
+export const NO_COMMITMENT = ZERO_SALT;
+
+/**
+ * Every seat's commitment for a round, indexed by seat, with `NO_COMMITMENT`
+ * for any seat that was dead or did not commit.
+ */
+export function commitmentsBySeat(
+  seats: number,
+  moves: ReadonlyArray<{ index: number; commitment: `0x${string}` }>,
+): `0x${string}`[] {
+  const commitments: `0x${string}`[] = new Array<`0x${string}`>(seats).fill(NO_COMMITMENT);
+  for (const move of moves) {
+    if (move.index >= 0 && move.index < seats) commitments[move.index] = move.commitment;
+  }
+  return commitments;
+}
+
 /**
  * Every seat's revealed salt for a round, indexed by seat, with `ZERO_SALT`
- * for any seat that was dead or did not reveal. The one canonical layout used
- * by both the round seed and the round hash.
+ * for any seat that was dead or did not reveal. The layout the round hash uses.
  */
 export function saltsBySeat(
   seats: number,
@@ -52,7 +69,7 @@ export function saltsBySeat(
 }
 
 const ROUND_ABI = parseAbiParameters(
-  'uint32 round, uint8[] actions, uint8[] targets, bytes32[] salts, uint32[] hpAfter, uint8[] eliminated',
+  'uint32 round, uint8[] actions, uint8[] targets, bytes32[] salts, bytes32[] commitments, uint32[] hpAfter, uint8[] eliminated',
 );
 
 /**
@@ -61,7 +78,10 @@ const ROUND_ABI = parseAbiParameters(
  * The salts are part of it because they are part of the outcome: they decide
  * every roll in the round. A history root that left them out would let a
  * quorum publish different salts after the fact, and a replay could no
- * longer re-derive the rolls the root was signed over.
+ * longer re-derive the rolls the root was signed over. The commitments are
+ * part of it so the signed root pins what every seat sealed, revealed or not:
+ * each reveal can be checked against its commitment, and a commitment a
+ * player holds a receipt for cannot be left out without the root changing.
  */
 export function hashRound(
   round: number,
@@ -75,9 +95,10 @@ export function hashRound(
     targets[move.index] = move.action === Action.Strike ? move.target : 0;
   }
   const salts = saltsBySeat(seats, record.moves);
+  const commitments = commitmentsBySeat(seats, record.moves);
   const hpAfter = record.hpAfter.map((hp) => (hp > 0 ? hp : 0));
   return keccak256(
-    encodeAbiParameters(ROUND_ABI, [round, actions, targets, salts, hpAfter, [...record.eliminated]]),
+    encodeAbiParameters(ROUND_ABI, [round, actions, targets, salts, commitments, hpAfter, [...record.eliminated]]),
   );
 }
 
@@ -101,26 +122,39 @@ export function chainHistory(previous: `0x${string}`, roundHash: `0x${string}`):
   return keccak256(encodeAbiParameters(HISTORY_STEP_ABI, [previous, roundHash]));
 }
 
-const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32[] salts');
+const COMMITMENT_SET_ABI = parseAbiParameters('bytes32[] commitments');
 
 /**
- * Entropy for one round's rolls: the match seed, the round, and every revealed
- * salt, in seat order.
+ * Digest of a round's commitments, in seat order with `NO_COMMITMENT` for a
+ * seat that sealed nothing. Fixed the moment the commit window closes.
+ */
+export function commitmentSetHash(commitments: readonly `0x${string}`[]): `0x${string}` {
+  return keccak256(encodeAbiParameters(COMMITMENT_SET_ABI, [[...commitments]]));
+}
+
+const ROUND_SEED_ABI = parseAbiParameters('bytes32 seed, uint32 round, bytes32 commitmentSet');
+
+/**
+ * Entropy for one round's rolls: the match seed, the round, and the digest of
+ * every commitment sealed in it (`commitmentSetHash`).
  *
  * The match seed alone is public from the moment the match starts, so rolls
  * keyed on it could be computed before anyone committed — which striker a
- * Guard blocks, and how ties break, would be a lookup table. Mixing in the
- * salts makes each round's rolls depend on every player's secret, so nobody can
- * know them until all reveals are in. A player who withholds a reveal to change
- * a roll forfeits their own move and takes every hit unguarded, which prices
- * that grind honestly.
+ * Guard blocks, and how ties break, would be a lookup table. Each commitment
+ * hides a fresh salt, so nobody can know the rolls until every commitment is
+ * in. And they are fixed at that moment: what happens at reveal cannot move
+ * them. A player who withholds a reveal, or a server that drops one, changes
+ * only that seat's move, never the dice. (Keyed on the revealed salts instead,
+ * a withheld reveal re-rolled the round.)
+ *
+ * The commitments are kept from everyone until the window closes, or the
+ * last to commit could grind their salt against the others' and pick the
+ * rolls. The server sees them as they arrive; it still cannot choose a
+ * player's salt, and with `hold` it is the one party that knows a move before
+ * the reveal.
  */
-export function roundSeed(
-  seed: `0x${string}`,
-  round: number,
-  salts: readonly `0x${string}`[],
-): `0x${string}` {
-  return keccak256(encodeAbiParameters(ROUND_SEED_ABI, [seed, round, [...salts]]));
+export function roundSeed(seed: `0x${string}`, round: number, commitmentSet: `0x${string}`): `0x${string}` {
+  return keccak256(encodeAbiParameters(ROUND_SEED_ABI, [seed, round, commitmentSet]));
 }
 
 const DRAW_ABI = parseAbiParameters('bytes32 roundSeed, uint32 nonce');

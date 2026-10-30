@@ -21,6 +21,7 @@ export function stateBeforeRound(state: PublicMatchState, round: number): Public
     ...state,
     round,
     committed: [],
+    commitments: [],
     revealed: [],
     history: earlier,
     players: state.players.map((player) => ({

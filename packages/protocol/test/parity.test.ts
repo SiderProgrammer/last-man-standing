@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { concatHex, encodeAbiParameters, hashDomain, hashTypedData, keccak256, parseAbiParameters, toHex } from 'viem';
 import {
   MATCH_ABORT_TYPES,
+  MATCH_RESULT_TYPES,
   matchResultDomain,
+  matchResultMessage,
+  type Transcript,
   Action,
   DEFAULT_RULES,
   ZERO_SALT,
   chainHistory,
   commitMove,
+  commitmentSetHash,
   deriveMatchId,
   draw,
   drawBps,
@@ -20,6 +24,8 @@ import {
 
 /** Seat 1 did not reveal, so its salt is zero. Same as `_salts()` in `HashLib.t.sol`. */
 const SALTS = [keccak256(toHex('s0')), ZERO_SALT, keccak256(toHex('s2'))];
+/** Seat 1 committed and did not reveal. Same as `_commitments()` in `HashLib.t.sol`. */
+const COMMITMENTS = [keccak256(toHex('c0')), keccak256(toHex('c1')), keccak256(toHex('c2'))];
 
 /**
  * Frozen cross-language vectors.
@@ -45,20 +51,22 @@ describe('hash parity with the Solidity mirror', () => {
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(DEFAULT_RULES);
   });
 
-  it('pins a round seed and the draws taken from it', () => {
-    const entropy = roundSeed(keccak256(toHex('seed')), 3, SALTS);
-    expect(entropy).toBe('0x7e4cede4cdb60ef627f7567fdd7c76c76994dedca72d33a26b4e24a27ac577e2');
-    expect(drawBps(entropy, 1)).toBe(91);
-    expect(draw(entropy, 258)).toBe(0x35488afc3fef29f5171659d3e19c131674225566a149e03f8284036d4406df15n);
+  it('pins a commitment set, a round seed and the draws taken from it', () => {
+    const set = commitmentSetHash(COMMITMENTS);
+    expect(set).toBe('0xf18d89b73a8eed2ced885c9152e679820bf8917ea67e7c46a681c6abe5573adc');
+    const entropy = roundSeed(keccak256(toHex('seed')), 3, set);
+    expect(entropy).toBe('0x4d667135737ff4ad6b8b379f133a58cbc0bcca5690cfbb05e8015750afc1ad98');
+    expect(drawBps(entropy, 1)).toBe(4023);
+    expect(draw(entropy, 258)).toBe(0xe2504df953442fd406f6996306c6bcd20bea346d70650cee4541d118af9a7e57n);
   });
 
-  it('pins a round hash, salts included', () => {
+  it('pins a round hash, salts and commitments included', () => {
     const record = {
       round: 3,
       moves: [
-        { index: 0, action: Action.Strike, target: 2, revealed: true, salt: SALTS[0] as `0x${string}` },
-        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
-        { index: 2, action: Action.Guard, target: 0, revealed: true, salt: SALTS[2] as `0x${string}` },
+        { index: 0, action: Action.Strike, target: 2, revealed: true, salt: SALTS[0] as `0x${string}`, commitment: COMMITMENTS[0] as `0x${string}` },
+        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT, commitment: COMMITMENTS[1] as `0x${string}` },
+        { index: 2, action: Action.Guard, target: 0, revealed: true, salt: SALTS[2] as `0x${string}`, commitment: COMMITMENTS[2] as `0x${string}` },
       ],
       strikes: [],
       stallDamage: 12,
@@ -66,17 +74,17 @@ describe('hash parity with the Solidity mirror', () => {
       hpAfter: [95, 0, 66],
     };
     expect(hashRound(3, 3, record)).toBe(
-      '0xf7eedecb9cbe6f45b5073a84a3ccd9768a9b16d1181979c49ae825f749ae94c4',
+      '0xf0e024d960c9b3f12a0464761e7f50f2cec8ec60ccd49e62ccc83acd1829a3a3',
     );
   });
 
-  it('changes the round seed when any one salt changes', () => {
+  it('changes the round seed when any one commitment changes', () => {
     const seed = keccak256(toHex('seed'));
-    const base = roundSeed(seed, 3, SALTS);
-    SALTS.forEach((_, seat) => {
-      const changed = [...SALTS];
+    const base = roundSeed(seed, 3, commitmentSetHash(COMMITMENTS));
+    COMMITMENTS.forEach((_, seat) => {
+      const changed = [...COMMITMENTS];
       changed[seat] = keccak256(toHex(`other:${seat}`));
-      expect(roundSeed(seed, 3, changed)).not.toBe(base);
+      expect(roundSeed(seed, 3, commitmentSetHash(changed))).not.toBe(base);
     });
   });
 
@@ -116,7 +124,7 @@ describe('hash parity with the Solidity mirror', () => {
 
   it('keeps draws inside the basis-point range and reproducible', () => {
     for (let round = 1; round <= 30; round += 1) {
-      const entropy = roundSeed(keccak256(toHex('seed')), round, SALTS);
+      const entropy = roundSeed(keccak256(toHex('seed')), round, commitmentSetHash(COMMITMENTS));
       for (let nonce = 0; nonce < 8; nonce += 1) {
         const roll = drawBps(entropy, nonce);
         expect(roll).toBeGreaterThanOrEqual(0);
@@ -163,5 +171,25 @@ describe('abort typed data', () => {
     expect(hashTypedData({ domain, types: MATCH_ABORT_TYPES, primaryType: 'MatchAbort', message: { matchId } })).toBe(
       expected,
     );
+  });
+});
+
+describe('result typed data', () => {
+  /**
+   * The digest the attestors sign for the four-seat golden match, under a
+   * fixed domain. `GoldenTranscript.t.sol` rebuilds it from the same file with
+   * `SettlementLib` and the escrow's domain formula and asserts the same
+   * literal, so a drift in the type string or the encoding fails one side.
+   */
+  it('pins a MatchResult digest shared with the Solidity suite', () => {
+    const file = new URL('../../../contracts/test/fixtures/golden/four-seats.json', import.meta.url);
+    const golden = JSON.parse(readFileSync(file, 'utf8')) as { transcriptHash: `0x${string}`; transcript: Transcript };
+    const digest = hashTypedData({
+      domain: matchResultDomain(84532, '0x000000000000000000000000000000000000e5c0'),
+      types: MATCH_RESULT_TYPES,
+      primaryType: 'MatchResult',
+      message: matchResultMessage({ ...golden.transcript.result, transcriptHash: golden.transcriptHash }),
+    });
+    expect(digest).toBe('0x528978564a977acf0690f2ba7d70962cf87faeca405ebdd98290e32f54577255');
   });
 });

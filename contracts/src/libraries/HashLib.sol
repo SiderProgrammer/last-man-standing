@@ -37,25 +37,34 @@ library HashLib {
     }
 
     /// @dev Everything is indexed by seat. `salts` holds zero for a seat that
-    ///      was dead or did not reveal.
+    ///      was dead or did not reveal, `commitments` zero for one that was
+    ///      dead or did not commit.
     function hashRound(
         uint32 round,
         uint8[] memory actions,
         uint8[] memory targets,
         bytes32[] memory salts,
+        bytes32[] memory commitments,
         uint32[] memory hpAfter,
         uint8[] memory eliminated
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(round, actions, targets, salts, hpAfter, eliminated));
+        return keccak256(abi.encode(round, actions, targets, salts, commitments, hpAfter, eliminated));
     }
 
     function historySeed(bytes32 matchId, bytes32 rulesHash, bytes32 seed) internal pure returns (bytes32) {
         return keccak256(abi.encode(matchId, rulesHash, seed));
     }
 
-    /// @dev Entropy for one round's rolls. Same encoding as `roundSeed` in TS.
-    function roundSeed(bytes32 seed, uint32 round, bytes32[] memory salts) internal pure returns (bytes32) {
-        return keccak256(abi.encode(seed, round, salts));
+    /// @dev Digest of a round's commitments, in seat order with zero for a
+    ///      seat that sealed none. Same encoding as `commitmentSetHash` in TS.
+    function commitmentSetHash(bytes32[] memory commitments) internal pure returns (bytes32) {
+        return keccak256(abi.encode(commitments));
+    }
+
+    /// @dev Entropy for one round's rolls, fixed when the commit window
+    ///      closes. Same encoding as `roundSeed` in TS.
+    function roundSeed(bytes32 seed, uint32 round, bytes32 commitmentSet) internal pure returns (bytes32) {
+        return keccak256(abi.encode(seed, round, commitmentSet));
     }
 
     function deriveMatchId(uint256 chainId, address escrow, uint256 nonce) internal pure returns (bytes32) {

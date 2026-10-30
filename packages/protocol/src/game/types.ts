@@ -114,8 +114,8 @@ export interface RoundRecord {
   round: number;
   /**
    * Declared move of every player that was alive at the start of the round,
-   * with the salt it was revealed under (`ZERO_SALT` if it was not revealed).
-   * The salts are published so anyone can recompute the round's rolls.
+   * with the salt it was revealed under (`ZERO_SALT` if it was not revealed)
+   * and the commitment it was sealed under.
    */
   moves: Array<{
     index: number;
@@ -123,6 +123,13 @@ export interface RoundRecord {
     target: number;
     revealed: boolean;
     salt: `0x${string}`;
+    /**
+     * The commitment the seat sealed this round, or `NO_COMMITMENT` if it
+     * sealed none. Published for every seat, revealed or not, so a reveal can
+     * be checked against what was committed, and so a commitment the server
+     * took cannot later vanish from the record.
+     */
+    commitment: `0x${string}`;
   }>;
   strikes: StrikeRecord[];
   /**
@@ -159,7 +166,7 @@ export interface PublicMatchState {
   matchId: `0x${string}`;
   /**
    * The oracle seed. Public on-chain from `MatchStarted` anyway, and safe to
-   * publish: rolls come from each round's revealed salts, not from this alone.
+   * publish: rolls come from each round's commitments, not from this alone.
    * Together with `rules`, the seats and `history`, it is everything a client
    * needs to replay the match and check the result for itself.
    */
@@ -180,6 +187,13 @@ export interface PublicMatchState {
   }>;
   /** Seats whose commitment has been received this round. */
   committed: number[];
+  /**
+   * Every commitment taken this round, by seat, once the commit window has
+   * closed; empty while it is open. Withheld until then because the round's
+   * rolls are drawn from the full set: a player who could see the others'
+   * commitments while still choosing a salt could grind the rolls.
+   */
+  commitments: Array<{ index: number; commitment: `0x${string}` }>;
   /** Seats whose reveal has been accepted this round. */
   revealed: number[];
   history: RoundRecord[];

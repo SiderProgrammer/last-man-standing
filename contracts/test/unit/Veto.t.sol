@@ -30,7 +30,7 @@ contract VetoTest is Fixtures {
         vm.expectEmit(true, true, false, true, address(escrow));
         emit GameEscrow.ResultVetoed(matchId, guardian);
         vm.expectEmit(true, false, false, true, address(escrow));
-        emit GameEscrow.MatchCancelled(matchId, "result vetoed");
+        emit GameEscrow.MatchCancelled(matchId, GameEscrow.CancelReason.ResultVetoed);
         vm.prank(guardian);
         escrow.veto(matchId);
 

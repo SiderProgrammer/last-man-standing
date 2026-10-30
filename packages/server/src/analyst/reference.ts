@@ -1,5 +1,14 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
-import { DEFAULT_RULES, commitMove, type Move, type Rules, type Seat } from '@lms/protocol';
+import {
+  DEFAULT_RULES,
+  TRANSCRIPT_VERSION,
+  commitMove,
+  hashTranscript,
+  type Move,
+  type Rules,
+  type Seat,
+  type Transcript,
+} from '@lms/protocol';
 import { Match, Prng, strategyByName, type Strategy, type StrategyName } from '@lms/engine';
 import type { ArchivedMatch } from '../lobby/store.js';
 
@@ -51,9 +60,34 @@ export function playReferenceMatch(options: {
     match.resolve();
   }
 
+  // Every seat is a bot, so nothing in it is signed.
+  const transcript: Transcript = {
+    version: TRANSCRIPT_VERSION,
+    matchId: match.matchId,
+    chainId: 0,
+    seed,
+    rules,
+    seats,
+    botSeats: seats.map((seat) => seat.index),
+    receiptSigner: null,
+    grants: [],
+    rounds: match.history.map((record) => ({
+      record,
+      proofs: record.moves.map((move) => ({
+        index: move.index,
+        commitSignature: null,
+        revealSignature: null,
+        receivedAt: null,
+      })),
+    })),
+    result: match.result(),
+  };
+
   return {
     result: match.result(),
     history: [...match.history],
+    transcript,
+    transcriptHash: hashTranscript(transcript),
     settledTx: null,
     seats,
     rules,

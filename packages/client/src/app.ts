@@ -15,6 +15,7 @@ import {
   onAvatars,
   onDossier,
   onFinished,
+  onReceipt,
   onRound,
   onState,
   updateTimer,
@@ -72,7 +73,7 @@ export function start(): void {
   wireLobbyControls();
   wireMatchControls();
   wirePayoutControls();
-  wireResultControls();
+  wireResultControls(httpOrigin(SERVER_URL));
   wireHelpControls();
   wireHistoryControls();
   wireStakingControls();
@@ -94,6 +95,7 @@ function onServerMessage(message: ServerMessage): void {
       app.escrow = message.escrow;
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;
+      app.receiptSigner = message.receiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
       app.hubMessenger = message.hubMessenger ?? null;
@@ -144,6 +146,10 @@ function onServerMessage(message: ServerMessage): void {
       onRound(message);
       break;
 
+    case 'receipt':
+      void onReceipt(message);
+      break;
+
     case 'finished':
       onFinished(message);
       break;
@@ -187,6 +193,7 @@ function onServerMessage(message: ServerMessage): void {
 function onError(message: Extract<ServerMessage, { type: 'error' }>): void {
   switch (message.code) {
     case 'BAD_SIGNATURE':
+    case 'BAD_GRANT':
       if (!onLoginRejected()) toast(message.message);
       return;
     default:

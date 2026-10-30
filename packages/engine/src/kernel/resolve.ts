@@ -4,8 +4,10 @@ import {
   draw,
   exposedDamage,
   isLegalAction,
+  NO_COMMITMENT,
+  commitmentSetHash,
+  commitmentsBySeat,
   roundSeed,
-  saltsBySeat,
   stallDamageFor,
   strikeDamageFor,
   strikeHeal,
@@ -27,6 +29,8 @@ export interface DeclaredMove {
   revealed: boolean;
   /** Salt the move was revealed under; `ZERO_SALT` when it was not revealed. */
   salt: `0x${string}`;
+  /** The seat's commitment this round; `NO_COMMITMENT` when it sealed none. */
+  commitment: `0x${string}`;
 }
 
 export interface RoundResolution {
@@ -62,7 +66,7 @@ export function entropyOf(
   seats: number,
   record: Pick<RoundRecord, 'round' | 'moves'>,
 ): `0x${string}` {
-  return roundSeed(seed, record.round, saltsBySeat(seats, record.moves));
+  return roundSeed(seed, record.round, commitmentSetHash(commitmentsBySeat(seats, record.moves)));
 }
 
 /** Scratch state for one seat while a round is being resolved. */
@@ -73,6 +77,7 @@ interface SeatContext {
   target: number;
   revealed: boolean;
   salt: `0x${string}`;
+  commitment: `0x${string}`;
   /** Damage accumulated from strikes and reflections this round. */
   incoming: number;
   /** HP regained from landed strikes this round. */
@@ -90,8 +95,9 @@ interface SeatContext {
  * This is what makes a match independently replayable from its seed and move
  * log.
  *
- * Every roll in the round is drawn from `roundSeed(seed, round, salts)`, which
- * nobody can compute until every reveal is in.
+ * Every roll in the round is drawn from `roundSeed(seed, round, commitments)`,
+ * which nobody can compute until every commitment is in, and which no reveal
+ * can change.
  *
  * A seat is identified by its position in `states`; the `index` field of an
  * incoming state is not trusted. A move its player may not make this round (a
@@ -113,6 +119,7 @@ export function resolveRound(
     target: 0,
     revealed: false,
     salt: ZERO_SALT,
+    commitment: NO_COMMITMENT,
     incoming: 0,
     healing: 0,
     hp: state.hp,
@@ -122,6 +129,7 @@ export function resolveRound(
   for (const move of moves) {
     const context = contexts[move.index];
     if (context === undefined || !context.before.alive) continue;
+    context.commitment = move.commitment;
     if (!move.revealed || !isLegalAction(move.action, context.before)) continue;
     context.action = move.action;
     context.target = move.action === Action.Strike ? move.target : 0;
@@ -133,9 +141,11 @@ export function resolveRound(
   const entropy = roundSeed(
     seed,
     round,
-    saltsBySeat(
-      states.length,
-      living.map((context) => ({ index: context.seat, revealed: context.revealed, salt: context.salt })),
+    commitmentSetHash(
+      commitmentsBySeat(
+        states.length,
+        living.map((context) => ({ index: context.seat, commitment: context.commitment })),
+      ),
     ),
   );
 
@@ -248,6 +258,7 @@ export function resolveRound(
       target: context.action === Action.Strike ? context.target : 0,
       revealed: context.revealed,
       salt: context.salt,
+      commitment: context.commitment,
     })),
     strikes,
     stallDamage: stall,

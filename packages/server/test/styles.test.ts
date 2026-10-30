@@ -14,12 +14,12 @@ describe('play styles', () => {
   it('tallies one match per seat, by wallet', () => {
     const history = [
       record([
-        { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT },
-        { index: 1, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT },
+        { index: 0, action: Action.Strike, target: 1, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
+        { index: 1, action: Action.Guard, target: 0, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
       ]),
       record([
-        { index: 0, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT },
-        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT },
+        { index: 0, action: Action.Charge, target: 0, revealed: true, salt: ZERO_SALT, commitment: ZERO_SALT },
+        { index: 1, action: Action.None, target: 0, revealed: false, salt: ZERO_SALT, commitment: ZERO_SALT },
       ]),
     ];
     const styles = tallyStyles(

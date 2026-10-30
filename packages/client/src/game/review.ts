@@ -35,6 +35,7 @@ export function reviewOf(match: ReviewedMatch, viewer: `0x${string}` | null): Re
       ...cooldownsFrom(match.history, seat.index),
     })),
     committed: [],
+    commitments: [],
     revealed: [],
     history: match.history,
     historyRoot: match.result.historyRoot,

@@ -8,6 +8,13 @@ export interface StoredMove {
   action: ActionValue;
   target: number;
   salt: `0x${string}`;
+  /**
+   * The server's signed receipt for the commitment, once it arrives. Kept as
+   * evidence: the transcript must then show the commitment.
+   */
+  receipt?: { receivedAt: number; signature: `0x${string}` };
+  /** Set once the reveal was sent, or handed to the server to hold. */
+  revealed?: boolean;
 }
 
 /**
@@ -35,6 +42,26 @@ export function rememberMove(matchId: string, round: number, move: StoredMove): 
 
 export function recallMove(matchId: string, round: number): StoredMove | null {
   return read()[`${matchId}:${round}`] ?? null;
+}
+
+/** Merges into a stored move. Does nothing if this browser sealed no move for that round. */
+export function updateMove(matchId: string, round: number, change: Partial<StoredMove>): void {
+  const store = read();
+  const key = `${matchId}:${round}`;
+  const move = store[key];
+  if (!move) return;
+  store[key] = { ...move, ...change };
+  write(store);
+}
+
+/** Every move this browser sealed in a match, by round. */
+export function recallMatch(matchId: string): Map<number, StoredMove> {
+  const moves = new Map<number, StoredMove>();
+  for (const [key, move] of Object.entries(read())) {
+    const [id, round] = key.split(':');
+    if (id === matchId && round !== undefined) moves.set(Number(round), move);
+  }
+  return moves;
 }
 
 /** Drops records for a finished match so the store cannot grow without bound. */

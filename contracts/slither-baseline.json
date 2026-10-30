@@ -44,7 +44,7 @@
   {
     "key": "calls-loop|function:GameEscrow._checkQuorum|node:GameEscrow._checkQuorum.! config.isAttestorAt(version,signers[i])",
     "impact": "Low",
-    "summary": "GameEscrow._checkQuorum(uint32,bytes32,bytes) (src/GameEscrow.sol#525-533) has external calls inside a loop: ! config.isAttestorAt(version,signers[i]) (src/GameEscrow.sol#531)",
+    "summary": "GameEscrow._checkQuorum(uint32,bytes32,bytes) (src/GameEscrow.sol#564-572) has external calls inside a loop: ! config.isAttestorAt(version,signers[i]) (src/GameEscrow.sol#570)",
     "triage": "Accepted: one view call per signer to the trusted config, bounded by the attestor set."
   },
   {
@@ -92,7 +92,7 @@
   {
     "key": "divide-before-multiply|function:GameEscrow.quoteLmsDiscount|node:GameEscrow.quoteLmsDiscount.fee = (uint256(info.stake) * terms[info.termsId].feeBps) / BPS_DENOMINATOR|node:GameEscrow.quoteLmsDiscount.maxDiscount = (fee * MAX_DISCOUNT_BPS) / BPS_DENOMINATOR",
     "impact": "Medium",
-    "summary": "GameEscrow.quoteLmsDiscount(bytes32,uint256) (src/GameEscrow.sol#347-361) performs a multiplication on the result of a division:",
+    "summary": "GameEscrow.quoteLmsDiscount(bytes32,uint256) (src/GameEscrow.sol#380-394) performs a multiplication on the result of a division:",
     "triage": "Intended: the seat fee is rounded down exactly as finalize and _recordFees round it, then halved for the cap, so the cap is never above half the fee actually charged."
   },
   {
@@ -188,7 +188,7 @@
   {
     "key": "reentrancy-benign|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.seatDiscount[matchId][msg.sender] = seat|node:GameEscrow._joinWithLms.totalLmsEscrowed += lmsUsed|node:GameEscrow._seat.matchSeats[matchId].push(player)|node:GameEscrow._seat.seatNumber[matchId][player] = uint256(seat) + 1|node:GameEscrow._seat.seatOrigin[matchId][player] = originChainId|node:GameEscrow._seat.totalEscrowed += paid|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#329-342):",
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#362-375):",
     "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
   },
   {
@@ -212,13 +212,13 @@
   {
     "key": "reentrancy-events|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.FeeDiscounted(matchId,msg.sender,discount,lmsUsed)|node:GameEscrow._seat.PlayerJoined(matchId,player,seat,originChainId)|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#329-342):",
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#362-375):",
     "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
   },
   {
     "key": "reentrancy-events|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.MatchLocked(matchId,requestId,info.seatCount)|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(oracle).requestRandomness(matchId)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#438-457):",
+    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#471-490):",
     "triage": "Accepted: every state write precedes the oracle call (FIX_PLAN 2.7); only the event follows it, since it carries the request id the oracle returns."
   },
   {
@@ -272,43 +272,55 @@
   {
     "key": "timestamp|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.block.timestamp < until",
     "impact": "Low",
-    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#584-591) uses timestamp for comparisons",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#623-630) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow._joinFailure|node:GameEscrow._joinFailure.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#832-845) uses timestamp for comparisons",
+    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#929-942) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow._seat|node:GameEscrow._seat.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32,uint256) (src/GameEscrow.sol#848-868) uses timestamp for comparisons",
+    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32,uint256) (src/GameEscrow.sol#945-965) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow.cancelMatch|node:GameEscrow.cancelMatch.block.timestamp < cancellableAt|node:GameEscrow.cancelMatch.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#714-737) uses timestamp for comparisons",
+    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#807-830) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:GameEscrow.dismissDispute|node:GameEscrow.dismissDispute.block.timestamp >= info.deadline",
+    "impact": "Low",
+    "summary": "GameEscrow.dismissDispute(bytes32) (src/GameEscrow.sol#716-730) uses timestamp for comparisons",
+    "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
+  },
+  {
+    "key": "timestamp|function:GameEscrow.dispute|node:GameEscrow.dispute.block.timestamp >= info.deadline",
+    "impact": "Low",
+    "summary": "GameEscrow.dispute(bytes32,bytes32) (src/GameEscrow.sol#691-709) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.finalize|node:GameEscrow.finalize.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#559-582) uses timestamp for comparisons",
+    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#598-621) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.expired = block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#438-457) uses timestamp for comparisons",
+    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#471-490) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow.veto|node:GameEscrow.veto.block.timestamp >= info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#626-637) uses timestamp for comparisons",
+    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#666-677) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
@@ -398,25 +410,25 @@
   {
     "key": "uninitialized-local|variable:GameEscrow._assertSeatSet.seen",
     "impact": "Medium",
-    "summary": "GameEscrow._assertSeatSet(bytes32,uint256,address[]).seen (src/GameEscrow.sol#541) is a local variable never initialized",
+    "summary": "GameEscrow._assertSeatSet(bytes32,uint256,address[]).seen (src/GameEscrow.sol#580) is a local variable never initialized",
     "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow._distribute.paid",
     "impact": "Medium",
-    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,GameEscrow.Terms,address[],uint256).paid (src/GameEscrow.sol#653) is a local variable never initialized",
+    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,GameEscrow.Terms,address[],uint256).paid (src/GameEscrow.sol#746) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow._recordFees.total",
     "impact": "Medium",
-    "summary": "GameEscrow._recordFees(bytes32,uint128,uint16,address[],bool).total (src/GameEscrow.sol#607) is a local variable never initialized",
+    "summary": "GameEscrow._recordFees(bytes32,uint128,uint16,address[],bool).total (src/GameEscrow.sol#646) is a local variable never initialized",
     "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow.cancelMatch.reason",
     "impact": "Medium",
-    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#716) is a local variable never initialized",
+    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#809) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
@@ -440,19 +452,19 @@
   {
     "key": "uninitialized-state|function:GameEscrow._joinWithLms|function:GameEscrow._refundAll|function:GameEscrow.finalize|variable:GameEscrow.matchDiscount",
     "impact": "High",
-    "summary": "GameEscrow.matchDiscount (src/GameEscrow.sol#183) is never initialized. It is used in:",
+    "summary": "GameEscrow.matchDiscount (src/GameEscrow.sol#204) is never initialized. It is used in:",
     "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
   },
   {
-    "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.receiveMessage|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
+    "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.dismissDispute|function:GameEscrow.dispute|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.receiveMessage|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
     "impact": "High",
-    "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#168) is never initialized. It is used in:",
+    "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#189) is never initialized. It is used in:",
     "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
   },
   {
     "key": "unused-return|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.(None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData()",
     "impact": "Medium",
-    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#584-591) ignores return value by (None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData() (src/GameEscrow.sol#587)",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#623-630) ignores return value by (None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData() (src/GameEscrow.sol#626)",
     "triage": "Intended: Chainlink's sequencer feed only needs answer and startedAt; the round ids and updatedAt carry nothing for it."
   },
   {

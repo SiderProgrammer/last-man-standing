@@ -108,17 +108,22 @@ Still open:
 
 ### 3.1 Disputes are guardian-decided, not on-chain
 
-A proposed result waits out `challengeWindow` before it pays, and the guardian Safe can
-`veto` it in that time, refunding every stake. Detection is the off-chain replay every
-browser already runs. That is the intended trust level for testnet and a low-stake early
+A proposed result waits out `challengeWindow` before it pays. A seated player whose
+browser finds the transcript does not hold up can `dispute` it, which holds the payout 48
+hours more, and the guardian can `veto` it in that time, refunding every stake, or
+dismiss the dispute. That is the intended trust level for testnet and a low-stake early
 mainnet. Still open:
 
-- **The rounds are not public yet.** They are broadcast to the match's own players and
-  archived in the server's database, but nothing serves the archive, so the Safe can only
-  replay a disputed match from a player's copy. A read-only archive endpoint is the
-  minimum; pinning each match's log (IPFS or similar) removes the server from the path.
-- **Nobody watches yet.** A veto needs someone to notice. A small watcher that replays
-  every `ResultProposed` against the archive and alerts the Safe signers would close that.
+- **The server still serves the transcripts.** `GET /transcripts/<hash>` is public and
+  checked against the hash the escrow stores, so the server cannot alter one, but it can
+  withhold one (players then dispute). Pinning each transcript (IPFS or similar) takes the
+  server out of the path.
+- **Evidence goes to the guardian by hand.** A dispute records the evidence bundle's
+  hash; the player saves the bundle and sends it. An endpoint that accepts bundles by hash
+  would save that step.
+- **Nobody watches yet.** A veto needs someone to notice. A small watcher that audits
+  every `ResultProposed` transcript and alerts the guardian, and watches `ResultDisputed`,
+  would close that.
 - **On-chain fraud proof, later.** A Solidity kernel, `MatchVerifier`, bonded and
   slashable attestors and cross-language vectors were built and then removed (they are in
   `fadf583`). Bring them back once the rules are frozen and stakes justify maintaining

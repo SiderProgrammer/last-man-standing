@@ -14,6 +14,7 @@ import {PullPayable} from "./PullPayable.sol";
 import {ExpiringPause} from "./ExpiringPause.sol";
 import {
     BPS_DENOMINATOR,
+    DISPUTE_EXTENSION,
     LOCK_GRACE,
     MAX_DISCOUNT_BPS,
     RANDOMNESS_TIMEOUT,
@@ -35,15 +36,17 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      taking stakes, fixing an unpredictable seed before play starts,
 ///      accepting a result signed by a quorum of attestors, and paying out.
 ///
-///      Trust model. A result is signed by a quorum of allowlisted attestors
-///      and then waits out a challenge window before it pays. The signed
-///      digest commits to a history root, which commits to every round, so
-///      anyone holding the published rounds can replay the match off-chain and
-///      see whether the result follows from them. During the window the
-///      guardian may veto a result, which refunds every stake: disputes are
+///      Trust model: verifiable, not enforced. A result is signed by a quorum
+///      of allowlisted attestors and then waits out a challenge window before
+///      it pays. The signed digest commits to a history root, which commits to
+///      every round, and to the hash of the archived transcript, which holds
+///      every player's signed moves; anyone can fetch it by that hash and
+///      replay the match off-chain. During the window a seated player may
+///      `dispute`, which holds the payout back `DISPUTE_EXTENSION`, and the
+///      guardian may `veto` a result, which refunds every stake: disputes are
 ///      decided by that replay and the guardian acting on it, not on-chain.
 ///      The seed is drawn from an oracle after the lobby closes, and each
-///      round's rolls also depend on every player's revealed salt.
+///      round's rolls also depend on every commitment sealed in it.
 ///
 ///      Value handling is pull-based throughout. Settlement only ever credits
 ///      an internal balance; nothing is transferred until the recipient — or
@@ -110,7 +113,7 @@ contract GameEscrow is
         uint16[] payoutBps;
     }
 
-    /// @dev Five slots. The first two are packed; `deadline` is the deadline
+    /// @dev Six slots. The first two are packed; `deadline` is the deadline
     ///      of the current phase: the seed's while Pending, the result's while
     ///      Live, the challenge window's while Proposed.
     struct MatchInfo {
@@ -126,11 +129,17 @@ contract GameEscrow is
         uint32 attestorSetVersion;
         uint40 deadline;
         uint16 rounds;
+        /// @dev A seat has disputed the proposed result and the guardian has
+        ///      not dismissed it: `deadline` is `DISPUTE_EXTENSION` later.
+        bool disputed;
         bytes32 seed;
         bytes32 historyRoot;
         /// @dev The ranking of a proposed result, by hash: it is in
         ///      `ResultProposed`, and whoever finalises passes it back.
         bytes32 rankingHash;
+        /// @dev Hash of the archived transcript the result came from. Anyone
+        ///      can fetch the transcript by it and replay the match.
+        bytes32 transcriptHash;
     }
 
     /// @dev Part of a seat's fee paid in LMS, or a match's total of them.
@@ -139,6 +148,20 @@ contract GameEscrow is
         uint128 eth;
         /// @dev LMS paid for it, held until the match ends.
         uint128 lms;
+    }
+
+    /// @notice Why a match was cancelled and every stake refunded.
+    enum CancelReason {
+        /// @dev Past its join deadline without enough seats, or not locked in time.
+        JoinWindowExpired,
+        /// @dev Locked, but the oracle never delivered a seed.
+        RandomnessNotDelivered,
+        /// @dev Live, but no result was proposed before the settle deadline.
+        SettlementDeadlinePassed,
+        /// @dev The guardian or governance vetoed the proposed result.
+        ResultVetoed,
+        /// @dev The attestors aborted a match the server could not finish.
+        AbortedByAttestors
     }
 
     /// @notice Why a seat could not be taken. `None` means it could.
@@ -181,6 +204,9 @@ contract GameEscrow is
     /// @dev Every seat's discount in a match, added up. Zero for nearly every
     ///      match, which then never reads `seatDiscount`.
     mapping(bytes32 matchId => Discount) private matchDiscount;
+    /// @dev Seats that have disputed the match's result, one bit per seat
+    ///      number less one: each may dispute once.
+    mapping(bytes32 matchId => uint256) private disputedSeats;
     /// @notice LMS held against seats of matches that have not ended.
     uint256 public totalLmsEscrowed;
 
@@ -206,6 +232,7 @@ contract GameEscrow is
         bytes32 indexed matchId,
         bytes32 indexed historyRoot,
         uint32 rounds,
+        bytes32 transcriptHash,
         address[] ranking,
         uint40 challengeDeadline
     );
@@ -213,9 +240,14 @@ contract GameEscrow is
         bytes32 indexed matchId, bytes32 indexed historyRoot, uint32 rounds, address indexed winner
     );
     event ResultVetoed(bytes32 indexed matchId, address indexed by);
+    /// @param evidenceHash Hash of the player's evidence bundle, published off-chain.
+    event ResultDisputed(
+        bytes32 indexed matchId, address indexed player, bytes32 evidenceHash, uint40 challengeDeadline
+    );
+    event DisputeDismissed(bytes32 indexed matchId, address indexed by, uint40 challengeDeadline);
     event PayoutCredited(bytes32 indexed matchId, address indexed player, uint16 rank, uint256 amount);
     event FeeCredited(bytes32 indexed matchId, address indexed treasury, uint256 amount);
-    event MatchCancelled(bytes32 indexed matchId, string reason);
+    event MatchCancelled(bytes32 indexed matchId, CancelReason reason);
     /// @notice A cross-chain stake arrived for a seat that could no longer be
     ///         taken, and was credited back to the player here instead.
     event JoinRefunded(bytes32 indexed matchId, address indexed player, uint256 amount, JoinFailure reason);
@@ -244,6 +276,9 @@ contract GameEscrow is
     error NotAPermutation();
     error SequencerDown();
     error SequencerGracePeriod(uint256 until);
+    error NotSeated(bytes32 matchId, address caller);
+    error AlreadyDisputed(bytes32 matchId, address player);
+    error NotDisputed(bytes32 matchId);
     error DiscountOff();
     error NoDiscount(uint256 lmsIn);
 
@@ -486,12 +521,15 @@ contract GameEscrow is
     /// @notice Proposes a match result signed by a quorum of attestors.
     /// @dev Pays nothing yet. The result is open to `veto` until
     ///      `challengeDeadline`; after that anyone may `finalize` it.
+    /// @param transcriptHash Hash of the transcript the server archived before
+    ///        settling: the evidence anyone can replay the result from.
     /// @param ranking Finishing order, best first. Must be exactly the seat set.
     /// @param signatures Concatenated 65-byte signatures in ascending signer order.
     function settle(
         bytes32 matchId,
         uint32 rounds,
         bytes32 historyRoot,
+        bytes32 transcriptHash,
         address[] calldata ranking,
         bytes calldata signatures
     ) external nonReentrant whenNotPaused {
@@ -503,7 +541,9 @@ contract GameEscrow is
 
         _checkQuorum(
             info.attestorSetVersion,
-            _hashTypedDataV4(SettlementLib.hashMatchResult(matchId, rounds, historyRoot, ranking)),
+            _hashTypedDataV4(
+                SettlementLib.hashMatchResult(matchId, rounds, historyRoot, transcriptHash, ranking)
+            ),
             signatures
         );
         _assertSeatSet(matchId, info.seatCount, ranking);
@@ -516,8 +556,9 @@ contract GameEscrow is
         info.rounds = uint16(rounds);
         info.deadline = deadline;
         info.rankingHash = keccak256(abi.encode(ranking));
+        info.transcriptHash = transcriptHash;
 
-        emit ResultProposed(matchId, historyRoot, rounds, ranking, deadline);
+        emit ResultProposed(matchId, historyRoot, rounds, transcriptHash, ranking, deadline);
     }
 
     /// @dev Reverts unless `signatures` over `digest` come from a quorum of
@@ -615,16 +656,17 @@ contract GameEscrow is
     }
 
     /// @notice Throws out a proposed result and refunds every stake.
-    /// @dev For a result that a replay of its published rounds does not
-    ///      support. The replay happens off-chain; this is the guardian acting
-    ///      on it, inside the window. Open to governance too, as `pause` is,
-    ///      so a veto is still possible with no guardian set.
+    /// @dev For a result that a replay of its transcript does not support,
+    ///      usually one a player has disputed. The replay happens off-chain;
+    ///      this is the guardian acting on it, inside the window. Open to
+    ///      governance too, as `pause` is, so a veto is still possible with no
+    ///      guardian set.
     ///
     ///      It can only refund, never redirect: the worst a compromised
     ///      guardian can do is void honest results, and every player keeps
     ///      their stake. Never paused: a veto must always be possible in time.
     function veto(bytes32 matchId) external nonReentrant {
-        if (msg.sender != config.guardian() && msg.sender != config.owner()) revert NotGuardian();
+        _onlyGuardianOrGovernance();
         MatchInfo storage info = matchInfo[matchId];
         if (info.status != MatchStatus.Proposed) {
             revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
@@ -633,7 +675,60 @@ contract GameEscrow is
 
         _refundAll(matchId, info);
         emit ResultVetoed(matchId, msg.sender);
-        emit MatchCancelled(matchId, "result vetoed");
+        emit MatchCancelled(matchId, CancelReason.ResultVetoed);
+    }
+
+    /// @notice Disputes a proposed result: holds back its payout by
+    ///         `DISPUTE_EXTENSION` for the guardian to look at it.
+    /// @dev Any seated player, once each, while the result can still be
+    ///      vetoed. The first open dispute extends the deadline; one already
+    ///      open does not extend it again. Nothing on-chain checks the
+    ///      evidence: the guardian reads it, replays the transcript, and then
+    ///      vetoes or dismisses. A guardian that does neither lets the result
+    ///      finalise when the extension runs out, which is the liveness
+    ///      assumption this rests on.
+    ///
+    ///      Never paused: a player must always be able to object in time.
+    /// @param evidenceHash Hash of the evidence bundle the player published.
+    function dispute(bytes32 matchId, bytes32 evidenceHash) external {
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+        uint256 number = seatNumber[matchId][msg.sender];
+        if (number == 0) revert NotSeated(matchId, msg.sender);
+        uint256 bit = 1 << (number - 1);
+        uint256 seen = disputedSeats[matchId];
+        if (seen & bit != 0) revert AlreadyDisputed(matchId, msg.sender);
+        disputedSeats[matchId] = seen | bit;
+
+        if (!info.disputed) {
+            info.disputed = true;
+            info.deadline = SafeCast.toUint40(info.deadline + uint256(DISPUTE_EXTENSION));
+        }
+        emit ResultDisputed(matchId, msg.sender, evidenceHash, info.deadline);
+    }
+
+    /// @notice The guardian's answer to a dispute it finds unfounded: the
+    ///         result goes back to its own challenge deadline, or may be
+    ///         finalised at once if that has passed.
+    /// @dev Open to governance too, as `veto` is. A player who has not yet
+    ///      disputed may still do so before the restored deadline.
+    function dismissDispute(bytes32 matchId) external {
+        _onlyGuardianOrGovernance();
+        MatchInfo storage info = matchInfo[matchId];
+        if (info.status != MatchStatus.Proposed) {
+            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
+        }
+        if (!info.disputed) revert NotDisputed(matchId);
+        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+
+        info.disputed = false;
+        // Extended exactly once while disputed, so this is the deadline it had.
+        uint256 restored = info.deadline - uint256(DISPUTE_EXTENSION);
+        info.deadline = SafeCast.toUint40(Math.max(restored, block.timestamp));
+        emit DisputeDismissed(matchId, msg.sender, info.deadline);
     }
 
     /// @dev The pool is the full stakes, as if nobody had a discount: the
@@ -700,7 +795,7 @@ contract GameEscrow is
             signatures
         );
         _refundAll(matchId, info);
-        emit MatchCancelled(matchId, "aborted by attestors");
+        emit MatchCancelled(matchId, CancelReason.AbortedByAttestors);
     }
 
     /// @notice Refunds every stake in a match that can no longer complete.
@@ -713,21 +808,21 @@ contract GameEscrow is
     ///      same block as the lock and race it.
     function cancelMatch(bytes32 matchId) external nonReentrant {
         MatchInfo storage info = matchInfo[matchId];
-        string memory reason;
+        CancelReason reason;
 
         if (info.status == MatchStatus.Open) {
             uint256 cancellableAt = info.joinDeadline;
             if (info.seatCount >= terms[info.termsId].minSeats) cancellableAt += LOCK_GRACE;
             if (block.timestamp < cancellableAt) revert CannotCancelYet(matchId);
-            reason = "join window expired";
+            reason = CancelReason.JoinWindowExpired;
         } else if (info.status == MatchStatus.Pending) {
             // The oracle never answered.
             if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
-            reason = "randomness not delivered";
+            reason = CancelReason.RandomnessNotDelivered;
         } else if (info.status == MatchStatus.Live) {
             // No quorum produced a result in time.
             if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
-            reason = "settlement deadline passed";
+            reason = CancelReason.SettlementDeadlinePassed;
         } else {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
@@ -779,6 +874,10 @@ contract GameEscrow is
 
     function _isGovernance(address account) internal view override returns (bool) {
         return account == config.owner();
+    }
+
+    function _onlyGuardianOrGovernance() private view {
+        if (!_isGuardian(msg.sender) && !_isGovernance(msg.sender)) revert NotGuardian();
     }
 
     // --- Views -------------------------------------------------------------
