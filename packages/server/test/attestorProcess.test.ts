@@ -121,9 +121,8 @@ describe('attestor process', () => {
     const forged = { ...transcript, result: { ...transcript.result, rounds: transcript.result.rounds + 1 } };
     await expect(attestor.attest(forged)).rejects.toBeInstanceOf(AttestationRefused);
 
-    // Killed from outside: the next call starts it again.
+    // Killed from outside, even with no time to notice: the next call starts it again.
     (attestor as unknown as { child: { kill(): void } }).child.kill();
-    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(await signerOf(transcript, await attestor.attest(transcript))).toBe(attestor.address);
   }, 60_000);
 });

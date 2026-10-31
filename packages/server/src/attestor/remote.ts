@@ -64,13 +64,26 @@ export class AttestorProcess implements Attestor {
     this.rpc = null;
   }
 
+  /**
+   * Calls the child, starting it first if it is not running. A call caught
+   * by the child dying is made once more, on a fresh one: signing is
+   * idempotent, so asking twice costs nothing.
+   */
   private async call<T>(method: string, ...args: unknown[]): Promise<T> {
-    const rpc = this.rpc ?? (await (this.starting ??= this.spawn().then(({ rpc }) => rpc)));
-    return rpc.call<T>(method, ...args);
+    try {
+      return await (await this.connection()).call<T>(method, ...args);
+    } catch (error) {
+      if (!(error instanceof AttestorExited) || this.stopped) throw error;
+      return (await this.connection()).call<T>(method, ...args);
+    }
+  }
+
+  private async connection(): Promise<Rpc> {
+    return this.rpc ?? (await (this.starting ??= this.spawn().then(({ rpc }) => rpc)));
   }
 
   private lost(code: number | null): void {
-    this.rpc?.failAll(new Error(`the attestor process exited (${code})`));
+    this.rpc?.failAll(new AttestorExited(`the attestor process exited (${code})`));
     this.child = null;
     this.rpc = null;
     this.starting = null;
@@ -96,7 +109,12 @@ export class AttestorProcess implements Attestor {
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
     const rpc = new Rpc({
-      send: (message) => void child.send(message as never),
+      // A child that has just died throws on send: the call fails as if it
+      // had exited mid-call, and is retried.
+      send: (message) => {
+        if (!child.connected) throw new AttestorExited('the attestor process is not running');
+        child.send(message as never);
+      },
       listen: (listener) => void child.on('message', listener),
     });
     this.child = child;
@@ -121,6 +139,11 @@ export class AttestorProcess implements Attestor {
       });
     });
   }
+}
+
+/** A call the child never answered because it exited. */
+class AttestorExited extends Error {
+  override name = 'AttestorExited';
 }
 
 /** The environment, less every key and secret the server holds. */
