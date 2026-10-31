@@ -60,6 +60,8 @@ export class Arena {
   private readonly hudStorm = new Text({ text: '', style: { ...HUD, fill: COLORS.stormEdge } });
   private readonly effects: Effects;
   private readonly glow: Texture;
+  /** The glow, when it had to be drawn here because the file did not load: then it is this arena's to free. */
+  private readonly drawnGlow: Texture | null;
   private readonly reduced = prefersReducedMotion();
 
   // Your own pick, drawn on the floor. Built once; GSAP keeps them moving.
@@ -93,7 +95,8 @@ export class Arena {
     private readonly app: Application,
     textures: FxTextures,
   ) {
-    this.glow = textures.glow ?? app.renderer.generateTexture(softGlow());
+    this.drawnGlow = textures.glow ? null : app.renderer.generateTexture(softGlow());
+    this.glow = textures.glow ?? this.drawnGlow!;
     this.storm = new Storm(this.reduced);
     this.effects = new Effects({
       app,
@@ -243,12 +246,22 @@ export class Arena {
     this.effects.showWinner(seat);
   }
 
+  /**
+   * Tears the arena down for good: every tween, every seat and the faces
+   * they wore, the effects and their pool, the canvas and its WebGL context.
+   * The match screen calls it between matches and when the player leaves.
+   */
   destroy(): void {
     this.replay?.timeline.kill();
-    this.effects.clear();
+    this.replay = null;
+    this.state = null;
+    this.onPick = null;
+    this.effects.destroy();
     this.storm.destroy();
     for (const seat of this.seats.values()) seat.destroy();
+    this.seats.clear();
     gsap.killTweensOf([this.reticle, this.reticle.scale, this.veil, this.guard.scale]);
+    this.drawnGlow?.destroy(true);
     this.app.destroy(true, { children: true });
   }
 

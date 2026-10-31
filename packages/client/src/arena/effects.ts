@@ -71,6 +71,8 @@ export class Effects {
   readonly overlay = new Graphics();
 
   private readonly textures: Record<FxTexture, Texture>;
+  /** Drawn here for any texture that failed to load, so it is this object's to free. */
+  private readonly fallback: Texture;
   private readonly pool: Sprite[] = [];
   /** Sprites currently on screen, so `clear` can recover any a killed timeline stranded. */
   private readonly active = new Set<Sprite>();
@@ -84,9 +86,9 @@ export class Effects {
   constructor(private readonly options: EffectsOptions) {
     this.overlay.alpha = 0;
     this.overlay.eventMode = 'none';
-    const fallback = options.app.renderer.generateTexture(softGlow());
+    this.fallback = options.app.renderer.generateTexture(softGlow());
     this.textures = Object.fromEntries(
-      FX_TEXTURES.map((name) => [name, options.textures[name] ?? fallback]),
+      FX_TEXTURES.map((name) => [name, options.textures[name] ?? this.fallback]),
     ) as Record<FxTexture, Texture>;
   }
 
@@ -176,6 +178,19 @@ export class Effects {
     this.options.world.position.set(0, 0);
     this.options.camera.scale.set(1);
     this.overlay.alpha = 0;
+  }
+
+  /**
+   * Frees what the arena's own teardown would miss: pooled sprites are off
+   * the stage, so destroying the stage does not reach them, and the fallback
+   * texture was generated here. The loaded textures are the asset cache's,
+   * shared with the next arena, and stay.
+   */
+  destroy(): void {
+    this.clear();
+    for (const sprite of this.pool) sprite.destroy();
+    this.pool.length = 0;
+    this.fallback.destroy(true);
   }
 
   /** Crowns the last seat standing. Persists until the next match. */

@@ -53,6 +53,21 @@ let arena: Arena | null = null;
  * they must share one canvas rather than each make their own.
  */
 let mounting: Promise<Arena> | null = null;
+
+/**
+ * Destroys the arena: its canvas and WebGL context, its seats and the faces
+ * they wore, its effects. Each match gets a fresh one, so nothing of the last
+ * table — a seat, a texture, a tween — outlives it. One still mounting is
+ * destroyed as soon as it is ready.
+ */
+function disposeArena(): void {
+  const current = arena;
+  const pending = mounting;
+  arena = null;
+  mounting = null;
+  if (current) current.destroy();
+  else void pending?.then((mounted) => mounted.destroy());
+}
 /** Ends the current replay hold. Owned here, not by the renderer, so the
  *  controls still unlock if the canvas never managed to mount. */
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -203,6 +218,7 @@ export function onState(
     // A replay from the previous match must not close this one's controls.
     if (replayTimer) clearTimeout(replayTimer);
     replayTimer = null;
+    disposeArena();
     dom.feed.replaceChildren();
     hideResult();
     resetAnalysis();
@@ -383,14 +399,19 @@ function renderTable(): void {
 }
 
 async function renderArena(state: PublicMatchState, you: number | null): Promise<void> {
-  const fresh = arena === null;
-  arena ??= await (mounting ??= mountArena());
-  arena.onPick ??= pickTarget;
+  if (!arena) {
+    const pending = (mounting ??= mountArena());
+    const mounted = await pending;
+    // Disposed while it mounted: the match it was for is gone.
+    if (mounting !== pending) return;
+    arena = mounted;
+    arena.onPick = pickTarget;
+    // Avatars for this match may have landed while the canvas was still
+    // being created, in which case nothing has handed them to the arena yet.
+    if (app.avatars.length > 0) arena.setAvatars(app.avatars);
+  }
   arena.render(state, you);
   renderMove();
-  // Avatars for this match may have landed while the canvas was still being
-  // created, in which case nothing has handed them to the arena yet.
-  if (fresh && app.avatars.length > 0) arena.setAvatars(app.avatars);
 }
 
 async function mountArena(): Promise<Arena> {
@@ -612,6 +633,8 @@ export function wireMatchControls(): void {
   store.subscribe(['match', 'you', 'dossier'], renderReads);
   store.subscribe(['match', 'you', 'draft', 'committedRound', 'revealedRound', 'replaying'], renderControls);
   store.subscribe(['avatars'], () => arena?.setAvatars(app.avatars));
+  // Leaving the finished match for the lobby: nothing on its table is needed again.
+  dom.resultBack.addEventListener('click', disposeArena);
 
   dom.lockIn.onclick = lockIn;
 
