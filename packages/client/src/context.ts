@@ -14,7 +14,7 @@ import type {
 import type { Net } from './io/net.js';
 import { createStore } from './store.js';
 import type { Dom } from './ui/dom.js';
-import type { QueueSpot } from './ui/views.js';
+import type { DiscountTerms, QueueSpot } from './ui/views.js';
 import type { GrantedKey } from './wallet/grant.js';
 import type { Wallet } from './wallet/wallet.js';
 
@@ -60,6 +60,11 @@ export interface AppState {
   practiceReceiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /**
+   * The LMS fee discount and this wallet's LMS, read on the hub; null when
+   * governance has it off or the wallet is elsewhere.
+   */
+  discount: DiscountTerms | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
   spokes: SpokeInfo[];
   /** The staked-lobby directory, as the server last sent it. */
@@ -131,6 +136,7 @@ export const store = createStore<AppState>({
   practiceReceiptSigner: null,
   zap: null,
   spokes: [],
+  discount: null,
   lobbies: { open: [], live: [] },
   inTransit: new Set(),
   matchmaking: [],

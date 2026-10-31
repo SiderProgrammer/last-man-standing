@@ -18,8 +18,10 @@ import { app, dom, net, store } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 import {
   crossChainNotice,
+  discountStatus,
   chainChips,
   lobbyAction,
   lobbySummary,
@@ -58,9 +60,41 @@ export function wireLobbyControls(): void {
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
   dom.createLobby.onclick = () => void createLobby();
   dom.payWith.onchange = renderLobbies;
+  dom.useDiscount.checked = readRaw(DISCOUNT_KEY) === '1';
+  dom.useDiscount.onchange = () => {
+    writeRaw(DISCOUNT_KEY, dom.useDiscount.checked ? '1' : '0');
+    renderLobbies();
+  };
 
   store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
   store.subscribe(['lobbies', 'inTransit', 'matched'], renderLobbies);
+  store.subscribe(['discount'], renderDiscount);
+  // The discount is read on the hub, where the escrow is; its module loads
+  // the first time a wallet is there.
+  store.subscribe(['wallet', 'walletChainId', 'escrow', 'chainId'], () => {
+    const onHub = app.wallet && app.escrow && app.wallet.chainId === app.chainId;
+    if (onHub) void import('./discount.js').then((discount) => discount.refreshDiscount());
+    else store.set({ discount: null });
+  });
+}
+
+const DISCOUNT_KEY = 'lms:pay-fee-in-lms';
+
+/** The "pay part of the fee in LMS" option: shown while governance has the discount on. */
+function renderDiscount(): void {
+  const terms = app.discount;
+  dom.discountRow.classList.toggle('hidden', !terms);
+  if (terms) {
+    const status = discountStatus(terms);
+    dom.discountStatus.textContent = status.text;
+    dom.useDiscount.disabled = !status.enabled;
+  }
+  renderLobbies();
+}
+
+/** True when the next ETH join should spend LMS on its fee. */
+function payingInLms(): boolean {
+  return Boolean(app.discount && app.discount.balance > 0n && dom.useDiscount.checked);
 }
 
 /**
@@ -179,6 +213,8 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     const token = payToken();
     if (token) {
       idleTokenButton(button, lobby, token);
+    } else if (payingInLms()) {
+      idleDiscountButton(button, lobby);
     } else {
       button.textContent = stakeButtonLabel(lobby.stake, null);
       button.onclick = () => void joinLobby(lobby);
@@ -278,6 +314,16 @@ export function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, tok
   button.classList.remove('primary');
   // The pricing and paying are a chunk of their own, fetched on the first quote.
   button.onclick = () => void import('./zap.js').then((zap) => zap.quoteTokenJoin(button, lobby, token));
+}
+
+/**
+ * An ETH join that spends LMS on its fee, before it is priced. The pricing
+ * and paying are in `discount.ts`, loaded with the option.
+ */
+export function idleDiscountButton(button: HTMLButtonElement, lobby: LobbyInfo): void {
+  button.textContent = `${stakeButtonLabel(lobby.stake, null)} · fee in LMS`;
+  button.classList.remove('primary');
+  button.onclick = () => void import('./discount.js').then((discount) => discount.quoteDiscountJoin(button, lobby));
 }
 
 // -------------------------------------------------------------- spoke joins

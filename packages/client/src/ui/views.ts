@@ -256,6 +256,32 @@ export function payWithOptions(zap: ZapInfo | null): Option[] {
   return [['ETH', 'ETH'], ...(zap?.tokens ?? []).map((token): Option => [token.address, token.symbol])];
 }
 
+/** The LMS fee discount, as governance has set it, and this wallet's LMS. */
+export interface DiscountTerms {
+  /** The LMS token, which the escrow takes the discount's LMS in. */
+  token: `0x${string}`;
+  /** LMS per ETH of fee taken off, 18 decimals. */
+  rate: bigint;
+  /** LMS this wallet holds. */
+  balance: bigint;
+}
+
+/**
+ * The line under the "pay part of the fee in LMS" option, and whether it can
+ * be ticked at all. Null terms hide the option: the discount is off.
+ */
+export function discountStatus(terms: DiscountTerms): { text: string; enabled: boolean } {
+  const rate = `${formatTokenAmount(terms.rate, 18, 0)} LMS buys 1 ETH off a fee, up to half of each fee`;
+  if (terms.balance === 0n) return { text: `${rate} · you hold no LMS`, enabled: false };
+  return { text: `${rate} · you hold ${formatTokenAmount(terms.balance, 18, 2)} LMS`, enabled: true };
+}
+
+/** A join priced with the discount: the ETH sent and the LMS spent, which the second click pays. */
+export function discountJoinLabel(stakeWei: string, quote: { discount: bigint; lmsUsed: bigint }): string {
+  const eth = formatEther(BigInt(stakeWei) - quote.discount);
+  return `Pay ${eth} ETH + ${formatTokenAmount(quote.lmsUsed, 18, 2)} LMS`;
+}
+
 /** An open lobby's join button before anything has been quoted. */
 export function stakeButtonLabel(stakeWei: string, token: ZapToken | null): string {
   const stake = formatEther(BigInt(stakeWei));

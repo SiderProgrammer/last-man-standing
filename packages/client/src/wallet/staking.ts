@@ -1,7 +1,8 @@
-import { parseSignature, type Address, type Hex } from 'viem';
+import type { Address, Hex } from 'viem';
 import { claimableEpochRange, lmsTokenAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/protocol';
 import type { PlayRewards, StakingPosition, Vesting } from '../ui/staking.js';
-import { PERMIT_SECONDS, type Wallet } from './wallet.js';
+import { signLmsPermit } from './permit.js';
+import type { Wallet } from './wallet.js';
 
 /**
  * The staking vault and play-mining, through the player's own wallet: what
@@ -44,34 +45,13 @@ export async function stakingPosition(wallet: Wallet, vault: Address): Promise<S
 export async function stake(wallet: Wallet, vault: Address, amount: bigint): Promise<Hex> {
   const chain = await wallet.onHub();
   const lms = await wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
-  const [name, nonce] = await Promise.all([
-    wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
-    wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'nonces', args: [wallet.address] }),
-  ]);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_SECONDS);
-  const signature = await wallet.client.signTypedData({
-    account: wallet.signer,
-    domain: { name, version: '1', chainId: wallet.chainId, verifyingContract: lms },
-    types: {
-      Permit: [
-        { name: 'owner', type: 'address' },
-        { name: 'spender', type: 'address' },
-        { name: 'value', type: 'uint256' },
-        { name: 'nonce', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-      ],
-    },
-    primaryType: 'Permit',
-    message: { owner: wallet.address, spender: vault, value: amount, nonce, deadline },
-  });
-  const { r, s, v, yParity } = parseSignature(signature);
-
+  const { deadline, v, r, s } = await signLmsPermit(wallet, lms, vault, amount);
   const { request } = await wallet.rpc.simulateContract({
     account: wallet.address,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'depositWithPermit',
-    args: [amount, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
+    args: [amount, deadline, v, r, s],
   });
   return wallet.client.writeContract({ ...request, chain });
 }
