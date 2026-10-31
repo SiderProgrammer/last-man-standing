@@ -87,6 +87,8 @@ contract Deploy is Registry, AcrossBook {
     /// @dev The guardian on a local node: anvil's tenth default account, so a
     ///      developer has its key, and never the deployer, which is the Safe.
     address private constant LOCAL_GUARDIAN = 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720;
+    /// @dev Anvil's fourth default account.
+    address private constant LOCAL_MATCHMAKER = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
 
     /// @dev Chainlink VRF v2.5 on Base: the coordinator and the 2 gwei lane.
     address private constant BASE_VRF_COORDINATOR = 0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634;
@@ -141,6 +143,9 @@ contract Deploy is Registry, AcrossBook {
         MultisigPhase multisigPhase;
         address safe;
         address guardian;
+        /// @dev Opens matchmade lobbies: the server's `MATCHMAKER_PK`. Zero
+        ///      when `MATCHMAKER` is unset: every lobby is then private.
+        address matchmaker;
         address oracle;
         /// @dev The VRF adapter this script deployed, if any; it is also
         ///      `oracle`. Zero with the mocks, or when `ORACLE` was passed.
@@ -164,6 +169,7 @@ contract Deploy is Registry, AcrossBook {
         address deployer = vm.addr(pk);
         deployment.safe = _safe(deployer);
         deployment.guardian = _guardian();
+        deployment.matchmaker = _matchmaker();
         deployment.deployBlock = block.number;
 
         vm.startBroadcast(pk);
@@ -184,6 +190,7 @@ contract Deploy is Registry, AcrossBook {
         _configure(deployment.config, deployment.oracle, deployment.guardian, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
+        if (deployment.matchmaker != address(0)) deployment.config.setMatchmaker(deployment.matchmaker);
         _bridge(deployment);
         _wireVrf(deployment);
         // Cosmetic and per-chain: the same deployment is repeated on every
@@ -232,6 +239,7 @@ contract Deploy is Registry, AcrossBook {
         _entry("multisigPhase", address(deployment.multisigPhase));
         _entry("safe", deployment.safe);
         _entry("guardian", deployment.guardian);
+        _entry("matchmaker", deployment.matchmaker);
         _entry("randomnessOracle", deployment.oracle);
         return _registry(deployment.deployBlock);
     }
@@ -257,6 +265,14 @@ contract Deploy is Registry, AcrossBook {
         return LOCAL_GUARDIAN;
     }
 
+    /// @dev `MATCHMAKER`: the address of the server's matchmaker key. Unset on
+    ///      a local node, it is anvil's fourth default account, which
+    ///      `npm run dev:fork` gives the server; elsewhere unset means none.
+    function _matchmaker() internal view virtual returns (address matchmaker) {
+        matchmaker = vm.envOr("MATCHMAKER", address(0));
+        if (matchmaker == address(0) && block.chainid == LOCAL_CHAIN_ID) return LOCAL_MATCHMAKER;
+    }
+
     /// @dev Safe, guardian and treasury (the timelock) are separate, so that
     ///      no one key can both stop the protocol and change it, and the Safe
     ///      that proposes cannot also spend. The deployer is checked too: it
@@ -268,6 +284,14 @@ contract Deploy is Registry, AcrossBook {
         address timelock = address(deployment.timelock);
         if (guardian == safe || guardian == timelock) revert RolesOverlap(guardian);
         if (safe == timelock) revert RolesOverlap(safe);
+        // A hot key on the game server: never one that governs or stops it.
+        address matchmaker = deployment.matchmaker;
+        if (
+            matchmaker != address(0)
+                && (matchmaker == safe || matchmaker == guardian || matchmaker == timelock)
+        ) {
+            revert RolesOverlap(matchmaker);
+        }
     }
 
     /// @dev The mocks are for a local node only. `MockRandomnessOracle.fulfill`

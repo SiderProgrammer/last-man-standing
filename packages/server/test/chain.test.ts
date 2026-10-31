@@ -35,6 +35,7 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     seed: bytes32('seed'),
     deadline: 9_999_999_999n,
     rankingHash: `0x${'00'.repeat(32)}`,
+    matchmade: false,
     ...overrides,
   };
 }
@@ -639,5 +640,20 @@ describe('chunked log scans', () => {
     expect(confirmedHead(100n, 3)).toBe(97n);
     expect(confirmedHead(2n, 3)).toBeNull();
     expect(confirmedHead(100n, 0)).toBe(100n);
+  });
+});
+
+describe('chain bridge and matchmade lobbies', () => {
+  it('says which lobbies the matchmaker opened', async () => {
+    const reader = new FakeEscrow();
+    const matched = bytes32('matchmade');
+    const open = bytes32('private');
+    reader.created = [matched, open];
+    reader.matches.set(matched, match({ status: MatchStatus.Open, seatCount: 1, matchmade: true }));
+    reader.matches.set(open, match({ status: MatchStatus.Open, seatCount: 1 }));
+    const { bridge } = bridgeOver(reader);
+    await bridge.poll();
+    const listed = new Map(bridge.directory().open.map((lobby) => [lobby.matchId, lobby.matchmade]));
+    expect(listed).toEqual(new Map([[matched, true], [open, false]]));
   });
 });

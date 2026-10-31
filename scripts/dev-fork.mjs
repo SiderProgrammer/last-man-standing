@@ -87,6 +87,11 @@ const PLAYER_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b
  * key, as the server requires: the attestor only signs.
  */
 const KEEPER_KEY = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
+/**
+ * Opens matchmade lobbies. Anvil's fourth account, which `Deploy.s.sol` makes
+ * the matchmaker on a local node when `MATCHMAKER` is unset.
+ */
+const MATCHMAKER_KEY = '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6';
 
 /**
  * Answers the mock oracle. A different anvil dev account from the operator,
@@ -673,6 +678,9 @@ async function main() {
       ESCROW_ADDRESS: addresses.GameEscrow,
       ATTESTOR_PK: OPERATOR_KEY,
       KEEPER_PK: KEEPER_KEY,
+      MATCHMAKER_PK: MATCHMAKER_KEY,
+      // A short wait, so two browsers can make a table without finding two more.
+      MATCHMAKING_FILL_AFTER_MS: '5000',
       ZAP_JOIN: addresses.ZapJoin,
       V4_QUOTER,
       ZAP_TOKENS: zapTokens(),

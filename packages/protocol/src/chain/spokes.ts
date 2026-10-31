@@ -36,6 +36,8 @@ export const JoinFailure = {
   LobbyFull: 5,
   AlreadyJoined: 6,
   StakeTooLow: 7,
+  /** A matchmade lobby whose roster does not name the player. */
+  NotRostered: 8,
 } as const;
 
 export type JoinFailureValue = (typeof JoinFailure)[keyof typeof JoinFailure];
@@ -57,6 +59,8 @@ export function joinFailureText(reason: number): string {
       return 'you already had a seat in it';
     case JoinFailure.StakeTooLow:
       return 'less than the stake arrived';
+    case JoinFailure.NotRostered:
+      return 'that lobby was matched for other players'
     default:
       return 'the seat could not be taken';
   }

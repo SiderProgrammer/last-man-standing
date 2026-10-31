@@ -122,6 +122,14 @@ const ENV = z.object({
   SESSION_DELEGATE: address,
   SESSION_RELAYER_PK: privateKey,
   MATCHMAKER_PK: privateKey,
+  MATCHMAKING_TIERS: text(
+    JSON.stringify([
+      { stake: '1000000000000000', seats: 4 },
+      { stake: '1000000000000000', seats: 8 },
+      { stake: '10000000000000000', seats: 4 },
+    ]),
+  ),
+  MATCHMAKING_FILL_AFTER_MS: whole(30_000),
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
   CROSS_CHAIN_FROM_BLOCK: bigint,
@@ -229,6 +237,13 @@ export function loadConfig(
     keeperPk: e.KEEPER_PK,
     /** Opens matchmade lobbies with their rosters. See `lobby/matchmaker.ts`. */
     matchmakerPk: e.MATCHMAKER_PK,
+    /**
+     * The queues the matchmaker runs, as JSON: `[{"stake":"<wei>","seats":4}]`.
+     * Each stake must be one the escrow accepts. Only with `MATCHMAKER_PK`.
+     */
+    matchmakingTiers: e.MATCHMAKING_TIERS,
+    /** A tier with enough players for a table, but not a full one, opens it after the first has waited this long. */
+    matchmakingFillAfterMs: e.MATCHMAKING_FILL_AFTER_MS,
     /** Blank, or `ARCHIVE=memory`, keeps the archive in memory. */
     databaseUrl: e.ARCHIVE === 'memory' ? '' : (e.DATABASE_URL ?? ''),
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */

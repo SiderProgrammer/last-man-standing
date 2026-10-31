@@ -62,6 +62,28 @@ contract EscrowHandler is Test {
         matchIds.push(current);
     }
 
+    /// @dev The config's matchmaker; `setUp` names it.
+    address public constant MATCHMAKER = address(0x3A7C4);
+
+    /// @dev A matchmade lobby for the actors `mask` picks, at least four of
+    ///      them. Joins by anyone else revert, and their bridged stakes are
+    ///      credited back.
+    function createMatchmade(uint256 mask) public {
+        mask = bound(mask, 0, (1 << actors.length) - 1) | 0x0f;
+        uint256 count;
+        for (uint256 i = 0; i < actors.length; ++i) {
+            if (mask & (1 << i) != 0) ++count;
+        }
+        address[] memory roster = new address[](count);
+        uint256 n;
+        for (uint256 i = 0; i < actors.length; ++i) {
+            if (mask & (1 << i) != 0) roster[n++] = actors[i];
+        }
+        vm.prank(MATCHMAKER);
+        current = escrow.createMatchmade(STAKE, 4, roster);
+        matchIds.push(current);
+    }
+
     function matchCount() external view returns (uint256) {
         return matchIds.length;
     }
@@ -295,6 +317,10 @@ contract EscrowInvariantTest is Fixtures {
             lms.approve(address(escrow), type(uint256).max);
         }
         initialLmsSupply = lms.totalSupply();
+        // Read first: a prank is spent on the next call, and the getter is one.
+        address matchmaker_ = handler.MATCHMAKER();
+        vm.prank(owner);
+        config.setMatchmaker(matchmaker_);
         address guardian = handler.GUARDIAN();
         vm.prank(owner);
         config.setGuardian(guardian);
@@ -357,9 +383,22 @@ contract EscrowInvariantTest is Fixtures {
         }
     }
 
-    /// @dev And it counts exactly the seats of the matches that settled in it,
-    ///      net of their discounts: nothing for a match still open, in play,
-    ///      refunded or vetoed.
+    /// @dev Nobody the matchmaker did not roster sits in a matchmade lobby,
+    ///      whichever route their stake took.
+    function invariant_matchmadeSeatsAreRostered() public view {
+        for (uint256 m = 0; m < handler.matchCount(); ++m) {
+            bytes32 matchId = handler.matchIds(m);
+            if (!escrow.getMatch(matchId).matchmade) continue;
+            address[] memory seats = escrow.getSeats(matchId);
+            for (uint256 i = 0; i < seats.length; ++i) {
+                assertTrue(escrow.rostered(matchId, seats[i]));
+            }
+        }
+    }
+
+    /// @dev And it counts exactly the seats of the matchmade matches that
+    ///      settled in it, net of their discounts: nothing for a match still
+    ///      open, in play, refunded or vetoed, and nothing for a private one.
     function invariant_epochFeesCountOnlySettledMatches() public view {
         uint256 seatFee = (uint256(handler.STAKE()) * config.feeBps()) / BPS_DENOMINATOR;
         uint256 expectedTotal;
@@ -371,6 +410,7 @@ contract EscrowInvariantTest is Fixtures {
                 if (handler.settledInEpochPlusOne(matchId) != epoch + 1) continue;
                 GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
                 assertEq(uint8(info.status), uint8(GameEscrow.MatchStatus.Settled));
+                if (!info.matchmade) continue;
                 expected += seatFee * info.seatCount - _discounts(matchId, true);
             }
             assertEq(escrow.epochFees(epoch), expected);
@@ -381,7 +421,7 @@ contract EscrowInvariantTest is Fixtures {
         for (uint256 m = 0; m < handler.matchCount(); ++m) {
             bytes32 matchId = handler.matchIds(m);
             GameEscrow.MatchInfo memory info = escrow.getMatch(matchId);
-            if (info.status != GameEscrow.MatchStatus.Settled) continue;
+            if (info.status != GameEscrow.MatchStatus.Settled || !info.matchmade) continue;
             settledFees += seatFee * info.seatCount - _discounts(matchId, true);
         }
         assertEq(expectedTotal, settledFees);

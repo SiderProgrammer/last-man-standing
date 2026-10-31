@@ -27,6 +27,8 @@ import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossCha
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { AnalystWorker } from './analyst/remote.js';
+import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
+import { DEFAULT_RULES } from '@lms/protocol';
 import { SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 
 const TICK_MS = 250;
@@ -186,6 +188,20 @@ async function main(): Promise<void> {
       })
     : undefined;
 
+  // Opens matchmade lobbies, the only ones that earn play-mining, with its
+  // own key. Told who to notify once the gateway exists.
+  const matchmakerSender = config.onChain ? senderFor(config.matchmakerPk, 'matchmaker') : null;
+  let notify: (player: `0x${string}`, message: Parameters<Gateway['notify']>[1]) => void = () => undefined;
+  const matchmaker = matchmakerSender
+    ? new Matchmaker({
+        port: viemMatchmakerPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: matchmakerSender }),
+        tiers: parseTiers(config.matchmakingTiers),
+        minSeats: DEFAULT_RULES.minPlayers,
+        fillAfterMs: config.matchmakingFillAfterMs,
+        notify: (player, message) => notify(player, message),
+      })
+    : null;
+
   const gateway = new Gateway({
     lobby,
     archive,
@@ -203,6 +219,7 @@ async function main(): Promise<void> {
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,
+    ...(matchmaker ? { matchmaker } : {}),
     staking:
       config.stakedLms !== ZERO_ADDRESS
         ? {
@@ -312,8 +329,12 @@ async function main(): Promise<void> {
     socket.on('close', () => heartbeat.untrack(pingable));
   });
 
+  notify = (player, message) => gateway.notify(player, message);
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
+  const matching = matchmaker ? setInterval(() => void matchmaker.tick(), 1_000) : null;
+  matching?.unref();
+  if (matchmaker) console.log(`[server] matchmaking ${matchmaker.tiers.length} tiers`);
   const sweeper = setInterval(() => {
     gateway.sweep();
   }, SWEEP_MS);
@@ -381,6 +402,7 @@ async function main(): Promise<void> {
     crossChain?.stop();
     proposals?.stop();
     clearInterval(ticker);
+    if (matching) clearInterval(matching);
     clearInterval(sweeper);
     clearInterval(beat);
     wss.close();

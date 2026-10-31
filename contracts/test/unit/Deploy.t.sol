@@ -437,7 +437,8 @@ contract DeployTest is Test {
             vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
         );
         assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 21);
+        assertEq(vm.parseJsonAddress(json, ".contracts.matchmaker"), deployment.matchmaker);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 22);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

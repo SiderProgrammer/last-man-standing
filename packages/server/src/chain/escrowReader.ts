@@ -25,6 +25,8 @@ export interface EscrowMatch {
   deadline: bigint;
   /** `keccak256(abi.encode(ranking))` of a proposed result; zero before one. */
   rankingHash: `0x${string}`;
+  /** Opened by the matchmaker: only its roster can join. */
+  matchmade: boolean;
 }
 
 /** A match and who sits in it, as one batched read returns them. */
@@ -179,6 +181,7 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
             seed: info.seed,
             deadline: BigInt(info.deadline),
             rankingHash: info.rankingHash,
+            matchmade: info.matchmade,
           },
           seats: results[i * 3 + 2] as readonly Address[],
         };
@@ -219,4 +222,5 @@ interface MatchInfoRead {
   seed: `0x${string}`;
   deadline: number;
   rankingHash: `0x${string}`;
+  matchmade: boolean;
 }

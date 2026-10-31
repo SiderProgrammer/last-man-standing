@@ -149,13 +149,19 @@ describe('spoke joins', () => {
 });
 
 describe('lobby rows', () => {
-  const lobby = { status: 'open', joinDeadline: 1_000, cancellableAt: 1_000 } as const;
+  const lobby = { status: 'open', joinDeadline: 1_000, cancellableAt: 1_000, matchmade: false } as const;
 
   it('offers a seated player the refund once the lobby can only be cancelled', () => {
     expect(lobbyAction(lobby, true, 999)).toBe('enter');
     expect(lobbyAction(lobby, true, 1_000)).toBe('cancel');
     expect(lobbyAction({ ...lobby, status: 'pending', cancellableAt: 5_000 }, true, 4_000)).toBe('enter');
     expect(lobbyAction({ ...lobby, status: 'pending', cancellableAt: 5_000 }, true, 5_000)).toBe('cancel');
+  });
+
+  it('offers a matchmade lobby only to the players the queue put in it', () => {
+    const matchmade = { ...lobby, matchmade: true };
+    expect(lobbyAction(matchmade, false, 999)).toBe('matchmade');
+    expect(lobbyAction(matchmade, false, 999, true)).toBe('join');
   });
 
   it('takes no new seat once the join window has closed', () => {

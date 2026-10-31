@@ -3,7 +3,7 @@ import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { onCrossChain, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
+import { onCrossChain, onMatched, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
 import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
 import {
   governanceVisible,
@@ -174,6 +174,16 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'crossChain':
       onCrossChain(message.event);
+      break;
+
+    case 'matched':
+      onMatched(message);
+      break;
+
+    // The queue's own screen comes with the matchmaking UI; until then the
+    // only news worth showing is a table being ready.
+    case 'queued':
+    case 'dequeued':
       break;
 
     case 'analysis.step':

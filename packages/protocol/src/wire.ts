@@ -66,6 +66,8 @@ export type RequestErrorCode =
   | 'RELAY_REFUSED'
   /** The wallet has used today's relayed calls. Its own transactions still work. */
   | 'RELAY_QUOTA'
+  /** A matchmaking tier this server does not run, or a wallet already queued. */
+  | 'BAD_QUEUE'
   /** A failure with no specific code. The message says what happened. */
   | 'INTERNAL';
 
@@ -137,7 +139,15 @@ export type ClientMessage =
    * `relay.error` carrying the same `id`. The call runs from the
    * authenticated wallet, through `SessionKeyDelegate.executeWithSession`.
    */
-  | { type: 'relay'; id: string; call: RelayedCall };
+  | { type: 'relay'; id: string; call: RelayedCall }
+  /**
+   * Joins the matchmaking queue for one of the tiers `hello` lists. Answered
+   * with `queued`, then `matched` once the queue has put a table together.
+   * One queue per wallet; joining another leaves the first.
+   */
+  | { type: 'queue'; stake: string; seats: number }
+  /** Leaves the matchmaking queue. Answered with `dequeued`. */
+  | { type: 'dequeue' };
 
 export type ServerMessage =
   | {
@@ -189,6 +199,12 @@ export type ServerMessage =
        * signed with a key the escrow trusts.
        */
       practiceReceiptSigner: `0x${string}` | null;
+      /**
+       * The tiers this server matchmakes, each a stake in wei and a table
+       * size. Empty when it runs no matchmaker: every lobby is then one a
+       * player opened, joined by id, and none earns play-mining.
+       */
+      matchmaking: MatchmakingTier[];
     }
   | { type: 'authed'; address: `0x${string}` }
   /**
@@ -253,6 +269,15 @@ export type ServerMessage =
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
   | { type: 'review'; match: ReviewedMatch }
+  /** In the queue for this tier, with `waiting` wallets in it now, this one included. */
+  | { type: 'queued'; stake: string; seats: number; waiting: number }
+  | { type: 'dequeued' }
+  /**
+   * The queue put a table together, and the escrow holds a matchmade lobby
+   * for it, with this wallet on its roster. Stake into it, by any route,
+   * within its join window to take the seat.
+   */
+  | { type: 'matched'; matchId: `0x${string}`; stake: string; seats: number }
   | { type: 'error'; code: ErrorCode; message: string };
 
 /** One finished match in a player's history, as seen from their seat. */
@@ -280,6 +305,12 @@ export interface ReviewedMatch {
   staked: boolean;
   settledTx: `0x${string}` | null;
   finishedAt: number;
+}
+
+/** A matchmaking queue: a stake in wei, as a decimal string, and a table size. */
+export interface MatchmakingTier {
+  stake: string;
+  seats: number;
 }
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */
@@ -316,6 +347,12 @@ export interface LobbyInfo {
    * cancels it then; a seated player may too.
    */
   cancellableAt: number;
+  /**
+   * Opened by the server's matchmaker for the players its queue put
+   * together: only they can take a seat. Every other lobby is private, open
+   * to anyone with its id, and earns no play-mining.
+   */
+  matchmade: boolean;
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

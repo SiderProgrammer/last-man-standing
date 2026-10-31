@@ -56,6 +56,11 @@ export interface AppState {
    * `crossChain` report, or by the seat showing up in the directory.
    */
   inTransit: Set<string>;
+  /**
+   * Matchmade lobbies the server's queue put this wallet in, by lowercased
+   * match id: the only matchmade lobbies it can take a seat in.
+   */
+  matched: Set<string>;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   /** True when the server can write match analyses. */
@@ -106,6 +111,7 @@ export const app: AppState = {
   zap: null,
   spokes: [],
   inTransit: new Set(),
+  matched: new Set(),
   staking: null,
   analyst: false,
   match: null,

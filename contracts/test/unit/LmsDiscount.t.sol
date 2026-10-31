@@ -100,7 +100,9 @@ contract LmsDiscountTest is Fixtures {
         address carol = vm.addr(CAROL_PK);
         vm.deal(carol, 10 ether);
         lms.transfer(carol, MAX_LMS);
-        bytes32 matchId = _create();
+        // Private: carol is on no roster.
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
         (uint8 v, bytes32 r, bytes32 s) = _permit(CAROL_PK, MAX_LMS, block.timestamp);
 
         vm.prank(carol);
@@ -203,9 +205,9 @@ contract LmsDiscountTest is Fixtures {
 
     // --- Helpers -------------------------------------------------------------------
 
+    /// @dev Matchmade, so its net fees count.
     function _create() private returns (bytes32 matchId) {
-        vm.prank(players[0]);
-        matchId = escrow.createMatch(STAKE, 4);
+        matchId = _createMatchmade(4, _firstPlayers(8));
     }
 
     function _fillHalfDiscounted() private returns (bytes32 matchId) {

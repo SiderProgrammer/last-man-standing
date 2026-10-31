@@ -11,6 +11,7 @@ import {
   type BotDifficulty,
   type CrossChainEvent,
   type LobbyInfo,
+  type ServerMessage,
   type SpokeInfo,
   type ZapToken,
 } from '@lms/protocol';
@@ -139,7 +140,7 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
 
   const button = document.createElement('button');
   const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
-  const action = lobbyAction(lobby, seated, Math.floor(Date.now() / 1000));
+  const action = lobbyAction(lobby, seated, Math.floor(Date.now() / 1000), app.matched.has(lobby.matchId.toLowerCase()));
 
   const spoke = currentSpoke();
 
@@ -157,6 +158,10 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     button.textContent = 'Closed';
     button.disabled = true;
     button.title = 'Its join window has closed.';
+  } else if (action === 'matchmade') {
+    button.textContent = 'Matchmade';
+    button.disabled = true;
+    button.title = 'The matchmaking queue put this table together; only its players can take a seat.';
   } else if (app.inTransit.has(lobby.matchId.toLowerCase())) {
     button.textContent = 'In transit…';
     button.disabled = true;
@@ -217,6 +222,13 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
   } catch (error) {
     toast(errorFirstLine(error));
   }
+}
+
+/** The queue put this wallet at a table: its lobby is now one it can stake into. */
+export function onMatched(message: Extract<ServerMessage, { type: 'matched' }>): void {
+  app.matched.add(message.matchId.toLowerCase());
+  toast(`Matched: a ${message.seats}-seat table is ready. Stake into ${short(message.matchId)} to take your seat.`);
+  net.send({ type: 'lobbies' });
 }
 
 /** Cancels a lobby the player sits in that can no longer start; the refund is then theirs to withdraw. */

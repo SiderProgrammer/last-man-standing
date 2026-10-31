@@ -28,6 +28,7 @@ import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type Gate
 import type { Client } from '../match/room.js';
 import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
 import type { SessionRelay } from '../chain/sessionRelay.js';
+import type { Matchmaker } from '../lobby/matchmaker.js';
 
 /**
  * Checks a login signature against an address.
@@ -99,6 +100,8 @@ interface Session extends Client {
   closed: boolean;
   /** The analysis being written for this socket, if any; aborted if it closes. */
   analysis: AbortController | null;
+  /** This socket put its wallet in the matchmaking queue; it leaves if the last such socket closes. */
+  queued: boolean;
 }
 
 export interface GatewayOptions {
@@ -113,6 +116,11 @@ export interface GatewayOptions {
    * one-click play, and `hello` names no delegate.
    */
   relay?: SessionRelay;
+  /**
+   * The matchmaking queue. Omitted, `hello` lists no tiers, `queue` is
+   * refused, and every lobby is one a player opened.
+   */
+  matchmaker?: Matchmaker;
   /** Token payment through `ZapJoin`. Null or omitted offers ETH only. */
   zap?: ZapInfo | null;
   /** Spoke chains a player may stake from. Omitted or empty is hub-only. */
@@ -232,6 +240,7 @@ export class Gateway {
       grant: null,
       closed: false,
       analysis: null,
+      queued: false,
     };
     this.sessions.set(socket, session);
     this.perIp.set(ip, (this.perIp.get(ip) ?? 0) + 1);
@@ -250,6 +259,7 @@ export class Gateway {
       spokes: this.options.spokes ?? [],
       receiptSigner: this.options.receipts?.address ?? null,
       practiceReceiptSigner: this.options.practiceReceipts?.address ?? null,
+      matchmaking: [...(this.options.matchmaker?.tiers ?? [])],
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -383,6 +393,20 @@ export class Gateway {
       }
       case 'relay': {
         await this.relay(session, address, message);
+        return;
+      }
+      case 'queue': {
+        const matchmaker = this.options.matchmaker;
+        if (!matchmaker) throw new RequestError('UNAVAILABLE', 'this server runs no matchmaking');
+        // `queued` goes to every socket of the wallet, this one included.
+        matchmaker.join(address, message.stake, message.seats);
+        session.queued = true;
+        return;
+      }
+      case 'dequeue': {
+        this.options.matchmaker?.leave(address);
+        session.queued = false;
+        session.send({ type: 'dequeued' });
         return;
       }
       case 'commit': {
@@ -618,9 +642,22 @@ export class Gateway {
     session.analysis?.abort();
     for (const room of this.options.lobby.list()) room.detach(session);
     this.sessions.delete(session.socket);
+    // Nobody left to tell when its table is ready: out of the queue.
+    if (session.queued && session.address && !this.connected(session.address)) {
+      this.options.matchmaker?.leave(session.address);
+    }
     const count = (this.perIp.get(session.ip) ?? 1) - 1;
     if (count > 0) this.perIp.set(session.ip, count);
     else this.perIp.delete(session.ip);
+  }
+
+  /** Whether any open socket is logged in as `address`. */
+  private connected(address: `0x${string}`): boolean {
+    const key = addressKey(address);
+    for (const session of this.sessions.values()) {
+      if (session.address !== null && addressKey(session.address) === key) return true;
+    }
+    return false;
   }
 
   private now(): number {

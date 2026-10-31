@@ -293,6 +293,7 @@ export class ChainBridge {
         status: raw.status === MatchStatus.Open ? 'open' : raw.status === MatchStatus.Pending ? 'pending' : 'live',
         players: seats,
         cancellableAt: cancellableAt ?? Number(raw.deadline),
+        matchmade: raw.matchmade,
       };
 
       // A match that can only be cancelled now is cancelled: an Open lobby
@@ -462,5 +463,6 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
     status: 'open',
     players: [],
     cancellableAt: 0,
+    matchmade: false,
   };
 }

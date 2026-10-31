@@ -175,14 +175,17 @@ export function lobbySummary(stake: string, seatCount: number, maxSeats: number,
  * closed takes no new seats, whatever the directory last said.
  */
 export function lobbyAction(
-  lobby: Pick<LobbyInfo, 'status' | 'joinDeadline' | 'cancellableAt'>,
+  lobby: Pick<LobbyInfo, 'status' | 'joinDeadline' | 'cancellableAt' | 'matchmade'>,
   seated: boolean,
   nowSeconds: number,
-): 'cancel' | 'enter' | 'watch' | 'closed' | 'join' {
+  /** The queue put this wallet in it: see `app.matched`. */
+  matched = false,
+): 'cancel' | 'enter' | 'watch' | 'closed' | 'matchmade' | 'join' {
   if (seated && nowSeconds >= lobby.cancellableAt) return 'cancel';
   if (seated) return 'enter';
   if (lobby.status !== 'open') return 'watch';
-  return nowSeconds >= lobby.joinDeadline ? 'closed' : 'join';
+  if (nowSeconds >= lobby.joinDeadline) return 'closed';
+  return lobby.matchmade && !matched ? 'matchmade' : 'join';
 }
 
 // ------------------------------------------------------------ token payment

@@ -22,6 +22,7 @@ import {
   Gateway,
   HISTORY_PAGE,
   Lobby,
+  Matchmaker,
   MemoryArchive,
   SessionRelay,
   nullRelayer,
@@ -107,6 +108,7 @@ function openLobby(): LobbyInfo {
     status: 'open',
     players: [{ address: account.address, chainId: 11155111 }],
     cancellableAt: 1_800_000_600,
+    matchmade: false,
   };
 }
 
@@ -122,6 +124,7 @@ interface Extras {
   spokes: SpokeInfo[];
   receipts: ReceiptSigner;
   practiceReceipts: ReceiptSigner;
+  matchmaker: Matchmaker;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -146,6 +149,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.archive ? { archive: extras.archive } : {}),
     ...(extras.receipts ? { receipts: extras.receipts } : {}),
     ...(extras.practiceReceipts ? { practiceReceipts: extras.practiceReceipts } : {}),
+    ...(extras.matchmaker ? { matchmaker: extras.matchmaker } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -627,6 +631,56 @@ describe('gateway match history', () => {
     await login(socket);
     await socket.deliver({ type: 'history' });
     expect(socket.last('error')?.code).toBe('UNAVAILABLE');
+  });
+});
+
+describe('gateway matchmaking', () => {
+  const STAKE = '1000000000000000';
+  function queueing() {
+    const matchmaker = new Matchmaker({
+      port: { create: async () => `0x${'12'.repeat(32)}` },
+      tiers: [{ stake: STAKE, seats: 4 }],
+      minSeats: 4,
+      notify: (player, message) => gateway.notify(player, message),
+    });
+    const { socket, gateway } = harness({ matchmaker });
+    return { socket, matchmaker };
+  }
+
+  it('lists the tiers it runs in hello, and none without a matchmaker', () => {
+    expect(queueing().socket.last('hello')?.matchmaking).toEqual([{ stake: STAKE, seats: 4 }]);
+    expect(harness().socket.last('hello')?.matchmaking).toEqual([]);
+  });
+
+  it('queues the wallet, tells it how many are waiting, and takes it out when asked', async () => {
+    const { socket, matchmaker } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    expect(socket.last('queued')).toEqual({ type: 'queued', stake: STAKE, seats: 4, waiting: 1 });
+
+    await socket.deliver({ type: 'dequeue' });
+    expect(socket.last('dequeued')).toEqual({ type: 'dequeued' });
+    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+  });
+
+  it('takes the wallet out of the queue when its socket closes', async () => {
+    const { socket, matchmaker } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    socket.close();
+    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+  });
+
+  it('refuses a tier it does not run, and a queue on a server with none', async () => {
+    const { socket } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: '5', seats: 4 });
+    expect(socket.last('error')?.code).toBe('BAD_QUEUE');
+
+    const plain = harness().socket;
+    await login(plain);
+    await plain.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    expect(plain.last('error')?.code).toBe('UNAVAILABLE');
   });
 });
 

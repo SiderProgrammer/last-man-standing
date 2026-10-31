@@ -251,7 +251,7 @@ contract GameEscrowTest is Fixtures {
         stranger[1] = ATTESTOR_PK_A;
         // One real attestor is not enough, and 0xDEAD is not an attestor.
         bytes memory bad = _signResult(stranger, matchId, 3, historyRoot, ranking);
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, vm.addr(0xDEAD)));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.NotAnAttestor.selector, vm.addr(0xDEAD)));
         escrow.settle(matchId, 3, historyRoot, TRANSCRIPT_HASH, ranking, bad);
 
         address[] memory shuffled = new address[](4);
@@ -289,7 +289,7 @@ contract GameEscrowTest is Fixtures {
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _signResult(one, matchId, ROUNDS, HISTORY_ROOT, ranking);
 
-        vm.expectPartialRevert(GameEscrow.NotAnAttestor.selector);
+        vm.expectPartialRevert(ProtocolConfig.NotAnAttestor.selector);
         escrow.settle(matchId, ROUNDS, HISTORY_ROOT, keccak256("another transcript"), ranking, sigs);
         escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, sigs);
     }
@@ -301,7 +301,7 @@ contract GameEscrowTest is Fixtures {
         uint256[] memory one = new uint256[](1);
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _signResult(one, matchId, 1, keccak256("r"), ranking);
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.QuorumNotMet.selector, uint256(1), uint32(2)));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.QuorumNotMet.selector, uint256(1), uint32(2)));
         escrow.settle(matchId, 1, keccak256("r"), TRANSCRIPT_HASH, ranking, sigs);
     }
 

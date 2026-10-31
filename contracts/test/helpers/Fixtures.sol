@@ -27,6 +27,8 @@ contract Fixtures is Test {
     MockRandomnessOracle internal oracle;
     /// @dev Stands in for `BridgeJoinReceiver`: the one caller of `bridgeJoin`.
     address internal bridge;
+    /// @dev Opens matchmade lobbies, as the server's matchmaker key does.
+    address internal matchmaker;
     SettlementHarness internal harness;
 
     uint128 internal constant STAKE = 1 ether;
@@ -52,6 +54,7 @@ contract Fixtures is Test {
 
         oracle = new MockRandomnessOracle();
         bridge = makeAddr("bridge");
+        matchmaker = makeAddr("matchmaker");
         harness = new SettlementHarness();
 
         ProtocolConfig.Params memory params = ProtocolConfig.Params({
@@ -76,6 +79,7 @@ contract Fixtures is Test {
         config.setAttestorSet(_attestors(attestorA, attestorB, attestorC), 2);
         config.setRulesHash(harness.hashRulesDefault());
         config.setBridgeReceiver(bridge);
+        config.setMatchmaker(matchmaker);
         config.setChallengeWindow(CHALLENGE_WINDOW);
         vm.stopPrank();
 
@@ -115,6 +119,27 @@ contract Fixtures is Test {
         for (uint16 i = 0; i < seats; ++i) {
             vm.prank(players[i]);
             escrow.join{value: STAKE}(matchId);
+        }
+    }
+
+    /// @dev A matchmade lobby for the first `seats` players, every one of them seated.
+    function _createMatchmadeAndFill(uint16 seats) internal returns (bytes32 matchId) {
+        matchId = _createMatchmade(seats, _firstPlayers(seats));
+        for (uint16 i = 0; i < seats; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+    }
+
+    function _createMatchmade(uint16 seats, address[] memory roster) internal returns (bytes32 matchId) {
+        vm.prank(matchmaker);
+        matchId = escrow.createMatchmade(STAKE, seats, roster);
+    }
+
+    function _firstPlayers(uint256 count) internal view returns (address[] memory roster) {
+        roster = new address[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            roster[i] = players[i];
         }
     }
 
