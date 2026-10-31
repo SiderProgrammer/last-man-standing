@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
-import { DEFAULT_RULES, MatchStatus, hashRules } from '@lms/protocol';
+import { DEFAULT_RULES, LOCK_GRACE_SECONDS, MatchStatus, hashRules } from '@lms/protocol';
 import {
   ChainBridge,
   Lobby,
@@ -28,7 +28,7 @@ function match(overrides: Partial<EscrowMatch> = {}): EscrowMatch {
     joinDeadline: 9_999_999_999n,
     rulesHash: hashRules(DEFAULT_RULES),
     seed: bytes32('seed'),
-    deadline: 0n,
+    deadline: 9_999_999_999n,
     ...overrides,
   };
 }
@@ -381,5 +381,93 @@ describe('chain bridge after a restart', () => {
     nowMs = 5_000_000;
     await bridge.poll();
     expect(reader.cancelled).toEqual([id]);
+  });
+});
+
+describe('chain bridge keeper', () => {
+  const id = bytes32('keeper');
+
+  function tracked(reader: FakeEscrow, info: Partial<EscrowMatch>): void {
+    reader.created = [id];
+    reader.matches.set(id, match(info));
+    reader.seats.set(id, [seat(0), seat(1)]);
+  }
+
+  it('cancels an open lobby whose join window closed short of seats', async () => {
+    const reader = new FakeEscrow();
+    tracked(reader, { status: MatchStatus.Open, seatCount: 2, minSeats: 4, joinDeadline: 500n });
+    const { bridge } = bridgeOver(reader, () => 1_000_000);
+    await bridge.poll();
+
+    expect(reader.cancelled).toEqual([id]);
+    expect(reader.locked).toEqual([]);
+    // Still listed, so a seated player sees it can be cancelled.
+    expect(bridge.directory().open[0]?.cancellableAt).toBe(500);
+  });
+
+  it('locks a quorate lobby past its deadline, and cancels it only once the lock grace has passed', async () => {
+    const reader = new FakeEscrow();
+    reader.lockSucceeds = false;
+    tracked(reader, { status: MatchStatus.Open, seatCount: 4, maxSeats: 8, minSeats: 4, joinDeadline: 500n });
+    let nowMs = 600_000;
+    const { bridge } = bridgeOver(reader, () => nowMs);
+
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([]);
+    expect(bridge.directory().open[0]?.cancellableAt).toBe(500 + LOCK_GRACE_SECONDS);
+
+    nowMs = (500 + LOCK_GRACE_SECONDS) * 1000;
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([id]);
+  });
+
+  it('cancels a lobby the oracle never seeded, once its timeout has passed', async () => {
+    const reader = new FakeEscrow();
+    tracked(reader, { status: MatchStatus.Pending, deadline: 2_000n });
+    let nowMs = 1_000_000;
+    const { bridge } = bridgeOver(reader, () => nowMs);
+
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([]);
+    nowMs = 2_000_000;
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([id]);
+  });
+
+  it('cancels a match it adopted but never settled, once the settle deadline has passed', async () => {
+    const reader = new FakeEscrow();
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Open, seatCount: 4, maxSeats: 4 }));
+    reader.seats.set(id, [seat(0), seat(1), seat(2), seat(3)]);
+    let nowMs = 1_000_000;
+    const { bridge, lobby } = bridgeOver(reader, () => nowMs);
+    await bridge.poll();
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4, deadline: 4_000n }));
+    await bridge.poll();
+    expect(lobby.get(id)).not.toBeNull();
+
+    nowMs = 4_000_000;
+    await bridge.poll();
+    expect(reader.cancelled).toEqual([id]);
+  });
+
+  it('forgets a match nothing has cancelled an hour after it could have been', async () => {
+    const reader = new FakeEscrow();
+    // No keeper here: every cancel is refused.
+    reader.cancelMatch = async () => false;
+    tracked(reader, { status: MatchStatus.Open, seatCount: 2, minSeats: 4, joinDeadline: 500n });
+    let nowMs = 1_000_000;
+    const { bridge } = bridgeOver(reader, () => nowMs);
+
+    await bridge.poll();
+    expect(bridge.directory().open).toHaveLength(1);
+    nowMs = (500 + 3_600) * 1000;
+    await bridge.poll();
+    expect(bridge.directory().open).toHaveLength(0);
+    // Gone for good: not read again.
+    reader.getMatch = async () => {
+      throw new Error('read after it was forgotten');
+    };
+    await bridge.poll();
   });
 });

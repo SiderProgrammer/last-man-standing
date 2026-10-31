@@ -374,6 +374,22 @@ export class Wallet {
   }
 
   /**
+   * Calls off a lobby that can no longer start, or a match never settled in
+   * time, and refunds every seat. Permissionless once `cancellableAt` passes;
+   * the refund is credited, to withdraw like winnings.
+   */
+  async cancelMatch(escrow: Address, matchId: Hex): Promise<Hex> {
+    const { request } = await this.rpc.simulateContract({
+      account: this.address,
+      address: escrow,
+      abi: gameEscrowAbi,
+      functionName: 'cancelMatch',
+      args: [matchId],
+    });
+    return this.wallet.writeContract({ ...request, chain: null });
+  }
+
+  /**
    * Disputes a proposed result: its payout waits 48 hours more while the
    * guardian looks at the evidence whose hash this records.
    */

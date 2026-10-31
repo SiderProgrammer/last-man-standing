@@ -7,6 +7,7 @@ import {
   maxAmountInFor,
   type AvatarCollectionInfo,
   type CrossChainEvent,
+  type LobbyInfo,
   type LobbySeat,
   type PublicMatchState,
   type SpokeInfo,
@@ -163,10 +164,25 @@ export function avatarPanel(
   return { mintDisabled: false, status: `Free, one per wallet · ${supply}` };
 }
 
-/** The lobby row's left-hand label. */
 /** A lobby row's text: its stake, how full it is, and its status. */
 export function lobbySummary(stake: string, seatCount: number, maxSeats: number, status: string): string {
   return `${formatEther(BigInt(stake))} ETH · ${seatCount}/${maxSeats} seats · ${status}`;
+}
+
+/**
+ * What a lobby row's button does for this wallet. A seat in a lobby that can
+ * now only be cancelled offers the refund; a lobby whose join window has
+ * closed takes no new seats, whatever the directory last said.
+ */
+export function lobbyAction(
+  lobby: Pick<LobbyInfo, 'status' | 'joinDeadline' | 'cancellableAt'>,
+  seated: boolean,
+  nowSeconds: number,
+): 'cancel' | 'enter' | 'watch' | 'closed' | 'join' {
+  if (seated && nowSeconds >= lobby.cancellableAt) return 'cancel';
+  if (seated) return 'enter';
+  if (lobby.status !== 'open') return 'watch';
+  return nowSeconds >= lobby.joinDeadline ? 'closed' : 'join';
 }
 
 // ------------------------------------------------------------ token payment

@@ -106,6 +106,7 @@ function openLobby(): LobbyInfo {
     joinDeadline: 1_800_000_000,
     status: 'open',
     players: [{ address: account.address, chainId: 11155111 }],
+    cancellableAt: 1_800_000_600,
   };
 }
 

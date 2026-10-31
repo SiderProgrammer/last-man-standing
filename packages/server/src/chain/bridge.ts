@@ -1,6 +1,7 @@
 import type { Address, Hex } from 'viem';
 import {
   DEFAULT_RULES,
+  LOCK_GRACE_SECONDS,
   MatchStatus,
   hashRules,
   addressKey,
@@ -12,7 +13,7 @@ import {
 } from '@lms/protocol';
 import type { MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
-import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
+import { viemEscrowReader, type EscrowMatch, type EscrowReader } from './escrowReader.js';
 import type { TxSender } from './txSender.js';
 
 export interface ChainBridgeOptions {
@@ -179,6 +180,8 @@ export class ChainBridge {
         this.tracked.delete(key);
         continue;
       }
+      const nowSeconds = Math.floor(this.now() / 1000);
+      const cancellableAt = cancellableFrom(raw);
       if (raw.status === MatchStatus.Proposed) {
         entry.proposed = true;
         await this.maybeFinalize(matchId, raw.deadline);
@@ -186,6 +189,7 @@ export class ChainBridge {
       }
       if (entry.abandoned) {
         await this.maybeCancel(matchId, raw.deadline);
+        if (nowSeconds >= Number(raw.deadline) + PRUNE_AFTER_SECONDS) this.tracked.delete(key);
         continue;
       }
       // The escrow pins the rule set a match was created under, and the history
@@ -219,7 +223,24 @@ export class ChainBridge {
         joinDeadline: Number(raw.joinDeadline),
         status: raw.status === MatchStatus.Open ? 'open' : raw.status === MatchStatus.Pending ? 'pending' : 'live',
         players: seats,
+        cancellableAt: cancellableAt ?? Number(raw.deadline),
       };
+
+      // A match that can only be cancelled now is cancelled: an Open lobby
+      // whose join window closed short of seats, or past its lock grace; one
+      // the oracle never seeded; one that was never settled in time. Every
+      // seat is refunded. The keeper only saves a player the call.
+      if (cancellableAt !== null && nowSeconds >= cancellableAt) {
+        await this.maybeCancel(matchId, BigInt(cancellableAt));
+        // Nothing can cancel it from here, and nothing else will happen to
+        // it: forget it rather than read it every poll forever. Anyone can
+        // still cancel it on-chain.
+        if (nowSeconds >= cancellableAt + PRUNE_AFTER_SECONDS) {
+          console.warn(`[chain] forgetting ${matchId}: cancellable since ${cancellableAt} and still not cancelled`);
+          this.tracked.delete(key);
+        }
+        continue;
+      }
 
       // Not locked: locking spends an oracle request on a match that would be
       // abandoned the moment its seed arrived.
@@ -253,7 +274,7 @@ export class ChainBridge {
     }
   }
 
-  /** The fallback for an abandoned match: the permissionless refund at its deadline. */
+  /** The permissionless refund, once `deadline` has passed: for an abandoned match, and every dead one. */
   private async maybeCancel(matchId: `0x${string}`, deadline: bigint): Promise<void> {
     if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
     if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelling ${matchId}`);
@@ -321,6 +342,29 @@ export class ChainBridge {
   }
 }
 
+/**
+ * After this long cancellable and still not cancelled — no keeper here, and
+ * nobody else bothered — a match is dropped from `tracked`.
+ */
+const PRUNE_AFTER_SECONDS = 60 * 60;
+
+/**
+ * Unix seconds from which `cancelMatch` accepts the match, as the escrow
+ * decides it, or null once a result is proposed, which only `finalize` or
+ * `veto` can end.
+ */
+export function cancellableFrom(match: Pick<EscrowMatch, 'status' | 'seatCount' | 'minSeats' | 'joinDeadline' | 'deadline'>): number | null {
+  switch (match.status) {
+    case MatchStatus.Open:
+      return Number(match.joinDeadline) + (match.seatCount >= match.minSeats ? LOCK_GRACE_SECONDS : 0);
+    case MatchStatus.Pending:
+    case MatchStatus.Live:
+      return Number(match.deadline);
+    default:
+      return null;
+  }
+}
+
 /** The rule set every room this server opens is played under, as the escrow records it. */
 const RULES_HASH = hashRules(DEFAULT_RULES).toLowerCase();
 
@@ -334,6 +378,7 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
     joinDeadline: 0,
     status: 'open',
     players: [],
+    cancellableAt: 0,
   };
 }
 

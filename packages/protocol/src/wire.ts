@@ -302,6 +302,14 @@ export interface LobbyInfo {
   joinDeadline: number;
   status: 'open' | 'pending' | 'live';
   players: LobbySeat[];
+  /**
+   * Unix seconds from which anyone may `cancelMatch` it and refund every
+   * seat: the join deadline for a lobby short of seats, `LOCK_GRACE_SECONDS`
+   * after it for one with enough, the oracle's timeout while it waits for a
+   * seed, the settle deadline while it is played. The server's keeper
+   * cancels it then; a seated player may too.
+   */
+  cancellableAt: number;
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

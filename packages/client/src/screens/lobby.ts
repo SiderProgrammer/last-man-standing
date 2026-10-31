@@ -21,6 +21,7 @@ import { short } from '../ui/format.js';
 import {
   crossChainNotice,
   chainChips,
+  lobbyAction,
   lobbySummary,
   payWithOptions,
   planTokenJoin,
@@ -138,15 +139,24 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
 
   const button = document.createElement('button');
   const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
+  const action = lobbyAction(lobby, seated, Math.floor(Date.now() / 1000));
 
   const spoke = currentSpoke();
 
-  if (seated || !joinable) {
-    button.textContent = seated ? 'Enter' : 'Watch';
+  if (action === 'cancel') {
+    button.textContent = 'Cancel & refund';
+    button.title = 'This lobby can no longer start. Cancelling it refunds every seat.';
+    button.onclick = () => void cancelLobby(button, lobby);
+  } else if (action === 'enter' || action === 'watch' || !joinable) {
+    button.textContent = action === 'enter' ? 'Enter' : 'Watch';
     button.onclick = () => {
       net.send({ type: 'watch', matchId: lobby.matchId });
       showMatchScreen();
     };
+  } else if (action === 'closed') {
+    button.textContent = 'Closed';
+    button.disabled = true;
+    button.title = 'Its join window has closed.';
   } else if (app.inTransit.has(lobby.matchId.toLowerCase())) {
     button.textContent = 'In transit…';
     button.disabled = true;
@@ -206,6 +216,24 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
     seated(lobby);
   } catch (error) {
     toast(errorFirstLine(error));
+  }
+}
+
+/** Cancels a lobby the player sits in that can no longer start; the refund is then theirs to withdraw. */
+async function cancelLobby(button: HTMLButtonElement, lobby: LobbyInfo): Promise<void> {
+  const { wallet, escrow } = app;
+  if (!wallet || !escrow) return toast('Connect a wallet first.');
+  button.disabled = true;
+  button.textContent = 'Cancelling…';
+  try {
+    await wallet.waitFor(await wallet.cancelMatch(escrow, lobby.matchId));
+    toast('Cancelled. Your stake is back in your balance, ready to withdraw.');
+    void renderWinnings();
+    net.send({ type: 'lobbies' });
+  } catch (error) {
+    toast(errorFirstLine(error));
+    button.disabled = false;
+    button.textContent = 'Cancel & refund';
   }
 }
 

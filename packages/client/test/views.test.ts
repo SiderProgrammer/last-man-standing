@@ -10,6 +10,7 @@ import {
   avatarPanel,
   chainChipCounts,
   chainChips,
+  lobbyAction,
   formatTokenAmount,
   hubLabel,
   payWithOptions,
@@ -144,6 +145,23 @@ describe('spoke joins', () => {
     expect(
       crossChainNotice({ kind: 'refunded', matchId: MATCH, amount: '10000000000000000', reason: 5 }, SEPOLIA),
     ).toBe('Not seated: the lobby filled while your stake was in transit. Your 0.01 ETH is yours to collect on Sepolia.');
+  });
+});
+
+describe('lobby rows', () => {
+  const lobby = { status: 'open', joinDeadline: 1_000, cancellableAt: 1_000 } as const;
+
+  it('offers a seated player the refund once the lobby can only be cancelled', () => {
+    expect(lobbyAction(lobby, true, 999)).toBe('enter');
+    expect(lobbyAction(lobby, true, 1_000)).toBe('cancel');
+    expect(lobbyAction({ ...lobby, status: 'pending', cancellableAt: 5_000 }, true, 4_000)).toBe('enter');
+    expect(lobbyAction({ ...lobby, status: 'pending', cancellableAt: 5_000 }, true, 5_000)).toBe('cancel');
+  });
+
+  it('takes no new seat once the join window has closed', () => {
+    expect(lobbyAction(lobby, false, 999)).toBe('join');
+    expect(lobbyAction(lobby, false, 1_000)).toBe('closed');
+    expect(lobbyAction({ ...lobby, status: 'live' }, false, 0)).toBe('watch');
   });
 });
 
