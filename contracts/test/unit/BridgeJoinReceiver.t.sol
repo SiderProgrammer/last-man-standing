@@ -414,6 +414,28 @@ contract BridgeJoinReceiverTest is Fixtures {
         );
         assertEq(receiver.withdrawalDigest(w), keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
     }
+
+    /// @dev Frozen, and the same vector as `packages/protocol/test/spokes.test.ts`:
+    ///      what the client has a wallet sign is what the receiver checks. The
+    ///      receiver's code is put at a fixed address, which the domain names.
+    function test_withdrawalDigest_frozenVector() public {
+        address at = 0x1111111111111111111111111111111111111111;
+        vm.etch(at, address(receiver).code);
+        BridgeJoinReceiver.Withdrawal memory w = BridgeJoinReceiver.Withdrawal({
+            player: 0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa,
+            hubChainId: 84_532,
+            destinationChainId: 421_614,
+            recipient: 0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB,
+            outputToken: SPOKE_WETH,
+            maxFee: 1e15,
+            nonce: 3,
+            deadline: 1_800_000_000
+        });
+        assertEq(
+            BridgeJoinReceiver(payable(at)).withdrawalDigest(w),
+            0x5c24035ab95701f0bcca63331fc1c2ba82b5cb6496e7c6b90d93b33359b63b13
+        );
+    }
 }
 
 /// @dev A smart wallet owned by one key.

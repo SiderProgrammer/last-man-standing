@@ -37,7 +37,7 @@ import {
   playerAvatarsAbi,
   stakedLmsAbi,
   sessionKeyDelegateAbi,
-  spokeEscrowAbi,
+  spokeRouterAbi,
   v4QuoterAbi,
   zapJoinAbi,
   type ProposalStateValue,
@@ -46,6 +46,7 @@ import {
   type ProposalSummary,
   type VoteSupportValue,
   type ZapPathKey,
+  type BridgeQuote,
 } from '@lms/protocol';
 
 /**
@@ -69,6 +70,14 @@ declare global {
   interface Window {
     ethereum?: Eip1193Provider;
   }
+}
+
+/** What `Wallet.spokeRoute` reads from a `SpokeRouter`. */
+export interface SpokeRoute {
+  weth: Address;
+  hubWeth: Address;
+  hubReceiver: Address;
+  hubChainId: number;
 }
 
 /**
@@ -198,31 +207,42 @@ export class Wallet {
   }
 
   /**
-   * What staking `stakeWei` from a spoke costs on that spoke: the stake, which
-   * arrives on the hub exactly, plus the transport fee.
+   * What a join through `router` needs to know that the router itself holds:
+   * the WETH Across moves on this chain, the hub's, and where on the hub the
+   * fill is paid. Immutable, so a caller may keep the answer.
    */
-  quoteSpokeJoin(spoke: Address, matchId: Hex, stakeWei: bigint): Promise<bigint> {
-    return this.rpc.readContract({
-      address: spoke,
-      abi: spokeEscrowAbi,
-      functionName: 'quoteJoin',
-      args: [matchId, stakeWei],
-      account: this.address,
-    });
+  async spokeRoute(router: Address): Promise<SpokeRoute> {
+    const read = <F extends 'weth' | 'hubWeth' | 'hubReceiver' | 'hubChainId'>(functionName: F) =>
+      this.rpc.readContract({ address: router, abi: spokeRouterAbi, functionName });
+    const [weth, hubWeth, hubReceiver, hubChainId] = await Promise.all([
+      read('weth'),
+      read('hubWeth'),
+      read('hubReceiver'),
+      read('hubChainId'),
+    ]);
+    return { weth, hubWeth, hubReceiver, hubChainId: Number(hubChainId) };
+  }
+
+  /** This chain's latest block time, which a quote with no fee API is stamped with. */
+  async chainTime(): Promise<number> {
+    return Number((await this.rpc.getBlock()).timestamp);
   }
 
   /**
-   * Stakes into a hub lobby from the spoke the wallet is on. `value` is the
-   * quote; anything above what the spoke needs comes straight back. The seat
-   * is taken on the hub minutes later, or the stake credited back there.
+   * Bridges `value` to the hub to take a seat in `matchId`, from the spoke the
+   * wallet is on. `quote.outputAmount` is the stake; the rest of `value` is
+   * Across's fee. The seat is taken on the hub once a relayer fills the
+   * deposit, or the stake credited there if the seat is gone by then.
    */
-  async joinFromSpoke(spoke: Address, matchId: Hex, stakeWei: bigint, value: bigint): Promise<Hex> {
+  async joinFromSpoke(router: Address, matchId: Hex, quote: BridgeQuote, value: bigint): Promise<Hex> {
     const { request } = await this.rpc.simulateContract({
       account: this.address,
-      address: spoke,
-      abi: spokeEscrowAbi,
+      address: router,
+      abi: spokeRouterAbi,
       functionName: 'join',
-      args: [matchId, stakeWei],
+      // Zero seats the caller, which the router allows only for an account
+      // that is the same on the hub: an EOA, delegated or not.
+      args: [matchId, ZERO_ADDRESS, quote],
       value,
     });
     return this.wallet.writeContract({ ...request, chain: null });
@@ -657,7 +677,7 @@ export class Wallet {
    */
   async proposalContext(
     governor: Address,
-    known: Pick<ProposalContext, 'vault' | 'feeRouter' | 'escrow' | 'hubMessenger' | 'hubChainId'>,
+    known: Pick<ProposalContext, 'vault' | 'feeRouter' | 'escrow'>,
   ): Promise<{ context: ProposalContext; power: bigint; threshold: bigint }> {
     const [timelock, threshold, clock, config] = await Promise.all([
       this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'timelock' }),

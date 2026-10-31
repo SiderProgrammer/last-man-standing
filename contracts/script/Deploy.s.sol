@@ -217,6 +217,9 @@ contract Deploy is Registry, AcrossBook {
         _entry("zapJoin", address(deployment.zap));
         _entry("bridgeReceiver", address(deployment.bridgeReceiver));
         _entry("acrossSpokePool", deployment.acrossSpokePool);
+        if (deployment.acrossSpokePool != address(0)) {
+            _entry("weth", IAcrossSpokePool(deployment.acrossSpokePool).wrappedNativeToken());
+        }
         _entry("timelock", address(deployment.timelock));
         _entry("lmsToken", address(deployment.lms));
         _entry("stakedLms", address(deployment.stakedLms));

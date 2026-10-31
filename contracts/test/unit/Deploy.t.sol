@@ -425,6 +425,11 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
         assertEq(vm.parseJsonAddress(json, ".contracts.bridgeReceiver"), address(deployment.bridgeReceiver));
         assertEq(vm.parseJsonAddress(json, ".contracts.acrossSpokePool"), deployment.acrossSpokePool);
+        assertEq(
+            vm.parseJsonAddress(json, ".contracts.weth"),
+            address(deployment.bridgeReceiver.weth()),
+            "the hub WETH, which a spoke deploy needs"
+        );
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
         assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
@@ -432,7 +437,7 @@ contract DeployTest is Test {
             vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
         );
         assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 20);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 21);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

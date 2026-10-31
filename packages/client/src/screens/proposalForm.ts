@@ -58,8 +58,6 @@ export async function loadProposalContext(): Promise<{ power: bigint; threshold:
     vault: staking.vault,
     feeRouter: staking.feeRouter,
     escrow: app.escrow,
-    hubMessenger: app.hubMessenger,
-    hubChainId: app.chainId,
   });
   context = result.context;
   return result;
@@ -212,6 +210,5 @@ export function knownContracts(): Record<string, string> {
   name(app.escrow, 'GameEscrow');
   name(context?.config, 'ProtocolConfig');
   name(context?.timelock, 'Timelock');
-  name(app.hubMessenger, 'Hub messenger');
   return labels;
 }

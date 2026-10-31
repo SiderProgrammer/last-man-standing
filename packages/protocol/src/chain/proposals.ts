@@ -8,9 +8,9 @@ import {
   type Hex,
 } from 'viem';
 import {
+  bridgeJoinReceiverAbi,
   feeRouterAbi,
   gameEscrowAbi,
-  layerZeroMessengerAbi,
   lmsGovernorAbi,
   lmsTokenAbi,
   protocolConfigAbi,
@@ -117,7 +117,7 @@ export function splitDescription(description: string): { title: string; body: st
 export const governableAbi = [
   ...protocolConfigAbi,
   ...gameEscrowAbi,
-  ...layerZeroMessengerAbi,
+  ...bridgeJoinReceiverAbi,
   ...feeRouterAbi,
   ...stakedLmsAbi,
   ...rewardsDistributorAbi,

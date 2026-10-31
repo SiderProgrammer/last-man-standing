@@ -3,9 +3,7 @@ import {
   CHAINS,
   PRACTICE_CHAIN_ID,
   chainCss,
-  chainIdForEid,
   chainInfo,
-  eidForChainId,
   originChainId,
 } from '../src/chain/chains.js';
 
@@ -41,19 +39,9 @@ describe('originChainId', () => {
 });
 
 describe('the chain table', () => {
-  it('has no duplicate chain ids or endpoint ids', () => {
+  it('has no duplicate chain ids', () => {
     const chainIds = CHAINS.map((chain) => chain.chainId);
-    const eids = CHAINS.flatMap((chain) => (chain.eid === undefined ? [] : [chain.eid]));
     expect(new Set(chainIds).size).toBe(chainIds.length);
-    expect(new Set(eids).size).toBe(eids.length);
-  });
-
-  it('round-trips every endpoint id', () => {
-    for (const chain of CHAINS) {
-      if (chain.eid === undefined) continue;
-      expect(chainIdForEid(chain.eid)).toBe(chain.chainId);
-      expect(eidForChainId(chain.chainId)).toBe(chain.eid);
-    }
   });
 
   it('renders every colour as a six-digit hex string', () => {

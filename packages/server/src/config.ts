@@ -123,7 +123,6 @@ const ENV = z.object({
   SESSION_RELAYER_PK: privateKey,
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
-  HUB_MESSENGER: address,
   CROSS_CHAIN_FROM_BLOCK: bigint,
   ZAP_JOIN: address,
   V4_QUOTER: address,
@@ -264,15 +263,11 @@ export function loadConfig(
     relayQuotaPerDay: e.RELAY_QUOTA_PER_DAY,
     /**
      * Spoke chains players may stake from, as JSON:
-     * `[{"chainId":8453,"escrow":"0x…"}]`, one `SpokeEscrow` per chain. Blank
-     * offers hub-only staking. See `chain/crossChain.ts`.
+     * `[{"chainId":42161,"router":"0x…"}]`, one `SpokeRouter` per chain, from
+     * that chain's `deployments/<chainId>.json`. Blank offers hub-only staking.
+     * See `chain/crossChain.ts`.
      */
     spokes: e.SPOKES,
-    /**
-     * The hub `LayerZeroMessenger`. With it, the server reports deliveries the
-     * hub could not take, and retries them with `KEEPER_PK` once it can.
-     */
-    hubMessenger: e.HUB_MESSENGER ?? deployed('messenger'),
     /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
     crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK ?? fromBlock,
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */

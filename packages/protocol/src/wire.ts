@@ -175,7 +175,7 @@ export type ServerMessage =
        * so up front rather than after the player has asked.
        */
       analyst: boolean;
-      /** Spoke chains a player can stake from, each with its `SpokeEscrow`. Empty means hub-only. */
+      /** Spoke chains a player can stake from, each with its `SpokeRouter`. Empty means hub-only. */
       spokes: SpokeInfo[];
       /**
        * The key that signs commit receipts, or null when this server issues
@@ -183,11 +183,6 @@ export type ServerMessage =
        * attestor set vouches for it.
        */
       receiptSigner: `0x${string}` | null;
-      /**
-       * The hub `LayerZeroMessenger`, which a new spoke's messenger must be
-       * registered as a peer of. Optional; absent or null when there is none.
-       */
-      hubMessenger?: `0x${string}` | null;
     }
   | { type: 'authed'; address: `0x${string}` }
   /**

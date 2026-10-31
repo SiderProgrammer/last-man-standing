@@ -465,7 +465,7 @@
     "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.bridgeJoin|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.dismissDispute|function:GameEscrow.dispute|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
     "impact": "High",
     "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#183) is never initialized. It is used in:",
-    "triage": "False positive, as before bridgeJoin replaced receiveMessage: matchInfo is a mapping, written per match in createMatch."
+    "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
   },
   {
     "key": "unused-return|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.(None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData()",

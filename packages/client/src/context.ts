@@ -46,7 +46,7 @@ export interface AppState {
   receiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
-  /** Spoke chains a wallet may stake from, each with its `SpokeEscrow`. */
+  /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
   spokes: SpokeInfo[];
   /**
    * Lobbies this browser has staked into from a spoke whose stake has not yet
@@ -54,8 +54,6 @@ export interface AppState {
    * `crossChain` report, or by the seat showing up in the directory.
    */
   inTransit: Set<string>;
-  /** The hub `LayerZeroMessenger`, for the "Add a spoke chain" proposal. */
-  hubMessenger: `0x${string}` | null;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   /** True when the server can write match analyses. */
@@ -105,7 +103,6 @@ export const app: AppState = {
   zap: null,
   spokes: [],
   inTransit: new Set(),
-  hubMessenger: null,
   staking: null,
   analyst: false,
   match: null,

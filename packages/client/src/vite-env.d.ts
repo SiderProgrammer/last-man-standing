@@ -13,6 +13,12 @@ interface ImportMetaEnv {
   readonly VITE_RPC_URL?: string;
   /** The spoke `npm run dev:fork` runs, which the burner uses on `?chain=spoke`. */
   readonly VITE_SPOKE_RPC_URL?: string;
+  /**
+   * Across's fee API, which prices joins from a spoke: `https://app.across.to/api`,
+   * or `https://testnet.across.to/api` on testnet. Unset, a spoke join is
+   * quoted with no fee, which only a local stack with mock SpokePools fills.
+   */
+  readonly VITE_ACROSS_API?: string;
   /** Development-only burner key, ignored in production builds. */
   readonly VITE_DEV_KEY?: string;
 }
