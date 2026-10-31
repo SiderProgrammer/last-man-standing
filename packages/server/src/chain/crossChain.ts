@@ -1,12 +1,7 @@
 import type { Address } from 'viem';
-import {
-  ZERO_ADDRESS,
-  errorMessage,
-  gameEscrowAbi,
-  originChainId,
-  type CrossChainEvent,
-  type SpokeInfo,
-} from '@lms/protocol';
+import { ZERO_ADDRESS } from '@lms/consensus';
+import { gameEscrowAbi, originChainId } from '@lms/contracts';
+import { errorMessage, type CrossChainEvent, type SpokeInfo } from '@lms/api';
 import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
 

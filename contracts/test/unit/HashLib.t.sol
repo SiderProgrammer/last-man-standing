@@ -16,7 +16,7 @@ contract HashLibTest is Test {
         assertTrue(attack != hide);
     }
 
-    // --- Frozen vectors shared with `packages/protocol/test/parity.test.ts` ---
+    // --- Frozen vectors shared with `packages/consensus/test/parity.test.ts` ---
     // If an encoding drifts on either side, exactly one suite fails.
 
     function test_defaultRulesHashMatchesTypeScript() public pure {

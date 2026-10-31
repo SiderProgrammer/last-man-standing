@@ -415,7 +415,7 @@ contract SessionKeyDelegateTest is Fixtures {
 
     /**
      * Frozen vector, pinned against `sessionCallDigest` in
-     * `packages/protocol/test/session.test.ts`. A drift between the two would
+     * `packages/consensus/test/session.test.ts`. A drift between the two would
      * not corrupt a match, but every relayed call would fail to recover the
      * session key and one-click play would silently stop working.
      */

@@ -1,11 +1,10 @@
+import { ZERO_ADDRESS, sameAddress } from '@lms/consensus';
 import {
-  ZERO_ADDRESS,
   errorMessage,
-  sameAddress,
   type ZapInfo,
   type ZapPathKey,
   type ZapToken,
-} from '@lms/protocol';
+} from '@lms/api';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const HEX = /^0x([0-9a-fA-F]{2})*$/;

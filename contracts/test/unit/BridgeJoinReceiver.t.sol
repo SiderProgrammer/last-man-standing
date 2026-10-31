@@ -385,7 +385,7 @@ contract BridgeJoinReceiverTest is Fixtures {
     }
 
     /// @dev Pins the type string, which the client builds the typed data from:
-    ///      `packages/protocol` hashes the same instruction to the same digest.
+    ///      `packages/consensus` hashes the same instruction to the same digest.
     function test_withdrawalDigest_matchesTheTypedDataByHand() public view {
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 7);
         bytes32 typeHash = keccak256(
@@ -415,7 +415,7 @@ contract BridgeJoinReceiverTest is Fixtures {
         assertEq(receiver.withdrawalDigest(w), keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
     }
 
-    /// @dev Frozen, and the same vector as `packages/protocol/test/spokes.test.ts`:
+    /// @dev Frozen, and the same vector as `packages/consensus/test/withdrawal.test.ts`:
     ///      what the client has a wallet sign is what the receiver checks. The
     ///      receiver's code is put at a fixed address, which the domain names.
     function test_withdrawalDigest_frozenVector() public {

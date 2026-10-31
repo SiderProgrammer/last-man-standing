@@ -168,8 +168,7 @@ matches.
 ## Files
 
 ```
-packages/protocol/src/analysis.ts      wire types: KeyMoment, MatchAnalysis, error codes
-packages/protocol/src/game/reads.ts    the reads logic, shared by the client panel and get_reads
+packages/api/src/analysis.ts           wire types: KeyMoment, MatchAnalysis, error codes
 packages/server/src/analyst/
   analyst.ts    access, cache, limits, the tool loop, deadline, usage
   model.ts      the injected model interface and the analyst's message format

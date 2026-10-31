@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Action, StrikeOutcome, type KeyMoment, type RoundRecord } from '@lms/protocol';
+import { Action, StrikeOutcome, type RoundRecord } from '@lms/consensus';
+import { type KeyMoment } from '@lms/api';
 import { checkDecisiveRound, playReferenceMatch, refute, verifyMoments } from '@lms/server';
 
 const match = playReferenceMatch({ label: 'verify', strategies: ['striker', 'guarder', 'charger', 'reader', 'random'] });

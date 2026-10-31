@@ -1,19 +1,20 @@
+import { sameAddress, type BotDifficulty } from '@lms/consensus';
 import {
   chainInfo,
-  errorFirstLine,
-  errorMessage,
   joinMessage,
   localQuote,
   quoteAcross,
-  sameAddress,
   type BridgeQuote,
-  type BotDifficulty,
+} from '@lms/contracts';
+import {
+  errorFirstLine,
+  errorMessage,
   type CrossChainEvent,
   type LobbyInfo,
   type ServerMessage,
   type SpokeInfo,
   type ZapToken,
-} from '@lms/protocol';
+} from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';

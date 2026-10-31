@@ -9,7 +9,7 @@ export { Room, type Client, type MatchFinished, type MoveProof, type RoomOptions
 export { MemoryJournal, PostgresJournal, type JournalEntry, type RoomJournal } from './match/journal.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
 export { transcriptResponse } from './lobby/transcripts.js';
-export { MemoryStyleBook, PostgresStyleBook, type StyleBook } from './lobby/styles.js';
+export { MemoryStyleBook, PostgresStyleBook, tallyStyles, type StyleBook } from './lobby/styles.js';
 export {
   InstanceLockHeld,
   claimInstance,

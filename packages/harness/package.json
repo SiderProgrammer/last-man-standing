@@ -16,7 +16,8 @@
     "build": "tsc --build"
   },
   "dependencies": {
-    "@lms/protocol": "0.1.0",
+    "@lms/api": "0.1.0",
+    "@lms/consensus": "0.1.0",
     "viem": "^2.21.55",
     "ws": "^8.18.0"
   },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { Action } from '@lms/protocol';
+import { Action } from '@lms/consensus';
 import { readOpponents } from '../src/game/reads.js';
+import { describeStyle } from '../src/game/style.js';
 import { round, stateWith } from './helpers.js';
 
 /**
@@ -187,5 +188,18 @@ describe('reads panel', () => {
     expect(reads.find((read) => read.seat === 1)?.past).toBe('4 matches · 2 won · ⚔️60% 🛡️30% ⚡10%');
     // A stranger has no record to show.
     expect(reads.find((read) => read.seat === 2)?.past).toBe('');
+  });
+});
+
+describe('describeStyle', () => {
+  it('reads a record as shares of the revealed moves, with no-shows apart', () => {
+    expect(describeStyle({ matches: 1, wins: 1, strikes: 0, guards: 1, charges: 0, noShows: 1 })).toBe(
+      '1 match · 1 won · ⚔️0% 🛡️100% ⚡0% · 1 no-show',
+    );
+  });
+
+  it('is empty for a stranger', () => {
+    expect(describeStyle(undefined)).toBe('');
+    expect(describeStyle({ matches: 0, wins: 0, strikes: 0, guards: 0, charges: 0, noShows: 0 })).toBe('');
   });
 });

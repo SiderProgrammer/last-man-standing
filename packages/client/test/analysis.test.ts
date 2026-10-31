@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Action, type MatchAnalysis } from '@lms/protocol';
+import { Action } from '@lms/consensus';
+import { type MatchAnalysis } from '@lms/api';
 import { stateBeforeRound } from '../src/game/rewind.js';
 import { analysisNote, errorText, momentHeading, paragraphs, progressText } from '../src/ui/analysis.js';
 import { round, stateWith } from './helpers.js';

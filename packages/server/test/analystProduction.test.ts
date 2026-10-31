@@ -12,7 +12,7 @@ import {
   type ArchivedMatch,
   type ModelReply,
 } from '@lms/server';
-import type { MatchAnalysis } from '@lms/protocol';
+import type { MatchAnalysis } from '@lms/api';
 import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
 
 const practice = playReferenceMatch({ label: 'prod', strategies: ['reader', 'striker', 'guarder', 'charger'] });

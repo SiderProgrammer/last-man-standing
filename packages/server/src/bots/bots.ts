@@ -1,5 +1,5 @@
 import { keccak256, toHex } from 'viem';
-import { commitMove, type BotDifficulty, type SealedMove } from '@lms/protocol';
+import { commitMove, type BotDifficulty, type SealedMove } from '@lms/consensus';
 import type { Match } from '@lms/engine';
 import { Prng, smartStrategy } from '@lms/engine/bots';
 

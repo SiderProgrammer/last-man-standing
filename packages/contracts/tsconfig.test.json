@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    "paths": {
+      "@lms/consensus": ["../consensus/src/index.ts"],
+      "@lms/contracts": ["../contracts/src/index.ts"],
+      "@lms/contracts/registry": ["../contracts/src/registry.ts"],
+      "@lms/api": ["../api/src/index.ts"]
+    }
+  },
+  "include": ["test/**/*.ts"]
+}

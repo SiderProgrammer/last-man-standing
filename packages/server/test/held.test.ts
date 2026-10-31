@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Action, MatchPhase, commitMove, type SealedMove } from '@lms/protocol';
+import { Action, MatchPhase, commitMove, type SealedMove } from '@lms/consensus';
 import { Room } from '@lms/server';
 import { HUMAN, botSeats, bytes32, setupWithBots } from './helpers.js';
 

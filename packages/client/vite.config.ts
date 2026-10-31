@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
-import { DEFAULT_SERVER_PORT } from '../protocol/src/ports.js';
+import { DEFAULT_SERVER_PORT } from '../api/src/ports.js';
 import { contentSecurityPolicy } from './src/csp.js';
 
 /** Puts the production Content-Security-Policy in the page's `<head>`. See `src/csp.ts`. */
@@ -20,16 +20,18 @@ function csp(): Plugin {
 }
 
 /**
- * The client consumes `@lms/protocol` from source rather than from `dist`, so a
- * change to the wire format or the hashing rules shows up immediately instead of
- * after a rebuild. The commit hash in particular has to stay byte-identical with
+ * The client consumes the shared packages from source rather than from `dist`,
+ * so a change to the wire format or the hashing rules shows up immediately
+ * instead of after a rebuild. The commit hash in particular has to stay byte-identical with
  * the server and the contracts.
  */
 export default defineConfig({
   plugins: [csp()],
   resolve: {
     alias: {
-      '@lms/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),
+      '@lms/consensus': fileURLToPath(new URL('../consensus/src/index.ts', import.meta.url)),
+      '@lms/contracts': fileURLToPath(new URL('../contracts/src/index.ts', import.meta.url)),
+      '@lms/api': fileURLToPath(new URL('../api/src/index.ts', import.meta.url)),
       // The in-browser verifier replays matches with the same kernel the server runs.
       '@lms/engine': fileURLToPath(new URL('../engine/src/index.ts', import.meta.url)),
     },

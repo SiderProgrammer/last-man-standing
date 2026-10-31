@@ -7,7 +7,7 @@ import {
   type PublicMatchState,
   type RoundRecord,
   ZERO_SALT,
-} from '@lms/protocol';
+} from '@lms/consensus';
 
 export function bytes32(label: string): `0x${string}` {
   return keccak256(toHex(label));

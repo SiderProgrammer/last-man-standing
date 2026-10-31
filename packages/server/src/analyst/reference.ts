@@ -8,7 +8,7 @@ import {
   type Rules,
   type Seat,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Match } from '@lms/engine';
 import { Prng, type Strategy } from '@lms/engine/bots';
 import { strategyByName, type StrategyName } from '@lms/engine/sim';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { keccak256, recoverTypedDataAddress, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { MATCH_RESULT_TYPES, matchResultDomain, type AttestedResult } from '@lms/protocol';
+import { MATCH_RESULT_TYPES, matchResultDomain, type AttestedResult } from '@lms/consensus';
 import { packSignatures, signResult } from '@lms/server';
 
 const ESCROW = '0x000000000000000000000000000000000000e5c0' as const;

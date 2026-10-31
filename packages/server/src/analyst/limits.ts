@@ -1,4 +1,4 @@
-import { addressKey } from '@lms/protocol';
+import { addressKey } from '@lms/consensus';
 import { KeyedLimiter } from '../gateway/limits.js';
 
 export interface AnalystLimitOptions {

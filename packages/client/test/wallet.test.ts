@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toHex } from 'viem';
-import { ONE_CLICK_CAPS } from '@lms/protocol';
+import { ONE_CLICK_CAPS } from '@lms/contracts';
 import { centreOf, seatPosition, seatRingRadius, stormRing } from '../src/arena/layout.js';
 import { COLORS, hpColor } from '../src/arena/theme.js';
 

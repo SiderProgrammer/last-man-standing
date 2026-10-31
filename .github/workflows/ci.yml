@@ -44,7 +44,7 @@ jobs:
           version: v1.4.3
       - run: forge fmt --check
       - run: forge build --sizes
-      # packages/protocol/src/chain/abis/ must match what was just compiled.
+      # packages/contracts/src/abis/ must match what was just compiled.
       - run: node ../scripts/gen-abis.mjs --check
       - run: forge test -vv
       # The fuzz seed is fixed in foundry.toml, so this is deterministic.

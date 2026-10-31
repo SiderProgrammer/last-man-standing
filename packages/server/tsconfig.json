@@ -6,5 +6,5 @@
     "lib": ["ES2023"]
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../protocol" }, { "path": "../engine" }]
+  "references": [{ "path": "../consensus" }, { "path": "../contracts" }, { "path": "../api" }, { "path": "../engine" }]
 }

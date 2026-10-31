@@ -12,7 +12,7 @@
  * be measured before it is proposed. Exits non-zero if the balance targets in
  * `TARGETS` fail, so it can gate a rules change in CI.
  */
-import { DEFAULT_RULES, assertValidRules } from '@lms/protocol';
+import { DEFAULT_RULES, assertValidRules } from '@lms/consensus';
 import { balanceFailures, simulate } from '@lms/engine/sim';
 
 // Mindless play must lose: less than its share of wins, and money under the payout schedule.

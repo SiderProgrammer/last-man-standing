@@ -12,8 +12,10 @@
   "dependencies": {
     "@dicebear/collection": "^9.4.2",
     "@dicebear/core": "^9.4.3",
+    "@lms/api": "0.1.0",
+    "@lms/consensus": "0.1.0",
+    "@lms/contracts": "0.1.0",
     "@lms/engine": "0.1.0",
-    "@lms/protocol": "0.1.0",
     "gsap": "^3.15.0",
     "pixi.js": "^8.20.1",
     "viem": "^2.21.55"

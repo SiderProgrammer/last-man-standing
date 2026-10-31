@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
-import { DEFAULT_RULES, LOCK_GRACE_SECONDS, MatchStatus, hashRules } from '@lms/protocol';
+import { DEFAULT_RULES, hashRules } from '@lms/consensus';
+import { LOCK_GRACE_SECONDS, MatchStatus } from '@lms/contracts';
 import { rankingHash } from '@lms/engine';
 import {
   ChainBridge,

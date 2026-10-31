@@ -1,4 +1,4 @@
-import { errorMessage } from '@lms/protocol';
+import { errorMessage } from '@lms/api';
 import { MIGRATIONS, type Migration } from './migrations.js';
 
 /** Anything SQL can be sent to: the pool, or one transaction's connection. */

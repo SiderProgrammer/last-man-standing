@@ -1,5 +1,6 @@
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
-import { ZERO_ADDRESS, sameAddress, type StakingInfo } from '@lms/protocol';
+import { ZERO_ADDRESS, sameAddress } from '@lms/consensus';
+import { type StakingInfo } from '@lms/api';
 
 /**
  * Pure builders for the staking panel: what to show for a given on-chain

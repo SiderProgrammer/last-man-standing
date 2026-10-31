@@ -1,5 +1,5 @@
 import type { Address, Hex } from 'viem';
-import { claimableEpochRange, lmsTokenAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/protocol';
+import { claimableEpochRange, lmsTokenAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/contracts';
 import type { PlayRewards, StakingPosition, Vesting } from '../ui/staking.js';
 import { signLmsPermit } from './permit.js';
 import type { Wallet } from './wallet.js';

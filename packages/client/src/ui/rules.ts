@@ -1,4 +1,4 @@
-import { BPS_DENOMINATOR, exposedDamage, stallDamageFor, strikeDamageFor, strikeHeal, type Rules } from '@lms/protocol';
+import { BPS_DENOMINATOR, exposedDamage, stallDamageFor, strikeDamageFor, strikeHeal, type Rules } from '@lms/consensus';
 
 /** One titled block of the rules sheet. */
 export interface RulesSection {

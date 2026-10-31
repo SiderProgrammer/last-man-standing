@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
-import { AUTH_PREFIX, type ClientMessage, type ServerMessage } from '@lms/protocol';
+import { AUTH_PREFIX, type ClientMessage, type ServerMessage } from '@lms/api';
 import { MatchError } from '@lms/engine';
 import {
   CloseCode,

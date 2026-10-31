@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getAddress } from 'viem';
-import { describeCall, type ProtocolParams } from '@lms/protocol';
+import { describeCall, type ProtocolParams } from '@lms/contracts';
 import {
   ACTION_TEMPLATES,
   buildAction,

@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
-import { MAX_CLIENT_FRAME_BYTES, errorMessage } from '@lms/protocol';
+import { MAX_CLIENT_FRAME_BYTES, errorMessage } from '@lms/api';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Heartbeat } from './gateway/heartbeat.js';
@@ -28,7 +28,7 @@ import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js'
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { AnalystWorker } from './analyst/remote.js';
 import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
-import { DEFAULT_RULES } from '@lms/protocol';
+import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 

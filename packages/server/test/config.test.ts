@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ZERO_ADDRESS } from '@lms/protocol';
+import { ZERO_ADDRESS } from '@lms/consensus';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

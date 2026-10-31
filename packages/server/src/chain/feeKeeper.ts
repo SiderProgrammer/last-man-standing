@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
-import { errorMessage, feeRouterAbi, gameEscrowAbi } from '@lms/protocol';
+import { feeRouterAbi, gameEscrowAbi } from '@lms/contracts';
+import { errorMessage } from '@lms/api';
 import type { TxSender } from './txSender.js';
 import { readClient } from './viem.js';
 

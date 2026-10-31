@@ -9,7 +9,7 @@ import {
   StrikeOutcome,
   ZERO_SALT,
   type PlayerState,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { GUARD_NONCE_BASE, entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '@lms/engine';
 import { bytes32, freshStates } from './helpers.js';
 

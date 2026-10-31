@@ -1,4 +1,4 @@
-import type { MatchAnalysis, ServerMessage } from '@lms/protocol';
+import type { MatchAnalysis, ServerMessage } from '@lms/api';
 import { app, dom, net } from '../context.js';
 import { analysisNote, errorText, momentHeading, paragraphs, progressText } from '../ui/analysis.js';
 

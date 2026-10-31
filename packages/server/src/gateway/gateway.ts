@@ -1,17 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { verifyMessage, verifyTypedData, type TypedDataDefinition } from 'viem';
 import {
-  AUTH_PREFIX,
-  MAX_CLIENT_FRAME_BYTES,
   addressKey,
   commitTypedData,
   grantProblem,
   grantTypedData,
   revealTypedData,
   type SignedGrant,
+  type CommitReceipt,
+} from '@lms/consensus';
+import {
+  AUTH_PREFIX,
+  MAX_CLIENT_FRAME_BYTES,
   type AvatarCollectionInfo,
   type ClientMessage,
-  type CommitReceipt,
   type LobbyInfo,
   type MatchSummary,
   type MoveAim,
@@ -19,7 +21,7 @@ import {
   type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
-} from '@lms/protocol';
+} from '@lms/api';
 import type { Lobby } from '../lobby/lobby.js';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import { RequestError } from '../errors.js';

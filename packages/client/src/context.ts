@@ -1,16 +1,15 @@
+import type { ActionValue, PublicMatchState } from '@lms/consensus';
 import type {
-  ActionValue,
   PlayStyle,
   AvatarCollectionInfo,
   AvatarEntry,
   LobbyInfo,
   MatchmakingTier,
-  PublicMatchState,
   ServerMessage,
   SpokeInfo,
   StakingInfo,
   ZapInfo,
-} from '@lms/protocol';
+} from '@lms/api';
 import type { Net } from './io/net.js';
 import { createStore } from './store.js';
 import type { Dom } from './ui/dom.js';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Address, Hex } from 'viem';
-import { delegationCode, joinCall, withdrawForCall, type RelayedCall } from '@lms/protocol';
+import { delegationCode, joinCall, withdrawForCall } from '@lms/contracts';
+import { type RelayedCall } from '@lms/api';
 import { SessionRelay, type RelayPort } from '@lms/server';
 
 const ESCROW = `0x${'e5'.repeat(20)}` as const;

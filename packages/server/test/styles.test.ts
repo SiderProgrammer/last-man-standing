@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Action, describeStyle, tallyStyles, ZERO_SALT, type RoundRecord } from '@lms/protocol';
-import { Lobby, MemoryArchive, MemoryStyleBook, nullRelayer } from '@lms/server';
+import { Action, ZERO_SALT, type RoundRecord } from '@lms/consensus';
+import { Lobby, MemoryArchive, MemoryStyleBook, nullRelayer, tallyStyles } from '@lms/server';
 import { FakeClient, HUMAN, botSeats, bytes32, setupWithBots } from './helpers.js';
 
 const A = '0x00000000000000000000000000000000000000a1' as const;
@@ -29,7 +29,6 @@ describe('play styles', () => {
     );
     expect(styles.get(A.toLowerCase())).toEqual({ matches: 1, wins: 0, strikes: 1, guards: 0, charges: 1, noShows: 0 });
     expect(styles.get(B.toLowerCase())).toEqual({ matches: 1, wins: 1, strikes: 0, guards: 1, charges: 0, noShows: 1 });
-    expect(describeStyle(styles.get(B.toLowerCase()))).toBe('1 match · 1 won · ⚔️0% 🛡️100% ⚡0% · 1 no-show');
   });
 
   it('records a finished staked match and briefs the next table with it', async () => {

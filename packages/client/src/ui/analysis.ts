@@ -1,4 +1,4 @@
-import type { AnalysisErrorCode, KeyMoment, MatchAnalysis } from '@lms/protocol';
+import type { AnalysisErrorCode, KeyMoment, MatchAnalysis } from '@lms/api';
 
 /**
  * Pure presentation for the analysis tab. Like `views.ts`, nothing here

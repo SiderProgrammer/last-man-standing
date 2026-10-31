@@ -1,4 +1,4 @@
-import { cooldownsFrom, type PublicMatchState } from '@lms/protocol';
+import { cooldownsFrom, type PublicMatchState } from '@lms/consensus';
 
 /**
  * The table as it stood when a round began, rebuilt from the published

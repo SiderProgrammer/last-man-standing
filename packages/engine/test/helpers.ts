@@ -8,7 +8,7 @@ import {
   type Rules,
   type Seat,
   ZERO_SALT,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Match, type MatchSetup } from '@lms/engine';
 import type { Strategy } from '@lms/engine/bots';
 import type { DeclaredMove } from '@lms/engine';

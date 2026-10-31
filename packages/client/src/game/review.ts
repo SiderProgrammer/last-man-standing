@@ -1,4 +1,5 @@
-import { MatchPhase, cooldownsFrom, sameAddress, type PublicMatchState, type ReviewedMatch } from '@lms/protocol';
+import { MatchPhase, cooldownsFrom, sameAddress, type PublicMatchState } from '@lms/consensus';
+import { type ReviewedMatch } from '@lms/api';
 
 /** An archived match, rebuilt into what the match screen draws. */
 export interface Review {

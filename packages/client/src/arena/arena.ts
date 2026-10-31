@@ -8,10 +8,10 @@ import {
   quietRounds,
   stallDamageFor,
   type ActionValue,
-  type AvatarEntry,
   type PublicMatchState,
   type RoundRecord,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { type AvatarEntry } from '@lms/api';
 import { defaultAvatar } from '../assets/avatars.js';
 import { loadAssets, type FxTextures } from '../assets/loader.js';
 import { gsap } from '../motion.js';

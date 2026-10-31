@@ -1,12 +1,12 @@
 import type { Queryable } from '../db/database.js';
 import {
-  type MatchAnalysis,
   type MatchResult,
   type RoundRecord,
   type Rules,
   type Seat,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { type MatchAnalysis } from '@lms/api';
 
 export interface ArchivedMatch {
   result: MatchResult;

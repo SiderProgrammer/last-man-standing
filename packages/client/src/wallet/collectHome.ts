@@ -1,15 +1,16 @@
+import { withdrawalTypedData, type ChainWithdrawal } from '@lms/consensus';
 import {
   chainInfo,
-  errorFirstLine,
   localQuote,
   quoteAcrossFrom,
+  type BridgeQuote,
+} from '@lms/contracts';
+import {
+  errorFirstLine,
   quoteToWire,
   withdrawalToWire,
-  withdrawalTypedData,
-  type BridgeQuote,
-  type ChainWithdrawal,
   type SpokeInfo,
-} from '@lms/protocol';
+} from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { collectHomePlan } from '../ui/views.js';

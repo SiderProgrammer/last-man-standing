@@ -1,4 +1,5 @@
-import { chainInfo, errorFirstLine, type ServerMessage, type SpokeInfo } from '@lms/protocol';
+import { chainInfo } from '@lms/contracts';
+import { errorFirstLine, type ServerMessage, type SpokeInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { spokeFor } from '../ui/views.js';

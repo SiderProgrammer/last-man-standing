@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@lms/protocol';
+import type { ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { fillSelect } from '../ui/dom.js';
 import { queuePanel, tierKey } from '../ui/views.js';

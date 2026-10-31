@@ -1,10 +1,5 @@
-import {
-  Action,
-  StrikeOutcome,
-  TARGETED_MOMENT_KINDS,
-  type KeyMoment,
-  type RoundRecord,
-} from '@lms/protocol';
+import { Action, StrikeOutcome, type RoundRecord } from '@lms/consensus';
+import { TARGETED_MOMENT_KINDS, type KeyMoment } from '@lms/api';
 
 /** A moment the history does not support, and why. */
 export interface DroppedMoment {

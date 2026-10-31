@@ -2,23 +2,22 @@ import { randomBytes, createHash } from 'node:crypto';
 import { keccak256, toHex } from 'viem';
 import {
   DEFAULT_RULES,
-  PRACTICE_CHAIN_ID,
   ZERO_ADDRESS,
   deriveMatchId,
-  errorMessage,
   hashTranscript,
-  tallyStyles,
   type AttestedResult,
   type BotDifficulty,
   type Rules,
   type Seat,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { PRACTICE_CHAIN_ID } from '@lms/contracts';
+import { errorMessage } from '@lms/api';
 import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
 import type { ArchivedMatch, MatchArchive } from './store.js';
-import type { StyleBook } from './styles.js';
+import { tallyStyles, type StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
 import type { JournalEntry, RoomJournal } from '../match/journal.js';
 import { RequestError } from '../errors.js';

@@ -416,7 +416,7 @@ contract Deploy is Registry, AcrossBook {
 
     /// @dev Read from `config/rules.json` rather than typed in here, so the
     ///      deployed rules hash cannot drift from the rules the server plays:
-    ///      `packages/protocol/test/parity.test.ts` checks that file field by
+    ///      `packages/consensus/test/parity.test.ts` checks that file field by
     ///      field against `DEFAULT_RULES`.
     function _rules() private view returns (HashLib.Rules memory rules) {
         string memory json = vm.readFile(string.concat(vm.projectRoot(), "/config/rules.json"));

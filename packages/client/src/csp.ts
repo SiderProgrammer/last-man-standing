@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_PORT } from '../../protocol/src/ports.js';
+import { DEFAULT_SERVER_PORT } from '../../api/src/ports.js';
 
 /**
  * The Content-Security-Policy the production build ships with.

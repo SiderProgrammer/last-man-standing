@@ -29,7 +29,7 @@ import {
   hashTranscript,
   historySeed,
   revealTypedData,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Match } from '@lms/engine';
 import { Prng, readerStrategy, smartStrategy } from '@lms/engine/bots';
 

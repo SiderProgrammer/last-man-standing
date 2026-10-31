@@ -8,7 +8,7 @@
  * over the port.
  */
 import { parentPort, workerData } from 'node:worker_threads';
-import type { MatchAnalysis, PlayStyle } from '@lms/protocol';
+import type { MatchAnalysis, PlayStyle } from '@lms/api';
 import type { ArchivedAnalysis, ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import { Rpc } from '../util/rpc.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData, getAddress } from 'viem';
-import { ProposalState, governableAbi, type ProposalSummary } from '@lms/protocol';
+import { ProposalState, governableAbi, type ProposalSummary } from '@lms/contracts';
 import { proposalCard, type ProposalLive } from '../src/ui/governance.js';
 
 const E18 = 10n ** 18n;

@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 /// @title SettlementLib
 /// @notice EIP-712 struct hash of a match result.
-/// @dev Mirrored by `packages/protocol/src/chain/eip712.ts`. The domain half of
+/// @dev Mirrored by `packages/consensus/src/eip712/result.ts`. The domain half of
 ///      the digest is the escrow's own `EIP712` base.
 library SettlementLib {
     bytes32 internal constant MATCH_RESULT_TYPEHASH = keccak256(
@@ -13,7 +13,7 @@ library SettlementLib {
     /// @notice EIP-712 struct hash of a `MatchResult`. An `address[]` member is
     ///         encoded as the hash of its elements, each padded to a word.
     /// @param transcriptHash keccak256 of the archived transcript's canonical
-    ///        JSON (`hashTranscript` in the protocol package).
+    ///        JSON (`hashTranscript` in `@lms/consensus`).
     function hashMatchResult(
         bytes32 matchId,
         uint32 rounds,

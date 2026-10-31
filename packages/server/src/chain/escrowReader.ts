@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
-import { errorMessage, gameEscrowAbi } from '@lms/protocol';
+import { gameEscrowAbi } from '@lms/contracts';
+import { errorMessage } from '@lms/api';
 import { chunkedLogs } from './logs.js';
 import type { ContractCall, TxSender } from './txSender.js';
 import { readClient } from './viem.js';

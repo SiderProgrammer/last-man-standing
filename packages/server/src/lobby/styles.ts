@@ -1,5 +1,51 @@
-import { addStyles, addressKey, emptyStyle, type PlayStyle } from '@lms/protocol';
+import { Action, addressKey, type MatchResult, type RoundRecord } from '@lms/consensus';
+import type { PlayStyle } from '@lms/api';
 import type { Queryable } from '../db/database.js';
+
+export function emptyStyle(): PlayStyle {
+  return { matches: 0, wins: 0, strikes: 0, guards: 0, charges: 0, noShows: 0 };
+}
+
+/** One match's contribution to each seat's style, keyed by lowercased address. */
+export function tallyStyles(
+  result: MatchResult,
+  history: readonly RoundRecord[],
+  seatAddresses: readonly `0x${string}`[],
+): Map<string, PlayStyle> {
+  const styles = new Map<string, PlayStyle>();
+  for (const address of seatAddresses) {
+    styles.set(addressKey(address), { ...emptyStyle(), matches: 1 });
+  }
+  const winner = result.ranking[0];
+  if (winner) {
+    const style = styles.get(addressKey(winner));
+    if (style) style.wins = 1;
+  }
+
+  for (const record of history) {
+    for (const move of record.moves) {
+      const address = seatAddresses[move.index];
+      const style = address ? styles.get(addressKey(address)) : undefined;
+      if (!style) continue;
+      if (!move.revealed) style.noShows += 1;
+      else if (move.action === Action.Strike) style.strikes += 1;
+      else if (move.action === Action.Guard) style.guards += 1;
+      else if (move.action === Action.Charge) style.charges += 1;
+    }
+  }
+  return styles;
+}
+
+export function addStyles(a: PlayStyle, b: PlayStyle): PlayStyle {
+  return {
+    matches: a.matches + b.matches,
+    wins: a.wins + b.wins,
+    strikes: a.strikes + b.strikes,
+    guards: a.guards + b.guards,
+    charges: a.charges + b.charges,
+    noShows: a.noShows + b.noShows,
+  };
+}
 
 /**
  * Play styles by wallet, accumulated from every settled staked match.

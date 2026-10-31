@@ -1,4 +1,4 @@
-import { MatchPhase, type PublicMatchState } from '@lms/protocol';
+import { MatchPhase, type PublicMatchState } from '@lms/consensus';
 
 /** What the controls should look like, and whether a reveal is now due. */
 export interface PhasePlan {

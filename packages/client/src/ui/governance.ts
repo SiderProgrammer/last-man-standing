@@ -5,7 +5,7 @@ import {
   splitDescription,
   type ProposalStateValue,
   type ProposalSummary,
-} from '@lms/protocol';
+} from '@lms/contracts';
 import { short } from './format.js';
 import { formatDuration, formatLms } from './staking.js';
 

@@ -1,5 +1,7 @@
 import { erc20Abi, type Address, type Hex } from 'viem';
-import { ZERO_ADDRESS, v4QuoterAbi, zapJoinAbi, type ZapPathKey } from '@lms/protocol';
+import { ZERO_ADDRESS } from '@lms/consensus';
+import { v4QuoterAbi, zapJoinAbi } from '@lms/contracts';
+import { type ZapPathKey } from '@lms/api';
 import type { Wallet } from './wallet.js';
 
 /**

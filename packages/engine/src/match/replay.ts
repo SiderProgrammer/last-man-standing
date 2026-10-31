@@ -8,7 +8,7 @@ import {
   type PlayerState,
   type RoundRecord,
   type Seat,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import type { MatchSetup } from './match.js';
 import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
 

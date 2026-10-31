@@ -1,5 +1,6 @@
 import type { Address, Hex } from 'viem';
-import { ZERO_ADDRESS, gameEscrowAbi, lmsTokenAbi, protocolConfigAbi } from '@lms/protocol';
+import { ZERO_ADDRESS } from '@lms/consensus';
+import { gameEscrowAbi, lmsTokenAbi, protocolConfigAbi } from '@lms/contracts';
 import type { DiscountTerms } from '../ui/views.js';
 import { signLmsPermit } from './permit.js';
 import type { Wallet } from './wallet.js';

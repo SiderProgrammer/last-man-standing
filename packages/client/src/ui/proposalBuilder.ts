@@ -1,5 +1,5 @@
 import { encodeFunctionData, isAddress, isHex, keccak256, pad, parseEther, toBytes, type Address, type Hex } from 'viem';
-import { governableAbi, type ProtocolParams } from '@lms/protocol';
+import { governableAbi, type ProtocolParams } from '@lms/contracts';
 
 /**
  * Builds proposal actions from plain inputs.

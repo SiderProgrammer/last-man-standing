@@ -21,7 +21,7 @@ import {
   type SealedMove,
   type Seat,
   ZERO_SALT,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
 
 export class MatchError extends Error {

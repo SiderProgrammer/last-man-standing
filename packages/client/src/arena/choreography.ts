@@ -3,7 +3,7 @@ import {
   type ActionValue,
   type RoundRecord,
   type StrikeOutcomeValue,
-} from '@lms/protocol';
+} from '@lms/consensus';
 
 /**
  * A resolved round, turned into a schedule of beats: what happens, to whom, and

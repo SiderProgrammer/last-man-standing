@@ -8,9 +8,9 @@ import {
   receiptTypedData,
   type AttestedResult,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import type { ReceiptSigner } from '../gateway/gateway.js';
-import { gameEscrowAbi } from '@lms/protocol';
+import { gameEscrowAbi } from '@lms/contracts';
 import type { ServerConfig } from '../config.js';
 import type { Attestor } from '../attestor/service.js';
 import type { TxSender } from './txSender.js';

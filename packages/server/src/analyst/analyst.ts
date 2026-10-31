@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
+import { addressKey } from '@lms/consensus';
 import {
-  addressKey,
   errorMessage,
   type AnalysisErrorCode,
   type KeyMoment,
   type MatchAnalysis,
-} from '@lms/protocol';
+} from '@lms/api';
 import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import {

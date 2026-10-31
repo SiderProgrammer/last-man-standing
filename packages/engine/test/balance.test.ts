@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES } from '@lms/protocol';
+import { DEFAULT_RULES } from '@lms/consensus';
 import { balanceFailures, simulate } from '@lms/engine/sim';
 
 /**

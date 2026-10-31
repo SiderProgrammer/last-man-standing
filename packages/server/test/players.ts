@@ -1,16 +1,15 @@
 import { keccak256, toHex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
-  AUTH_PREFIX,
   commitMove,
   commitTypedData,
   grantTypedData,
   revealTypedData,
-  type ClientMessage,
   type MovePlace,
   type SealedMove,
   type SignedGrant,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { AUTH_PREFIX, type ClientMessage } from '@lms/api';
 
 /**
  * A player as the browser is one: a wallet, and a session key the wallet

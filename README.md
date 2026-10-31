@@ -206,7 +206,9 @@ which is out of scope.
 ## Layout
 
 ```
-packages/protocol   types, rules, hashing, EIP-712 schema, wire format, contract ABIs
+packages/consensus  rules, hashing, EIP-712, and the frozen vectors pinning them to Solidity
+packages/contracts  generated ABIs, chain table, deployment registry, contract call helpers
+packages/api        wire messages and DTOs between browser and server
 packages/engine     deterministic resolution kernel, match state machine, replay, bots, balance sim
 packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge, fee keeper
 packages/client     PixiJS arena, wallet login, history and reads, staking and governance screens
@@ -215,9 +217,10 @@ contracts/          Foundry: escrow, config, governance, oracles, bridge router 
 scripts/            mainnet-fork dev environment, balance sim, load generator
 ```
 
-Dependencies only ever point one way: the engine uses the protocol; the server
-and the client use both (the client replays every finished match with the
-engine); the harness uses only the protocol. Nothing depends on the server,
+Dependencies only ever point one way: `contracts` uses `consensus`, `api` uses
+both, and the engine uses only `consensus`; the server and the client use all of
+them (the client replays every finished match with the engine); the harness uses
+`consensus` and `api`. Nothing depends on the server,
 which is what makes a match replayable by a third party.
 
 ## Running it locally
@@ -324,11 +327,11 @@ testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.
 ## Tests
 
 ```bash
-npm test                    # TypeScript: protocol, engine, server, client — includes chaos seeds
+npm test                    # TypeScript: every package — includes chaos seeds
 npm run typecheck           # whole monorepo, strict — including every test file
 npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
-npm run abis                # regenerate packages/protocol/src/chain/abis/ after a contract change
+npm run abis                # regenerate packages/contracts/src/abis/ after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```
@@ -341,7 +344,7 @@ triage note. To add one, run Slither with `--json contracts/slither.json`, then
 and write the note.
 
 The TypeScript and Solidity hashing implementations are pinned against each
-other by frozen vectors in `packages/protocol/test/parity.test.ts` and
+other by frozen vectors in `packages/consensus/test/parity.test.ts` and
 `contracts/test/unit/HashLib.t.sol`, so commitments, the rules hash and the
 history root mean the same thing in both languages. Any on-chain verifier
 depends on that, so those tests are the ones to watch.

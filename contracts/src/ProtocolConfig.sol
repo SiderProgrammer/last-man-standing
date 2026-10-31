@@ -47,7 +47,7 @@ contract ProtocolConfig is Ownable2Step {
     Params private params;
 
     /// @notice Digest of the off-chain rule set matches must be played under.
-    /// @dev Mirrors `hashRules()` in `@lms/protocol`. Bumping it invalidates
+    /// @dev Mirrors `hashRules()` in `@lms/consensus`. Bumping it invalidates
     ///      results produced under the previous rules.
     bytes32 public rulesHash;
 

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import * as z from 'zod/v4';
-import { DEFAULT_SERVER_PORT, ZERO_ADDRESS } from '@lms/protocol';
+import { readDeployment, type Deployment } from '@lms/contracts/registry';
+import { ZERO_ADDRESS } from '@lms/consensus';
+import { DEFAULT_SERVER_PORT } from '@lms/api';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
 
@@ -422,37 +423,8 @@ function parseLimits(raw: string): Record<string, number> {
   );
 }
 
-/** `contracts/deployments/<chainId>.json`, as `Deploy.s.sol` writes it. */
-export interface Deployment {
-  chainId: number;
-  /** No contract in `contracts` is older: where log scans start. */
-  deployBlock: number;
-  contracts: Record<string, `0x${string}`>;
-}
-
-const DEPLOYMENT = z.object({
-  chainId: z.number().int(),
-  deployBlock: z.number().int().min(0),
-  contracts: z.record(z.string(), hexAddress),
-});
-
-const DEPLOYMENTS_DIR = new URL('../../../contracts/deployments/', import.meta.url);
-
-/**
- * The registry the deploy script wrote for `chainId`, or null if there is
- * none. Throws on a file that is there but malformed, or names another chain.
- */
-export function readDeployment(chainId: number, dir: URL = DEPLOYMENTS_DIR): Deployment | null {
-  const file = new URL(`${chainId}.json`, dir);
-  if (!existsSync(file)) return null;
-  const result = DEPLOYMENT.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-  if (!result.success) throw new ConfigError(`invalid deployment registry ${file.pathname}: ${result.error.message}`);
-  if (result.data.chainId !== chainId) {
-    throw new ConfigError(`deployment registry ${file.pathname} is for chain ${result.data.chainId}, not ${chainId}`);
-  }
-  return result.data;
-}
-
 export const config = loadConfig(process.env, readDeployment);
+
+export { readDeployment, type Deployment };
 
 export { ZERO_ADDRESS };

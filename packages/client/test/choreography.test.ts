@@ -5,7 +5,7 @@ import {
   type RoundRecord,
   type StrikeRecord,
   ZERO_SALT,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { choreograph, type SeatSnapshot, type Timeline } from '../src/arena/choreography.js';
 import { buildReplay, type SeatDisplay } from '../src/arena/replay.js';
 import { bytes32 } from './helpers.js';

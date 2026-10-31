@@ -31,7 +31,7 @@ A quick index, since most of these are the reason a given file exists at all.
 
 | Standard | Where | Why it is used |
 | --- | --- | --- |
-| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `protocol/eip712.ts`, `protocol/moves.ts` | Attestors sign results, wallets sign session grants and session keys sign every move as a readable structure, not an opaque digest, and the domain binds a signature to one contract or chain |
+| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `consensus/eip712/result.ts`, `consensus/eip712/moves.ts` | Attestors sign results, wallets sign session grants and session keys sign every move as a readable structure, not an opaque digest, and the domain binds a signature to one contract or chain |
 | **EIP-1153** transient storage | `SeatSetLib` | A scratch set that self-clears at end of transaction, turning the settlement permutation check from quadratic to linear |
 | **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | One-click joins and withdrawals without changing the player's address — see [Account abstraction](#account-abstraction) |
@@ -119,7 +119,7 @@ cancels, settlements and withdrawals in any order.
 
 ## Hidden information: commit–reveal
 
-`packages/protocol/src/game/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
+`packages/consensus/src/game/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
 
 ### What it does
 
@@ -261,7 +261,7 @@ It currently targets a minimal local coordinator interface and runs against
 ## Cross-chain
 
 `contracts/src/periphery/SpokeRouter.sol` · `contracts/src/periphery/BridgeJoinReceiver.sol` ·
-`packages/protocol/src/chain/spokes.ts` · [ACROSS.md](ACROSS.md) ·
+`packages/contracts/src/spokes.ts` · [ACROSS.md](ACROSS.md) ·
 **Live on the local fork and on mainnet forks; not yet on testnets**
 
 ### What it does
@@ -361,7 +361,7 @@ is for, or refuses with both chains named.
 ## Paying in any token
 
 `contracts/src/periphery/ZapJoin.sol` · `contracts/src/interfaces/IPoolManager.sol` ·
-`GameEscrow.joinFor` · `protocol/chain/zap.ts` · `server/chain/zap.ts` ·
+`GameEscrow.joinFor` · `contracts/zap.ts` · `server/chain/zap.ts` ·
 `client/screens/lobby.ts` · **Live** against a mainnet fork
 
 ### What it does
@@ -819,7 +819,7 @@ phase on its own.
 
 ## Session grants
 
-`packages/protocol/src/chain/moves.ts` · `packages/client/src/wallet/grant.ts` · **Unit-tested**
+`packages/consensus/src/eip712/moves.ts` · `packages/client/src/wallet/grant.ts` · **Unit-tested**
 
 The wallet signs one EIP-712 `SessionGrant` naming a key the browser keeps for
 a day. The key signs the login nonce on every connect and every commit and
@@ -919,7 +919,7 @@ the revert (`ValueCapExceeded`, `SessionExpired`, or the escrow's error inside
 
 ### Digest parity
 
-`sessionCallDigest` in `protocol/session.ts` mirrors the delegate's EIP-712
+`sessionCallDigest` in `consensus/eip712/session.ts` mirrors the delegate's EIP-712
 hashing and is pinned to it by frozen vectors on **both** sides, exactly as the
 commit hashes are. `sessionCallTypedData` is what the key signs, and a test
 checks it hashes to the same digest.
@@ -1201,8 +1201,8 @@ pinned to **frozen vectors**:
 
 | Hash | TypeScript | Solidity |
 | --- | --- | --- |
-| Commit, round, history, `drawBps` | `protocol/test/parity.test.ts` | `test/unit/HashLib.t.sol` |
-| Session call digest | `protocol/test/session.test.ts` | `test/unit/SessionKeyDelegate.t.sol` |
+| Commit, round, history, `drawBps` | `consensus/test/parity.test.ts` | `test/unit/HashLib.t.sol` |
+| Session call digest | `consensus/test/session.test.ts` | `test/unit/SessionKeyDelegate.t.sol` |
 
 Purpose: if an encoding ever drifts, exactly one suite fails instead of the two
 implementations diverging silently. For the commit hash that failure mode is

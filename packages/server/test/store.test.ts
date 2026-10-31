@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, type MatchAnalysis, type MatchResult } from '@lms/protocol';
+import { DEFAULT_RULES, type MatchResult } from '@lms/consensus';
+import { type MatchAnalysis } from '@lms/api';
 import {
   Lobby,
   MemoryArchive,

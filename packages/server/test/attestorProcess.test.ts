@@ -9,7 +9,7 @@ import {
   matchResultDomain,
   matchResultMessage,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import {
   AnalystError,
   AnalystWorker,

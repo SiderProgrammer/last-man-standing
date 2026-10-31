@@ -1,7 +1,9 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/protocol" },
+    { "path": "./packages/consensus" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/api" },
     { "path": "./packages/engine" },
     { "path": "./packages/server" },
     { "path": "./packages/harness" }

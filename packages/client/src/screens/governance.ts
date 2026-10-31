@@ -1,4 +1,5 @@
-import { VoteSupport, errorFirstLine, type ProposalSummary, type VoteSupportValue } from '@lms/protocol';
+import { VoteSupport, type ProposalSummary, type VoteSupportValue } from '@lms/contracts';
+import { errorFirstLine } from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { proposalCard, type ProposalCard, type ProposalLive } from '../ui/governance.js';

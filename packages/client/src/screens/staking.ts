@@ -1,4 +1,5 @@
-import { chainInfo, errorFirstLine } from '@lms/protocol';
+import { chainInfo } from '@lms/contracts';
+import { errorFirstLine } from '@lms/api';
 import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import {

@@ -1,11 +1,7 @@
 import { parseEventLogs, type Address, type Hex } from 'viem';
-import {
-  addressKey,
-  errorMessage,
-  gameEscrowAbi,
-  type MatchmakingTier,
-  type ServerMessage,
-} from '@lms/protocol';
+import { addressKey } from '@lms/consensus';
+import { gameEscrowAbi } from '@lms/contracts';
+import { errorMessage, type MatchmakingTier, type ServerMessage } from '@lms/api';
 import { RequestError } from '../errors.js';
 import type { TxSender } from '../chain/txSender.js';
 import { readClient } from '../chain/viem.js';

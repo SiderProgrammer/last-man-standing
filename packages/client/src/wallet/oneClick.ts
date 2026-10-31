@@ -1,13 +1,11 @@
+import { type SessionCallParams } from '@lms/consensus';
+import { ONE_CLICK_CAPS, joinCall, withdrawForCall } from '@lms/contracts';
 import {
-  ONE_CLICK_CAPS,
   errorFirstLine,
-  joinCall,
-  withdrawForCall,
   type ClientMessage,
   type ErrorCode,
   type ServerMessage,
-  type SessionCallParams,
-} from '@lms/protocol';
+} from '@lms/api';
 import { formatEther, type Hex } from 'viem';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
