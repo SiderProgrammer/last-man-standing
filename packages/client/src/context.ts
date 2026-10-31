@@ -4,6 +4,7 @@ import type {
   AvatarCollectionInfo,
   AvatarEntry,
   LobbyInfo,
+  MatchmakingTier,
   PublicMatchState,
   ServerMessage,
   SpokeInfo,
@@ -13,6 +14,7 @@ import type {
 import type { Net } from './io/net.js';
 import { createStore } from './store.js';
 import type { Dom } from './ui/dom.js';
+import type { QueueSpot } from './ui/views.js';
 import type { GrantedKey } from './wallet/grant.js';
 import type { Wallet } from './wallet/wallet.js';
 
@@ -68,6 +70,10 @@ export interface AppState {
    * `crossChain` report, or by the seat showing up in the directory.
    */
   inTransit: ReadonlySet<string>;
+  /** The tiers the server matchmakes; empty when it runs no matchmaker. */
+  matchmaking: readonly MatchmakingTier[];
+  /** This wallet's place in the matchmaking queue, or null when it is not in it. */
+  queue: QueueSpot | null;
   /**
    * Matchmade lobbies the server's queue put this wallet in, by lowercased
    * match id: the only matchmade lobbies it can take a seat in.
@@ -127,6 +133,8 @@ export const store = createStore<AppState>({
   spokes: [],
   lobbies: { open: [], live: [] },
   inTransit: new Set(),
+  matchmaking: [],
+  queue: null,
   matched: new Set(),
   staking: null,
   analyst: false,

@@ -152,6 +152,24 @@
           <span id="staking-status" class="muted small">Connect a wallet to see your stake.</span>
         </div>
 
+        <div id="queue-panel" class="panel hidden">
+          <div class="panel-head">
+            <h2>Find a match</h2>
+            <span id="queue-state" class="pill">idle</span>
+          </div>
+          <p class="muted small">
+            The matchmaker seats strangers at a table and opens a lobby only they can join.
+            These are the only matches that earn LMS.
+          </p>
+          <div class="row">
+            <label for="queue-tier">Table</label>
+            <select id="queue-tier"></select>
+            <button id="join-queue" class="primary" disabled>Find a match</button>
+            <button id="leave-queue" class="ghost hidden">Leave queue</button>
+          </div>
+          <span id="queue-status" class="muted small">Connect a wallet to queue.</span>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>Staked lobbies</h2>

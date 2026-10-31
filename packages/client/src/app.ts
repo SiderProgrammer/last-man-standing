@@ -3,6 +3,7 @@ import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { onCrossChain, onLobbies, onMatched, wireLobbyControls } from './screens/lobby.js';
+import { onDequeued, onQueued, wireQueueControls } from './screens/queue.js';
 import { refreshStaking, wireStakingPanel } from './screens/stakingPanel.js';
 import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
@@ -70,6 +71,7 @@ export function start(): void {
   wireWalletControls();
   wireOneClickControls();
   wireLobbyControls();
+  wireQueueControls();
   wireMatchControls();
   wirePayoutControls();
   wireResultControls(httpOrigin(SERVER_URL));
@@ -104,6 +106,9 @@ function onServerMessage(message: ServerMessage): void {
         spokes: message.spokes,
         staking: message.staking,
         analyst: message.analyst,
+        matchmaking: message.matchmaking,
+        // A new connection: the server let the old one's place in the queue go.
+        queue: null,
       });
       break;
 
@@ -184,13 +189,16 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'matched':
+      onDequeued();
       onMatched(message);
       break;
 
-    // The queue's own screen comes with the matchmaking UI; until then the
-    // only news worth showing is a table being ready.
     case 'queued':
+      onQueued(message);
+      break;
+
     case 'dequeued':
+      onDequeued();
       break;
 
     case 'analysis.step':

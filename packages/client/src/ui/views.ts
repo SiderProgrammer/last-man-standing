@@ -9,6 +9,7 @@ import {
   type CrossChainEvent,
   type LobbyInfo,
   type LobbySeat,
+  type MatchmakingTier,
   type PublicMatchState,
   type SpokeInfo,
   type ZapInfo,
@@ -27,6 +28,66 @@ import {
 
 /** A `<select>` option, as value and label. */
 export type Option = [value: string, label: string];
+
+/** Where this wallet is in the matchmaking queue, as the server last said. */
+export interface QueueSpot {
+  stake: string;
+  seats: number;
+  /** Wallets in that tier now, this one included. */
+  waiting: number;
+}
+
+export interface QueuePanel {
+  visible: boolean;
+  /** The tiers, each `stake:seats`, labelled with the stake in ETH and the table size. */
+  tiers: Option[];
+  pill: string;
+  joinVisible: boolean;
+  joinDisabled: boolean;
+  leaveVisible: boolean;
+  status: string;
+}
+
+/** The tier a queue option stands for. */
+export function tierKey(tier: MatchmakingTier): string {
+  return `${tier.stake}:${tier.seats}`;
+}
+
+/**
+ * The matchmaking panel. Shown only when the server matchmakes: its tiers
+ * are the only tables that earn play-mining, and the queue is the only way
+ * into them.
+ */
+export function queuePanel(tiers: readonly MatchmakingTier[], connected: boolean, spot: QueueSpot | null): QueuePanel {
+  const options: Option[] = tiers.map((tier) => [
+    tierKey(tier),
+    `${formatEther(BigInt(tier.stake))} ETH · ${tier.seats} seats`,
+  ]);
+  const base = { visible: tiers.length > 0, tiers: options };
+  if (spot) {
+    const others = spot.waiting - 1;
+    return {
+      ...base,
+      pill: 'queued',
+      joinVisible: false,
+      joinDisabled: true,
+      leaveVisible: true,
+      status:
+        `Waiting for a ${spot.seats}-seat table at ${formatEther(BigInt(spot.stake))} ETH · ` +
+        (others <= 0 ? 'nobody else queued yet' : `${others} other${others === 1 ? '' : 's'} queued`),
+    };
+  }
+  return {
+    ...base,
+    pill: 'idle',
+    joinVisible: true,
+    joinDisabled: !connected,
+    leaveVisible: false,
+    status: connected
+      ? 'When a table fills, its lobby opens for exactly those players; stake into it to take your seat.'
+      : 'Connect a wallet to queue.',
+  };
+}
 
 export function targetOptions(state: PublicMatchState, you: number | null): Option[] {
   return state.players
