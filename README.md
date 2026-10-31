@@ -359,8 +359,8 @@ a thousand or more real WebSocket players against a running server
 
 After a match ends, **Analyse match** asks the server for a written analysis:
 a short narrative, three to six key moments, and advice for the player's seat.
-Gemini reads the match through tools bound to that one archived match
-(`get_match`, `get_round`, `get_reads`, `get_player_history`), and every key
+Gemini gets the whole archived match in one prompt and answers in one
+structured-output call, from a worker thread of its own, and every key
 moment's round, seat, kind and target is checked against the round records
 before anyone sees it — moments the history does not support are dropped and
 counted. Clicking a moment rewinds the arena and plays that round again.

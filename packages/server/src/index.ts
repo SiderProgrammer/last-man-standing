@@ -153,7 +153,6 @@ export {
   Analyst,
   AnalystError,
   classify,
-  describeCall,
   type AnalysisUsage,
   type AnalystOptions,
   type AnalyzeRequest,
@@ -164,16 +163,14 @@ export {
 export {
   ProviderError,
   type AnalystModel,
-  type ContentBlock,
-  type Message,
   type ModelReply,
   type ModelRequest,
-  type ToolDefinition,
+  type StopReason,
   type Usage,
 } from './analyst/model.js';
 export { fromGeminiResponse, geminiModel, toGeminiRequest, type GeminiModelOptions } from './analyst/gemini.js';
 export { AnalystLimits, type AnalystLimitOptions, type Refusal } from './analyst/limits.js';
-export { turnCost } from './analyst/pricing.js';
+export { callCost } from './analyst/pricing.js';
 export { AnalysisOutput, MalformedAnalysisError, outputSchema, parseAnalysisOutput } from './analyst/schema.js';
 export { verifyMoments, refute, checkDecisiveRound, type DroppedMoment, type Verification } from './analyst/verify.js';
 export {
@@ -182,5 +179,5 @@ export {
   renderRequest,
   renderRound,
 } from './analyst/prompt.js';
-export { MatchTools, TOOLS, type ToolName, type ToolOutput } from './analyst/tools.js';
+export { briefMatch } from './analyst/briefing.js';
 export { playReferenceMatch, type ReferenceMatch } from './analyst/reference.js';

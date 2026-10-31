@@ -25,8 +25,8 @@ const PRICES: Record<string, Price> = {
   demo: { input: 0, output: 0, cacheRead: 0 },
 };
 
-/** Estimated cost of one model turn, or null for a model with no listed price. */
-export function turnCost(model: string, usage: Usage): number | null {
+/** Estimated cost of one model call, or null for a model with no listed price. */
+export function callCost(model: string, usage: Usage): number | null {
   const price = PRICES[model];
   if (!price) return null;
   const perToken = (perMillion: number) => perMillion / 1_000_000;

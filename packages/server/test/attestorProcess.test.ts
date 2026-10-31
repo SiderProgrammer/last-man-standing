@@ -171,7 +171,7 @@ describe('analyst worker', () => {
       archive,
       config: {
         model: { apiKey: 'test', baseUrl: await fakeGemini(), timeoutMs: 10_000, maxRetries: 0 },
-        analyst: { modelId: 'gemini-3.8-flash', effort: 'low', maxTokens: 1_000, maxTurns: 1 },
+        analyst: { modelId: 'gemini-3.8-flash', effort: 'low', maxTokens: 1_000 },
         limits: unlimited,
       },
     });

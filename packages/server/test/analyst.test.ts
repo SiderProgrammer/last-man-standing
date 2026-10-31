@@ -9,7 +9,7 @@ import {
   outputSchema,
   playReferenceMatch,
 } from '@lms/server';
-import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
+import { FakeModel, answer, usage, type Turn } from './analystFakes.js';
 
 // Staked, so a wallet that did not play may still ask for the spectator's view.
 const match = { ...playReferenceMatch({ label: 'analyst', strategies: ['reader', 'striker', 'guarder', 'charger'] }), staked: true };
@@ -68,7 +68,7 @@ describe('analyst', () => {
     const { analyst, model } = await harness([answer(output())]);
     const { analysis } = await analyst.analyze({ matchId: match.result.matchId, requester: stranger });
     expect(analysis.seat).toBeNull();
-    expect(JSON.stringify(model.requests[0]?.messages)).toMatch(/spectator/);
+    expect(model.requests[0]?.prompt).toMatch(/spectator/);
   });
 
   it('sends a frozen system prompt and keeps the match after it', async () => {
@@ -78,7 +78,7 @@ describe('analyst', () => {
 
     expect(request?.system).toBe(SYSTEM_PROMPT);
     expect(SYSTEM_PROMPT).not.toContain(match.result.matchId);
-    const user = JSON.stringify(request?.messages);
+    const user = String(request?.prompt);
     expect(user).toContain(match.result.matchId);
     expect(user).toContain('seat #0');
   });
@@ -104,27 +104,24 @@ describe('analyst', () => {
   it('opens with an overview line for every round', async () => {
     const { analyst, model } = await harness([answer(output())]);
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    const user = String(model.requests[0]?.messages[0]?.content);
+    const user = String(model.requests[0]?.prompt);
     for (const record of match.history) expect(user).toContain(`Round ${record.round}:`);
     expect(user).toContain('#0 '); // the table
     expect(user).toContain('(you)');
   });
 
-  it('puts the whole match in the first message, so one call can answer', async () => {
+  it('puts the whole match in the prompt, so one call can answer', async () => {
     const { analyst, model } = await harness([answer(output())]);
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    const user = String(model.requests[0]?.messages[0]?.content);
+    const user = String(model.requests[0]?.prompt);
     expect(user).toContain('Every round in full:');
     expect(user.match(/ {2}moves: /g)).toHaveLength(match.history.length);
     expect(user).toContain('What each seat did over the whole match:');
     for (const seat of match.seats ?? []) expect(user).toContain(`Seat #${seat.index} over the whole match`);
   });
 
-  it('answers in a single call, tools off, when held to one turn', async () => {
-    const archive = new MemoryArchive();
-    await archive.save(match);
-    const model = new FakeModel([answer(output())]);
-    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000, maxTurns: 1 });
+  it('answers in a single call, and says what it is doing', async () => {
+    const { analyst, model } = await harness([answer(output())]);
     const steps: string[] = [];
     const { analysis } = await analyst.analyze({
       matchId: match.result.matchId,
@@ -133,7 +130,6 @@ describe('analyst', () => {
     });
     expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
     expect(model.requests).toHaveLength(1);
-    expect(model.requests[0]?.tool_choice).toBe('none');
     expect(steps).toEqual([
       'Gemini is reading the whole match and writing the analysis',
       'Checking the key moments against the rounds',
@@ -154,26 +150,17 @@ describe('analyst', () => {
   });
 
   it('reports a refusal', async () => {
-    const { analyst } = await harness([
-      {
-        reply: {
-          stop_reason: 'refusal',
-          content: [],
-        },
-      },
-    ]);
+    const { analyst } = await harness([{ reply: { stop_reason: 'refusal', text: '' } }]);
     expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('refused');
   });
 
   it('reports a truncated answer', async () => {
-    const { analyst } = await harness([{ reply: { stop_reason: 'max_tokens', content: [] } }]);
+    const { analyst } = await harness([{ reply: { stop_reason: 'max_tokens', text: '{"summary":' } }]);
     expect((await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }))).code).toBe('failed');
   });
 
   it('rejects an answer that is not JSON, or not the schema', async () => {
-    const prose: Turn = {
-      reply: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is my analysis!' }] },
-    };
+    const prose: Turn = { reply: { stop_reason: 'end_turn', text: 'Here is my analysis!' } };
     const { analyst } = await harness([prose, answer({ summary: 'no moments, no advice' })]);
     const notJson = await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }));
     expect(notJson.code).toBe('failed');
@@ -201,47 +188,8 @@ describe('analyst', () => {
   });
 });
 
-describe('analyst tool loop', () => {
-  it('runs the tools the model asks for and answers with every result in one message', async () => {
-    const { analyst, model } = await harness([
-      toolTurn([
-        { name: 'get_round', input: { round: 1 } },
-        { name: 'get_reads', input: { seat: 2 } },
-      ]),
-      answer(output()),
-    ]);
-    const steps: string[] = [];
-    const { analysis, usage } = await analyst.analyze({
-      matchId: match.result.matchId,
-      requester: human,
-      onStep: (step) => steps.push(step),
-    });
-
-    expect(analysis.keyMoments).toEqual([TRUE_MOMENT]);
-    // Every turn and every lookup is announced, so a slow call never looks like a hang.
-    expect(steps).toEqual([
-      'Gemini is reading the whole match and writing the analysis',
-      'Reading round 1',
-      'Studying seat #2',
-      'Thinking over what it found',
-      'Checking the key moments against the rounds',
-    ]);
-    expect(usage).toMatchObject({ turns: 2, toolCalls: 2 });
-
-    const second = model.requests[1];
-    const [, assistant, results] = second?.messages ?? [];
-    // The assistant turn is echoed whole, signature first.
-    expect(assistant?.role).toBe('assistant');
-    expect((assistant?.content as Array<{ type: string }>)[0]?.type).toBe('signature');
-    expect(results?.role).toBe('user');
-    const blocks = results?.content as Array<{ type: string; tool_use_id: string; content: string; is_error?: boolean }>;
-    expect(blocks.map((block) => block.tool_use_id)).toEqual(['call_0', 'call_1']);
-    expect(blocks[0]?.content).toContain('Round 1:');
-    expect(blocks[1]?.content).toContain('Seat #2');
-    expect(blocks.every((block) => block.is_error === undefined)).toBe(true);
-  });
-
-  it('keeps tools and system byte-identical across turns and matches, so the prefix caches', async () => {
+describe('analyst prompt and usage', () => {
+  it('keeps the system prompt byte-identical across matches, so the prefix caches', async () => {
     const other = {
       ...playReferenceMatch({ label: 'analyst-other', strategies: ['random', 'random', 'reader', 'charger', 'guarder'] }),
       staked: true,
@@ -249,66 +197,23 @@ describe('analyst tool loop', () => {
     const archive = new MemoryArchive();
     await archive.save(match);
     await archive.save(other);
-    const model = new FakeModel([toolTurn([{ name: 'get_round', input: { round: 2 } }]), answer(output()), answer(output())]);
+    const model = new FakeModel([answer(output()), answer(output())]);
     const analyst = new Analyst({ archive, model, modelId: 'gemini-3.8-flash', effort: 'medium', maxTokens: 16_000 });
     await analyst.analyze({ matchId: match.result.matchId, requester: human });
     await analyst.analyze({ matchId: other.result.matchId, requester: stranger });
 
     const prefix = (request: (typeof model.requests)[number] | undefined) =>
-      JSON.stringify({ model: request?.model, tools: request?.tools, system: request?.system });
-    expect(model.requests).toHaveLength(3);
+      JSON.stringify({ model: request?.model, system: request?.system, schema: request?.output_schema });
+    expect(model.requests).toHaveLength(2);
     expect(prefix(model.requests[1])).toBe(prefix(model.requests[0]));
-    expect(prefix(model.requests[2])).toBe(prefix(model.requests[0]));
+    expect(model.requests[1]?.prompt).not.toBe(model.requests[0]?.prompt);
   });
 
-  it('hands a bad tool call back to the model as an error instead of running it', async () => {
-    const { analyst, model } = await harness([
-      toolTurn([
-        { name: 'get_round', input: { round: 'one' } },
-        { name: 'get_wallet', input: { address: '0x0' } },
-      ]),
-      answer(output()),
-    ]);
-    await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    const results = model.requests[1]?.messages[2]?.content as Array<{ is_error?: boolean; content: string }>;
-    expect(results.map((block) => block.is_error)).toEqual([true, true]);
-    expect(results[0]?.content).toMatch(/invalid input/);
-    expect(results[1]?.content).toMatch(/no tool named/);
-  });
-
-  it('switches tools off on the last allowed turn', async () => {
-    const archive = new MemoryArchive();
-    await archive.save(match);
-    const model = new FakeModel([
-      toolTurn([{ name: 'get_round', input: { round: 1 } }]),
-      toolTurn([{ name: 'get_round', input: { round: 2 } }]),
-      answer(output()),
-    ]);
-    const analyst = new Analyst({ archive, model, modelId: 'm', effort: 'low', maxTokens: 1_000, maxTurns: 3 });
-    await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    expect(model.requests.map((request) => request.tool_choice)).toEqual([undefined, undefined, 'none']);
-  });
-
-  it('never runs a tool call cut off at the token limit', async () => {
-    const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }], 'max_tokens')]);
-    const error = await failure(analyst.analyze({ matchId: match.result.matchId, requester: human }));
-    expect(error.code).toBe('failed');
-    expect(model.requests).toHaveLength(1);
-  });
-
-  it('sums usage over every turn', async () => {
-    const turn = toolTurn([{ name: 'get_round', input: { round: 1 } }]);
-    if ('reply' in turn) turn.reply.usage = usage({ input_tokens: 100, cache_read_input_tokens: 3_000, output_tokens: 40 });
-    const final = answer(output());
-    if ('reply' in final) {
-      final.reply.usage = usage({ input_tokens: 50, cache_read_input_tokens: 3_200 });
-    }
-    const { analyst } = await harness([turn, final]);
+  it('reports the call\'s tokens', async () => {
+    const reply = answer(output());
+    if ('reply' in reply) reply.reply.usage = usage({ input_tokens: 150, cache_read_input_tokens: 3_200, output_tokens: 540 });
+    const { analyst } = await harness([reply]);
     const result = await analyst.analyze({ matchId: match.result.matchId, requester: human });
-    expect(result.usage).toMatchObject({
-      inputTokens: 150,
-      cacheReadTokens: 6_200,
-      outputTokens: 540,
-    });
+    expect(result.usage).toMatchObject({ inputTokens: 150, cacheReadTokens: 3_200, outputTokens: 540 });
   });
 });

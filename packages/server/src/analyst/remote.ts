@@ -12,7 +12,7 @@ import type { AnalysisErrorCode } from '@lms/api';
 /** What the worker builds its analyst from. Plain data, to cross the thread boundary. */
 export interface AnalystWorkerConfig {
   model: GeminiModelOptions;
-  analyst: Pick<AnalystOptions, 'modelId' | 'effort' | 'maxTokens' | 'deadlineMs' | 'maxTurns'>;
+  analyst: Pick<AnalystOptions, 'modelId' | 'effort' | 'maxTokens' | 'deadlineMs'>;
   limits: AnalystLimitOptions;
 }
 

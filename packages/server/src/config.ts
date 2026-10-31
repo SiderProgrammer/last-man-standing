@@ -157,7 +157,6 @@ const ENV = z.object({
   ANALYST_TIMEOUT_MS: whole(240_000, 1),
   ANALYST_MAX_RETRIES: whole(2),
   ANALYST_DEADLINE_MS: whole(300_000, 1),
-  ANALYST_MAX_TURNS: limit(1),
   ANALYST_QUOTA_PER_HOUR: whole(3),
   ANALYST_MAX_CONCURRENT: whole(1, 1),
   ANALYST_RPM: limit(5),
@@ -365,14 +364,14 @@ export function loadConfig(
      */
     analyst: {
       enabled: e.ANALYST_ENABLED && Boolean(e.GEMINI_API_KEY),
-      /** A Gemini 3 model or later: the first to combine structured output with function calling. */
+      /** A Gemini model with structured output and a thinking level: Gemini 3 or later. */
       model: e.ANALYST_MODEL,
       geminiApiKey: e.GEMINI_API_KEY,
       /** Blank uses the public Gemini API. */
       geminiBaseUrl: e.GEMINI_BASE_URL,
       /** `low` | `medium` | `high` | `xhigh` | `max`, as Gemini's thinking level; the top three all mean `high`. */
       effort: e.ANALYST_EFFORT,
-      /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
+      /** Output ceiling, thinking included. Caps the cost of one runaway answer. */
       maxTokens: e.ANALYST_MAX_TOKENS,
       /**
        * Per model call. Long, because the Gemini free tier can take a minute
@@ -381,14 +380,8 @@ export function loadConfig(
        */
       timeoutMs: e.ANALYST_TIMEOUT_MS,
       maxRetries: e.ANALYST_MAX_RETRIES,
-      /** Ceiling on one whole analysis, every turn and retry included. */
+      /** Ceiling on one whole analysis, retries included. */
       deadlineMs: e.ANALYST_DEADLINE_MS,
-      /**
-       * Model calls per analysis. 1: the whole match goes in the first
-       * message and the answer comes back in the same call. More lets the
-       * model look details up again, at one quota request per turn.
-       */
-      maxTurns: e.ANALYST_MAX_TURNS,
       /** Fresh analyses per wallet per hour. Cached answers do not count. */
       quotaPerHour: e.ANALYST_QUOTA_PER_HOUR,
       /** Analyses being written at once, server-wide. One, so a single analysis has the whole per-minute quota. */
