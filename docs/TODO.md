@@ -69,8 +69,9 @@ Still open:
 
 - **A real testnet deposit.** Follow `docs/TESTNET.md` with a little testnet ETH. Across's
   testnet is unreliable and does not refund an unfilled deposit, so use small amounts.
-- **Withdraw to a spoke has no screen.** `withdrawToChainFor` works on-chain and the typed
-  data is in `@lms/protocol`; the client and the server's relay come with FIX_PLAN 8.5.
+- ~~**Withdraw to a spoke has no screen.**~~ The Winnings panel collects to the spoke the
+  wallet is on, and the server submits the signed withdrawal (FIX_PLAN 8.5). Checked on
+  the local stack, not yet over Across's testnet.
 - **Matchmaking tickets.** The join message is `(matchId, player, origin)`; a queue ticket
   joins it with FIX_PLAN 7.9.
 
@@ -199,8 +200,8 @@ invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
   and a run from separate generator hosts at 10k.
 - **Deployment record:** done. Both deploy scripts write `contracts/deployments/<chainId>.json`
   on a broadcast, the server reads it for defaults, and `--verify` verifies on the explorer.
-- **Bundle size:** the client ships one 565 kB chunk because Pixi and viem are not split.
-  Fine for a testnet demo, worth code-splitting before anything public.
+- ~~**Bundle size.**~~ Split (FIX_PLAN 8.3): a 413 kB main chunk, 134 kB gzipped, mostly
+  viem; Pixi, governance, staking and token payment load on demand.
 
 ### Not yet exercised against a chain
 

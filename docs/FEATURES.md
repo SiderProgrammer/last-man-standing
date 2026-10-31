@@ -285,7 +285,10 @@ A stake that arrives for a seat that can no longer be taken is credited to the
 player on the hub, never reverted, so nothing is stranded in transit. Winnings
 and refunds stay on the hub; a player with no gas there signs a `Withdrawal`
 and anyone submits `withdrawToChainFor`, which bridges the whole balance back
-to the chain and address they named, Across's fee capped by the signature.
+to the chain and address they named, Across's fee capped by the signature. The
+client's Winnings panel does this for a wallet on a spoke ("Collect to …"), and
+the server submits it from the session relayer's key, within the same daily
+quota as one-click calls.
 
 ### When a fill cannot seat anyone
 
@@ -342,7 +345,8 @@ warning when the connected wallet is on a different chain than the hub.
 Purpose: in a cross-chain game the origins are the point — a lobby that pulled
 stakes from four chains should look like it. The warning exists because
 otherwise every stake from the wrong network reverts with an error the wallet
-renders unreadably.
+renders unreadably; and every write first switches the wallet to the chain it
+is for, or refuses with both chains named.
 
 > **Status.** The vendored Across interface is pinned to `across-protocol/contracts`
 > v5.0.27. The router and receiver have run against Across's real SpokePools
@@ -907,7 +911,9 @@ submits only a call that:
 - fits the wallet's `RELAY_QUOTA_PER_DAY`, taken before the first await so two
   racing calls cannot share the last slot, and handed back if the call fails.
 
-It pays from `SESSION_RELAYER_PK`, a key holding only gas money. A refusal names
+It pays from `SESSION_RELAYER_PK`, a key holding only gas money, which also
+submits players' signed withdrawals to a spoke, from the same sender and
+against the same quota. A refusal names
 the revert (`ValueCapExceeded`, `SessionExpired`, or the escrow's error inside
 `CallFailed`), and the client then uses the wallet.
 
@@ -1033,7 +1039,7 @@ whatsoever.
   the public snapshot (which shows every seat's loaded Charge and last action).
 - **`match/replay.ts`** — recomputes an entire match from the seed and published move
   log, and checks a claimed result against it.
-- **`bots/strategy.ts`** — seeded bots: `always`, `randomStrategy`, `readerStrategy`,
+- **`bots/strategy.ts`** (`@lms/engine/bots`, not in the browser's entry) — seeded bots: `always`, `randomStrategy`, `readerStrategy`,
   and the house bot `smartStrategy`. Every one of them only ever picks a move its
   cooldowns allow. The house bot reads each opponent's revealed moves and
   cooldowns, samples plausible rounds, plays each of its legal moves against the
@@ -1123,18 +1129,28 @@ Two supporting decisions:
 | --- | --- |
 | `main.ts` | Entry point, three lines: calls `start()` |
 | `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
-| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| `context.ts` | `AppState` in the store, plus the shared `dom` and `net`, assigned once at boot |
+| `store.ts` | The typed store: `set` a patch, `subscribe` a renderer to the keys it draws |
 | `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
 | **`assets/`** | **Everything loaded at boot** |
 | `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
-| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot |
+| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot. A chunk of its own, with Pixi |
 | **`screens/`** | **What the player sees, and the controls on it** |
 | `screens/loading.ts` | The boot screen: a progress bar while assets load |
-| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
-| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join, from the hub or a spoke |
+| `screens/queue.ts` | The matchmaking queue: pick a tier, wait, leave |
+| `screens/discount.ts` | *On demand.* Paying part of a seat's fee in LMS: quote, permit, join |
+| `screens/zap.ts` | *On demand.* Paying a stake in a token through `ZapJoin` |
+| `screens/staking.ts` | *On demand* (`stakingPanel.ts`). Stake, unstake, claim, vesting and release, delegation |
+| `screens/governance.ts` | *On demand* (`governanceNav.ts`). Proposals, votes, the proposal form |
+| `screens/result.ts` | The result: ranking, the browser's and the chain's verification, Dispute |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer; mounts and disposes the arena |
 | **`wallet/`** | **The player's account** |
 | `wallet/flows.ts` | Connect, login with the session grant, avatar and hub-chain panels |
-| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/chains.ts` | The viem chain every write names, and `WrongChainError` |
+| `wallet/payouts.ts` | Collecting winnings: on the hub, or to the spoke the wallet is on (`collectHome.ts`, on demand) |
+| `wallet/staking.ts`, `governance.ts`, `zap.ts`, `discount.ts` | *On demand.* Each screen's contract calls and ABIs, out of the main bundle |
+| `wallet/wallet.ts` | Injected EIP-1193 session, the chain guard, login signature, escrow / avatar / session calls |
 | `wallet/grant.ts` | The browser's session key and its grant: sign logins, moves and relayed calls |
 | `wallet/oneClick.ts` | One-click play: the on-chain session, relayed joins and collects |
 | **`game/`** | **Match logic that runs in the browser** |
@@ -1148,9 +1164,10 @@ Two supporting decisions:
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
 | `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
 | `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
+| `arena/textures.ts` | Seat faces leased by URL, unloaded once no seat wears them |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |
+| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar, queue, discount and collect-home panels |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
 | **`io/`** | **Browser I/O** |
