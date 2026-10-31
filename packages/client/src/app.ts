@@ -35,7 +35,7 @@ import {
   onLoginRejected,
   wireWalletControls,
 } from './wallet/flows.js';
-import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
+import { onBalance, renderWinnings, wirePayoutControls } from './wallet/payouts.js';
 import { onRelayError, onRelayed, wireOneClickControls } from './wallet/oneClick.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:${DEFAULT_SERVER_PORT}`;
@@ -107,6 +107,7 @@ function onServerMessage(message: ServerMessage): void {
         staking: message.staking,
         analyst: message.analyst,
         matchmaking: message.matchmaking,
+        withdrawToChain: message.withdrawToChain,
         // A new connection: the server let the old one's place in the queue go.
         queue: null,
       });
@@ -215,6 +216,10 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'relayed':
       onRelayed(message);
+      break;
+
+    case 'balance':
+      onBalance(message);
       break;
 
     case 'relay.error':

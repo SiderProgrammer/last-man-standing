@@ -88,6 +88,12 @@ const wei = z.string({ error: 'must be a decimal string' }).regex(/^\d{1,78}$/, 
 /** Calldata for one of the two calls a session key may make: a selector and one word. */
 const calldata = hexMatching(HEX, 'hex').refine((value) => value.length <= 2 + 2 * 1024, 'is too long');
 
+/** A relayed call's id, which its answer carries back. */
+const relayId = z.string({ error: 'must be a string' }).min(1).max(64, 'is too long');
+
+/** A uint32, as a bridge quote's times are. */
+const uint32 = integer(0, 0xffffffff);
+
 /** The match and round a move names. */
 const aim = { matchId: bytes32, round: integer(0, 0xffffffff) };
 
@@ -114,9 +120,38 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, signature, ...aim }),
   queue: z.object({ type: z.literal('queue'), stake: wei, seats: integer(2, 256) }),
   dequeue: z.object({ type: z.literal('dequeue') }),
+  balance: z.object({ type: z.literal('balance') }),
+  withdrawToChain: z.object({
+    type: z.literal('withdrawToChain'),
+    id: relayId,
+    withdrawal: z.object(
+      {
+        player: address,
+        hubChainId: wei,
+        destinationChainId: wei,
+        recipient: address,
+        outputToken: address,
+        maxFee: wei,
+        nonce: wei,
+        deadline: wei,
+      },
+      { error: 'must be an object' },
+    ),
+    quote: z.object(
+      {
+        outputAmount: wei,
+        quoteTimestamp: uint32,
+        fillDeadline: uint32,
+        exclusiveRelayer: address,
+        exclusivityParameter: uint32,
+      },
+      { error: 'must be an object' },
+    ),
+    signature,
+  }),
   relay: z.object({
     type: z.literal('relay'),
-    id: z.string({ error: 'must be a string' }).min(1).max(64, 'is too long'),
+    id: relayId,
     call: z.object({ target: address, value: wei, data: calldata, nonce: wei, signature }, { error: 'must be an object' }),
   }),
 };

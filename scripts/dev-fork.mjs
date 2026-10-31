@@ -92,6 +92,11 @@ const KEEPER_KEY = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cd
  * the matchmaker on a local node when `MATCHMAKER` is unset.
  */
 const MATCHMAKER_KEY = '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6';
+/**
+ * Pays the hub gas of one-click calls and of withdrawals to the spoke that
+ * players sign: the server's session relayer. Anvil's fifth account.
+ */
+const SESSION_RELAYER_KEY = '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a';
 
 /**
  * Answers the mock oracle. A different anvil dev account from the operator,
@@ -99,7 +104,7 @@ const MATCHMAKER_KEY = '0x7c852118294e51e653712a81e05800f419141751be58f605c371e1
  * unlocked one, so anvil signs for it and no key is needed here.
  */
 const ORACLE_NODE = '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720';
-/** Plays the Across relayer on the hub. Another unlocked anvil account, for the same reason. */
+/** Plays the Across relayer on both chains. Another unlocked anvil account, for the same reason. */
 const RELAYER = '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f';
 
 // Uniswap v4 on mainnet.
@@ -404,15 +409,21 @@ function deploySpoke(hub) {
 }
 
 /**
- * Plays an Across relayer: reads each deposit made into the spoke's mock pool
- * and, `FILL_DELAY_MS` later, fills it on the hub's — paying the receiver and
- * calling its handler with the deposit's message, which is what a relayer and
- * the real SpokePool do. The delay is there so the client's "in transit" state
- * can be seen.
+ * Plays an Across relayer, both ways: reads each deposit made into one
+ * chain's mock pool and, `FILL_DELAY_MS` later, fills it on the other's —
+ * paying the recipient and calling its handler with the deposit's message,
+ * which is what a relayer and the real SpokePool do. Joins go spoke to hub;
+ * withdrawals to the spoke go hub to spoke. The delay is there so the
+ * client's "in transit" state can be seen.
  */
 function runRelayer(hub, spoke) {
-  const spokeClient = createPublicClient({ transport: http(SPOKE_RPC) });
-  const relayer = createWalletClient({ account: RELAYER, transport: http(RPC) });
+  relayDeposits({ name: 'the hub', rpc: SPOKE_RPC, pool: spoke.MockAcrossSpokePool }, { rpc: RPC, pool: hub.MockAcrossSpokePool, chainId: CHAIN_ID });
+  relayDeposits({ name: 'the spoke', rpc: RPC, pool: hub.MockAcrossSpokePool }, { rpc: SPOKE_RPC, pool: spoke.MockAcrossSpokePool, chainId: SPOKE_CHAIN_ID });
+}
+
+function relayDeposits(from, to) {
+  const source = createPublicClient({ transport: http(from.rpc) });
+  const relayer = createWalletClient({ account: RELAYER, transport: http(to.rpc) });
   const pool = abiOf('MockAcrossSpokePool');
   let next = 0n;
   let busy = false;
@@ -421,21 +432,16 @@ function runRelayer(hub, spoke) {
     if (busy) return;
     busy = true;
     try {
-      const count = await spokeClient.readContract({ address: spoke.MockAcrossSpokePool, abi: pool, functionName: 'depositCount' });
+      const count = await source.readContract({ address: from.pool, abi: pool, functionName: 'depositCount' });
       for (; next < count; next++) {
-        const deposit = await spokeClient.readContract({
-          address: spoke.MockAcrossSpokePool,
-          abi: pool,
-          functionName: 'getDeposit',
-          args: [next],
-        });
-        if (deposit.destinationChainId !== BigInt(CHAIN_ID)) continue;
+        const deposit = await source.readContract({ address: from.pool, abi: pool, functionName: 'getDeposit', args: [next] });
+        if (deposit.destinationChainId !== BigInt(to.chainId)) continue;
         const index = next;
-        log('across', `deposit ${index} waiting for a fill: ${formatUnits(deposit.outputAmount, 18)} ETH to the hub…`);
+        log('across', `deposit ${index} waiting for a fill: ${formatUnits(deposit.outputAmount, 18)} ETH to ${from.name}…`);
         setTimeout(() => void fill(index, deposit), FILL_DELAY_MS);
       }
     } catch (error) {
-      log('across', `could not read the spoke: ${error.shortMessage ?? error.message}`);
+      log('across', `could not read deposits for ${from.name}: ${error.shortMessage ?? error.message}`);
     } finally {
       busy = false;
     }
@@ -445,15 +451,15 @@ function runRelayer(hub, spoke) {
     try {
       await relayer.writeContract({
         chain: null,
-        address: hub.MockAcrossSpokePool,
+        address: to.pool,
         abi: pool,
         functionName: 'fill',
         args: [deposit.recipient, deposit.outputToken, deposit.outputAmount, deposit.fillDeadline, deposit.message],
         value: deposit.outputAmount,
       });
-      log('across', `deposit ${index} filled`);
+      log('across', `deposit ${index} to ${from.name} filled`);
     } catch (error) {
-      log('across', `deposit ${index} could not be filled: ${error.shortMessage ?? error.message}`);
+      log('across', `deposit ${index} to ${from.name} could not be filled: ${error.shortMessage ?? error.message}`);
     }
   };
 
@@ -695,6 +701,7 @@ async function main() {
       HARVEST_MIN_WEI: '1',
       // Prompt-free logins: anvil's fork runs the latest hardfork, so EIP-7702 works.
       SESSION_DELEGATE: addresses.SessionKeyDelegate,
+      SESSION_RELAYER_PK: SESSION_RELAYER_KEY,
       AVATAR_COLLECTIONS: JSON.stringify([
         { chainId: CHAIN_ID, address: addresses.PlayerAvatars, rpcUrl: RPC },
         { chainId: SPOKE_CHAIN_ID, address: spoke.PlayerAvatars, rpcUrl: SPOKE_RPC },

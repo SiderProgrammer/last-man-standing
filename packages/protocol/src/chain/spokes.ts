@@ -135,32 +135,60 @@ export async function quoteAcross(
   outputAmount: bigint,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ inputAmount: bigint; quote: BridgeQuote }> {
+  const params = feeParams(route, outputAmount);
+  const body = await suggestedFees(api, params, fetchFn);
+  const fee = BigInt(body.totalRelayFee.total);
+  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
+  return { inputAmount: outputAmount + fee + buffer, quote: quoteFrom(body, outputAmount) };
+}
+
+/**
+ * The other way round: what arrives for exactly `inputAmount` sent, which is
+ * how a withdrawal is priced — the whole balance goes in, and the fee comes
+ * out of it. The same `FEE_BUFFER_BPS` over the quoted fee goes to the relayer.
+ */
+export async function quoteAcrossFrom(
+  api: string,
+  route: AcrossRoute,
+  inputAmount: bigint,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ outputAmount: bigint; quote: BridgeQuote }> {
+  const body = await suggestedFees(api, feeParams(route, inputAmount), fetchFn);
+  const fee = BigInt(body.totalRelayFee.total);
+  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
+  const outputAmount = inputAmount - fee - buffer;
+  if (outputAmount <= 0n) throw new Error('Across would take all of it in fees.');
+  return { outputAmount, quote: quoteFrom(body, outputAmount) };
+}
+
+function feeParams(route: AcrossRoute, amount: bigint): URLSearchParams {
   const params = new URLSearchParams({
     inputToken: route.inputToken,
     outputToken: route.outputToken,
     originChainId: String(route.originChainId),
     destinationChainId: String(route.destinationChainId),
-    amount: outputAmount.toString(),
+    amount: amount.toString(),
     recipient: route.recipient,
   });
   if (route.message !== '0x') params.set('message', route.message);
+  return params;
+}
 
+async function suggestedFees(api: string, params: URLSearchParams, fetchFn: typeof fetch): Promise<AcrossFees> {
   const response = await fetchFn(`${api.replace(/\/$/, '')}/suggested-fees?${params}`);
   const body = (await response.json()) as AcrossFees & { message?: string };
   if (!response.ok) throw new Error(`Across would not quote: ${body.message ?? response.status}`);
   if (body.isAmountTooLow) throw new Error('Across will not bridge an amount this small.');
+  return body;
+}
 
-  const fee = BigInt(body.totalRelayFee.total);
-  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
+function quoteFrom(body: AcrossFees, outputAmount: bigint): BridgeQuote {
   return {
-    inputAmount: outputAmount + fee + buffer,
-    quote: {
-      outputAmount,
-      quoteTimestamp: Number(body.timestamp),
-      fillDeadline: Number(body.fillDeadline),
-      exclusiveRelayer: body.exclusiveRelayer,
-      exclusivityParameter: Number(body.exclusivityDeadline),
-    },
+    outputAmount,
+    quoteTimestamp: Number(body.timestamp),
+    fillDeadline: Number(body.fillDeadline),
+    exclusiveRelayer: body.exclusiveRelayer,
+    exclusivityParameter: Number(body.exclusivityDeadline),
   };
 }
 
@@ -243,4 +271,54 @@ export const WITHDRAWAL_TYPES = {
  */
 export function withdrawalDomain(receiver: Address): TypedDataDomain {
   return { name: EIP712_DOMAIN_NAME, version: EIP712_DOMAIN_VERSION, verifyingContract: receiver };
+}
+
+/** The typed data a player signs for `withdrawal`, to `receiver` on the hub. */
+export function withdrawalTypedData(receiver: Address, withdrawal: ChainWithdrawal) {
+  return {
+    domain: withdrawalDomain(receiver),
+    types: WITHDRAWAL_TYPES,
+    primaryType: 'Withdrawal',
+    message: withdrawal,
+  } as const;
+}
+
+/** `ChainWithdrawal` over the wire: every number a decimal string. */
+export type WireWithdrawal = { [K in keyof ChainWithdrawal]: ChainWithdrawal[K] extends bigint ? string : ChainWithdrawal[K] };
+
+/** `BridgeQuote` over the wire, its amount a decimal string. */
+export type WireBridgeQuote = Omit<BridgeQuote, 'outputAmount'> & { outputAmount: string };
+
+export function withdrawalToWire(w: ChainWithdrawal): WireWithdrawal {
+  return {
+    player: w.player,
+    hubChainId: w.hubChainId.toString(),
+    destinationChainId: w.destinationChainId.toString(),
+    recipient: w.recipient,
+    outputToken: w.outputToken,
+    maxFee: w.maxFee.toString(),
+    nonce: w.nonce.toString(),
+    deadline: w.deadline.toString(),
+  };
+}
+
+export function withdrawalFromWire(w: WireWithdrawal): ChainWithdrawal {
+  return {
+    player: w.player,
+    hubChainId: BigInt(w.hubChainId),
+    destinationChainId: BigInt(w.destinationChainId),
+    recipient: w.recipient,
+    outputToken: w.outputToken,
+    maxFee: BigInt(w.maxFee),
+    nonce: BigInt(w.nonce),
+    deadline: BigInt(w.deadline),
+  };
+}
+
+export function quoteToWire(quote: BridgeQuote): WireBridgeQuote {
+  return { ...quote, outputAmount: quote.outputAmount.toString() };
+}
+
+export function quoteFromWire(quote: WireBridgeQuote): BridgeQuote {
+  return { ...quote, outputAmount: BigInt(quote.outputAmount) };
 }

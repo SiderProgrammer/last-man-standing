@@ -282,6 +282,35 @@ export function discountJoinLabel(stakeWei: string, quote: { discount: bigint; l
   return `Pay ${eth} ETH + ${formatTokenAmount(quote.lmsUsed, 18, 2)} LMS`;
 }
 
+export type CollectHomePlan = { ok: true; label: string; detail: string } | { ok: false; reason: string };
+
+/**
+ * A priced withdrawal of the whole hub balance to a spoke, or why there is
+ * none: nothing held, or less than the receiver bridges. `amount` is the
+ * balance and `output` what Across delivers for it.
+ */
+export function collectHomePlan(
+  amount: bigint,
+  minimum: bigint,
+  output: bigint,
+  spokeChainId: number,
+  hubChainId: number,
+): CollectHomePlan {
+  const hub = chainInfo(hubChainId).name;
+  if (amount === 0n) return { ok: false, reason: `Nothing waiting for you on ${hub}.` };
+  if (amount < minimum) {
+    return {
+      ok: false,
+      reason: `${formatEther(amount)} ETH is under the ${formatEther(minimum)} ETH that can be bridged; switch to ${hub} to collect it there.`,
+    };
+  }
+  return {
+    ok: true,
+    label: `Receive ${formatEther(output)} ETH on ${chainInfo(spokeChainId).name}`,
+    detail: `${formatEther(amount)} ETH on ${hub}, less ${formatEther(amount - output)} ETH to the bridge. Click again to sign.`,
+  };
+}
+
 /** An open lobby's join button before anything has been quoted. */
 export function stakeButtonLabel(stakeWei: string, token: ZapToken | null): string {
   const stake = formatEther(BigInt(stakeWei));

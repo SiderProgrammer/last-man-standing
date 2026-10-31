@@ -7,7 +7,10 @@ import {
   joinMessage,
   localQuote,
   quoteAcross,
+  quoteAcrossFrom,
   withdrawalDomain,
+  withdrawalFromWire,
+  withdrawalToWire,
   type AcrossRoute,
 } from '../src/chain/spokes.js';
 
@@ -95,6 +98,43 @@ describe('quoteAcross', () => {
     await expect(
       quoteAcross('https://app.across.to/api', ROUTE, STAKE, fakeFetch(400, { message: 'Unsupported route' })),
     ).rejects.toThrow('Across would not quote: Unsupported route');
+  });
+});
+
+describe('quoteAcrossFrom', () => {
+  /** A withdrawal: the whole balance goes in, and the fee and the buffer come out of it. */
+  it('prices an exact input, taking the fee and the buffer from it', async () => {
+    const fee = 1_000_000_000_000n;
+    const fetchFn = fakeFetch(200, answer(fee));
+    const { outputAmount, quote } = await quoteAcrossFrom('https://app.across.to/api', ROUTE, STAKE, fetchFn);
+
+    const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
+    expect(outputAmount).toBe(STAKE - fee - buffer);
+    expect(quote.outputAmount).toBe(outputAmount);
+    expect(new URL(fetchFn.mock.calls[0]![0] as string).searchParams.get('amount')).toBe(STAKE.toString());
+  });
+
+  it('refuses a balance the fee would swallow', async () => {
+    await expect(quoteAcrossFrom('https://app.across.to/api', ROUTE, 100n, fakeFetch(200, answer(100n)))).rejects.toThrow(
+      'Across would take all of it in fees.',
+    );
+  });
+});
+
+describe('withdrawal over the wire', () => {
+  it('survives the trip as decimal strings', () => {
+    const withdrawal = {
+      player: PLAYER,
+      hubChainId: 8453n,
+      destinationChainId: 42161n,
+      recipient: PLAYER,
+      outputToken: ROUTE.outputToken,
+      maxFee: 12_345n,
+      nonce: 7n,
+      deadline: 1_793_403_468n,
+    };
+    const wire = JSON.parse(JSON.stringify(withdrawalToWire(withdrawal)));
+    expect(withdrawalFromWire(wire)).toEqual(withdrawal);
   });
 });
 

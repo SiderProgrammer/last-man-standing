@@ -27,6 +27,7 @@ import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
 import type { Client } from '../match/room.js';
 import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
+import type { ChainWithdrawals } from '../chain/chainWithdrawals.js';
 import type { SessionRelay } from '../chain/sessionRelay.js';
 import type { Matchmaker } from '../lobby/matchmaker.js';
 
@@ -116,6 +117,12 @@ export interface GatewayOptions {
    * one-click play, and `hello` names no delegate.
    */
   relay?: SessionRelay;
+  /**
+   * Submits withdrawals to a spoke that players signed. Omitted, `hello`
+   * says the server offers none, and `balance` and `withdrawToChain` are
+   * refused.
+   */
+  withdrawals?: ChainWithdrawals;
   /**
    * The matchmaking queue. Omitted, `hello` lists no tiers, `queue` is
    * refused, and every lobby is one a player opened.
@@ -260,6 +267,7 @@ export class Gateway {
       receiptSigner: this.options.receipts?.address ?? null,
       practiceReceiptSigner: this.options.practiceReceipts?.address ?? null,
       matchmaking: [...(this.options.matchmaker?.tiers ?? [])],
+      withdrawToChain: this.options.withdrawals !== undefined,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -393,6 +401,24 @@ export class Gateway {
       }
       case 'relay': {
         await this.relay(session, address, message);
+        return;
+      }
+      case 'balance': {
+        const withdrawals = this.options.withdrawals;
+        if (!withdrawals) throw new RequestError('UNAVAILABLE', 'this server bridges no withdrawals');
+        const balance = await withdrawals.balance(address);
+        session.send({
+          type: 'balance',
+          amount: balance.amount.toString(),
+          receiver: balance.receiver,
+          withdrawalNonce: balance.nonce.toString(),
+          minimum: balance.minimum.toString(),
+          chainTime: balance.chainTime,
+        });
+        return;
+      }
+      case 'withdrawToChain': {
+        await this.withdrawToChain(session, address, message);
         return;
       }
       case 'queue': {
@@ -560,6 +586,30 @@ export class Gateway {
     try {
       const { kind, tx, left } = await relay.relay(address, message.call);
       session.send({ type: 'relayed', id, kind, tx, left });
+    } catch (error) {
+      const { code, message: reason } = errorFrame(error);
+      session.send({ type: 'relay.error', id, code, message: reason });
+    }
+  }
+
+  /**
+   * Submits the socket's own wallet's signed withdrawal to a spoke. Answered
+   * on `relayed` frames by `id`, like a session call: it takes a block too.
+   */
+  private async withdrawToChain(
+    session: Session,
+    address: `0x${string}`,
+    message: Extract<ClientMessage, { type: 'withdrawToChain' }>,
+  ): Promise<void> {
+    const { id } = message;
+    const withdrawals = this.options.withdrawals;
+    if (!withdrawals) {
+      session.send({ type: 'relay.error', id, code: 'UNAVAILABLE', message: 'this server bridges no withdrawals' });
+      return;
+    }
+    try {
+      const { tx, left } = await withdrawals.submit(address, message);
+      session.send({ type: 'relayed', id, kind: 'withdrawToChain', tx, left });
     } catch (error) {
       const { code, message: reason } = errorFrame(error);
       session.send({ type: 'relay.error', id, code, message: reason });

@@ -67,6 +67,8 @@ export interface AppState {
   discount: DiscountTerms | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
   spokes: SpokeInfo[];
+  /** True when the server submits signed withdrawals to a spoke. */
+  withdrawToChain: boolean;
   /** The staked-lobby directory, as the server last sent it. */
   lobbies: { open: readonly LobbyInfo[]; live: readonly LobbyInfo[] };
   /**
@@ -137,6 +139,7 @@ export const store = createStore<AppState>({
   zap: null,
   spokes: [],
   discount: null,
+  withdrawToChain: false,
   lobbies: { open: [], live: [] },
   inTransit: new Set(),
   matchmaking: [],

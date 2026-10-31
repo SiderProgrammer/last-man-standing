@@ -29,7 +29,8 @@ import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
 import { AnalystWorker } from './analyst/remote.js';
 import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
 import { DEFAULT_RULES } from '@lms/protocol';
-import { SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
+import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
+import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -151,19 +152,33 @@ async function main(): Promise<void> {
 
   const verifyPool = new VerifyPool(config.verifyThreads);
 
+  // The session relayer's key pays for both of what follows, from one sender and
+  // against one daily quota per wallet.
+  const relaySender = config.onChain ? senderFor(config.sessionRelayerPk, 'relay') : null;
+  const relayQuota = new DailyQuota(config.relayQuotaPerDay);
+
   // One-click play: joins and withdrawals a player's session key signed, sent
-  // with the relayer's gas. Needs all of an escrow, a delegate and a key.
+  // with the session relayer's gas. Needs all of an escrow, a delegate and a key.
   const relay =
-    config.onChain && config.sessionDelegate !== ZERO_ADDRESS && config.sessionRelayerPk
+    relaySender && config.sessionDelegate !== ZERO_ADDRESS
       ? new SessionRelay({
-          port: viemRelayPort({
-            rpcUrl: config.rpcUrl,
-            chainId: config.chainId,
-            sender: senderFor(config.sessionRelayerPk, 'relay') as TxSender,
-          }),
+          port: viemRelayPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, sender: relaySender }),
           escrow: config.escrow,
           delegate: config.sessionDelegate,
           quotaPerDay: config.relayQuotaPerDay,
+          quota: relayQuota,
+        })
+      : null;
+
+  // Withdrawals to a spoke a player signed, bridged home with the session relayer's
+  // gas on the hub. Needs a key and at least one spoke to bridge to.
+  const withdrawals =
+    relaySender && spokes.length > 0
+      ? new ChainWithdrawals({
+          port: viemWithdrawalPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: relaySender }),
+          hubChainId: config.chainId,
+          spokes,
+          quota: relayQuota,
         })
       : null;
 
@@ -225,6 +240,7 @@ async function main(): Promise<void> {
     ...(receipts ? { receipts } : {}),
     practiceReceipts,
     ...(relay ? { relay } : {}),
+    ...(withdrawals ? { withdrawals } : {}),
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,

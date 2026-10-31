@@ -1,6 +1,6 @@
 import type { AvatarEntry } from './chain/avatars.js';
 import type { ZapInfo } from './chain/zap.js';
-import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
+import type { CrossChainEvent, SpokeInfo, WireBridgeQuote, WireWithdrawal } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
 import type { MatchDelta } from './game/delta.js';
@@ -9,6 +9,9 @@ import type { CommitReceipt, SeatProof, SignedGrant } from './chain/moves.js';
 import type { RelayedCall, SessionCallKind } from './chain/session.js';
 import type { PlayStyle } from './game/style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
+
+/** What a `relayed` frame relayed: a session call, or a withdrawal to a spoke. */
+export type RelayKind = SessionCallKind | 'withdrawToChain';
 
 /** Largest client frame the server will parse. Every legitimate message is far smaller. */
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
@@ -142,6 +145,19 @@ export type ClientMessage =
    */
   | { type: 'relay'; id: string; call: RelayedCall }
   /**
+   * Asks for this wallet's balance in the hub escrow, and what a withdrawal
+   * of it to a spoke must carry that only the hub can say. Answered with
+   * `balance`. For a wallet on a spoke, which cannot read the hub itself.
+   */
+  | { type: 'balance' }
+  /**
+   * The wallet's signed withdrawal of its whole hub balance to a spoke, for
+   * the server to submit to `BridgeJoinReceiver.withdrawToChainFor`, paying
+   * the hub gas. Answered with `relayed` or `relay.error` carrying the same
+   * `id`, like `relay`, and counted against the same daily quota.
+   */
+  | { type: 'withdrawToChain'; id: string; withdrawal: WireWithdrawal; quote: WireBridgeQuote; signature: `0x${string}` }
+  /**
    * Joins the matchmaking queue for one of the tiers `hello` lists. Answered
    * with `queued`, then `matched` once the queue has put a table together.
    * One queue per wallet; joining another leaves the first.
@@ -206,6 +222,12 @@ export type ServerMessage =
        * player opened, joined by id, and none earns play-mining.
        */
       matchmaking: MatchmakingTier[];
+      /**
+       * True when this server submits signed withdrawals to a spoke
+       * (`withdrawToChain`), so a player who has no gas on the hub can still
+       * bring their balance home.
+       */
+      withdrawToChain: boolean;
     }
   | { type: 'authed'; address: `0x${string}` }
   /**
@@ -284,7 +306,21 @@ export type ServerMessage =
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
   /** A relayed call that landed. `left` is how many more the wallet may relay today. */
-  | { type: 'relayed'; id: string; kind: SessionCallKind; tx: `0x${string}`; left: number }
+  | { type: 'relayed'; id: string; kind: RelayKind; tx: `0x${string}`; left: number }
+  /**
+   * This wallet's balance in the hub escrow, in wei, and what a signed
+   * withdrawal of it must name: the receiver it is signed to, the nonce it
+   * must carry, the least the receiver will bridge, and the hub's clock,
+   * which a bridge quote is stamped with.
+   */
+  | {
+      type: 'balance';
+      amount: string;
+      receiver: `0x${string}`;
+      withdrawalNonce: string;
+      minimum: string;
+      chainTime: number;
+    }
   /** A relayed call the server refused, or that failed on-chain. */
   | { type: 'relay.error'; id: string; code: ErrorCode; message: string }
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */

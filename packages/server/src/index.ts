@@ -48,7 +48,20 @@ export {
 export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
-export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions } from './chain/sessionRelay.js';
+export {
+  DailyQuota,
+  SessionRelay,
+  viemRelayPort,
+  type RelayPort,
+  type SessionRelayOptions,
+} from './chain/sessionRelay.js';
+export {
+  ChainWithdrawals,
+  viemWithdrawalPort,
+  type ChainWithdrawalsOptions,
+  type HubBalance,
+  type WithdrawalPort,
+} from './chain/chainWithdrawals.js';
 export { keySigner, signerAccount, type Signer } from './chain/signer.js';
 export {
   AttestationRefused,

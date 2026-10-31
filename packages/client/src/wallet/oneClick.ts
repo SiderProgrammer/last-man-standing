@@ -3,6 +3,7 @@ import {
   errorFirstLine,
   joinCall,
   withdrawForCall,
+  type ClientMessage,
   type ErrorCode,
   type ServerMessage,
   type SessionCallParams,
@@ -74,14 +75,22 @@ async function relay(call: Pick<SessionCallParams, 'target' | 'value' | 'data'>)
   const { nonce } = await wallet.oneClickStatus(sessionDelegate, grantKey.address);
   const params: SessionCallParams = { ...call, account: wallet.address, chainId: app.chainId, nonce };
   const signature = await grantKey.signSessionCall(params);
-
-  const id = `relay-${(nextId += 1)}`;
-  const landed = new Promise<Hex>((resolve, reject) => pending.set(id, { resolve, reject }));
-  net.send({
+  return sendRelayed((id) => ({
     type: 'relay',
     id,
     call: { target: call.target, value: call.value.toString(), data: call.data, nonce: nonce.toString(), signature },
-  });
+  }));
+}
+
+/**
+ * Sends a frame the relayer answers by its `id`, with `relayed` or
+ * `relay.error`: a session call, or a signed withdrawal to a spoke. Resolves
+ * with the mined transaction, or rejects with a `RelayError`.
+ */
+export function sendRelayed(frame: (id: string) => ClientMessage): Promise<Hex> {
+  const id = `relay-${(nextId += 1)}`;
+  const landed = new Promise<Hex>((resolve, reject) => pending.set(id, { resolve, reject }));
+  net.send(frame(id));
   return landed;
 }
 
