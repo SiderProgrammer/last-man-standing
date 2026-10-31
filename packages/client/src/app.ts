@@ -1,14 +1,13 @@
 import { DEFAULT_SERVER_PORT, MatchPhase, type ServerMessage } from '@lms/protocol';
 import { loadAssets } from './assets/loader.js';
-import { app, dom, initContext, net } from './context.js';
+import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { onCrossChain, onMatched, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
+import { onCrossChain, onLobbies, onMatched, wireLobbyControls } from './screens/lobby.js';
 import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
 import {
   governanceVisible,
   renderGovernance,
-  renderGovernanceNav,
   wireGovernanceControls,
 } from './screens/governance.js';
 import {
@@ -38,13 +37,10 @@ import {
   authenticate,
   onAuthed,
   onLoginRejected,
-  renderAvatarPanel,
-  renderHubLabel,
-  renderSessionPanel,
   wireWalletControls,
 } from './wallet/flows.js';
 import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
-import { onRelayError, onRelayed, renderOneClickPanel, wireOneClickControls } from './wallet/oneClick.js';
+import { onRelayError, onRelayed, wireOneClickControls } from './wallet/oneClick.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:${DEFAULT_SERVER_PORT}`;
 
@@ -93,26 +89,22 @@ export function start(): void {
 function onServerMessage(message: ServerMessage): void {
   switch (message.type) {
     case 'hello':
-      app.nonce = message.nonce;
-      app.chainId = message.chainId;
       if (app.wallet) app.wallet.hubChainId = message.chainId;
-      app.escrow = message.escrow;
-      app.avatarCollections = message.avatarCollections;
-      app.sessionDelegate = message.sessionDelegate;
-      app.relayQuota = message.relayQuota;
-      app.receiptSigner = message.receiptSigner;
-      app.practiceReceiptSigner = message.practiceReceiptSigner;
-      app.zap = message.zap;
-      app.spokes = message.spokes ?? [];
-      app.staking = message.staking;
-      app.analyst = message.analyst ?? false;
-      renderPayWith();
-      renderHubLabel();
-      renderSessionPanel();
-      renderOneClickPanel();
-      void renderAvatarPanel();
-      void renderStakingPanel();
-      renderGovernanceNav();
+      // Every panel that shows any of this is subscribed to it.
+      store.set({
+        nonce: message.nonce,
+        chainId: message.chainId,
+        escrow: message.escrow,
+        avatarCollections: message.avatarCollections,
+        sessionDelegate: message.sessionDelegate,
+        relayQuota: message.relayQuota,
+        receiptSigner: message.receiptSigner,
+        practiceReceiptSigner: message.practiceReceiptSigner,
+        zap: message.zap,
+        spokes: message.spokes,
+        staking: message.staking,
+        analyst: message.analyst,
+      });
       break;
 
     case 'authed':
@@ -133,7 +125,7 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'lobbies':
-      renderLobbies(message.open, message.live);
+      onLobbies(message.open, message.live);
       break;
 
     case 'state':

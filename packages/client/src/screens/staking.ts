@@ -1,5 +1,5 @@
 import { chainInfo, errorFirstLine } from '@lms/protocol';
-import { app, dom } from '../context.js';
+import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
 
@@ -26,6 +26,7 @@ export function wireStakingControls(): void {
   dom.claimPlayRewards.onclick = () => void act('LMS claimed. It vests over six months; stake it once released to vote.', claimPlayRewards());
   dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
   dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
+  store.subscribe(['wallet', 'walletChainId', 'chainId', 'staking'], () => void renderStakingPanel());
 }
 
 export async function renderStakingPanel(): Promise<void> {

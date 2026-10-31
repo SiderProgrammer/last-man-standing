@@ -1,5 +1,5 @@
 import { chainInfo, errorFirstLine } from '@lms/protocol';
-import { app, dom } from '../context.js';
+import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { RelayError, canRelay, relayCollect } from './oneClick.js';
 
@@ -93,4 +93,5 @@ async function collectByRelay(): Promise<boolean> {
 export function wirePayoutControls(): void {
   dom.collect.onclick = () => void collectWinnings();
   dom.resultCollect.onclick = () => void collectWinnings();
+  store.subscribe(['wallet', 'walletChainId', 'chainId', 'escrow', 'oneClick'], () => void renderWinnings());
 }

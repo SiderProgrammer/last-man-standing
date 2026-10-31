@@ -8,7 +8,7 @@ import {
   type SessionCallParams,
 } from '@lms/protocol';
 import { formatEther, type Hex } from 'viem';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 
 /**
@@ -86,20 +86,20 @@ async function relay(call: Pick<SessionCallParams, 'target' | 'value' | 'data'>)
 }
 
 /**
- * Reads whether the current key holds a live session, and redraws the panel.
- * Called on login, after either switch, and whenever the key changes.
+ * Reads whether the current key holds a live session. Runs whenever the
+ * wallet, its chain or the key changes, on login, and after either switch.
  */
 export async function refreshOneClick(): Promise<void> {
   const { wallet, grantKey, sessionDelegate } = app;
-  app.oneClick = false;
+  let active = false;
   if (wallet && grantKey && sessionDelegate && wallet.canDelegate && wallet.chainId === app.chainId) {
     try {
-      app.oneClick = (await wallet.oneClickStatus(sessionDelegate, grantKey.address)).active;
+      active = (await wallet.oneClickStatus(sessionDelegate, grantKey.address)).active;
     } catch (error) {
       console.error('[one-click]', error);
     }
   }
-  renderOneClickPanel();
+  store.set({ oneClick: active });
 }
 
 export function renderOneClickPanel(): void {
@@ -166,4 +166,8 @@ export async function disableOneClick(): Promise<void> {
 export function wireOneClickControls(): void {
   dom.enableOneClick.onclick = () => void enableOneClick();
   dom.disableOneClick.onclick = () => void disableOneClick();
+
+  const inputs = ['wallet', 'walletChainId', 'chainId', 'grantKey', 'sessionDelegate'] as const;
+  store.subscribe([...inputs, 'oneClick', 'relayQuota'], renderOneClickPanel);
+  store.subscribe(inputs, () => void refreshOneClick());
 }

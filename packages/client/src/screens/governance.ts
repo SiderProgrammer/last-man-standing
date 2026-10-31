@@ -1,5 +1,5 @@
 import { VoteSupport, errorFirstLine, type ProposalSummary, type VoteSupportValue } from '@lms/protocol';
-import { app, dom } from '../context.js';
+import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { proposalCard, type ProposalCard, type ProposalLive } from '../ui/governance.js';
 import { knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
@@ -29,6 +29,7 @@ export function wireGovernanceControls(origin: string): void {
   });
   dom.navGovernance.onclick = () => showGovernance(true);
   dom.governanceBack.onclick = () => showGovernance(false);
+  store.subscribe(['staking'], renderGovernanceNav);
   // One listener for every card's buttons, which are rebuilt on each render.
   dom.proposalList.onclick = (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-step]');

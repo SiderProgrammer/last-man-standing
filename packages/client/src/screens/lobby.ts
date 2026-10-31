@@ -15,7 +15,7 @@ import {
   type SpokeInfo,
   type ZapToken,
 } from '@lms/protocol';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
@@ -48,9 +48,6 @@ const QUOTE_TTL_MS = 30_000;
 /** A little over the chain bridge's poll interval: how stale the directory can be. */
 const DIRECTORY_LAG_MS = 5_000;
 
-/** Last directory the server sent, so changing the payment token can redraw it. */
-let shown: { open: LobbyInfo[]; live: LobbyInfo[] } = { open: [], live: [] };
-
 export function wireLobbyControls(): void {
   dom.practice.onclick = () => {
     net.send({
@@ -62,7 +59,10 @@ export function wireLobbyControls(): void {
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
   dom.createLobby.onclick = () => void createLobby();
-  dom.payWith.onchange = () => renderLobbies(shown.open, shown.live);
+  dom.payWith.onchange = renderLobbies;
+
+  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
+  store.subscribe(['lobbies', 'inTransit', 'matched'], renderLobbies);
 }
 
 /**
@@ -79,7 +79,7 @@ export function renderPayWith(): void {
   dom.createLobby.title = spoke
     ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
     : '';
-  renderLobbies(shown.open, shown.live);
+  renderLobbies();
 }
 
 /** The token picked to pay with, or null for plain ETH. */
@@ -92,15 +92,24 @@ function currentSpoke(): SpokeInfo | null {
   return app.wallet && app.escrow ? spokeFor(app.spokes, app.wallet.chainId) : null;
 }
 
-export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
-  shown = { open, live };
+/** The server's directory arrived. */
+export function onLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
   // A seat in the directory is the surest sign a stake landed, even if the
   // server's report of it was missed while the socket was down.
-  for (const lobby of [...open, ...live]) {
-    if (lobby.players.some((player) => sameAddress(player.address, app.wallet?.address))) {
-      app.inTransit.delete(lobby.matchId.toLowerCase());
-    }
-  }
+  const landed = new Set(
+    [...open, ...live]
+      .filter((lobby) => lobby.players.some((player) => sameAddress(player.address, app.wallet?.address)))
+      .map((lobby) => lobby.matchId.toLowerCase()),
+  );
+  const inTransit = [...app.inTransit].filter((id) => !landed.has(id));
+  store.set({
+    lobbies: { open, live },
+    ...(inTransit.length !== app.inTransit.size ? { inTransit: new Set(inTransit) } : {}),
+  });
+}
+
+export function renderLobbies(): void {
+  const { open, live } = app.lobbies;
   if (open.length === 0 && live.length === 0) {
     dom.lobbyList.replaceChildren(
       element(
@@ -226,7 +235,7 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
 
 /** The queue put this wallet at a table: its lobby is now one it can stake into. */
 export function onMatched(message: Extract<ServerMessage, { type: 'matched' }>): void {
-  app.matched.add(message.matchId.toLowerCase());
+  store.set({ matched: new Set([...app.matched, message.matchId.toLowerCase()]) });
   toast(`Matched: a ${message.seats}-seat table is ready. Stake into ${short(message.matchId)} to take your seat.`);
   net.send({ type: 'lobbies' });
 }
@@ -415,8 +424,7 @@ async function paySpokeJoin(
     const hash = await wallet.joinFromSpoke(spoke.chainId, spoke.router, lobby.matchId, quote, total);
     button.textContent = 'Sending…';
     await wallet.waitFor(hash);
-    app.inTransit.add(lobby.matchId.toLowerCase());
-    renderLobbies(shown.open, shown.live);
+    store.set({ inTransit: new Set([...app.inTransit, lobby.matchId.toLowerCase()]) });
     toast(
       `Stake sent from ${chainInfo(spoke.chainId).name}. It reaches ${chainInfo(app.chainId).name} once a ` +
         'relayer fills it, usually within a minute; you will be told when it is seated.',
@@ -433,15 +441,15 @@ export function onCrossChain(event: CrossChainEvent): void {
   if (event.kind === 'seated') {
     // The row stays locked until the seat shows in the directory, which can
     // lag this report by one of the bridge's polls; otherwise it would offer
-    // to stake for a seat the player already holds. `renderLobbies` unlocks it.
+    // to stake for a seat the player already holds. `onLobbies` unlocks it.
     // No `watch` yet: the room only exists once the lobby locks and the
     // oracle seeds it, and asking sooner answers "unknown match" over this
     // notice. The row's Enter button attaches the player then.
     net.send({ type: 'lobbies' });
     setTimeout(() => net.send({ type: 'lobbies' }), DIRECTORY_LAG_MS);
   } else if (event.kind === 'refunded') {
-    app.inTransit.delete(event.matchId.toLowerCase());
+    const id = event.matchId.toLowerCase();
+    store.set({ inTransit: new Set([...app.inTransit].filter((entry) => entry !== id)) });
     void renderWinnings();
   }
-  renderLobbies(shown.open, shown.live);
 }
