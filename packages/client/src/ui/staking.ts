@@ -39,12 +39,29 @@ export interface PlayRewards {
   epochs: bigint[];
 }
 
+/** Claimed play-mining rewards in `RewardVesting`, for this wallet. */
+export interface Vesting {
+  /** The vesting contract, which `release` is sent to. */
+  address: Address;
+  /** Claimed and not yet released: everything the contract still holds for this wallet. */
+  held: bigint;
+  /** The part of `held` that has vested, which `release` pays now. */
+  releasable: bigint;
+  /** The epochs `releasable` comes from: what `release` is called with. */
+  epochs: bigint[];
+  /** When the last tranche held finishes vesting, in chain time; 0 with nothing held. */
+  fullyVestedAt: number;
+  chainTime: number;
+}
+
 export interface StakingPanelInput {
   info: StakingInfo | null;
   connected: boolean;
   position: StakingPosition | null;
   /** Null when the server names no distributor, or the read failed. */
   playRewards?: PlayRewards | null;
+  /** Null when the server names no distributor, or the read failed. */
+  vesting?: Vesting | null;
   /** Used only when there is no position to take the chain's time from. */
   nowSeconds: number;
   /** A read that failed, usually a wallet on the wrong chain. */
@@ -59,6 +76,9 @@ export interface StakingPanel {
   /** Play-mining line: what has been earned by playing, or empty to hide it. */
   playRewards: string;
   claimPlayVisible: boolean;
+  /** Vesting line: claimed LMS still locked or ready to release, or empty to hide it. */
+  vesting: string;
+  releaseVisible: boolean;
   /** Where this wallet's votes go, or empty when it has no stake to delegate. */
   delegation: string;
   delegateDisabled: boolean;
@@ -78,6 +98,8 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
     claimRewardsVisible: false,
     playRewards: '',
     claimPlayVisible: false,
+    vesting: '',
+    releaseVisible: false,
     delegation: '',
     delegateDisabled: true,
     undelegateVisible: false,
@@ -98,6 +120,7 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
     rewards: `${formatLms(position.earned, 6)} ETH earned`,
     claimRewardsVisible: position.earned > 0n,
     ...playRewardsLine(input.info, input.playRewards ?? null),
+    ...vestingLine(input.vesting ?? null),
     ...delegationLine(position),
     summary:
       position.staked > 0n
@@ -138,6 +161,24 @@ function playRewardsLine(
     playRewards: `${formatLms(rewards.claimable)} LMS earned by playing, over ${weeks} week${weeks === 1 ? '' : 's'} · vests over six months once claimed`,
     claimPlayVisible: true,
   };
+}
+
+/**
+ * Claimed rewards on their way to being spendable. Vesting LMS carries no
+ * vote; only once released, and then staked, does it count, which the line
+ * says, because that is the question a new holder asks.
+ */
+export function vestingLine(vesting: Vesting | null): Pick<StakingPanel, 'vesting' | 'releaseVisible'> {
+  if (!vesting || vesting.held === 0n) return { vesting: '', releaseVisible: false };
+  const locked = vesting.held - vesting.releasable;
+  const parts: string[] = [];
+  if (locked > 0n) {
+    const left = vesting.fullyVestedAt - vesting.chainTime;
+    parts.push(`${formatLms(locked)} LMS vesting${left > 0 ? `, all of it in ${formatDuration(left)}` : ''}`);
+  }
+  if (vesting.releasable > 0n) parts.push(`${formatLms(vesting.releasable)} LMS ready to release`);
+  parts.push('release and stake it to vote');
+  return { vesting: parts.join(' · '), releaseVisible: vesting.releasable > 0n };
 }
 
 /**

@@ -30,6 +30,7 @@ const CONTRACTS = {
   ZapJoin: 'zapJoinAbi',
   FeeRouter: 'feeRouterAbi',
   RewardsDistributor: 'rewardsDistributorAbi',
+  RewardVesting: 'rewardVestingAbi',
   StakedLms: 'stakedLmsAbi',
   LmsToken: 'lmsTokenAbi',
   LmsGovernor: 'lmsGovernorAbi',

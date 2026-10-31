@@ -1,6 +1,6 @@
 import { parseSignature, type Address, type Hex } from 'viem';
-import { claimableEpochRange, lmsTokenAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/protocol';
-import type { PlayRewards, StakingPosition } from '../ui/staking.js';
+import { claimableEpochRange, lmsTokenAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/protocol';
+import type { PlayRewards, StakingPosition, Vesting } from '../ui/staking.js';
 import { PERMIT_SECONDS, type Wallet } from './wallet.js';
 
 /**
@@ -162,6 +162,62 @@ export async function claimRewards(wallet: Wallet, vault: Address): Promise<Hex>
     abi: stakedLmsAbi,
     functionName: 'claimRewards',
     args: [wallet.address],
+  });
+  return wallet.client.writeContract({ ...request, chain });
+}
+
+/**
+ * What this wallet's claimed play-mining rewards are doing in `RewardVesting`.
+ *
+ * A tranche exists only for an epoch that has ended, so the epochs read are
+ * the distributor's ended ones; one read per epoch, a few dozen at most for
+ * a year of weekly epochs.
+ */
+export async function vesting(wallet: Wallet, distributor: Address): Promise<Vesting> {
+  const [address, firstEpoch, epochLength, programEpochs, block] = await Promise.all([
+    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'vesting' }),
+    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'firstEpoch' }),
+    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'epochLength' }),
+    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'PROGRAM_EPOCHS' }),
+    wallet.rpc.getBlock(),
+  ]);
+  const chainTime = Number(block.timestamp);
+  const none: Vesting = { address, held: 0n, releasable: 0n, epochs: [], fullyVestedAt: 0, chainTime };
+  const range = claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp);
+  if (!range) return none;
+
+  const contract = { address, abi: rewardVestingAbi } as const;
+  const epochs: bigint[] = [];
+  for (let epoch = range.from; epoch <= range.to; epoch += 1n) epochs.push(epoch);
+  const [[releasable, ready], duration, tranches] = await Promise.all([
+    wallet.rpc.readContract({ ...contract, functionName: 'releasableIn', args: [wallet.address, range.from, range.to] }),
+    wallet.rpc.readContract({ ...contract, functionName: 'VESTING_DURATION' }),
+    Promise.all(
+      epochs.map((epoch) => wallet.rpc.readContract({ ...contract, functionName: 'trancheOf', args: [wallet.address, epoch] })),
+    ),
+  ]);
+
+  let held = 0n;
+  let fullyVestedAt = 0;
+  tranches.forEach(([amount, released], i) => {
+    if (amount <= released) return;
+    held += amount - released;
+    // `vestingStart`: the moment the tranche's epoch ended.
+    const end = Number((epochs[i]! + 1n) * epochLength + duration);
+    fullyVestedAt = Math.max(fullyVestedAt, end);
+  });
+  return { address, held, releasable, epochs: [...ready], fullyVestedAt, chainTime };
+}
+
+/** Pays this wallet what has vested in `epochs`, as liquid LMS. */
+export async function releaseVested(wallet: Wallet, vestingAddress: Address, epochs: readonly bigint[]): Promise<Hex> {
+  const chain = await wallet.onHub();
+  const { request } = await wallet.rpc.simulateContract({
+    account: wallet.address,
+    address: vestingAddress,
+    abi: rewardVestingAbi,
+    functionName: 'release',
+    args: [wallet.address, [...epochs]],
   });
   return wallet.client.writeContract({ ...request, chain });
 }

@@ -56,6 +56,8 @@ export function queryDom(doc: Document = document) {
     claimRewards: el<HTMLButtonElement>('claim-rewards'),
     playRewards: el<HTMLSpanElement>('play-rewards'),
     claimPlayRewards: el<HTMLButtonElement>('claim-play-rewards'),
+    vestingStatus: el<HTMLSpanElement>('vesting-status'),
+    releaseVested: el<HTMLButtonElement>('release-vested'),
     stakingSummary: el<HTMLSpanElement>('staking-summary'),
     stakingAmount: el<HTMLInputElement>('staking-amount'),
     stakingMax: el<HTMLButtonElement>('staking-max'),

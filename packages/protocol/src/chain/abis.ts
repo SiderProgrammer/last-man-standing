@@ -9,6 +9,7 @@ export { bridgeJoinReceiverAbi } from './abis/BridgeJoinReceiver.js';
 export { zapJoinAbi } from './abis/ZapJoin.js';
 export { feeRouterAbi } from './abis/FeeRouter.js';
 export { rewardsDistributorAbi } from './abis/RewardsDistributor.js';
+export { rewardVestingAbi } from './abis/RewardVesting.js';
 export { stakedLmsAbi } from './abis/StakedLms.js';
 export { lmsTokenAbi } from './abis/LmsToken.js';
 export { lmsGovernorAbi } from './abis/LmsGovernor.js';

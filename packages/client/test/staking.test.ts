@@ -8,8 +8,10 @@ import {
   parseDelegatee,
   parseLms,
   stakingPanel,
+  vestingLine,
   type StakingPanelInput,
   type StakingPosition,
+  type Vesting,
 } from '../src/ui/staking.js';
 
 const E18 = 10n ** 18n;
@@ -122,6 +124,48 @@ describe('stakingPanel', () => {
       );
       expect(view.playRewards).toBe('1,250 LMS earned by playing, over 2 weeks · vests over six months once claimed');
       expect(view.claimPlayVisible).toBe(true);
+    });
+  });
+
+  describe('vesting', () => {
+    const VESTING = `0x${'7f'.repeat(20)}` as const;
+    const vesting = (overrides: Partial<Vesting> = {}): Vesting => ({
+      address: VESTING,
+      held: 0n,
+      releasable: 0n,
+      epochs: [],
+      fullyVestedAt: 0,
+      chainTime: NOW,
+      ...overrides,
+    });
+
+    it('is hidden with nothing claimed', () => {
+      expect(vestingLine(null)).toEqual({ vesting: '', releaseVisible: false });
+      expect(vestingLine(vesting())).toEqual({ vesting: '', releaseVisible: false });
+    });
+
+    it('says what is still locked, and until when, with no vote while it vests', () => {
+      const line = vestingLine(vesting({ held: 300n * E18, fullyVestedAt: NOW + 90 * 86_400 }));
+      expect(line.vesting).toBe('300 LMS vesting, all of it in 90d · release and stake it to vote');
+      expect(line.releaseVisible).toBe(false);
+    });
+
+    it('offers to release what has vested, and keeps the rest counted as locked', () => {
+      const line = vestingLine(
+        vesting({ held: 300n * E18, releasable: 100n * E18, epochs: [3n], fullyVestedAt: NOW + 3_600 }),
+      );
+      expect(line.vesting).toBe('200 LMS vesting, all of it in 1h · 100 LMS ready to release · release and stake it to vote');
+      expect(line.releaseVisible).toBe(true);
+    });
+
+    it('drops the countdown once everything has vested', () => {
+      const line = vestingLine(vesting({ held: 50n * E18, releasable: 50n * E18, epochs: [1n], fullyVestedAt: NOW - 1 }));
+      expect(line.vesting).toBe('50 LMS ready to release · release and stake it to vote');
+    });
+
+    it('reaches the panel', () => {
+      const view = stakingPanel(input({ vesting: vesting({ held: 10n * E18, releasable: 10n * E18, epochs: [1n] }) }));
+      expect(view.releaseVisible).toBe(true);
     });
   });
 

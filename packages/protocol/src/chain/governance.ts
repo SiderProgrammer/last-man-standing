@@ -1,4 +1,4 @@
-import { feeRouterAbi, rewardsDistributorAbi, stakedLmsAbi, lmsTokenAbi } from './abis.js';
+import { feeRouterAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi, lmsTokenAbi } from './abis.js';
 
 /**
  * The fee-to-stakers path: `FeeRouter` passes the stakers' share of every fee
@@ -51,6 +51,14 @@ export function claimableEpochRange(
   const lastInProgram = firstEpoch + programEpochs - 1n;
   return { from: firstEpoch, to: lastEnded < lastInProgram ? lastEnded : lastInProgram };
 }
+
+/**
+ * `RewardVesting`, the distributor's `vesting()`: where claimed play-mining
+ * rewards wait, one tranche per epoch, each vesting linearly over
+ * `VESTING_DURATION` from the moment its epoch ended. `release` pays what
+ * has vested to the player, as liquid LMS.
+ */
+export { rewardVestingAbi };
 
 /** The `StakedLms` surface the client uses. Errors are included so a failed simulation reads as its cause. */
 export { stakedLmsAbi };
