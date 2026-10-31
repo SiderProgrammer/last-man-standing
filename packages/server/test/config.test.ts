@@ -158,7 +158,7 @@ describe('server configuration', () => {
 
   it('gives every job its own key, and refuses one key for two', () => {
     const pk = `0x${'22'.repeat(32)}`;
-    // The keeper no longer falls back to the attestor's key.
+    // The keeper never falls back to the attestor's key.
     expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBeUndefined();
     expect(() => loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: pk })).toThrow(/ATTESTOR_PK, KEEPER_PK are the same key/);
     expect(() => loadConfig({ SESSION_RELAYER_PK: pk, MATCHMAKER_PK: pk.toUpperCase().replace('0X', '0x') })).toThrow(

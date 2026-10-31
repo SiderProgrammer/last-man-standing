@@ -138,8 +138,9 @@ Around that core:
 For the full design — game rules, trust model, hashing,
 cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
-see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
-[docs/TODO.md](docs/TODO.md).
+see [docs/FEATURES.md](docs/FEATURES.md). Why the big decisions went the way
+they did is in [docs/adr/](docs/adr/README.md), one short record each.
+Outstanding work is tracked in [docs/TODO.md](docs/TODO.md).
 
 ## Wallets
 

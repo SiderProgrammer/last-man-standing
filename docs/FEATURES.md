@@ -1,69 +1,35 @@
 # Last Man Standing — feature reference
 
-Every mechanism, standard and subsystem in the project: what it does, why it is
-there, and where to find it.
+Every mechanism and standard in the project: what it does, why it is there, and
+where to find it, one entry at a time. How the pieces fit together is
+[`ARCHITECTURE.md`](ARCHITECTURE.md), including each package's file table; why
+the big decisions went the way they did is [`adr/`](adr/README.md); what is
+unfinished is [`TODO.md`](TODO.md); the environment is
+[`.env.example`](../.env.example).
 
-This is the "what is this and why" document. Two others cover different ground,
-and none of the three repeats another:
-
-| Document | Answers |
-| --- | --- |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | How the game plays and how the system is put together, as a narrative |
-| **`FEATURES.md`** (this file) | What each feature is for, one entry at a time |
-| [`TODO.md`](TODO.md) | What is unfinished and in what order it blocks a demo |
-
-**Status labels** used throughout:
-
-- **Live** — implemented and exercised end to end.
-- **Unit-tested** — implemented and covered by tests, but never run against a
-  deployed contract or a real RPC.
-- **Mocked** — the third-party integration behind it is a local stub.
-- **Known issue** — implemented, but with a flaw documented in the review.
-
-Test counts at the time of writing: **190 TypeScript tests** across 18 files,
-**95 Foundry tests** across 15 suites.
+**Status labels:** **Live** — exercised end to end. **Unit-tested** — covered
+by tests, never run against a deployed contract or a public RPC. **Mocked** —
+the third-party integration behind it is a local stub.
 
 ---
 
 ## Standards and protocols used
 
-A quick index, since most of these are the reason a given file exists at all.
-
 | Standard | Where | Why it is used |
 | --- | --- | --- |
-| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `consensus/eip712/result.ts`, `consensus/eip712/moves.ts` | Attestors sign results, wallets sign session grants and session keys sign every move as a readable structure, not an opaque digest, and the domain binds a signature to one contract or chain |
+| **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `BridgeJoinReceiver`, `packages/consensus/src/eip712/` | Attestors sign results, wallets sign session grants and withdrawals, and session keys sign every move as a readable structure; the domain binds a signature to one contract or chain |
 | **EIP-1153** transient storage | `SeatSetLib` | A scratch set that self-clears at end of transaction, turning the settlement permutation check from quadratic to linear |
-| **EIP-1193** provider interface | `client/wallet.ts` | The browser talks to any injected wallet without knowing which one |
+| **EIP-1193** provider interface | `client/wallet/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | One-click joins and withdrawals without changing the player's address — see [Account abstraction](#account-abstraction) |
-| **ERC-721** non-fungible token | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
-| **ERC-20 wrapper** (`ERC20Wrapper`-style) | `StakedLms` | Stake LMS for sLMS one for one: `deposit`, `requestUnstake`, `claim` — see [Token governance and staking](#token-governance-and-staking) |
+| **ERC-721** | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
+| **ERC-20 wrapper** | `StakedLms` | Stake LMS for sLMS one for one |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
-| **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
-| **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the game server accept a session grant signed by a contract wallet |
-| **ERC-4337** account abstraction | *considered, not used* | Rejected because it would change every player's address; reasoning in [Account abstraction](#account-abstraction) |
-| **Across** (V3 SpokePool, `depositV3` and `handleV3AcrossMessage`) | `SpokeRouter`, `BridgeJoinReceiver` | Bridges a spoke stake to the hub with a join message, and a hub balance back out |
-| **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | Concrete source behind the chain-agnostic randomness interface |
-| **Uniswap v4** | `ZapJoin` | Swaps any token for exactly the stake in native ETH — see [Paying in any token](#paying-in-any-token) |
-
----
-
-## Contents
-
-1. [Escrow and match lifecycle](#escrow-and-match-lifecycle)
-2. [Hidden information: commit–reveal](#hidden-information-commitreveal)
-3. [Settlement and the attestor quorum](#settlement-and-the-attestor-quorum)
-4. [Randomness oracle](#randomness-oracle)
-5. [Cross-chain](#cross-chain)
-6. [Paying in any token](#paying-in-any-token)
-7. [Governance](#governance)
-8. [Token governance and staking](#token-governance-and-staking)
-9. [Session grants](#session-grants) and [account abstraction](#account-abstraction)
-10. [Identity and avatars](#identity-and-avatars)
-11. [Gas engineering in Yul](#gas-engineering-in-yul)
-12. [The off-chain engine](#the-off-chain-engine)
-13. [The game server](#the-game-server)
-14. [The browser client](#the-browser-client)
-15. [Testing and verification](#testing-and-verification)
+| **ERC-2612** permit | `LmsToken` | Approve and stake, or pay a fee discount, in one transaction |
+| **ERC-1271** | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the server accept a session grant signed by a contract wallet |
+| **ERC-4337** | *considered, not used* | It would change every player's address; see [Account abstraction](#account-abstraction) |
+| **Across** V3 SpokePool | `SpokeRouter`, `BridgeJoinReceiver` | Bridges a spoke stake to the hub with a join message, and a hub balance back out |
+| **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | The concrete source behind the chain-agnostic randomness interface, paid in native ETH |
+| **Uniswap v4** | `ZapJoin` | Swaps any token for exactly the stake in native ETH |
 
 ---
 
@@ -71,49 +37,40 @@ A quick index, since most of these are the reason a given file exists at all.
 
 `contracts/src/GameEscrow.sol` · **Unit-tested**
 
-### What it does
-
 Holds every stake and decides who gets paid. A match moves through a fixed
 status machine:
 
 ```
-createMatch   →  Open      terms snapshotted from ProtocolConfig
-join          →  Open      a stake arrives, locally or bridged from a spoke
-lockMatch     →  Pending   seat list final, randomness requested
-fulfillRandomness → Live   seed delivered, the server may start play
-settle        →  Settled   quorum-signed result accepted, payouts credited
-cancelMatch   →  Cancelled every stake refundable
+createMatch        →  Open       terms snapshotted from ProtocolConfig
+join               →  Open       a stake arrives, locally or bridged from a spoke
+lockMatch          →  Pending    seat list final, randomness requested
+fulfillRandomness  →  Live       seed delivered, the server may start play
+settle             →  Proposed   quorum-signed result stored, challenge window opens
+finalize           →  Settled    window closed unvetoed, payouts credited
+cancelMatch / veto / abortMatch → Cancelled   every stake refundable
 ```
 
 The match id is `keccak256(abi.encode(block.chainid, address(this), matchNonce++))`,
-so ids from two deployments or two chains can never collide.
+so ids from two deployments or two chains never collide.
 
-### Why each piece is there
+- **Terms are snapshotted at creation** — stake, fee, seat range, deadlines,
+  payout schedule, rules hash. A governance change cannot alter the deal a
+  player already staked into.
+- **Locking and cancelling are permissionless.** Players never depend on the
+  operator to recover a stake; the keeper key is a convenience, not a role.
+- **The seed is requested only after the seat list is final**, so nobody can
+  decide whether to join based on it.
+- **Payments are pull-based.** Settlement credits a balance; nothing moves
+  until the recipient calls `withdraw` (or a relayer calls `withdrawFor`, which
+  pays only the account). One reverting recipient cannot block a payout loop.
+- **Pausing leaves `cancelMatch` and `withdraw` open**, so a pause never traps
+  funds, and a guardian pause expires after 7 days unless governance extends it.
+- **Matchmade lobbies** take a seat only with a server-signed `JoinTicket`, and
+  only they earn play-mining; private lobbies keep join-by-id.
 
-- **Terms are snapshotted at creation.** Stake, fee, seat range, deadlines,
-  payout schedule and rules hash are copied into the match when the lobby opens.
-  Purpose: a governance change cannot alter the deal a player already staked
-  into.
-- **Locking and cancelling are permissionless.** Anyone may lock a full lobby,
-  or one that is quorate and expired; anyone may cancel a match that has blown
-  its deadline. Purpose: players never depend on the operator to recover a
-  stake. The keeper key is a convenience, not a trusted role.
-- **The seed is requested only after the seat list is final.** Purpose: nobody
-  can decide whether to join based on the seed.
-- **Payments are pull-based throughout.** Settlement credits an internal
-  balance; nothing transfers until the recipient calls `withdraw`. Purpose: one
-  reverting recipient cannot block a whole payout loop.
-- **Pausing leaves `cancelMatch` and `withdraw` open.** Purpose: pausing can
-  never trap player funds.
-- **Fee remainder is swept to the treasury.** Integer division leftovers are
-  assigned rather than stranded, so the pool is always fully distributed.
-
-### The solvency invariant
-
-`address(this).balance == totalOwed + totalEscrowed`, asserted by a Foundry
-invariant campaign that drives the contract through random call sequences. This
-is the single strongest safety property in the codebase: it holds across joins,
-cancels, settlements and withdrawals in any order.
+**The solvency invariant:** `address(this).balance == totalOwed + totalEscrowed`,
+asserted by a Foundry invariant campaign over random call sequences — joins,
+cancels, settlements, vetoes and withdrawals in any order.
 
 ---
 
@@ -121,699 +78,269 @@ cancels, settlements and withdrawals in any order.
 
 `packages/consensus/src/game/hash.ts` · `contracts/src/libraries/HashLib.sol` · **Live**
 
-### What it does
+During the commit window a player publishes only
+`keccak256(abi.encode(matchId, round, seat, action, target, salt))`; in the
+reveal window, the preimage. Until then the server holds hashes, not moves, so
+it cannot leak or trade on a pending action.
 
-During the commit window a player publishes only:
+- **`matchId`, `round` and `seat` are inside the hash**, so a commitment cannot
+  be replayed into another round or claimed by another seat.
+- **`target` is zero for every action but Strike**, or the number of plausible
+  preimages would leak whether the player meant to strike.
+- **The salt is persisted before it is sent**, so a refresh between commit and
+  reveal cannot cost the player the round.
+- **Every commit and reveal is signed** by the key the wallet granted, and the
+  server answers each commit with a signed `CommitReceipt`: the server can drop
+  a move but not invent or alter one, and a dropped move with a receipt is
+  provable.
+- **The round's rolls come from the commitment set**, fixed when the commit
+  window closes, so withholding a reveal cannot re-roll the round.
 
-```
-keccak256(abi.encode(matchId, round, seat, action, target, salt))
-```
-
-When the reveal window opens, they publish the preimage and the server checks it
-against the commitment.
-
-### Why
-
-The server is authoritative and fast, which means it sees everything — unless it
-physically cannot. Until the reveal window opens the server holds hashes, not
-moves, so it cannot leak or trade on a pending action even if it wanted to.
-
-Three details carry most of the weight:
-
-- **`matchId`, `round` and `seat` are inside the hash.** Purpose: a commitment
-  cannot be replayed into a later round or claimed by another seat.
-- **`target` is forced to zero for every action but Strike.** Purpose: otherwise the
-  number of plausible preimages would leak whether the player intended to
-  strike.
-- **The salt is per player per round**, persisted to `localStorage` before it is
-  sent. Purpose: a refresh between commit and reveal would otherwise leave a
-  commitment the player can no longer open, costing them the round.
-- **Every commit and reveal is signed** by the key the player's wallet granted
-  (`Commit` / `Reveal` typed data), and the server answers each commit with a
-  signed `CommitReceipt`. Purpose: the server can drop a move but not invent or
-  alter one, and a dropped move the player holds a receipt for is provable.
-- **The round's rolls come from the commitment set**, published when the commit
-  window closes. Purpose: they are fixed before anyone reveals, so withholding
-  or dropping a reveal cannot re-roll the round.
-
-### The history root
-
-Each resolved round — every seat's action, target, salt and commitment, HP and
-eliminations — is hashed and chained into a running root, seeded with the rules
-hash. Purpose: a result can only be verified against the rule set it was
-actually played under, and the signed result commits to the entire match rather
-than just the final ranking.
+**The history root.** Each resolved round — moves, salts, commitments, HP and
+eliminations — is hashed and chained into a running root seeded with the rules
+hash. A result is verifiable only against the rule set it was played under, and
+the signed result commits to the whole match, not just the ranking.
 
 ---
 
 ## Settlement and the attestor quorum
 
-`GameEscrow.settle` · `contracts/src/libraries/SignatureLib.sol` ·
-`packages/server/src/chain/attestor.ts` · **Unit-tested**
+`GameEscrow.settle` · `SignatureLib` · `packages/server/src/attestor/` · **Unit-tested**
 
-### What it does
+The server plays the match and archives its transcript; the attestor, in a
+process of its own that replays the transcript first, signs an EIP-712
+`MatchResult` (`matchId`, `rounds`, `historyRoot`, `transcriptHash`, `ranking`).
+`settle` checks the quorum and *proposes* the result; `finalize` pays it once
+the challenge window closes. Until then a seated player may `dispute` (48 h
+more) and the guardian may `veto` (every stake refunded) or dismiss.
 
-The server plays the match, archives its transcript, then signs an EIP-712
-`MatchResult` (`matchId`, `rounds`, `historyRoot`, `transcriptHash`, `ranking`)
-under the domain `LastManStanding` v1. A quorum of attestor signatures is
-submitted to `settle`, which verifies them and *proposes* the result, storing
-the transcript hash. It pays out through `finalize` once the challenge window
-has closed; until then a seated player may `dispute` it (48 h more) and the
-guardian may `veto` it, refunding every stake, or dismiss the dispute.
+- **EIP-712, not a raw digest**, so a hardware wallet shows a structured result
+  and the domain binds it to one escrow on one chain.
+- **Signatures in strictly ascending signer order** reject duplicates and
+  canonicalise the set at one comparison each.
+- **Low-`s`, `v` ∈ {27, 28}**, so no signature replays in its malleable form.
+- **The ranking must be an exact permutation of the seats**, which caps a
+  compromised quorum at reordering the finish: it cannot drop a player, repeat
+  one, or pay an address that never staked.
 
-### Why it is built this way
-
-- **EIP-712 rather than a raw digest.** Purpose: an attestor signing with a
-  hardware wallet sees a structured result, and the domain binds the signature to
-  one escrow on one chain.
-- **Signatures must arrive in strictly ascending signer order**
-  (`SignatureLib.recoverAscending`). Purpose: one rule simultaneously rejects
-  duplicate signers, canonicalises the set, and costs a single comparison per
-  signature instead of a nested membership loop.
-- **`s` is bounded to the lower half-order and `v` to {27, 28}.** Purpose: a
-  signature cannot be replayed in its malleable form.
-- **The ranking must be an exact permutation of the seat set**
-  (`SeatSetLib.assertPermutation`). Purpose: this caps what a compromised quorum
-  can do. It can reorder the finish — it cannot omit a player, repeat one, or
-  pay an address that never staked.
-
-### Trust model, stated plainly
-
-Verifiable, not enforced. Because the signed digest commits to the history
-root and the transcript hash, anyone can fetch the transcript by that hash,
-check every player's signatures, replay the match and *show* a signed result
-was fabricated. Every player's browser does that once the result is proposed,
-and offers to dispute it if it does not hold up.
-
-Acting on it is the guardian's job, not the contract's: a dispute holds the
-payout back 48 hours, and the guardian vetoes (every stake refunded) or
-dismisses. A guardian that does neither lets the result finalise: the liveness
-assumption. There is no on-chain replay and no slashing — a deliberate choice
-while the rules are still changing, since an on-chain verifier means keeping a
-second, Solidity copy of the kernel bit-for-bit identical. Today the quorum is
-the operator's one key, and `abortMatch` lets it refund any live match; see the
-README's trust model.
+**Verifiable, not enforced.** Anyone can fetch the transcript by its hash,
+check every signature, replay the match and *show* a result was fabricated;
+every player's browser does this once a result is proposed and offers Dispute.
+Acting on it is the guardian's job, and a guardian that neither vetoes nor
+dismisses lets the result finalise — the liveness assumption. There is no
+on-chain replay and no slashing; see [ADR 0002](adr/0002-verifiable-not-enforced.md)
+and the README's trust model.
 
 ---
 
 ## Randomness oracle
 
-`contracts/src/interfaces/IRandomnessOracle.sol` ·
-`contracts/src/oracles/ChainlinkVrfAdapter.sol` · **Mocked**
+`IRandomnessOracle` · `ChainlinkVrfAdapter` · **Unit-tested; fork-tested on Base Sepolia**
 
-### What it does
+The escrow requests randomness when a lobby locks and binds the answer to the
+match: `seed = keccak256(abi.encode(randomness, matchId))`.
 
-Supplies the per-match seed that every roll in the match is drawn from. The escrow requests
-randomness when a lobby locks; the oracle answers; the escrow binds the answer
-to the match and goes `Live`:
-
-```solidity
-bytes32 seed = keccak256(abi.encode(randomness, matchId));
-```
-
-### Why
-
-- **The interface is deliberately narrow** — one `requestRandomness(context)`
-  and one `fulfillRandomness(requestId, randomness)` callback. Purpose: a
-  Chainlink VRF subscription, a drand relay or a test double all fit behind it,
-  and the escrow never imports a vendor SDK. Swapping providers is a config
-  change, not a rewrite.
-- **The seed is drawn *after* the lobby closes.** Purpose: neither the server
-  nor any player can pick moves against rolls they already know, and nobody can
-  decide whether to join based on the seed.
-- **The answer is bound to the match id.** Purpose: one oracle response cannot
-  seed two matches, and a zero response is still a usable seed.
-- **A dead request is survivable.** If the oracle never answers, `cancelMatch`
-  refunds every stake once the deadline passes.
-
-`ChainlinkVrfAdapter` maps a VRF v2.5 subscription onto this interface, tracking
-its own request ids so a fulfilment can be routed back to the right consumer.
-It currently targets a minimal local coordinator interface and runs against
-`MockVrfCoordinator`.
-
-> **Round entropy.** The match seed alone is public from `MatchStarted`, so it
-> never drives a roll directly. Each round's rolls come from
-> `roundSeed(seed, round, salts)` over every salt revealed that round, which
-> nobody knows until all reveals are in.
+- **A narrow interface** — `requestRandomness` and a `fulfillRandomness`
+  callback — so VRF, a drand relay or a test double fit behind it and the
+  escrow imports no vendor SDK.
+- **Drawn after the lobby closes**, so nobody picks moves or seats against
+  rolls they know.
+- **VRF v2.5, paid in native ETH**, on a subscription the Safe owns; only
+  registered consumers may request, or anyone could drain it.
+- **The callback never reverts.** VRF does not retry, so the word is stored
+  first and `deliver` retries delivery; a dead request is refunded by
+  `cancelMatch` past the deadline.
+- **Round entropy.** The match seed is public from `MatchStarted`, so it never
+  drives a roll alone: each round's rolls come from `roundSeed(seed, round,
+  commitments)`.
 
 ---
 
 ## Cross-chain
 
-`contracts/src/periphery/SpokeRouter.sol` · `contracts/src/periphery/BridgeJoinReceiver.sol` ·
-`packages/contracts/src/spokes.ts` · [ACROSS.md](ACROSS.md) ·
-**Live on the local fork and on mainnet forks; not yet on testnets**
+`SpokeRouter` · `BridgeJoinReceiver` · `packages/contracts/src/spokes.ts` ·
+[ACROSS.md](ACROSS.md) · **Live on the local fork and on mainnet forks; not yet
+on Across's testnet**
 
-### What it does
-
-Lets players on different chains sit in the same lobby and share one prize pool.
-
-The model is **hub and spoke over a value bridge**, [Across](https://across.to).
-The hub chain holds all escrowed value and all match state. A spoke holds
-nothing:
+Players on different chains share one lobby and one prize pool. The hub holds
+all value and all match state; a spoke holds nothing:
 
 ```
 player on spoke → SpokeRouter.join(matchId, 0, quote)  with stake + Across's fee
                 → Across SpokePool deposit to the hub's BridgeJoinReceiver,
                   message (matchId, player, spoke chain id)
-relayer on hub  → fills it: exactly the stake, in WETH, then handleV3AcrossMessage
+relayer on hub  → fills exactly the stake in WETH, then handleV3AcrossMessage
                 → receiver unwraps, GameEscrow.bridgeJoin() seats the player
-                → hub records seatOrigin[matchId][player] = spoke chain id
 ```
 
-A stake that arrives for a seat that can no longer be taken is credited to the
-player on the hub, never reverted, so nothing is stranded in transit. Winnings
-and refunds stay on the hub; a player with no gas there signs a `Withdrawal`
-and anyone submits `withdrawToChainFor`, which bridges the whole balance back
-to the chain and address they named, Across's fee capped by the signature. The
-client's Winnings panel does this for a wallet on a spoke ("Collect to …"), and
-the server submits it from the session relayer's key, within the same daily
-quota as one-click calls.
-
-### When a fill cannot seat anyone
-
-`BridgeJoinReceiver.handleV3AcrossMessage` · `recover`
-
-A revert in the handler reverts the fill. Relayers simulate first, so the
-deposit simply waits until its deadline, and then Across refunds it on the
-spoke, or, on testnet, may never. So once the caller is the hub's SpokePool,
-the receiver never reverts. Another token, a message it cannot decode, or an
-escrow that refuses (a governance change of receiver while a fill was in
-flight) leaves the value in the receiver with an `Unroutable` event, and the
-timelock can `recover` it. A deposit made through the router always routes;
-the rest is someone sending the receiver something by hand.
-
-### Joining from a spoke, in the client
-
-`packages/client/src/screens/lobby.ts` · **Live on the local fork**
-
-The server lists each spoke's `SpokeRouter` in `hello`. A wallet on one of
-them sees "Staking from Arbitrum → Base hub" instead of a wrong-network
-warning, and each lobby offers **Stake from ARB**: the first click asks the
-Across API what it costs for exactly the stake to arrive (the stake plus the
-fee, plus a tenth of the fee for the relayer, so a fee that rises before the
-fill does not leave the deposit waiting), the second pays it. The row then
-reads *In transit…* until the server reports how the join landed: seated, or
-refunded on the hub (with the reason). Every spoke uses ETH for gas, so the
-stake is ETH everywhere.
-
-A contract wallet cannot be seated as itself from a spoke: its address there
-may be someone else's on the hub. The router refuses it unless it names its hub
-account; an EOA delegated under EIP-7702 is still an EOA and joins as itself.
-
-### Why
-
-- **All value lives on one chain.** Purpose: the prize pool is never split
-  across chains, so settlement is a single transaction against a single balance
-  and there is no cross-chain consistency problem at payout time.
+- **All value lives on one chain**, so settlement is one transaction against
+  one balance, with no cross-chain consistency problem at payout.
 - **A value bridge, not a message bus.** The stake has to move anyway; Across
-  moves it and the join together, with relayers paid by the depositor. No
-  custom messenger, no executor value, nothing of ours to configure on either
-  chain.
-- **Nothing to forge.** `bridgeJoin` takes only the config's receiver, and the
-  receiver only the hub SpokePool, which pays before it calls. The message is
-  not trusted: anyone may deposit with any message, which only ever buys
-  someone a seat with real ETH, like `joinFor`.
+  moves it and the join together, paid by the depositor. Nothing of ours to
+  configure per chain.
+- **Nothing to forge.** `bridgeJoin` takes only the configured receiver, and
+  the receiver only the hub SpokePool, which pays before it calls. Anyone may
+  deposit any message; it only ever buys someone a seat with real ETH.
+- **A fill never reverts.** A seat that is gone is credited to the player on
+  the hub; an unroutable fill stays in the receiver for the timelock to
+  `recover`. A revert would leave the deposit waiting, and on testnet maybe
+  never refunded.
+- **The way back out.** A player signs a `Withdrawal` (no chain id in its
+  domain, so a spoke wallet can sign it) and the server's relayer submits
+  `withdrawToChainFor`, bridging the whole balance to the chain and address
+  named, Across's fee capped by the signature.
+- **Contract wallets name their hub account**, since their address on a spoke
+  may be someone else's on the hub; an EOA delegated under 7702 is still an EOA.
 
-### Showing the origin
-
-`packages/client/src/arena/` · **Live**
-
-The origin rides through `Seat.chainId` into the match snapshot and is drawn as
-a coloured pill above each seat, with per-chain chips in the lobby list and a
-warning when the connected wallet is on a different chain than the hub.
-Purpose: in a cross-chain game the origins are the point — a lobby that pulled
-stakes from four chains should look like it. The warning exists because
-otherwise every stake from the wrong network reverts with an error the wallet
-renders unreadably; and every write first switches the wallet to the chain it
-is for, or refuses with both chains named.
-
-> **Status.** The vendored Across interface is pinned to `across-protocol/contracts`
-> v5.0.27. The router and receiver have run against Across's real SpokePools
-> on Base, Arbitrum, Optimism and Ethereum forks, including a real `fillRelay`
-> into the receiver. Hub and spoke run together in `npm run dev:fork` over
-> mock pools and a local relayer. Not yet run on Across's testnet; see
-> `docs/ACROSS.md` and `docs/TESTNET.md`. Withdrawing to a spoke has no screen
-> yet.
+Each seat shows its origin chain as a badge, and every write first switches the
+wallet to the chain it is for, or refuses with both chains named.
 
 ---
 
 ## Paying in any token
 
-`contracts/src/periphery/ZapJoin.sol` · `contracts/src/interfaces/IPoolManager.sol` ·
-`GameEscrow.joinFor` · `contracts/zap.ts` · `server/chain/zap.ts` ·
-`client/screens/lobby.ts` · **Live** against a mainnet fork
+`ZapJoin` · `GameEscrow.joinFor` · `packages/contracts/src/zap.ts` ·
+**Live against a mainnet fork**
 
-### What it does
+A player holding USDC, DAI or any ERC-20 with a Uniswap v4 route to ETH joins
+through `ZapJoin`, which swaps for exactly the stake and calls
+`GameEscrow.joinFor{value: stake}(matchId, player)`. The client prices the
+route with `V4Quoter` first and shows the ceiling (quote + 0.5%) before any
+wallet prompt.
 
-Lets a player join a lobby holding USDC, DAI or any other ERC-20 with a
-Uniswap v4 route to ETH. The escrow still only ever sees ETH:
+- **Outside the escrow.** Price risk, slippage and hook code never reach the
+  contract holding every stake; it only ever sees a `joinFor` with the stake.
+- **Exact output**, so there is no change to refund and the zap holds nothing
+  between transactions.
+- **v4**, because pools hold native ETH and flash accounting nets
+  intermediate hops to zero.
+- **`joinFor` needs no consent**: paying someone in can only credit them.
+- **Partial fills are rejected**: every hop checks it received exactly what it
+  asked for.
+- **Never through the session key**, whose scope is `join` and `withdrawFor`;
+  a token approval is exactly what a prompt-free key must not make.
+- **Exact, USDT-safe approvals**: never unlimited, zeroed first when the token
+  refuses to move one non-zero allowance to another.
 
-```
-player approves ZapJoin for the token
-ZapJoin.joinWithToken(matchId, path, maxAmountIn, deadline)
-  → PoolManager.unlock
-      → swap exact output: precisely `stake` ETH, route walked backwards
-      → pull the input token from the player straight into the PoolManager
-      → take the ETH
-  → GameEscrow.joinFor{value: stake}(matchId, player)   seats the player, not ZapJoin
-```
-
-The route uses v4-periphery's exact-output `PathKey` convention, so the same
-array can be priced off-chain with `V4Quoter.quoteExactOutput` to choose
-`maxAmountIn`.
-
-In the client, the server advertises the zap, the quoter and its token list in
-`hello` (`ZAP_JOIN`, `V4_QUOTER`, `ZAP_TOKENS`), and the lobby grows a *Pay
-with* picker. Joining with a token takes two clicks:
-
-1. **Quote.** The client prices the route with the quoter and reads the
-   player's balance. The button turns into `Pay ≤ 26.7866 USDC`: the quote plus
-   0.5%, capped at the balance, rounded *up* for display. A balance short of the
-   quote is refused here, before any wallet prompt. The quote lapses after 30 s.
-2. **Pay.** If the allowance is short, an `approve` for exactly that ceiling —
-   never an unlimited one — then `joinWithToken` with a ten-minute deadline.
-
-### Why
-
-- **Outside the escrow.** A swap brings price risk, slippage and arbitrary hook
-  code. None of that belongs in the contract holding every stake, and none of it
-  can reach it: all the escrow receives is a `joinFor` call carrying exactly the
-  stake.
-- **Exact output.** The stake is fixed, so the player buys precisely that much
-  ETH and pays what it costs, bounded by `maxAmountIn`. There is no change to
-  refund, and the zap holds no balance between transactions.
-- **v4 rather than v3.** v4 pools can hold native ETH as `address(0)`, so the
-  route ends in the currency the escrow takes, with no WETH unwrap step, and the
-  flash accounting nets intermediate hops of a multi-hop route to zero inside
-  one session.
-- **`joinFor` needs no consent.** Paying someone into a lobby can only ever
-  credit them: the seat, a refund and a payout all belong to `player`, never to
-  the payer. It still passes every seating rule `join` does, and the invariant
-  campaign drives it alongside `join`.
-- **Partial fills are rejected.** v4 ends an exact-output swap early, without
-  reverting, when a pool runs out of liquidity, and hooks can move either side
-  of a delta, so every hop checks that it received exactly what it asked for.
-- **Two clicks, not one.** The wallet's prompt for `joinWithToken` shows a
-  contract call, not a price, so the player sees and accepts the ceiling in the
-  game's own UI first.
-- **Never through the session key.** Its scope is `join` and `withdrawFor` on
-  the escrow. A token approval is exactly the kind of call a prompt-free key
-  should not be able to make.
-- **USDT-safe approvals.** USDT returns nothing from `approve` and refuses to
-  move one non-zero allowance to another, while every join leaves its unused
-  slippage allowance behind. The client approves through a return-less ABI and,
-  when the direct approval will not simulate, zeroes the allowance first.
-- **Routes are server configuration.** A route whose first hop is not the
-  token itself is dropped at boot, since the contract charges `path[0]` and
-  would take a different token than the one the player picked.
-
-> **Status.** `IPoolManager` is a local mirror of v4-core's ABI. The unit suite
-> runs against `MockPoolManager`; `test/fork/ZapJoinFork.t.sol` runs the real
-> mainnet `PoolManager` when `MAINNET_RPC_URL` is set. Fee-on-transfer and
-> rebasing tokens are unsupported: the session ends unsettled and the call
-> reverts. Approval is a plain ERC-20 `approve`, so a first join costs two
-> transactions; Permit2 is in `TODO.md`. Verified end to end on an anvil mainnet
-> fork: the quoted 26.653262 USDC was exactly what left the wallet for a
-> 0.01 ETH seat.
+Fee-on-transfer and rebasing tokens are unsupported.
 
 ---
 
 ## Governance
 
-`contracts/src/ProtocolConfig.sol` · `contracts/src/governance/` · **Unit-tested**
+`ProtocolConfig` · `contracts/src/governance/` · **Unit-tested**
 
-### What it does
-
-One contract holding every governable parameter, owned by a
-`TimelockController` whose only proposer is the token governor. A multisig (a
-Safe) keeps a veto:
+One contract holds every governable parameter, owned by a `TimelockController`
+whose proposer is the token governor. During the multisig phase a Safe also
+proposes and cancels, through `MultisigPhase`:
 
 ```
 sLMS votes --> LmsGovernor --proposes, cancels--> TimelockController --owns--> ProtocolConfig
-                                                   ^ (anyone executes once     StakedLms
-Safe --cancels (veto)------------------------------+  the delay has passed)    FeeRouter
- +- guardian: may pause GameEscrow at once, never unpause;
- |            may veto a proposed result, refunding every stake
- +- treasury: receives the non-staker share of fees
- +- owns PlayerAvatars directly
+                                                   ^ (anyone executes once     StakedLms, FeeRouter,
+Safe --> MultisigPhase --proposes, cancels---------+  the delay has passed)    BridgeJoinReceiver, …
+ guardian: pause GameEscrow at once (7 days), veto a proposed result
+ treasury: the timelock
 ```
-
-How voting power is earned is described in
-[Token governance and staking](#token-governance-and-staking).
 
 | Parameter group | Contents |
 | --- | --- |
-| Economics | `feeBps`, `minStake`, `maxStake`, `treasury` |
+| Economics | `feeBps`, `minStake`, `maxStake`, `treasury`, `lmsPerEthDiscount` |
 | Lobby shape | `minSeats`, `maxSeats`, `joinWindow`, `settleWindow` |
 | Payouts | Per-position schedule in basis points |
 | Rules | `rulesHash` — digest of the off-chain rule set |
-| Randomness | `randomnessOracle` address |
-| Attestation | Attestor allowlist, `attestorCount`, `attestorThreshold` |
-| Cross-chain | `bridgeReceiver`, the one contract that may seat a bridged stake |
-| Emergency | `guardian` — may pause the escrow, or veto a proposed result, without the delay |
-| Settlement | `challengeWindow` — how long a proposed result waits, open to a veto, before it pays |
+| Randomness | `randomnessOracle` |
+| Attestation | Attestor allowlist and threshold |
+| Cross-chain | `bridgeReceiver` |
+| Emergency and settlement | `guardian`, `challengeWindow` |
 
-`GameEscrow` reads this contract and never writes to it.
-
-### Why
-
-- **Token vote behind a timelock, with a multisig veto.** Purpose: no single
-  key can change the protocol. That matters more than it looks: whoever owns the config can swap the
-  randomness oracle (and so choose seeds) or add an attestor and lower the
-  threshold (and so sign results). Stakers propose and vote; the timelock makes the
-  change public before it lands, so players can see a fee increase or a new
-  oracle coming and leave. The deploy script refuses a delay shorter than
-  `joinWindow + settleWindow`, because the oracle and attestor set are read live
-  rather than snapshotted.
-- **A guardian that can only stop money moving.** Purpose: an emergency stop cannot wait a
-  day. `GameEscrow.pause()` is open to the guardian (and the owner) and skips
-  the timelock; `unpause()` is owner-only, so resuming waits out the
-  delay. A compromised guardian can therefore halt new play — refunds survive
-  a pause — but can never lift a pause that was put in place to stop an exploit.
-  Two consequences for whoever holds the guardian keys: a pause also blocks
-  `settle`, so every match in play ends by cancellation and refund rather than
-  by result; and to recover from a rogue guardian, governance queues
-  `setGuardian(newSafe)` and `unpause()` as one timelock batch, so the pause is
-  lifted with the guardian already replaced. The guardian's other power, `veto`,
-  is bounded the same way: it refunds a proposed result's stakes and can never
-  pay them anywhere else.
-- **`Ownable2Step`.** Purpose: ownership transfer requires the new owner to
-  accept, so governance cannot be accidentally handed to an address nobody
+- **Token vote behind a timelock.** Whoever owns the config can swap the
+  oracle (and choose seeds) or the attestors (and sign results), so no single
+  key can; the delay makes every change public before it lands. The deploy
+  script refuses a delay shorter than `joinWindow + settleWindow`.
+- **The Safe's powers end on a date written into `MultisigPhase`** (a year by
+  default, two at most). After `phaseEnd` anyone calls `retire()`; the Safe
+  cannot cancel its own removal or schedule anything that outlasts the phase.
+- **A guardian that can only stop money moving.** It pauses for 7 days
+  without the delay and vetoes a proposed result, refunding it. It cannot pay
+  anyone, shorten a pause governance extended, or pause again until 7 days
+  after the last pause ended, so it can never hold play stopped on its own.
+- **Every setter validates.** The fee is capped at 10%; seats at 256 (the seat
+  index is a `uint8` in the commit preimage); the attestor threshold is
+  re-checked on every membership change; the payout schedule sums to exactly
+  10,000 bps and is never longer than `minSeats`.
+- **`Ownable2Step`**, so ownership is never handed to an address nobody
   controls.
-- **Every setter validates.** The fee is capped at `MAX_FEE_BPS` = 1000 (10%) —
-  governance *cannot* exceed it, timelock or not. Seats are bounded by
-  `ABSOLUTE_MAX_SEATS` = 256, which is not arbitrary: the seat index is a
-  `uint8` in the commit preimage. Stake and window ranges must be coherent.
-- **The attestor threshold is re-validated on every membership change.**
-  Purpose: the set can never be shrunk below its own quorum, which would
-  otherwise brick settlement for every live match at once.
-- **The payout schedule must sum to exactly 10,000 bps** — 100% of the pool
-  *after* the fee — **and can never be longer than `minSeats`.** Purpose: a
-  schedule summing to less would silently divert the shortfall to the treasury
-  on every settlement, and one longer than the smallest legal lobby would index
-  past the ranking and brick settlement.
-- **Snapshotting at the escrow boundary.** Governance moves parameters; matches
-  already in flight keep the terms they started with.
-
-### What is missing
-
-The Safe's veto is meant to be temporary, and nothing removes it yet: a
-proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)` would. The hub `BridgeJoinReceiver` is deployed by `Deploy.s.sol`, owned by the
-timelock; each spoke's ownerless `SpokeRouter` by `DeploySpoke.s.sol`. `ChainlinkVrfAdapter` is still not
-deployed by a script; it must be constructed with the hub timelock as its
-owner. One Safe and timelock per chain. The config
-can also be deployed with a zero `rulesHash` and zero oracle — a valid-looking
-but unusable state that only the deploy script currently prevents.
 
 ---
 
-## Token governance and staking
+## Token, staking and play-mining
 
 `contracts/src/governance/` · `packages/server/src/chain/feeKeeper.ts` · **Unit-tested**
 
-### What it does
-
-Staking LMS does three things at once: it gives you **votes**, it **earns** a
-share of protocol fees in ETH, and it **commits** you to the outcome of your vote.
-Playing earns LMS: half the supply is paid out to players, by the fees they
-paid, already staked.
-
 ```
-GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (Safe)        [100% - stakerBps]
-    |                    |
-    |                    +--ETH--> StakedLms vault --streamed over 7 days--> each staker, pro rata
-    |                                   ^
-    +--fees per player per week         | LMS --deposit--> sLMS (1:1, ERC20Votes) --votes--> LmsGovernor
-         |                              |
-         +--> RewardsDistributor --claim--> RewardVesting --release, after 6 months--> each player
+GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (timelock)    [100% - stakerBps]
+    |                    +--ETH--> StakedLms --streamed over 7 days--> each staker, pro rata
+    +--fees per player per week --> RewardsDistributor --claim--> RewardVesting --6 months--> player
 ```
 
 | Contract | Role |
 | --- | --- |
-| `LmsToken` | Plain fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
-| `StakedLms` | Stake LMS for sLMS, one for one; sLMS is the voting token. Collects the stakers' share of fees as ETH and pays it out evenly over `rewardDuration`, pro rata; each staker claims with `claimRewards`. Unstaking is a two-step `requestUnstake` → `claim` with a cooldown. |
-| `LmsGovernor` | OpenZeppelin Governor reading sLMS votes, queuing through the existing timelock, with a minimum quorum. |
-| `FeeRouter` | The escrow's `treasury`. `harvest`, open to anyone, pulls fees and splits them between the vault and the treasury. |
-| `RewardsDistributor` | Play-mining. Reads the escrow's per-week fee totals and grants each player their share of that week's LMS budget, as a tranche in `RewardVesting`. |
-| `RewardVesting` | Holds each (player, week) tranche while it vests, linearly over six months from the week's end; `release` pays out liquid LMS. Cannot stake, so vesting LMS never votes. |
-| `MultisigPhase` | Holds the Safe's proposer and canceller roles on the timelock until `phaseEnd`, a date fixed at deploy; then anyone retires it. |
-| `LiquidityReserve` | Holds the 5% liquidity share. Pays out only to a recipient the timelock approves, never the vault or the Safe. |
-| `FeeKeeper` (server) | Calls `harvest` on a timer. Holds no role; anyone else can harvest too. |
-
-Defaults, all overridable through the deploy environment:
+| `LmsToken` | Fixed-supply ERC-20 with permit. No owner, no mint. Holding it gives **no** votes. |
+| `StakedLms` | LMS → sLMS one for one; sLMS votes and earns the stakers' share of fees in ETH. Unstaking waits out a cooldown. |
+| `LmsGovernor` | OpenZeppelin Governor over sLMS votes, through the timelock, with a quorum floor. |
+| `FeeRouter` | The escrow's treasury; `harvest`, open to anyone, splits fees between the vault and the treasury. |
+| `RewardsDistributor` | Play-mining: each week's LMS budget, split by the fees each player paid. |
+| `RewardVesting` | Holds each (player, week) tranche, vesting linearly over six months. Cannot stake, so vesting LMS never votes. |
+| `MultisigPhase` | The Safe's timelock roles, until `phaseEnd`. |
+| `LiquidityReserve` | The 5% liquidity share. Cannot stake or delegate; pays only a recipient the timelock approves. |
 
 | Setting | Default | Env |
 | --- | --- | --- |
-| LMS supply | 100,000,000, split as below | `LMS_SUPPLY` |
+| LMS supply | 100,000,000 | `LMS_SUPPLY` |
 | Unstake cooldown | 10 days | `STAKE_COOLDOWN` |
-| Staker reward payout | over 7 days | `REWARD_DURATION` |
+| Staker reward stream | 7 days | `REWARD_DURATION` |
 | Voting delay / period | 1 day / 5 days | `VOTING_DELAY`, `VOTING_PERIOD` |
-| Proposal threshold | 100,000 sLMS (0.1%) | `PROPOSAL_THRESHOLD` |
-| Quorum | 4% of staked supply, but never under 1,000,000 sLMS | `QUORUM_PERCENT`, `QUORUM_FLOOR` |
+| Proposal threshold | 100,000 sLMS | `PROPOSAL_THRESHOLD` |
+| Quorum | 4% of staked supply, never under 1,000,000 sLMS | `QUORUM_PERCENT`, `QUORUM_FLOOR` |
 | Stakers' share of fees | 0% on Ethereum mainnet, 50% elsewhere | `STAKER_FEE_BPS` |
-| Play-mining cap | 10,000 LMS per ETH of fees | `MAX_REWARD_PER_ETH` |
-| Play-mining cap per wallet | 20,000 LMS per week | `MAX_REWARD_PER_WALLET` |
-| End of the multisig phase | a year after the deploy | `MULTISIG_PHASE_END` |
-| First play-mining week | the first full week after the deploy | `REWARDS_FIRST_EPOCH` |
-| Team vesting beneficiary | required off a local node | `TEAM_BENEFICIARY` |
+| Play-mining caps | 10,000 LMS per ETH of fees; 20,000 LMS per wallet per week | `MAX_REWARD_PER_ETH`, `MAX_REWARD_PER_WALLET` |
+| Multisig phase | ends a year after the deploy | `MULTISIG_PHASE_END` |
 
-### Why
+**Supply.** 50% play-mining over four years, 25% treasury (the timelock), 15%
+team (a year's cliff, then three years linear), 5% liquidity
+(`LiquidityReserve`), 5% reserve (the timelock). None of it is staked, so none
+of it votes; governance starts with the players. There is no sale.
 
-- **Only staked tokens vote.** Purpose: tie governance to people who are
-  committed, not to whoever holds LMS on an exchange. sLMS self-delegates on
-  receipt, so staking alone is enough to vote. Votes are read at the proposal's
-  snapshot, so stake bought after a proposal appears cannot vote on it.
-- **A cooldown instead of slashing.** Purpose: commitment without a fraud
-  proof. `requestUnstake` burns the sLMS immediately (so it stops voting and
-  stops earning) and the LMS is released only after the cooldown. The deploy
-  script refuses a cooldown that does not outlast `votingPeriod + timelock
-  delay`, so whoever voted for a proposal is still staked when it executes.
-- **Fees are paid out in ETH, not used to buy LMS.** Purpose: nothing to
-  sandwich, nothing to price, nothing to trust. An earlier design swapped the
-  stakers' share for LMS on Uniswap; that needed a pool, a keeper trusted with
-  the timing and a price floor, and still left a sandwich window open. Paying
-  the ETH itself needs none of it. The cost is that stakers claim, and there is
-  no buy pressure on LMS.
-- **Rewards are streamed, not paid at once.** Purpose: pay for time staked,
-  not for being staked at the right moment. Paid out the instant it arrived, a
-  harvest would go to whoever was staked *then*: anyone could stake, call the
-  permissionless `harvest` and claim a full share of every fee since the last
-  one in a single transaction, then leave — earning as much for a second as a
-  week-long staker did. Each deposit, plus whatever of the last one is still
-  unpaid, is spread over a fresh `rewardDuration` instead (Synthetix-style).
-  While nothing is staked the stream pauses, so nothing is lost.
-- **A reward-per-share accumulator.** Purpose: pay every staker exactly their
-  share without looping over stakers. `rewardPerShare` only grows; it is
-  brought up to date, and each account settled, in `_update` before any
-  balance moves, so a deposit, transfer or unstake can never carry rewards
-  earned by someone else.
-- **A minimum quorum.** Purpose: no vote passes on a sliver of the supply.
-  OpenZeppelin's quorum is a fraction of the *staked* supply, so with little
-  staked it is tiny — with 2M sLMS staked, 4% is 80k, under the proposal
-  threshold, and one proposer could pass anything alone. The governor takes
-  the larger of the fraction and `quorumFloor`. The floor is checkpointed like
-  the fraction, so changing it never affects a vote in progress, and capped at
-  10% of the LMS supply, so it cannot be raised out of everyone's reach.
-- **A wrapper, not an ERC-4626 vault.** Purpose: no surface that misleads.
-  One sLMS is always one LMS, so there is no exchange rate to manipulate (the
-  4626 donation attack has nothing to act on) and no `withdraw`/`redeem` that
-  could only revert. LMS sent to the contract directly stakes nothing;
-  governance can sweep it with `sweepStray`.
-- **Harvesting is open to anyone.** Purpose: no keeper to trust or replace. It
-  only moves fees to where the router already sends them, so the worst a caller
-  can do is pay the gas for everyone else.
-### Paying part of the fee in LMS
+- **Only staked tokens vote**, read at the proposal's snapshot, so stake bought
+  after a proposal appears cannot vote on it.
+- **A cooldown instead of slashing.** `requestUnstake` burns the sLMS at once;
+  the LMS follows after a cooldown that must outlast `votingPeriod + delay`,
+  so whoever voted is still staked when the proposal executes.
+- **Fees are paid in ETH, not used to buy LMS**: nothing to sandwich, price or
+  trust.
+- **Rewards stream over a week**, Synthetix-style, so staking just before a
+  harvest earns a second's share, not a week's.
+- **A quorum floor**, since 4% of a small staked supply would let one proposer
+  pass anything; the floor is checkpointed and capped at 10% of supply.
+- **A wrapper, not ERC-4626**: one sLMS is always one LMS, so there is no
+  exchange rate to manipulate.
 
-`GameEscrow.joinWithLms` · `ProtocolConfig.lmsPerEthDiscount`
+**Play-mining** is computed on-chain from the fees each player paid, counted
+when a match **settles** (an expired, aborted or vetoed match pays no fee, so
+earns nothing). Each week has a budget, falling by a quarter a year; a player
+who paid 1% of a week's fees gets 1% of it, capped per ETH of fees and per
+wallet. Fees, not wins, because wins are zero-sum and one person can arrange
+them; fees are a real cost. A week is claimable once it ends, into
+`RewardVesting`; released LMS is staked to vote. The README's
+[wash-trading economics](../README.md#wash-trading-economics) works through
+what the caps buy.
 
-A seat can pay up to half its fee (`MAX_DISCOUNT_BPS`) in LMS, at a rate
-governance sets: `lmsPerEthDiscount` LMS buys one ETH off the fee (20,000 by
-default, off on Base mainnet). The seat stakes that much less ETH;
-`quoteLmsDiscount` says how much, and how much of the LMS offered it uses.
-
-- **Held, then burned.** The LMS stays in the escrow against the seat. When
-  the match settles it is burned; when it is cancelled, vetoed or aborted it
-  goes back with the stake. So LMS only leaves supply for a fee that was
-  actually paid.
-- **Prizes do not change.** The prize pool is computed from the full stakes;
-  the discounts come out of the treasury's cut, which is at least the full fee.
-- **Play-mining counts the net fee**, what the seat paid in ETH, so paying in
-  LMS earns proportionally less LMS.
-- **A rate change reaches only later seats.** It is read at join and stored
-  with the seat.
-- **No market price inside the protocol.** The rate is a governance setting,
-  not an oracle; the 50% cap bounds what a bad rate can cost the treasury.
-
-### The fee keeper
-
-`FeeKeeper` runs in the game server when `FEE_ROUTER` and `KEEPER_PK` are set,
-and calls `harvest` whenever at least `HARVEST_MIN_WEI` (0.05 ETH) is waiting in
-the escrow. Any funded key works: harvesting needs no role.
-
-### Distributing the supply
-
-The deploy script splits the whole supply; the deployer keeps none.
-
-| Share | Bucket | Held by |
-| --- | --- | --- |
-| 50% | Play-mining | `RewardsDistributor`, paid to players over four years, each week vesting over six months |
-| 25% | Treasury | The timelock: only a passed proposal can spend it |
-| 15% | Team | An OpenZeppelin `VestingWallet`: nothing for a year, then linear over three |
-| 5% | Liquidity | `LiquidityReserve`: the Safe sends it to a pool the timelock approves |
-| 5% | Reserve | The timelock, with the treasury |
-
-None of the timelock's, the distributor's, the vesting contracts' or the
-reserve's tokens is staked, so none of them votes. Governance starts with the players, as
-play-mining pays them, rather than with the Safe. There is no token sale.
-
-### Play-mining
-
-`contracts/src/governance/RewardsDistributor.sol` · the fee totals in `GameEscrow`
-
-Players earn LMS in proportion to the **fees they paid**, entirely on-chain: no
-server computes anything and no Merkle root is posted.
-
-- **The escrow keeps two totals per week** (`FEE_EPOCH`, Unix weeks): what each
-  player paid in fees, `feesPaid[player][week]`, and what everyone paid,
-  `epochFees[week]`. They are written when a match **settles**, in the week it
-  settles in, because that is when the fee is actually paid. An expired lobby,
-  an aborted or vetoed match never pays one, so never counts. Counting at join
-  instead — the first version of this — let a player sit in a lobby that could
-  never fill, claim rewards on its fee once the week ended, then cancel for a
-  full refund.
-- **Who pays the gas.** Joins cost what they always did. `finalize` writes one
-  counter per seat, so it costs more: for a four-seat match, about 113k gas
-  more when it is those players' first settlement of the week, about 28k after.
-  The server's keeper is what calls `finalize`, so this is an operator cost.
-- **Each week has a budget**, falling by a quarter every year for four years,
-  and the budgets add up to the 50M funded. A player who paid 1% of a week's
-  fees gets 1% of its budget.
-- **Why fees, not wins.** Wins are zero-sum: one person running every wallet in
-  a lobby can decide who wins for nothing. Fees are a real cost, and they go to
-  stakers and the treasury. With a fixed budget split by fees, farming defeats
-  itself — every extra fee a farmer pays lowers what each fee earns.
-- **A cap per ETH of fees** (`maxRewardPerEth`, 10,000 LMS). In a quiet week
-  the split alone would hand the whole budget to whoever paid the little there
-  was. This is the real bound on farming: every LMS costs at least 1e-4 ETH of
-  real fees, however many wallets earn it.
-- **A cap per wallet per week** (`maxRewardPerWalletPerEpoch`, 20,000 LMS).
-  It stops one wallet taking a quiet week; it does not stop sybils, who simply
-  use more wallets — the per-ETH cap and vesting do that. What either cap
-  leaves unpaid stays in the distributor; governance may sweep it only after
-  claims close, a year after the program ends.
-- **When.** A week can be claimed the moment it ends. A total only grows while
-  its week is the current one, so an ended week's totals — and every player's
-  share of it — never change again; a match still in play when the week ends
-  counts in the week it settles. The rate and the wallet cap are fixed by the
-  first claim, so a later change to a cap cannot treat two claimants of one
-  week differently, and the claims of a week add up to at most its budget.
-- **Vested, then staked to vote.** A claim adds one tranche per week to
-  `RewardVesting`, vesting linearly over six months from the week's end.
-  `release(player, weeks[])` pays out what has vested as liquid LMS; the player
-  stakes it to vote. So a reward neither votes nor sells before it vests.
-  `claim(player, weeks[])` takes any number of weeks, so a player can claim
-  rarely, and anyone may claim or release for anyone — both only pay the
-  player.
-
-### The staking panel
-
-The lobby screen shows a **Stake LMS** panel whenever the server has
-`STAKED_LMS` set:
-
-- **Rewards.** ETH earned from fees, in the header, and a **Claim ETH** button
-  once there is any.
-- **Play-mining**, when the server has `REWARDS_DISTRIBUTOR` set: the LMS
-  earned by playing and not yet claimed, and a **Claim LMS** button that claims
-  every week at once, into vesting. With nothing waiting it says how play earns it.
-- **Position.** Staked LMS, votes and wallet balance.
-- **Stake** in one transaction: an EIP-2612 permit signature plus
-  `depositWithPermit`, instead of an approval and a deposit. The permit is
-  attempted rather than required, so a copied signature submitted first cannot
-  make the deposit fail.
-- **Unstake** an amount of LMS (one sLMS each), then a countdown and a **Withdraw** button once the cooldown ends.
-- **Delegate** the stake's votes to another address, and **Back to me** to take
-  them back. On L1 every vote costs gas, so most small holders are better off
-  handing their votes to someone who votes anyway; the sLMS stays in the wallet
-  and keeps earning. sLMS received later — staked released rewards, say —
-  follows the delegate already chosen. The zero address is refused, since delegating to
-  it would switch the votes off.
-
-### The governance screen
-
-A **Governance** button in the top bar opens every proposal made to
-`LmsGovernor`, newest first, when the server has `GOVERNOR_ADDRESS` set:
-
-- **Where proposals come from.** The governor cannot list its own proposals, so
-  the server indexes `ProposalCreated` from `GOVERNOR_FROM_BLOCK` in 10k-block
-  chunks and serves them at `/proposals`. That list holds only what the event
-  says, which never changes; state, tallies, quorum and the voter's power are
-  read live from the chain by the client.
-- **What a proposal does.** Each action is decoded against every function the
-  timelock is expected to call, with the known contracts named and timelock
-  roles spelled out, so revoking the Safe's veto reads as
-  `revokeRole(CANCELLER_ROLE, 0x…)`. A call that matches nothing is shown raw and
-  flagged, never hidden; so is any action that sends ETH. Proposal text is
-  untrusted, and is only ever written into the page as text.
-- **Voting.** For, Against or Abstain, with an optional on-chain reason. Power is
-  the sLMS held when voting opened; before then the card shows the power held
-  now, which is what it will be if nothing changes. Quorum counts For and
-  Abstain, as `GovernorCountingSimple` does.
-- **Queue and Execute.** Anyone can move a passed proposal into the timelock and
-  execute it once the delay is over; the card offers each step when it is
-  possible and says how long is left otherwise.
-
-- **Making a proposal.** **New proposal** opens a form: a title, a reason, and
-  one or more actions picked from templates — the stakers' share of fees, the
-  protocol fee, the treasury, the guardian, the unstake cooldown, the voting
-  period, resuming play, and removing the multisig's veto. Each template takes
-  plain values (a percentage, a number of days, an address), checks them
-  against the limits the contracts enforce — a fee above 10% or a cooldown
-  outside 1–30 days is refused before a vote is wasted on it — and encodes the
-  one call that does it. Every action is previewed with the decoder voters
-  see. A custom call is the escape hatch, and is flagged like any other
-  unrecognised call. The form shows the proposer's power against the
-  threshold up front, read one second in the past as the governor reads it.
-  The protocol-fee template resends every other parameter as it is now, and
-  says so: it would undo another parameter change that executes first.
-
-`npm run dev:fork` shortens voting to open in a minute and last thirty, lowers
-the proposal threshold and the minimum quorum to 1,000 sLMS, streams staker
-rewards over an hour instead of a week, stakes 1,000 LMS for each dev player
-(enough to propose), harvests after every match, and makes a demo proposal to
-raise the stakers' fee share to 60%. The operator's stake is sent from the
-treasury, with the timelock impersonated. A play-mining
-claim needs a match settled in a week that has ended, so it takes moving the
-fork's clock (`evm_increaseTime`) past the end of the week.
-
-### The Safe's powers: when they go
-
-The Safe's proposer and canceller roles are training wheels, and they end on a
-date written into `MultisigPhase` at deploy (a year out by default, two at
-most). The Safe never holds a timelock role itself: it calls `MultisigPhase`,
-which forwards only before `phaseEnd`. After that anyone calls `retire()`,
-which renounces both roles. No vote is needed, and the Safe cannot cancel its
-own removal. Before then it cannot schedule a call on the timelock itself or a
-`transferOwnership`/`renounceOwnership`, so nothing it does can outlast the
-phase on its own.
-
-### What is missing
-
-- **A quiet start.** Nothing votes at launch: the treasury, reserve, team and
-  play-mining tokens are unstaked by design. No proposal can pass until players
-  hold enough sLMS to meet the 1M quorum floor, and rewards vest for six
-  months first. The cap then decides how long it takes: at 10,000 LMS per ETH,
-  1M LMS needs 100 ETH of fees paid in settled matches — 2,000 ETH of stakes at
-  the 5% fee. Until then the Safe proposes through `MultisigPhase`, and the
-  guardian can still pause the escrow and veto results.
-- **Hub chain only.** Spokes take no fees today; if they ever do, each needs
-  its own route back to the hub's router. Play-mining already counts spoke
-  players, since their seats are taken on the hub.
-- **Regulatory.** A token that pays holders a share of a gambling protocol's
-  revenue may be a security, or a licensing issue, depending on jurisdiction,
-  and paying LMS for play may be read as an inducement to gamble. The stakers'
-  share defaults to 0% on mainnet until there is advice; play-mining has no
-  such switch short of a cap of zero (`setMaxRewardPerEth(0)`).
+**Paying part of the fee in LMS.** A seat can pay up to half its fee in LMS at
+the governance rate `lmsPerEthDiscount`, with a permit, in the player's own
+transaction. The LMS is held against the seat, burned when the match settles
+and returned when it is cancelled, vetoed or aborted. Prizes do not change —
+discounts come out of the treasury's cut — and play-mining counts only the ETH
+paid. The rate is a setting, not an oracle; the 50% cap bounds a bad one.
 
 ---
 
@@ -824,173 +351,78 @@ phase on its own.
 The wallet signs one EIP-712 `SessionGrant` naming a key the browser keeps for
 a day. The key signs the login nonce on every connect and every commit and
 reveal, so a reconnect costs no prompt and every move in a transcript is
-provably its player's. The grant is shaped like a SIWE message (domain, uri,
-chain, issue and expiry, nonce) and has no chain id in its EIP-712 domain, so a
-wallet sitting on a spoke can still sign it. The server checks the wallet's
-signature with ERC-1271 for a contract wallet. The key can stake or spend
-nothing.
+provably its player's. The grant is shaped like a SIWE message and has no chain
+id in its domain, so a wallet on a spoke can sign it; a contract wallet's grant
+is checked with ERC-1271. The key can stake or spend nothing.
+
+The key is secp256k1, which WebCrypto cannot hold, so it is sealed in IndexedDB
+under a non-extractable AES-GCM key. The production build's
+Content-Security-Policy allows no script but the bundle's own, and the client
+never builds markup from data.
+
+---
 
 ## Account abstraction
 
-`contracts/src/SessionKeyDelegate.sol`, `server/chain/sessionRelay.ts`, `client/wallet/oneClick.ts` · **Unit-tested, end-to-end on anvil**
+`SessionKeyDelegate` · `server/chain/sessionRelay.ts` · `client/wallet/oneClick.ts` ·
+**Unit-tested, end to end on anvil**
 
-### The problem
+One-click play turns joins and collecting winnings into a click, with the
+server paying the gas. **EIP-7702, not ERC-4337**, because the address is the
+identity: seats, rankings and payouts are keyed by the address that staked,
+and 7702 gives that same address code (`0xef0100 || delegate`) instead of
+moving the player to a new one.
 
-Playing should not mean approving a transaction every few minutes. Logins and
-moves are covered by the session grant above; what remains is joins and
-collecting winnings, each a wallet transaction with its own gas. One-click play
-makes those a click, with the server paying the gas.
+1. Turning it on is one wallet transaction: the 7702 authorisation for
+   `SessionKeyDelegate`, plus `grantSession` on the player's own address.
+2. The session key signs `SessionCall{target, value, data, nonce}` for
+   `join(matchId)` or `withdrawFor(account)`; the server's `SessionRelay`
+   submits `executeWithSession` and pays the gas. The stake is the account's.
 
-### Why EIP-7702 and not ERC-4337
+| Limit | Enforcement |
+| --- | --- |
+| Calls | `join` and `withdrawFor` on the escrow only, one word of arguments; `withdrawFor` pays only the account |
+| Per call / in total | `valueCap` 0.05 ETH, `spendCap` 0.25 ETH |
+| Time | `validUntil`, at most seven days out |
+| Who pays the stake | `executeWithSession` is not payable: always the account |
 
-In this protocol **the address is the identity**. `GameEscrow` keys seats,
-rankings and payouts by the address that staked. Migrating players onto freshly
-deployed ERC-4337 smart accounts would change every one of those addresses.
+- **ERC-1271 answers for the root key only.** A session key is never a valid
+  signer for the account, so it cannot sign a permit, an order or a login as
+  the wallet.
+- **The relayer guards its own gas.** It submits only a call the delegate
+  would accept, from an account delegated to *our* delegate, that simulates
+  cleanly and fits the wallet's daily quota; withdrawals to a spoke share the
+  quota and the key.
+- **Digest parity.** `sessionCallDigest` is pinned to the delegate by a frozen
+  vector on both sides. The verifying contract is the *account*, never the
+  shared delegate, or a digest would be valid for every player who delegated.
 
-An EIP-7702 authorization keeps the exact same address and merely gives it code:
-
-```
-0xef0100 || delegateAddress      ← the account's code after delegation
-```
-
-### Who gets it
-
-Only a wallet that can sign an authorization for *our* delegate: the dev
-burner, and an embedded wallet wrapped as a viem local account (`toAccount`).
-An injected wallet cannot be asked for one, so MetaMask, Rabby and Coinbase
-Smart Wallet keep the normal flow, and so does every join from a spoke. The
-README has the full matrix.
-
-### How it works
-
-1. The player turns it on: one transaction, signed by the wallet, carries the
-   authorization pointing the EOA at `SessionKeyDelegate` and a call to
-   `grantSession` **on itself** — a call that only resolves because the
-   authorization in that same transaction put the code there. The key granted
-   is the browser's session key, and the session ends when its grant does.
-2. To join, the key signs `SessionCall{target, value, data, nonce}` for
-   `join(matchId)`, and the client sends it to the server as a `relay` frame.
-3. `SessionRelay` checks it and submits `executeWithSession` from its own key.
-   The seat, and the stake, are the account's; the gas is the relayer's.
-4. Collecting winnings is the same, with `withdrawFor(account)`.
-
-Storage lives in the *delegating account*, not in the delegate: under 7702 the
-delegate's code runs with the EOA as `address(this)`. One deployment per chain
-serves every player and holds nothing itself.
-
-### Scope — fixed in code, capped at grant
-
-A session key that can do anything is just the account key with extra steps.
-
-| Limit | Enforcement | Purpose |
-| --- | --- | --- |
-| **Calls** | `join(matchId)` and `withdrawFor(account)` on the escrow, an immutable of the delegate; exactly one word of arguments | A leaked key can stake into lobbies but never send ETH anywhere: `withdrawFor` pays only the account |
-| **Per call** | `valueCap`, 0.05 ETH from the client | One join cannot stake the balance |
-| **In total** | `spendCap`, 0.25 ETH from the client | A leaked key's whole reach |
-| **Time** | `validUntil`, in the future and at most seven days out | A forgotten key stops working on its own |
-| **Who pays** | `executeWithSession` is not payable | The stake always comes from the account |
-
-### ERC-1271: the account's own key only
-
-`isValidSignature` answers for the root key and nothing else. It used to accept
-any live session key too, which meant anything that checks ERC-1271 — a permit,
-an order, a login — took the key's word for the wallet's, with no cap. The
-server checks the off-chain grant instead, and uses ERC-1271 for contract
-wallets' grants.
-
-### The relayer guards its own gas
-
-The delegate protects the player; `SessionRelay` protects the server's gas. It
-submits only a call that:
-
-- the delegate would accept (`sessionCallKind` mirrors its check, before any
-  RPC);
-- comes from an account delegated to **our** delegate, since the call runs as
-  the account's code and any other code would run on the server's gas;
-- simulates cleanly, so a revert costs a read;
-- fits the wallet's `RELAY_QUOTA_PER_DAY`, taken before the first await so two
-  racing calls cannot share the last slot, and handed back if the call fails.
-
-It pays from `SESSION_RELAYER_PK`, a key holding only gas money, which also
-submits players' signed withdrawals to a spoke, from the same sender and
-against the same quota. A refusal names
-the revert (`ValueCapExceeded`, `SessionExpired`, or the escrow's error inside
-`CallFailed`), and the client then uses the wallet.
-
-### Digest parity
-
-`sessionCallDigest` in `consensus/eip712/session.ts` mirrors the delegate's EIP-712
-hashing and is pinned to it by frozen vectors on **both** sides, exactly as the
-commit hashes are. `sessionCallTypedData` is what the key signs, and a test
-checks it hashes to the same digest.
-
-The verifying contract in the domain is the **account**, never the delegate:
-under 7702 the delegate's code runs as the account, so a digest naming the
-shared implementation would be equally valid against every player who delegated
-to it.
-
-### Key storage and the page
-
-The key is secp256k1, which WebCrypto cannot hold, so it is kept in IndexedDB
-sealed with an AES-GCM key generated non-extractable (`io/keystore.ts`). A copy
-of the site's storage holds only ciphertext. Script in the page could still use
-the key, so the production build carries a Content-Security-Policy that allows
-no script but the bundle's own, no `eval`, and no origin it does not name
-(`csp.ts`), and the client never builds markup from data.
-
-> **Status.** 33 Foundry tests cover real `vm.signAndAttachDelegation`
-> delegations against the real escrow. `npm run check:one-click` runs the whole
-> path on a Prague anvil with the real deploy and the server's relay port. Not
-> yet checked: Privy's embedded wallet signing the authorization on Base
-> Sepolia (FIX_PLAN 5.1).
+Only a wallet that can sign an authorisation for our delegate gets it — the
+dev burner and an embedded wallet; injected wallets and spoke joins keep the
+normal flow. The README's wallet matrix has the detail.
 
 ---
 
 ## Identity and avatars
 
-### Wallet-as-identity login
+**Wallet-as-identity login** (`server/gateway/gateway.ts`, **Live**). The
+server issues a nonce; the granted key signs it; the server checks the grant's
+wallet signature and the key's. No passwords and no registration, and the
+login is the same address that staked. It proves ownership and authorises
+nothing.
 
-`packages/server/src/gateway/gateway.ts` · **Live**
+**NFT avatars** (`PlayerAvatars`, `server/chain/avatars.ts`, **Unit-tested**).
+An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
 
-The server issues a random nonce on connect; the key the wallet granted (see
-[Session grants](#session-grants)) signs `Last Man Standing login\nnonce:<nonce>`;
-the server checks the grant's wallet signature and that the key signed the
-nonce.
-
-Purpose: the wallet *is* the account — no passwords, no session store, no
-registration — and it is the same address that staked on-chain, so the server
-never has to reconcile two notions of "who this is". The login signature proves
-address ownership and nothing else; it cannot authorise a transfer.
-
-### NFT avatars
-
-`contracts/src/PlayerAvatars.sol` · `packages/server/src/chain/avatars.ts` ·
-**Unit-tested**
-
-An ERC-721 collection deployed **independently per chain**. Free mint, one per
-wallet, capped supply, with an `equipped` slot choosing which owned avatar a
-wallet wears.
-
-- **Per chain, not bridged.** Purpose: a player mints on the chain they already
-  play from and never has to bridge to look like themselves. The collection that
-  applies to a seat is the one on the chain that seat staked from — the same
-  origin the chain badge shows.
-- **Outside consensus, deliberately.** Nothing about an avatar reaches the
-  commit hash, round hashes, history root or rules hash. The engine cannot see
-  one and a replay is identical with or without. Purpose: a cosmetic that could
-  change a result would be pay-to-win; one that entered the hash chain would
-  break replay for anyone without the metadata. This is why avatars travel in
-  their own wire message instead of inside `PublicMatchState`.
-- **Transfers clear the sender's equipped slot.** Purpose: `avatarOf` can never
-  name a token the wallet has sold.
-- **Every failure is soft.** Resolving an avatar means a chain read *and* an
-  IPFS fetch, either of which can hang. `AvatarRegistry` resolves in the
-  background after the room is already playable, caches per wallet including the
-  misses, and degrades to "no avatar" on any error. The seat falls back to a
-  plain circle and the match is unaffected.
-- **The metadata hop happens server-side.** Purpose: one gateway policy, one
-  cache and one timeout, instead of every connected browser independently
-  fetching the same eight files from a public IPFS gateway.
+- **Per chain, not bridged**: a seat wears the collection on the chain it
+  staked from.
+- **Outside consensus**: nothing about an avatar reaches a hash, and the
+  engine never sees one, so a cosmetic can neither change a result nor break a
+  replay. Avatars travel in their own message.
+- **A transfer clears the sender's equipped slot**, so `avatarOf` never names a
+  token the wallet sold.
+- **Every failure is soft**: resolved in the background, cached with misses,
+  and a seat without one is a plain circle.
 
 ---
 
@@ -998,281 +430,57 @@ wallet wears.
 
 `contracts/src/libraries/` · **Live**
 
-Four libraries drop into hand-written Yul where the ABI encoder is measurably
-wasteful. Every one has a plain-Solidity reference implementation beside it and
-a differential fuzz test proving they agree — including with dirty high bits in
-calldata addresses.
-
 | Library | Technique | Why it is worth it |
 | --- | --- | --- |
-| `SettlementLib` | Hashes the ranking straight out of calldata into scratch memory | Settlement is the only path that moves value *and* hashes a variable-length array on every call; the encoder version copies the ranking twice |
-| `SignatureLib` | One reusable `ecrecover` frame for the whole batch | Runs `threshold` times per settlement |
-| `SeatSetLib` | EIP-1153 transient storage as a scratch set | Turns the permutation check from quadratic to linear, which is what matters at the 256-seat ceiling |
+| `SettlementLib` | Hashes the ranking straight out of calldata | Settlement hashes a variable-length array on every call; the encoder copies it twice |
+| `SignatureLib` | One reusable `ecrecover` frame per batch | Runs `threshold` times per settlement |
+| `SeatSetLib` | EIP-1153 transient storage as a scratch set | Linear permutation check at the 256-seat ceiling; a revert needs no cleanup |
 | `HashLib` | Hand-rolled `chainHistory` and `drawBps` | Two- and three-word hashes with no encoder overhead |
 
-`SeatSetLib` deserves a note on why transient storage fits: transient slots are
-discarded at end of transaction and rolled back on revert, so the failure path
-needs no cleanup at all — while the happy path still clears every mark it sets,
-so a second call in the same transaction starts clean.
-
-Measured: **451 gas cheaper per settlement at eight seats**, growing with lobby
-size. `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check`
-fails on drift.
+Every routine has a plain-Solidity reference beside it and a differential fuzz
+test, dirty high bits in calldata addresses included. `contracts/.gas-snapshot`
+is committed and CI fails on drift.
 
 ---
 
-## The off-chain engine
+## The engine, the server and the client
 
-`packages/engine/src/` · **Live**
+`packages/engine` · `packages/server` · `packages/client` — file by file in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
-### What it does
-
-The deterministic kernel that decides what happens in a round, with no I/O
-whatsoever.
-
-- **`kernel/resolve.ts`** — `resolveRound(rules, seed, round, states, moves, quietRounds)`
-  is pure and total. It does not read the clock, does not use floating point, and
-  does not depend on the order moves arrive in. A move its player's cooldown rules
-  out is resolved as no move, the same way `Match` rejects it at reveal.
-- **`match/match.ts`** — the per-match state machine: commit → reveal → resolve, phase
-  guards, commitment verification, the cooldowns and the stall streak, ranking, and
-  the public snapshot (which shows every seat's loaded Charge and last action).
-- **`match/replay.ts`** — recomputes an entire match from the seed and published move
-  log, and checks a claimed result against it.
-- **`bots/strategy.ts`** (`@lms/engine/bots`, not in the browser's entry) — seeded bots: `always`, `randomStrategy`, `readerStrategy`,
-  and the house bot `smartStrategy`. Every one of them only ever picks a move its
-  cooldowns allow. The house bot reads each opponent's revealed moves and
-  cooldowns, samples plausible rounds, plays each of its legal moves against the
-  same samples, and keeps the one that comes out best on HP kept, HP dealt and
-  kills. Easy and normal play a random move 6 and 3 rounds in 10; hard never does.
-  `npm run sim` puts hard at about 2x its share of wins, ahead of every mindless
-  strategy, and fails the build if any mindless strategy wins its share or turns
-  a profit under the payout schedule.
-
-### Why purity matters here
-
-This is the most valuable property in the codebase: it is what makes an
-independent check *possible*. Because resolution is deterministic and
-integer-only, any third party holding the seed and the move log can reproduce
-the exact same ranking and show a signed result was fabricated. Everything in the trust model
-rests on it.
-
-Two supporting decisions:
-
-- **The public snapshot never carries a pending action.** Purpose: the broadcast
-  cannot leak a hidden move even by accident.
-- **A guaranteed single winner.** If a round would wipe the lobby, the player
-  with the least overkill survives on 1 HP. Purpose: settlement needs a total
-  order; a full wipe would strand the prize pool.
-
----
-
-## The game server
-
-`packages/server/src/` · **Live** (practice) · **Unit-tested** (staked)
-
-| File | Responsibility |
-| --- | --- |
-| `main.ts` | Composition root: reads the config, wires every component, listens |
-| `index.ts` | The package's public exports. Importing it boots nothing |
-| `config.ts` | Environment configuration |
-| **`match/`** | **One live match** |
-| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop) |
-| **`bots/`** | **The house players** |
-| `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
-| **`lobby/`** | **Which matches exist, and what happens when one ends** |
-| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
-| `lobby/store.ts` | Match archive: in-memory by default, Postgres when `DATABASE_URL` is set |
-| **`gateway/`** | **The socket boundary** |
-| `gateway/gateway.ts` | Session registry, wallet login, message dispatch |
-| `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
-| **`chain/`** | **Everything that talks to a chain** |
-| `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
-| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
-| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle` |
-| `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
-| `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
-
-### Design decisions worth knowing
-
-- **The room owns the clock but never reads it.** `tick(now)` is driven from
-  outside — a 250 ms interval in production, a loop in tests. Purpose: a whole
-  match runs deterministically in a test without timers.
-- **Clients are opaque sinks.** `Room` talks to a `Client` interface with a
-  single `send`. Purpose: the state machine has no idea WebSockets exist.
-- **`ChainBridge` converges through one polling loop** rather than a web of
-  event subscriptions — it discovers lobbies from `MatchCreated`, re-reads each
-  tracked match, and acts on what it finds. Purpose: a missed block, a restart
-  or a flaky RPC costs a few seconds rather than a desynchronised server.
-- **A room only opens for a match that is already `Live`.** Purpose: the server
-  cannot start play before the seed exists, so it can never choose moves against
-  rolls it already knows.
-- **Seat origins come from `PlayerJoined`**, which already carries them, cached
-  per seat. Purpose: the escrow is only read for a seat that joined before the
-  backfill window, instead of once per seat per poll.
+- **The kernel is pure and total.** `resolveRound` reads no clock, uses no
+  floating point and ignores arrival order, so anyone with the seed and the
+  move log reproduces the ranking. Everything in the trust model rests on it.
+- **A guaranteed single winner.** If a round would wipe the table, the least
+  overkill survives on 1 HP: settlement needs a total order.
+- **The public snapshot never carries a pending action**, and the arena draws
+  only published state, so neither can leak a hidden move.
+- **The room owns the clock but never reads it**: `tick(now)` is driven from
+  outside, so a whole match runs deterministically in a test.
+- **The chain bridge converges through one polling loop**, and opens a room
+  only for a `Live` match under the rules hash it plays.
 - **Archive first.** A staked match is settled only once its transcript is
-  archived, and a named database that cannot be reached stops the server rather
-  than falling back to memory. Purpose: the evidence for a result is fetchable
-  for as long as it can be disputed.
-- **A staked room journals what moves it on.** Purpose: a restart resumes the
-  match where it was, with the same commitments, instead of refunding it.
-- **One instance.** Rooms, the matchmaking queue and the rate limits live in the
-  process; with Postgres, a second server against the same database is refused.
-
----
-
-## The browser client
-
-`packages/client/src/` · **Live**
-
-| File | Responsibility |
-| --- | --- |
-| `main.ts` | Entry point, three lines: calls `start()` |
-| `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
-| `context.ts` | `AppState` in the store, plus the shared `dom` and `net`, assigned once at boot |
-| `store.ts` | The typed store: `set` a patch, `subscribe` a renderer to the keys it draws |
-| `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
-| **`assets/`** | **Everything loaded at boot** |
-| `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
-| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot. A chunk of its own, with Pixi |
-| **`screens/`** | **What the player sees, and the controls on it** |
-| `screens/loading.ts` | The boot screen: a progress bar while assets load |
-| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join, from the hub or a spoke |
-| `screens/queue.ts` | The matchmaking queue: pick a tier, wait, leave |
-| `screens/discount.ts` | *On demand.* Paying part of a seat's fee in LMS: quote, permit, join |
-| `screens/zap.ts` | *On demand.* Paying a stake in a token through `ZapJoin` |
-| `screens/staking.ts` | *On demand* (`stakingPanel.ts`). Stake, unstake, claim, vesting and release, delegation |
-| `screens/governance.ts` | *On demand* (`governanceNav.ts`). Proposals, votes, the proposal form |
-| `screens/result.ts` | The result: ranking, the browser's and the chain's verification, Dispute |
-| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer; mounts and disposes the arena |
-| **`wallet/`** | **The player's account** |
-| `wallet/flows.ts` | Connect, login with the session grant, avatar and hub-chain panels |
-| `wallet/chains.ts` | The viem chain every write names, and `WrongChainError` |
-| `wallet/payouts.ts` | Collecting winnings: on the hub, or to the spoke the wallet is on (`collectHome.ts`, on demand) |
-| `wallet/staking.ts`, `governance.ts`, `zap.ts`, `discount.ts` | *On demand.* Each screen's contract calls and ABIs, out of the main bundle |
-| `wallet/wallet.ts` | Injected EIP-1193 session, the chain guard, login signature, escrow / avatar / session calls |
-| `wallet/grant.ts` | The browser's session key and its grant: sign logins, moves and relayed calls |
-| `wallet/oneClick.ts` | One-click play: the on-chain session, relayed joins and collects |
-| **`game/`** | **Match logic that runs in the browser** |
-| `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
-| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
-| `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
-| **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle, HP arcs, chain badges, avatars, ⚡ on charged seats, the stall wall |
-| `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
-| `arena/replay.ts` | Builds the round's GSAP timeline: HP drains and heals, shatters, the stall flare |
-| `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
-| `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
-| `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
-| `arena/textures.ts` | Seat faces leased by URL, unloaded once no seat wears them |
-| **`ui/`** | **The DOM around the canvas** |
-| `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar, queue, discount and collect-home panels |
-| `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
-| `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
-| **`io/`** | **Browser I/O** |
-| `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
-| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
-
-### Why these choices
-
-- **The arena renders only published state.** During commit, a seat shows *that*
-  it has committed, never what. Purpose: the view cannot leak a hidden move.
-- **The reveal is automatic.** The player already chose during the commit
-  window. Purpose: a second click would only manufacture no-shows.
-- **The reads panel is bookkeeping, not privileged data.** It is computed from
-  the same history every spectator receives — it just does the counting a player
-  would otherwise do on paper. Purpose: this is the actual game. After five
-  rounds you are playing the table, not the dice.
-- **Reconnect re-auths and re-attaches.** Purpose: a dropped socket does not
-  drop the seat.
-- **A dev burner wallet behind `VITE_DEV_KEY`.** Purpose: the practice loop needs
-  nothing but a login signature, and requiring a wallet extension to click
-  through the game locally is pure friction. Dev builds only.
+  archived; each room journals its rounds, so a restart resumes instead of
+  refunding.
+- **One instance.** Rooms, the queue and the rate limits live in the process;
+  a second server against the same Postgres is refused.
+- **The reveal is automatic**, and the reads panel is bookkeeping over the
+  published history: after five rounds you are playing the table.
 
 ---
 
 ## Testing and verification
 
-### Cross-implementation parity
-
-The same hashes are computed in TypeScript and in Solidity, and both sides are
-pinned to **frozen vectors**:
-
-| Hash | TypeScript | Solidity |
+| Pinned across languages | TypeScript | Solidity |
 | --- | --- | --- |
-| Commit, round, history, `drawBps` | `consensus/test/parity.test.ts` | `test/unit/HashLib.t.sol` |
+| Commit, round, history, `drawBps`, rules hash | `consensus/test/parity.test.ts` | `test/unit/HashLib.t.sol` |
 | Session call digest | `consensus/test/session.test.ts` | `test/unit/SessionKeyDelegate.t.sol` |
+| Withdrawal digest | `consensus/test/withdrawal.test.ts` | `test/unit/BridgeJoinReceiver.t.sol` |
+| Golden transcripts | `engine/test/golden.test.ts` | `test/unit/GoldenTranscript.t.sol` |
 
-Purpose: if an encoding ever drifts, exactly one suite fails instead of the two
-implementations diverging silently. For the commit hash that failure mode is
-severe — players could not open their commitments on-chain at all.
-
-### Differential fuzzing
-
-Every Yul routine is fuzzed against its plain-Solidity reference, including with
-dirty high bits in calldata addresses. Purpose: hand-written assembly is only
-acceptable if something independent proves it agrees with readable code.
-
-### Invariant campaign
-
-A stateful Foundry campaign drives `GameEscrow` through random call sequences
-while asserting solvency. A deeper run is available with `FOUNDRY_PROFILE=deep`.
-
-### Property tests
-
-The engine is checked for termination, unique ranking, HP bounds, determinism,
-replay equivalence and tamper detection over randomly generated strategy pools.
-
-### Gas
-
-`contracts/.gas-snapshot` is committed; `npm run sol:snapshot:check` fails on
-drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never
-worse than the encoder reference, warming the harness first so the measurement
-is not dominated by cold-account access.
-
-### Commands
-
-```bash
-npm test               # TypeScript: protocol, engine, server
-npm run typecheck      # whole monorepo, strict — including every test file
-npm run sol:test       # Foundry: unit, fuzz, invariant
-npm run sol:fuzz       # fuzz suites only
-npm run sol:invariant  # invariant suites only
-npm run sol:snapshot   # refresh the gas snapshot
-npm run dev:fork       # whole staked stack on a mainnet fork, token payment included
-
-# Uniswap v4 fork test, against the real PoolManager. Skipped without the RPC.
-MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/*'
-```
-
----
-
-## Configuration reference
-
-| Variable | Default | Feature it controls |
-| --- | --- | --- |
-| `WS_PORT` | `8787` | Gateway port |
-| `CHAIN_ID` | `84532` | Hub chain (Base Sepolia) |
-| `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
-| `RPC_URL` | — | Chain bridge, ERC-1271 logins |
-| `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
-| `ATTESTOR_PK` | — | Result, abort and receipt signing, in the attestor's own process |
-| `KEEPER_PK` | — | Sends settle, abort, `lockMatch`, `finalize`, `cancelMatch` and harvests |
-| `MATCHMAKER_PK` | — | The matchmaking queue, and the lobbies that earn play-mining |
-| `SESSION_DELEGATE` | registry | One-click play (needs `RPC_URL`, an escrow and `SESSION_RELAYER_PK`) |
-| `SESSION_RELAYER_PK` | — | Pays relayed gas |
-| `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |
-| `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
-| `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |
-| `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Avatar metadata resolution |
-| `DATABASE_URL` | — | Postgres (e.g. Neon): match archive, analysis cache, play styles, room journals |
-| `VITE_WS_URL` | host `:8787` | Server the browser connects to |
-| `VITE_DEV_KEY` | — | Dev-only burner wallet |
-
-Annotated template in [`.env.example`](../.env.example).
-
----
-
-*Reflects the working tree at 22 Sep 2026 · 104 TypeScript and 95 Foundry tests
-passing. Unfinished work is tracked in [`TODO.md`](TODO.md).*
+If an encoding drifts, exactly one suite fails instead of the two sides
+diverging silently. Beyond those: differential fuzzing of every Yul routine,
+the escrow's solvency invariant campaign, engine property tests (termination,
+unique ranking, HP bounds, determinism, replay equivalence, tamper detection),
+fork tests against Across, VRF and Uniswap v4, and a seeded chaos suite
+against the server. Commands are in the README.

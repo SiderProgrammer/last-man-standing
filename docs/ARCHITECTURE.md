@@ -5,6 +5,8 @@ server so rounds resolve in milliseconds; the money — stakes, prize pool, payo
 never leaves the chain. The two halves are joined by a hash chain and a signed
 attestation, so the server can be fast without being trusted.
 
+The decisions behind the design are recorded one at a time in [`adr/`](adr/README.md).
+
 ---
 
 ## Part 1 — How the game works
@@ -726,20 +728,17 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 
 ### Testing
 
-- **TypeScript (vitest, 18 files / 190 tests):** engine unit tests, property tests over
-  random strategies (termination, unique ranking, HP bounds, determinism, replay
-  equivalence, tamper detection), protocol parity vectors, room lifecycle,
-  gateway auth and lobby directory, attestation.
-- **Solidity (Foundry, 15 suites / 95 tests):** unit tests per contract and library,
+- **TypeScript (vitest):** engine unit tests, property tests over random strategies
+  (termination, unique ranking, HP bounds, determinism, replay equivalence, tamper
+  detection), consensus parity vectors, rooms, the gateway, the chain bridge, the
+  attestor process, the analyst, the client's pure modules, and a seeded chaos suite.
+- **Solidity (Foundry):** unit tests per contract and library,
   differential fuzzing of the Yul hashers and the signature recovery loop, and a stateful
   invariant campaign driving `GameEscrow` through random call sequences while asserting
   solvency. A deeper campaign is available with `FOUNDRY_PROFILE=deep`.
 - **Typecheck covers the tests too.** Each package has a `tsconfig.test.json` resolving
   `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
   test fails `npm run typecheck` rather than sitting there unchecked.
-- **Some tests pin behaviour that is wrong.** `config.test.ts` asserts that a
-  non-numeric `COMMIT_MS` yields `NaN`. Such tests exist so that fixing the behaviour
-  is a deliberate, visible change. Every one maps to a step in `docs/FIX_PLAN.md`.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
   on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
   than the ABI-encoder reference, warming the harness first so the measurement is not
@@ -750,7 +749,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `WS_PORT` | `8787` | WebSocket / HTTP port |
-| `CHAIN_ID` | `11155111` | Hub chain id |
+| `CHAIN_ID` | `84532` | Hub chain id (Base Sepolia) |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
 | `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |

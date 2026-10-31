@@ -7,9 +7,7 @@
  * first, and the whole codebase picks lowercase.
  *
  * These exist so that choice is made in one place rather than at every call
- * site. They are deliberately not applied anywhere a normalising call did not
- * already exist — see `docs/FIX_PLAN.md` step 7.2 for the one place that looks
- * like it wants `addressKey` and does not get it.
+ * site.
  */
 
 /** The zero address, used as "unset" for every configured address. */
