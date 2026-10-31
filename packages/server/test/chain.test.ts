@@ -8,6 +8,7 @@ import {
   confirmedHead,
   Lobby,
   MemoryArchive,
+  MemoryJournal,
   nullRelayer,
   type ChainBridgeDeps,
   type EscrowMatch,
@@ -655,5 +656,36 @@ describe('chain bridge and matchmade lobbies', () => {
     await bridge.poll();
     const listed = new Map(bridge.directory().open.map((lobby) => [lobby.matchId, lobby.matchmade]));
     expect(listed).toEqual(new Map([[matched, true], [open, false]]));
+  });
+});
+
+describe('chain bridge resuming after a restart', () => {
+  it('resumes a match live at startup from its journal instead of refunding it', async () => {
+    const reader = new FakeEscrow();
+    const id = bytes32('journalled');
+    const seats = [seat(0), seat(1), seat(2), seat(3)];
+    reader.created = [id];
+    reader.matches.set(id, match({ status: MatchStatus.Live, seatCount: 4 }));
+    reader.seats.set(id, seats);
+    const journal = new MemoryJournal();
+    await journal.append(id, 0, { kind: 'open', at: 0 });
+
+    const lobby = new Lobby({ archive: new MemoryArchive(), relayer: nullRelayer, commitMs: 1_000, revealMs: 1_000, journal });
+    const aborted: string[] = [];
+    const bridge = new ChainBridge({
+      reader,
+      lobby,
+      chainId: HUB,
+      now: () => 1_000_000,
+      abort: async (matchId) => {
+        aborted.push(matchId);
+        return null;
+      },
+    });
+    await bridge.poll();
+
+    expect(aborted).toEqual([]);
+    expect(lobby.get(id)?.match.seats.map((s) => s.address)).toEqual(seats);
+    expect(bridge.directory().live.map((lobbyInfo) => lobbyInfo.matchId)).toEqual([id]);
   });
 });

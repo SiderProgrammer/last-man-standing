@@ -72,4 +72,16 @@ export const MIGRATIONS: readonly Migration[] = [
       'UPDATE match_analyses SET match_id = lower(match_id) WHERE match_id <> lower(match_id)',
     ],
   },
+  {
+    // Everything that moves a staked room on, so a restart resumes it.
+    id: '0004_room_journal',
+    statements: [
+      `CREATE TABLE room_journal (
+        match_id TEXT NOT NULL,
+        seq      INTEGER NOT NULL,
+        entry    JSONB NOT NULL,
+        PRIMARY KEY (match_id, seq)
+      )`,
+    ],
+  },
 ];

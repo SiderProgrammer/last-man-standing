@@ -427,6 +427,9 @@ export class Gateway {
           { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
         );
         const signer = room.staked ? this.options.receipts : this.options.practiceReceipts;
+        // Not before the commit is in the room's journal: a receipt for a
+        // commit a restart could lose would be a promise the server cannot keep.
+        await this.options.lobby.persisted(room.matchId);
         if (signer) session.send({ type: 'receipt', receipt, signature: await signer.sign(receipt) });
         return;
       }

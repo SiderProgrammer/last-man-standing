@@ -20,6 +20,7 @@ import type { AvatarRegistry } from '../chain/avatars.js';
 import type { ArchivedMatch, MatchArchive } from './store.js';
 import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
+import type { JournalEntry, RoomJournal } from '../match/journal.js';
 import { RequestError } from '../errors.js';
 
 export interface LobbyOptions {
@@ -71,6 +72,12 @@ export interface LobbyOptions {
   expects?: (matchId: `0x${string}`) => boolean;
   /** Called with each staked room as it opens, so its players can be told. */
   onLive?: (room: Room) => void;
+  /**
+   * Where staked rooms journal everything that moves them on, so a restart
+   * resumes them (`resume`) instead of refunding them. Omitted, nothing is
+   * journalled and a restart refunds every live match.
+   */
+  journal?: RoomJournal;
 }
 
 const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
@@ -105,6 +112,11 @@ export class Lobby {
   private readonly settling = new Map<string, Promise<void>>();
   /** Clients holding a `watch` for a staked match whose room has not opened, by lower-cased id. */
   private readonly waiting = new Map<string, Set<Client>>();
+  /**
+   * Each journalled room's writes, chained in order, by lower-cased id, and
+   * how many entries it has. A failed write is logged; the chain goes on.
+   */
+  private readonly writes = new Map<string, { seq: number; done: Promise<void> }>();
   /**
    * Starts at a random 64-bit offset rather than zero. From zero, every
    * process handed out the same practice match ids, so after a restart a
@@ -204,12 +216,75 @@ export class Lobby {
   adopt(setup: MatchSetup, botSeats: readonly number[] = [], now: number = Date.now()): Room {
     const existing = this.get(setup.matchId);
     if (existing) return existing;
-    const room = this.open(setup, botSeats, now, true);
+    return this.opened(this.open(setup, botSeats, now, true), now);
+  }
+
+  /**
+   * Brings back a staked match's room from its journal after a restart, at
+   * the round and phase it was in, its commitments and reveals intact, with
+   * the clock given back to its players. Null when there is nothing to
+   * resume from — no journal, or one that does not replay — and the match
+   * must be refunded instead.
+   */
+  async resume(setup: MatchSetup, now: number = Date.now()): Promise<Room | null> {
+    const existing = this.get(setup.matchId);
+    if (existing) return existing;
+    const journal = this.options.journal;
+    if (!journal) return null;
+    let entries: JournalEntry[];
+    try {
+      entries = await journal.load(setup.matchId);
+    } catch (error) {
+      console.error(`[lobby] could not read the journal of ${setup.matchId}:`, errorMessage(error));
+      return null;
+    }
+    if (entries.length === 0) return null;
+    const key = setup.matchId.toLowerCase();
+    let room: Room;
+    try {
+      this.writes.set(key, { seq: entries.length, done: Promise.resolve() });
+      room = Room.replay(setup, this.roomOptions(setup, [], true, 'normal'), entries);
+    } catch (error) {
+      this.writes.delete(key);
+      console.error(`[lobby] the journal of ${setup.matchId} does not replay:`, errorMessage(error));
+      return null;
+    }
+    room.rebase(now);
+    this.rooms.set(key, room);
+    void this.decorate(room, setup);
+    void this.brief(room, setup);
+    console.log(`[lobby] resumed ${setup.matchId} at round ${room.match.round} from ${entries.length} journal entries`);
+    return this.opened(room, now);
+  }
+
+  /** Resolves once every journal entry written so far for the match has landed. */
+  async persisted(matchId: `0x${string}`): Promise<void> {
+    await this.writes.get(matchId.toLowerCase())?.done;
+  }
+
+  /** A staked room has opened: attach the watches held for it, and tell its players. */
+  private opened(room: Room, now: number): Room {
     const key = room.matchId.toLowerCase();
     for (const client of this.waiting.get(key) ?? []) room.attach(client, now);
     this.waiting.delete(key);
     this.options.onLive?.(room);
     return room;
+  }
+
+  /** Queues one journal entry behind the match's earlier ones. */
+  private record(matchId: `0x${string}`, entry: JournalEntry): void {
+    const journal = this.options.journal;
+    if (!journal) return;
+    const key = matchId.toLowerCase();
+    const chain = this.writes.get(key) ?? { seq: 0, done: Promise.resolve() };
+    const seq = chain.seq;
+    chain.seq += 1;
+    chain.done = chain.done.then(() =>
+      journal.append(matchId, seq, entry).catch((error: unknown) => {
+        console.error(`[lobby] journal entry ${seq} of ${matchId} was not written:`, errorMessage(error));
+      }),
+    );
+    this.writes.set(key, chain);
   }
 
   /** Records a staked match this server will not play: see `abandoned`. */
@@ -323,6 +398,11 @@ export class Lobby {
       receiptSigner: (staked ? this.options.receiptSigner : this.options.practiceReceiptSigner) ?? null,
       staked,
       readyMs: staked ? (this.options.readyMs ?? 0) : 0,
+      // Only a staked room of players is journalled: house bots draw their
+      // moves afresh, so a room with any would not replay to the same state.
+      ...(staked && botSeats.length === 0 && this.options.journal
+        ? { journal: (entry: JournalEntry) => this.record(setup.matchId, entry) }
+        : {}),
       onFinished: (transcript) => this.enqueue(transcript, staked),
     };
   }
@@ -359,8 +439,24 @@ export class Lobby {
       .catch((error: unknown) => {
         console.error(`[lobby] finalising ${transcript.matchId} failed:`, errorMessage(error));
       })
+      .then(() => this.forgetJournal(transcript.matchId))
       .finally(() => this.settling.delete(key));
     this.settling.set(key, job);
+  }
+
+  /**
+   * Drops a finished match's journal once its archiving and settlement are
+   * done or given up: nothing will resume it now. A crash before this point
+   * resumes the room, which finishes at once and is finalised again.
+   */
+  private async forgetJournal(matchId: `0x${string}`): Promise<void> {
+    const key = matchId.toLowerCase();
+    if (!this.writes.has(key)) return;
+    await this.persisted(matchId);
+    this.writes.delete(key);
+    await this.options.journal?.drop(matchId).catch((error: unknown) => {
+      console.warn(`[lobby] could not drop the journal of ${matchId}:`, errorMessage(error));
+    });
   }
 
   /**

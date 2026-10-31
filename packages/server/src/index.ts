@@ -5,7 +5,8 @@
  * every server test does — never opens a port, starts a ticker or reads the
  * environment beyond `config`.
  */
-export { Room, type Client, type MatchFinished, type RoomOptions } from './match/room.js';
+export { Room, type Client, type MatchFinished, type MoveProof, type RoomOptions } from './match/room.js';
+export { MemoryJournal, PostgresJournal, type JournalEntry, type RoomJournal } from './match/journal.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
 export { transcriptResponse } from './lobby/transcripts.js';
 export { MemoryStyleBook, PostgresStyleBook, type StyleBook } from './lobby/styles.js';

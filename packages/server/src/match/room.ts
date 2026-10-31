@@ -21,6 +21,7 @@ import {
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
 import { RequestError } from '../errors.js';
+import type { JournalEntry } from './journal.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -67,6 +68,12 @@ export interface RoomOptions {
    * Zero (the default) starts it at once.
    */
   readyMs?: number;
+  /**
+   * Told everything that moves the room on, as it happens, for
+   * `Room.replay` to rebuild it from after a restart. Synchronous: the
+   * caller queues the write.
+   */
+  journal?: (entry: JournalEntry) => void;
   onFinished?: MatchFinished;
 }
 
@@ -101,7 +108,9 @@ export class Room {
   /** Round 1's clock is running: everyone arrived, or the ready phase ran out. */
   private started: boolean;
   /** When the ready phase runs out. */
-  private readonly readyUntil: number;
+  private readyUntil: number;
+  /** Where entries go; off while a journal is being replayed. */
+  private journal: ((entry: JournalEntry) => void) | undefined;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
   /** The reveal signature that came with each held move, by seat. */
@@ -129,6 +138,67 @@ export class Room {
     this.started = this.readyUntil <= now || this.absent().length === 0;
     this.deadlineAt = (this.started ? now : this.readyUntil) + options.commitMs;
     this.bots.commit(this.match);
+    this.journal = options.journal;
+    this.journal?.({ kind: 'open', at: now });
+  }
+
+  /**
+   * Rebuilds a room from its journal: the same setup and options, and every
+   * entry applied in order with its own timestamp, which brings it to the
+   * state it was in when the last entry was written. Throws on a journal
+   * that does not replay.
+   */
+  static replay(setup: MatchSetup, options: RoomOptions, entries: readonly JournalEntry[]): Room {
+    const [first, ...rest] = entries;
+    if (first?.kind !== 'open') throw new Error('the journal does not begin with the room opening');
+    const quiet: RoomOptions = { ...options };
+    delete quiet.journal;
+    const room = new Room(setup, quiet, first.at);
+    for (const entry of rest) room.apply(entry);
+    room.journal = options.journal;
+    return room;
+  }
+
+  private apply(entry: JournalEntry): void {
+    const address = (seat: number) => {
+      const found = this.match.seats[seat]?.address;
+      if (!found) throw new Error(`the journal names seat ${seat}, which this match does not have`);
+      return found;
+    };
+    switch (entry.kind) {
+      case 'open':
+        throw new Error('the journal opens the room twice');
+      case 'commit':
+        this.submitCommit(address(entry.seat), entry.commitment, entry.at, entry.hold, entry.aim, entry.proof);
+        return;
+      case 'reveal':
+        this.submitReveal(address(entry.seat), entry.move, entry.at, entry.aim, entry.proof);
+        return;
+      case 'tick':
+        this.tick(entry.at);
+        return;
+      case 'start':
+        this.start(entry.at);
+        return;
+      case 'rebase':
+        this.rebase(entry.at);
+        return;
+    }
+  }
+
+  /**
+   * Gives the players their clock back after a restart: a fresh ready phase
+   * for them to reconnect in, then the window the room was in, in full. The
+   * round, its commitments and its reveals are as they were.
+   */
+  rebase(now: number): void {
+    if (this.match.finished) return;
+    this.started = false;
+    this.readyUntil = now + (this.options.readyMs ?? 0);
+    this.replayUntil = 0;
+    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+    this.deadlineAt = this.readyUntil + window;
+    this.journal?.({ kind: 'rebase', at: now });
   }
 
   /** Seats whose player has no client attached yet: the ready phase waits on these. Empty once round 1 has started. */
@@ -142,10 +212,12 @@ export class Room {
     return this.match.seats.map((seat) => seat.index).filter((index) => !this.bots.has(index) && !here.has(index));
   }
 
-  /** Starts round 1's clock now, everyone being here. */
+  /** Starts the clock now, everyone being here. */
   private start(now: number): void {
     this.started = true;
-    this.deadlineAt = Math.min(this.deadlineAt, now + this.options.commitMs);
+    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+    this.deadlineAt = Math.min(this.deadlineAt, now + window);
+    this.journal?.({ kind: 'start', at: now });
     this.broadcastState();
   }
 
@@ -252,6 +324,15 @@ export class Room {
       this.match.assertPlayable(seat, hold);
     }
     this.match.submitCommit(seat, commitment);
+    this.journal?.({
+      kind: 'commit',
+      at: now,
+      seat,
+      commitment,
+      aim: { matchId: this.matchId, round },
+      ...(hold ? { hold } : {}),
+      ...(proof ? { proof } : {}),
+    });
     this.receivedAt.set(seat, now);
     if (hold) this.held.set(seat, hold);
     if (proof) {
@@ -275,7 +356,9 @@ export class Room {
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    const round = this.match.round;
     this.match.submitReveal(seat, move);
+    this.journal?.({ kind: 'reveal', at: now, seat, move, aim: { matchId: this.matchId, round }, ...(proof ? { proof } : {}) });
     if (proof) {
       this.recordGrant(proof.grant);
       this.revealSignatures.set(seat, proof.signature);
@@ -287,6 +370,17 @@ export class Room {
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
+    const before = this.position();
+    this.advance(now);
+    if (this.position() !== before) this.journal?.({ kind: 'tick', at: now });
+  }
+
+  /** Where the room is: what a tick that moved it changes. */
+  private position(): string {
+    return `${this.started}:${this.match.round}:${this.match.phase}`;
+  }
+
+  private advance(now: number): void {
     if (!this.started && now >= this.readyUntil) {
       // Not everyone came: play starts without them, on the clock it was always going to.
       this.started = true;

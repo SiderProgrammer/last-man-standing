@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   });
 
   const storage = await openStorage(config.databaseUrl);
-  const { archive, styles } = storage;
+  const { archive, styles, journal } = storage;
   console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
   // One key per job, and one sender per key: a key's nonces are a single
   // sequence, and `loadConfig` refuses two jobs on one key.
@@ -87,6 +87,7 @@ async function main(): Promise<void> {
     archive,
     relayer,
     readyMs: config.readyMs,
+    journal,
     expects: (matchId) => bridge?.expects(matchId) ?? false,
     onLive: (room) => {
       for (const seat of room.match.seats) notify(seat.address, { type: 'live', matchId: room.matchId });

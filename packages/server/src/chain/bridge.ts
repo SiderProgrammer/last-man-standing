@@ -283,14 +283,20 @@ export class ChainBridge {
         await this.abandon(entry, matchId, 'it was created under rules this server does not play');
         continue;
       }
-      if (raw.status === MatchStatus.Live && !entry.adopted && liveAtBoot.has(key)) {
-        await this.abandon(entry, matchId, 'it was cancelled after a server restart');
-        continue;
-      }
-
       const seats: LobbySeat[] = [];
       for (const address of players) {
         seats.push({ address, chainId: await this.originOf(entry, matchId, address) });
+      }
+
+      // Live before this process started: resumed from its journal where
+      // there is one, refunded where there is not.
+      if (raw.status === MatchStatus.Live && !entry.adopted && liveAtBoot.has(key)) {
+        if (await this.deps.lobby.resume(setupOf(matchId, raw.seed, seats))) {
+          entry.adopted = true;
+        } else {
+          await this.abandon(entry, matchId, 'it was cancelled after a server restart');
+          continue;
+        }
       }
 
       entry.info = {
@@ -422,16 +428,15 @@ export class ChainBridge {
   }
 
   private adopt(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): void {
-    const seats: Seat[] = lobbySeats.map((seat, index) => ({
-      index,
-      address: seat.address,
-      chainId: seat.chainId,
-    }));
-
-    const setup: MatchSetup = { matchId, seats, seed, rules: DEFAULT_RULES };
-    this.deps.lobby.adopt(setup);
-    console.log(`[chain] opened room for ${matchId} with ${seats.length} seats`);
+    this.deps.lobby.adopt(setupOf(matchId, seed, lobbySeats));
+    console.log(`[chain] opened room for ${matchId} with ${lobbySeats.length} seats`);
   }
+}
+
+/** The room a live match is played in: its seats in stake order, its seed, and these rules. */
+function setupOf(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): MatchSetup {
+  const seats: Seat[] = lobbySeats.map((seat, index) => ({ index, address: seat.address, chainId: seat.chainId }));
+  return { matchId, seats, seed, rules: DEFAULT_RULES };
 }
 
 /**
