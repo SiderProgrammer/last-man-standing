@@ -2,7 +2,10 @@ import { keccak256, toHex } from 'viem';
 import {
   DEFAULT_RULES,
   TRANSCRIPT_VERSION,
+  applyDelta,
   hashTranscript,
+  withRound,
+  type PublicMatchState,
   type MatchResult,
   type RoundRecord,
   type Rules,
@@ -55,6 +58,28 @@ export function lastOfType<T extends ServerMessage['type']>(
   return undefined;
 }
 
+/** The match as a client following `messages` sees it: its last `state`, with every `delta` and `round` since folded in. */
+export interface View {
+  state: PublicMatchState;
+  you: number | null;
+  msRemaining: number;
+  waitingFor: number[];
+}
+
+export function viewOf(messages: readonly ServerMessage[]): View | undefined {
+  let view: View | undefined;
+  for (const message of messages) {
+    if (message.type === 'state') {
+      view = { state: message.state, you: message.you, msRemaining: message.msRemaining, waitingFor: message.waitingFor };
+    } else if (message.type === 'delta' && view && view.state.matchId === message.delta.matchId) {
+      view = { ...view, state: applyDelta(view.state, message.delta), msRemaining: message.msRemaining, waitingFor: message.waitingFor };
+    } else if (message.type === 'round' && view) {
+      view = { ...view, state: withRound(view.state, message.record) };
+    }
+  }
+  return view;
+}
+
 /** Records everything the room pushes, so tests can assert on the feed. */
 export class FakeClient implements Client {
   readonly received: ServerMessage[] = [];
@@ -67,6 +92,11 @@ export class FakeClient implements Client {
 
   last<T extends ServerMessage['type']>(type: T): Extract<ServerMessage, { type: T }> | undefined {
     return lastOfType(this.received, type);
+  }
+
+  /** The match as this client sees it now. */
+  view(): View | undefined {
+    return viewOf(this.received);
   }
 
   all<T extends ServerMessage['type']>(type: T): Array<Extract<ServerMessage, { type: T }>> {

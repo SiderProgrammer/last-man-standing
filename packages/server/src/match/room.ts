@@ -1,6 +1,7 @@
 import {
   MatchPhase,
   addressKey,
+  matchDelta,
   commitMove,
   errorMessage,
   type AvatarEntry,
@@ -111,6 +112,8 @@ export class Room {
   private readyUntil: number;
   /** Where entries go; off while a journal is being replayed. */
   private journal: ((entry: JournalEntry) => void) | undefined;
+  /** The latest time the room was driven at, which `msRemaining` is counted from. */
+  private clock: number;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
   /** The reveal signature that came with each held move, by seat. */
@@ -134,6 +137,7 @@ export class Room {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
     }
 
+    this.clock = now;
     this.readyUntil = now + (options.readyMs ?? 0);
     this.started = this.readyUntil <= now || this.absent().length === 0;
     this.deadlineAt = (this.started ? now : this.readyUntil) + options.commitMs;
@@ -259,11 +263,12 @@ export class Room {
   }
 
   attach(client: Client, now: number = Date.now()): void {
+    this.clock = now;
     this.clients.add(client);
+    this.pushState(client);
     // While the table fills, everyone sees who is still to come.
     if (!this.started && this.absent().length === 0) this.start(now);
     else if (!this.started) this.broadcastState();
-    else this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
     if (this.dossier.length > 0) this.pushDossier(client);
   }
@@ -315,6 +320,7 @@ export class Room {
   ): CommitReceipt {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    this.clock = now;
     const round = this.match.round;
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
@@ -356,6 +362,7 @@ export class Room {
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    this.clock = now;
     const round = this.match.round;
     this.match.submitReveal(seat, move);
     this.journal?.({ kind: 'reveal', at: now, seat, move, aim: { matchId: this.matchId, round }, ...(proof ? { proof } : {}) });
@@ -370,6 +377,7 @@ export class Room {
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
+    this.clock = now;
     const before = this.position();
     this.advance(now);
     if (this.position() !== before) this.journal?.({ kind: 'tick', at: now });
@@ -522,22 +530,35 @@ export class Room {
     };
   }
 
+  /**
+   * Tells every client what changed. One object for the whole table, so the
+   * gateway serialises it once however many sockets it goes to.
+   */
   private broadcastState(): void {
-    // Computed once: only `you` differs between the clients.
-    const state = this.match.publicState();
-    for (const client of this.clients) this.pushState(client, state);
+    const message = {
+      type: 'delta',
+      delta: matchDelta(this.match.publicState()),
+      msRemaining: this.remaining(),
+      waitingFor: this.absent(),
+    } as const;
+    for (const client of this.clients) client.send(message);
+  }
+
+  private remaining(): number {
+    return Math.max(0, this.deadlineAt - this.clock);
   }
 
   private pushAvatars(client: Client): void {
     client.send({ type: 'avatars', matchId: this.matchId, entries: this.avatars });
   }
 
-  private pushState(client: Client, state: PublicMatchState = this.match.publicState()): void {
+  /** The whole match, for a client that has just attached. */
+  private pushState(client: Client): void {
     client.send({
       type: 'state',
-      state,
+      state: this.match.publicState(),
       you: client.address ? this.seatOf(client.address) : null,
-      deadline: this.deadlineAt,
+      msRemaining: this.remaining(),
       waitingFor: this.absent(),
     });
   }

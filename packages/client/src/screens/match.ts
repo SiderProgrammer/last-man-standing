@@ -2,6 +2,8 @@ import {
   Action,
   MatchPhase,
   PRACTICE_CHAIN_ID,
+  applyDelta,
+  withRound,
   commitMove,
   isActionValue,
   errorFirstLine,
@@ -54,6 +56,8 @@ let timerTotal = 1;
 // ---------------------------------------------------------------- server feed
 
 export function onRound(message: Extract<ServerMessage, { type: 'round' }>): void {
+  // The history grows here: deltas never carry it.
+  if (app.match) app.match = withRound(app.match, message.record);
   appendRound(message.lines, message.record.round, message.record.eliminated);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
@@ -174,6 +178,12 @@ export function replayRound(round: number): void {
   const before = stateBeforeRound(state, round);
   if (!record || !before) return;
   arena.rewindTo(before, record);
+}
+
+/** Folds what changed into the match on screen, and redraws it. A delta for another match is stale and dropped. */
+export function onDelta(message: Extract<ServerMessage, { type: 'delta' }>): void {
+  if (!app.match || app.match.matchId !== message.delta.matchId) return;
+  onState(applyDelta(app.match, message.delta), app.you, Date.now() + message.msRemaining, message.waitingFor);
 }
 
 export function onState(

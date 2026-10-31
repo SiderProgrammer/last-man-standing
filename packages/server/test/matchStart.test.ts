@@ -19,12 +19,12 @@ describe('the ready phase', () => {
 
     const clients = seats.map((address) => new FakeClient(address));
     for (const client of clients.slice(0, 3)) room.attach(client, 1_000);
-    expect(clients[0]?.last('state')?.waitingFor).toEqual([3]);
+    expect(clients[0]?.view()?.waitingFor).toEqual([3]);
     expect(room.deadline).toBe(READY_MS + COMMIT_MS);
 
     room.attach(clients[3] as FakeClient, 5_000);
     expect(room.deadline).toBe(5_000 + COMMIT_MS);
-    expect(clients[0]?.last('state')?.waitingFor).toEqual([]);
+    expect(clients[0]?.view()?.waitingFor).toEqual([]);
   });
 
   it('counts a spectator for nothing', () => {
@@ -39,7 +39,7 @@ describe('the ready phase', () => {
     const here = new FakeClient(seats[0] as `0x${string}`);
     room.attach(here, 0);
     room.tick(READY_MS);
-    expect(here.last('state')?.waitingFor).toEqual([]);
+    expect(here.view()?.waitingFor).toEqual([]);
     expect(room.deadline).toBe(READY_MS + COMMIT_MS);
 
     // Nobody but seat 0 commits; the round still resolves on time.

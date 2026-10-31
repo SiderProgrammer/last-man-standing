@@ -3,6 +3,7 @@ import type { ZapInfo } from './chain/zap.js';
 import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
+import type { MatchDelta } from './game/delta.js';
 import type { Rules } from './game/rules.js';
 import type { CommitReceipt, SeatProof, SignedGrant } from './chain/moves.js';
 import type { RelayedCall, SessionCallKind } from './chain/session.js';
@@ -213,17 +214,32 @@ export type ServerMessage =
    */
   | { type: 'receipt'; receipt: CommitReceipt; signature: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
+  /**
+   * The whole match, sent once when a client attaches. Everything after it is
+   * a `delta`, and each finished round a `round`.
+   */
   | {
       type: 'state';
       state: PublicMatchState;
       you: number | null;
-      deadline: number;
+      /**
+       * Milliseconds until the current window closes, as of sending. Relative,
+       * like `replayMs`, so the client never reconciles its clock with the
+       * server's.
+       */
+      msRemaining: number;
       /**
        * Seats the room is still waiting to see connected before round 1's
        * clock starts. Empty once it has: everyone came, or the wait ran out.
        */
       waitingFor: number[];
     }
+  /**
+   * What changed since the last `state` or `delta`: everything that can,
+   * without the seed, the rules or the history. Fold it in with `applyDelta`,
+   * and each `round` with `withRound`. One object for the whole table.
+   */
+  | { type: 'delta'; delta: MatchDelta; msRemaining: number; waitingFor: number[] }
   | {
       type: 'round';
       record: RoundRecord;

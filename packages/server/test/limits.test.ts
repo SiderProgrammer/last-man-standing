@@ -21,7 +21,7 @@ import {
   type Pingable,
   type Socket,
 } from '@lms/server';
-import { lastOfType } from './helpers.js';
+import { lastOfType, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'33'.repeat(32)}`);
@@ -358,12 +358,12 @@ describe('message limits', () => {
 
     // The general bucket is empty; a commit still reaches the room.
     const errors = socket.sent.filter((message) => message.type === 'error').length;
-    const live = lastOfType(socket.sent, 'state')?.state;
+    const live = viewOf(socket.sent)?.state;
     if (!live) throw new Error('no match state yet');
     const place = { matchId: live.matchId, round: live.round, seat: 0 };
     await socket.deliver(await player.commit(place, { action: 1, target: 1, salt: BYTES32 }));
     expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(errors);
-    expect(lastOfType(socket.sent, 'state')?.state.committed).toContain(0);
+    expect(viewOf(socket.sent)?.state.committed).toContain(0);
   });
 });
 

@@ -127,7 +127,7 @@ describe('resuming after a restart', () => {
     const resumed = await after.resume(setup, 5_000_000);
     expect(resumed?.match.publicState()).toEqual(state);
     resumed?.attach(watcher, 5_000_000);
-    expect(watcher.last('state')?.state.round).toBe(2);
+    expect(watcher.view()?.state.round).toBe(2);
 
     // Played out to the end, it is archived and its journal goes.
     let now = 5_000_000;

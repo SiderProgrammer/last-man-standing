@@ -17,6 +17,7 @@ import {
   onFinished,
   onReceipt,
   onRound,
+  onDelta,
   onState,
   updateTimer,
   wireMatchControls,
@@ -135,7 +136,11 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'state':
-      onState(message.state, message.you, message.deadline, message.waitingFor);
+      onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor);
+      break;
+
+    case 'delta':
+      onDelta(message);
       break;
 
     // A match this wallet sits in has its room now: go to the table.

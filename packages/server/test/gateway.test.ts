@@ -38,7 +38,7 @@ import type {
   SignatureVerifier,
   Socket,
 } from '@lms/server';
-import { lastOfType, transcriptOf } from './helpers.js';
+import { lastOfType, transcriptOf, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -700,7 +700,7 @@ describe('gateway session grants and signed moves', () => {
     });
     await socket.deliver(await player.auth(nonceOf(socket)));
     await socket.deliver({ type: 'practice', bots: 3 });
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     return { socket, lobby, place: { matchId: state.matchId, round: state.round, seat: 0 } };
   }
@@ -747,7 +747,7 @@ describe('gateway session grants and signed moves', () => {
     const { socket } = harness();
     await login(socket);
     await socket.deliver({ type: 'practice', bots: 3 });
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     const place = { matchId: state.matchId, round: state.round, seat: 0 };
     await socket.deliver(await new TestPlayer('anyone', 11155111).commit(place, { action: 2, target: 0, salt: SALT }));
@@ -791,7 +791,7 @@ describe('gateway session grants and signed moves', () => {
     expect(valid).toBe(true);
 
     // The bots had committed, so the reveal is open, and the whole set is public.
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     expect(state?.commitments.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
     expect(state?.commitments[0]?.commitment).toBe(commit.commitment);
 
@@ -809,7 +809,7 @@ describe('gateway session grants and signed moves', () => {
 
     await socket.deliver(await player.commit({ ...place(socket), seat: 1 }, move));
     expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
-    expect(socket.last('state')?.state.committed).not.toContain(0);
+    expect(viewOf(socket.sent)?.state.committed).not.toContain(0);
   });
 
   it('refuses a held move whose reveal signature does not match it', async () => {
@@ -822,7 +822,7 @@ describe('gateway session grants and signed moves', () => {
   });
 
   function place(socket: FakeSocket) {
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     return { matchId: state.matchId, round: state.round, seat: 0 };
   }
