@@ -12,10 +12,9 @@ Items are ordered roughly by what blocks the next demo.
 > entries (§2.2), the Redis decision — dropped (§2.3),
 > unlimited practice rooms, a restart mid-match (now aborted and refunded rather
 > than resumed) and gateway rate limiting (§3.2),
-> the stored ranking (§3.3), and the hardwired deploy mocks. The LayerZero
-> adapter now builds per-message options and authenticates the originating app
-> (§2.1), but the real `@layerzerolabs` interfaces are still not vendored and no
-> two-testnet run has happened.
+> the stored ranking (§3.3), and the hardwired deploy mocks. Cross-chain joins
+> moved from LayerZero to Across (§2.1, FIX_PLAN Phase 6); no two-testnet run has
+> happened yet.
 
 ---
 
@@ -58,33 +57,21 @@ The client plays a full match, but these are missing:
 
 ## 2. Integrations that are still mocks
 
-### 2.1 LayerZero
+### 2.1 Across
 
-Hub and spoke run end to end in `npm run dev:fork`: a second anvil as the spoke, mock
-endpoints on both, and a relayer that delivers each join a few seconds later. Done:
-
-- ~~Vendor the real `@layerzerolabs` endpoint interfaces and reconcile the ABI.~~ Checked
-  field by field against `lz-evm-protocol-v2` 3.0.168 and kept local; the messenger now
-  also calls `setDelegate`, as `OAppCore` does, so its owner can set DVNs and libraries.
-- ~~Native-drop options encoding.~~ Each message's `lzReceive` option carries exactly its
-  lobby's stake, and the mock endpoint charges and delivers what the options ask.
-- ~~Wire peer configuration on both ends.~~ `DeploySpoke.s.sol` wires the spoke side; the
-  hub side is a governance proposal ("Add a spoke chain"), since the hub's config and
-  messenger belong to the timelock by then.
-- ~~Handle delivery failure.~~ A delivery the hub refuses parks in the hub messenger and
-  is retried, permissionlessly and at no value, once the hub can take it; the server
-  retries on every poll. See `FEATURES.md`, "When the hub cannot take a delivery".
+Spoke joins bridge the stake with Across: `SpokeRouter` on the spoke, `BridgeJoinReceiver`
+on the hub. Hub and spoke run end to end in `npm run dev:fork` over mock SpokePools, and
+the contracts run against Across's real pools in `test/fork/AcrossFork.t.sol`. What was
+checked is in `docs/ACROSS.md`.
 
 Still open:
 
-- **Two live testnets.** Follow `docs/TESTNET.md`. Needs testnet ETH on both chains and
-  DVN configuration on both messengers; neither can be done from the repository.
-- **The executor's native cap.** Check `nativeCap` for each spoke→hub pathway: a lobby
-  whose stake exceeds it cannot be joined from that spoke (the quote fails, nothing is
-  lost). If it is low, cap `maxStake` or say so in the lobby list.
-- **A message LayerZero never verifies** (no DVN configured, a dead DVN) cannot be helped
-  on-chain. Set DVNs on both messengers before opening a spoke, and watch for
-  `PacketSent` with no delivery.
+- **A real testnet deposit.** Follow `docs/TESTNET.md` with a little testnet ETH. Across's
+  testnet is unreliable and does not refund an unfilled deposit, so use small amounts.
+- **Withdraw to a spoke has no screen.** `withdrawToChainFor` works on-chain and the typed
+  data is in `@lms/protocol`; the client and the server's relay come with FIX_PLAN 8.5.
+- **Matchmaking tickets.** The join message is `(matchId, player, origin)`; a queue ticket
+  joins it with FIX_PLAN 7.9.
 
 ### 2.2 Chainlink VRF
 
@@ -152,8 +139,6 @@ mainnet. Still open:
 
 - `GameEscrow.settle` stores the full ranking (`matchRanking`) on every settlement — one
   SSTORE per seat, and nothing on-chain reads it any more. Consider dropping it for the event.
-- `SpokeEscrow.join` trusts the caller's `stake` argument for the event only; the hub is
-  the authority, but a mismatch produces a confusing failure. Quote the hub's stake instead.
 - Token governance is in place (`LmsGovernor` over staked LMS, with a 1M-vote
   minimum quorum), with the fee keeper, streamed ETH rewards for stakers,
   on-chain play-mining for half the supply, a staking panel with both claims, and
@@ -174,9 +159,8 @@ mainnet. Still open:
   - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide
     env, so it always sets one; the case where the Safe is the deployer (the
     `dev:fork` setup) is covered only by an `assert` in `_distribute`.
-- No deploy script for spokes. `SpokeEscrow`, `LayerZeroMessenger` and
-  `ChainlinkVrfAdapter` are plain `Ownable`; each must be constructed with a timelock
-  (fed by a Safe on that chain) as owner. Consider `Ownable2Step` for them too.
+- `ChainlinkVrfAdapter` is plain `Ownable`; it must be constructed with a timelock (fed
+  by a Safe on that chain) as owner. Consider `Ownable2Step` for it too.
 
 ---
 
@@ -206,8 +190,8 @@ invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
   browser rather than node.
 - **Chaos testing:** `packages/server/test/chaos.test.ts` (see `docs/CHAOS_TESTING.md`):
   seeded, reproducible runs with drops, stalls, latency, refused connects, server restarts
-  and a failing relayer. Open: chain-side chaos (RPC faults, reorgs) and LayerZero delivery
-  faults.
+  and a failing relayer. Open: chain-side chaos (RPC faults, reorgs) and Across fills that
+  come late or never.
 - **Load testing:** `npm run load` (see `docs/LOAD_TESTING.md`). One process tops out
   around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
   reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
@@ -241,10 +225,7 @@ reason as §1.1: no deployment has been driven end to end.
 ### Done since the last revision
 
 - **Origin chains are visible.** Seats carry the chain they staked from all the way to a
-  coloured badge in the arena and chips in the lobby list. Fixed a real defect on the way:
-  `seatOrigin` stores the *messenger's* id space (LayerZero endpoint ids), which
-  `ChainBridge` was assigning straight into `Seat.chainId` — a seat staked from Base
-  Sepolia would have rendered as "chain 40245".
+  coloured badge in the arena and chips in the lobby list.
 - **NFT avatars**, per chain, cosmetic, resolved off the match's critical path.
 - **EIP-7702 one-click play** for burner and embedded wallets: relayed joins and
   withdrawals under caps, with the server paying the gas.

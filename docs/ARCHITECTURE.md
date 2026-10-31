@@ -413,20 +413,20 @@ winner is crowned after the final round.
 | --- | --- |
 | `PullPayable` | Base for both escrows: credited balances, `totalOwed`, pull-based `withdraw` |
 | `Errors` | The errors several contracts raise identically, hoisted to file level |
-| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, per-chain messengers and peers, emergency guardian. Owned by a `TimelockController` whose proposer is a Safe. |
+| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, the bridge receiver, emergency guardian. Owned by a `TimelockController` whose proposer is a Safe. |
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
-| `SpokeEscrow` | Spoke-chain gate: forwards a stake plus a join message to the hub, receives bridged payouts. |
+| `SpokeRouter` | Spoke chain: deposits a stake into Across with a join message for the hub. Ownerless; holds nothing. |
+| `BridgeJoinReceiver` | Hub: takes Across fills and seats the player through `GameEscrow.bridgeJoin`, or credits them; bridges a balance home on a signed `withdrawToChainFor`. Owned by the timelock. |
 | `ZapJoin` | Periphery: joins a lobby paying in any ERC-20, swapped to exactly the stake through Uniswap v4, then seated via `GameEscrow.joinFor`. Ownerless; holds nothing between transactions. |
 | `PlayerAvatars` | Cosmetic ERC-721 avatars. Deployed independently per chain, never bridged. |
 | `SessionKeyDelegate` | EIP-7702 delegate: a session key may `join` and `withdrawFor` on the escrow, under caps; ERC-1271 for the root key only. |
-| `LayerZeroMessenger` | Adapts LayerZero v2 to the transport-agnostic `ICrossChainMessenger`. |
 | `ChainlinkVrfAdapter` | Presents a VRF v2.5 subscription as `IRandomnessOracle`. |
 
 **Match lifecycle on-chain**
 
 ```
 createMatch(stake, maxSeats)      terms snapshotted from ProtocolConfig
-  ↓  join() / receiveMessage()    local stake, or a stake bridged from a spoke
+  ↓  join() / bridgeJoin()        local stake, or a stake bridged from a spoke
 lockMatch()                       permissionless once full, or quorate and expired
   ↓  requestRandomness()
 fulfillRandomness()               seed = keccak(randomness, matchId) → status Live
@@ -459,8 +459,10 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
 - *A veto can only refund.* `veto` voids a proposed result and credits every seat its
   stake back; it cannot redirect a payout. It is not paused, so it is always available
   inside the window.
-- *Both ends of a bridge are authenticated.* A trusted transport still relays messages
-  from untrusted senders, so the messenger **and** the origin peer are checked.
+- *A bridged join cannot be forged, only paid for.* `bridgeJoin` takes only the
+  config's receiver, and the receiver only the hub's Across SpokePool, which pays the
+  value before it calls. The message is not trusted: anyone may deposit with any
+  message, which only ever buys someone a seat with real ETH, like `joinFor`.
 
 **No hand-written assembly.** Settlement hashing, signature recovery and the seat-set
 check are plain Solidity over OpenZeppelin's `EIP712` and `ECDSA`. The Yul versions
@@ -605,27 +607,38 @@ are still moving. It is in git history (`fadf583`) for when the rules are frozen
 
 ### Cross-chain model
 
-Hub-and-spoke. The hub chain holds all escrowed value and all match state; spokes hold
-nothing but a forwarding gate. A player on a spoke calls `SpokeEscrow.join`, which sends
-the stake and `(matchId, player)` through the messenger; the hub seats them and records
-their origin chain. If the seat can no longer be taken when the message lands — the lobby
-filled or locked in flight, the stake was wrong, the escrow is paused — the hub credits
-the stake to the player there instead of reverting, because a revert would strand it with
-the transport. Payouts stay on the hub; `withdrawFor` lets a keeper push one to a player
-who holds no gas there. The `ICrossChainMessenger` interface is transport-agnostic, so
-the adapter can be swapped without touching game logic.
+Hub-and-spoke over a value bridge, [Across](https://across.to). The hub (Base) holds all
+escrowed value and all match state; spokes (Arbitrum, Optimism, Ethereum) hold nothing.
+A player on a spoke calls `SpokeRouter.join` with a fee quote from the Across API. The
+router deposits the stake plus the fee into Across's SpokePool there, naming the hub's
+`BridgeJoinReceiver` as recipient and `(matchId, player, origin chain)` as the message.
+A relayer fills it on the hub: the SpokePool pays the receiver exactly the stake (in
+WETH, since the receiver is a contract) and calls its handler, which unwraps it and
+calls `GameEscrow.bridgeJoin`. If the seat can no longer be taken — the lobby filled or
+locked in flight, too little arrived, the escrow is paused — the escrow credits it all
+to the player there instead of reverting.
 
-**Authentication.** `LayerZeroMessenger` serves one local app. It only sends for that
-app, puts the app's address in the envelope, checks the remote messenger against its
-configured peer on receipt, and hands the escrow the *originating app* as `srcSender`. So
-the escrow's peer check names the remote `SpokeEscrow`, not merely the messenger that
-carried the message. Each message's executor options deliver exactly that lobby's stake.
+**Never revert a fill.** A handler revert reverts the fill, and an unfilled deposit waits
+until its deadline before Across refunds it on the spoke (on testnet, possibly never). So
+once the caller is the SpokePool, the receiver never reverts: value it cannot route
+(another token, an unreadable message, an escrow that refuses) stays in the receiver,
+with an `Unroutable` event, for the timelock to `recover`. A fill through the router
+always routes.
 
-**One id space.** The messenger translates LayerZero endpoint ids (`40161`) to EVM chain
-ids (`11155111`) at its boundary, so `GameEscrow.seatOrigin` holds chain ids, or zero
-for a stake placed on the hub, which `originChainId` maps to the hub. Origins are read from
-`PlayerJoined`, which already carries them, and cached per seat; the escrow is only read
-for a seat that joined before the backfill window.
+**Getting money home.** Winnings and refunds are credited on the hub. A player with gas
+there withdraws as usual. One without signs an EIP-712 `Withdrawal` (destination chain,
+recipient, the most Across may take), and anyone, typically the server, submits it to
+`withdrawToChainFor`, which moves the whole balance into an Across deposit to that chain.
+The typed data has no chain id in its domain, so a wallet on a spoke can sign it.
+
+**No registration.** The router is ownerless and the receiver takes a fill from any
+chain Across serves, so a new spoke is a deploy and a line in the server's `SPOKES`, not
+a governance proposal. The origin chain in a seat is what the message claims, shown and
+never trusted. `GameEscrow.seatOrigin` holds it, or zero for a stake placed on the hub,
+which `originChainId` maps to the hub. Origins are read from `PlayerJoined`, which already
+carries them, and cached per seat; the escrow is only read for a seat that joined before
+the backfill window. What was checked about Across, and what was not, is in
+[ACROSS.md](ACROSS.md).
 
 **Showing it.** The origin rides through `Seat.chainId` into `PublicMatchState`, and the
 arena draws it as a coloured pill above each seat — so a lobby that pulled stakes from

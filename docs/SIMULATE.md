@@ -17,8 +17,9 @@ fresh `npm run dev:fork`.
 | Solvency under random call sequences, through settlement | `EscrowInvariantTest` |
 | Attestor quorum and signature ordering | `SignatureLibTest`, `SignatureLibFuzzTest` |
 | Payout maths, Yul against the reference | `SettlementLibTest`, `SettlementLibFuzzTest` |
-| Spoke-chain gate | `SpokeEscrowTest` |
-| LayerZero and Chainlink VRF adapters | `AdapterTest` |
+| Cross-chain joins through Across: the spoke router, the hub receiver, signed withdrawals | `SpokeRouterTest`, `BridgeJoinReceiverTest` |
+| Across's real SpokePools, on forks | `AcrossHubForkTest`, `AcrossSpokeForkTest` |
+| Chainlink VRF adapter | `ChainlinkVrfAdapterTest` |
 | Governance parameters, guardian | `ProtocolConfigTest` |
 | The real deploy: Safe → timelock → config, guardian | `DeployTest` |
 | EIP-7702 session keys | `SessionKeyDelegateTest` |
@@ -49,7 +50,7 @@ anvil signs for itself (`--unlocked`), so no key is ever typed.
 
 ```bash
 R=http://127.0.0.1:8545
-eval "$(node -e "const d=require('./contracts/broadcast/Deploy.s.sol/31337/run-latest.json');const n={GameEscrow:'ESCROW',MockRandomnessOracle:'ORACLE',MockMessenger:'MESSENGER',ProtocolConfig:'CONFIG',TimelockController:'TIMELOCK'};for(const t of d.transactions)if(t.transactionType==='CREATE'&&n[t.contractName])console.log(n[t.contractName]+'='+t.contractAddress)")"
+eval "$(node -e "const d=require('./contracts/deployments/31337.json').contracts;const n={escrow:'ESCROW',randomnessOracle:'ORACLE',config:'CONFIG',timelock:'TIMELOCK',acrossSpokePool:'POOL',bridgeReceiver:'RECEIVER',weth:'WETH'};for(const k in n)console.log(n[k]+'='+d[k])")"
 OP=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266   # deployer: attestor, and on 31337 also the Safe and guardian
 P1=0x70997970C51812dc3A010C7d01b50e0d17dc79C8   # the browser's burner
 P2=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; P3=0x90F79bf6EB2c4f870365E785982E1f101E93b906; P4=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
@@ -133,22 +134,26 @@ warp 86401; cast send --unlocked --from $FAN $TIMELOCK 'execute(address,uint256,
 
 Warping a day expires every open lobby; restart `dev:fork` afterwards.
 
-### 3.6 Cross-chain: a join from a spoke, and a payout back
+### 3.6 Cross-chain: a join from a spoke
 
-The fork deploys a `MockMessenger` but registers no remote chain, so register
-one through governance first, then play the transport:
+The local deploy puts a `MockAcrossSpokePool` on the hub, with the
+`BridgeJoinReceiver` as its recipient. Play an Across relayer filling a deposit
+a `SpokeRouter` made on Arbitrum Sepolia; `npm run dev:fork` does the same for
+deposits made on its local spoke.
 
 ```bash
-PEER=0x000000000000000000000000000000000000000000000000000000000000beef; SALT2=0x$(printf '01%.0s' {1..32})
-REG=$(cast calldata 'setRemoteChain(uint32,address,bytes32)' 421614 $MESSENGER $PEER)
-cast send --unlocked --from $OP $TIMELOCK 'schedule(address,uint256,bytes,bytes32,bytes32,uint256)' $CONFIG 0 $REG $SALT $SALT2 86400 --rpc-url $R; warp 86401
-cast send --unlocked --from $FAN $TIMELOCK 'execute(address,uint256,bytes,bytes32,bytes32)' $CONFIG 0 $REG $SALT $SALT2 --rpc-url $R
 M=$(next_match); cast send --unlocked --from $OP $ESCROW 'createMatch(uint128,uint16)' 10000000000000000 4 --rpc-url $R
 SPOKE_PLAYER=0x00000000000000000000000000000000000000a5
-cast send --unlocked --from $FAN $MESSENGER 'deliver(address,uint32,bytes32,bytes,uint256)' $ESCROW 421614 $PEER $(cast abi-encode 'f(bytes32,address)' $M $SPOKE_PLAYER) 10000000000000000 --value 0.01ether --rpc-url $R
+MSG=$(cast abi-encode 'f(bytes32,address,uint32)' $M $SPOKE_PLAYER 421614)
+DEADLINE=$(( $(cast block latest -f timestamp --rpc-url $R) + 3600 ))
+fill() { cast send --unlocked --from $FAN $POOL 'fill(address,address,uint256,uint32,bytes)' $RECEIVER $WETH 10000000000000000 $DEADLINE $1 --value 0.01ether --rpc-url $R; }
+fill $MSG
 cast call $ESCROW 'seatOrigin(bytes32,address)(uint32)' $M $SPOKE_PLAYER --rpc-url $R   # 421614
 ```
 
-A different `PEER` reverts with `UntrustedPeer`. Delivering the same join again
-is refunded rather than reverted: `withdrawable(SPOKE_PLAYER)` shows the stake
-credited back on the hub, and `withdrawFor(SPOKE_PLAYER)` pays it out.
+Filling the same join again is credited rather than reverted (`JoinRefunded`,
+reason `AlreadyJoined`): `withdrawable(SPOKE_PLAYER)` shows the stake on the hub,
+and `withdrawFor(SPOKE_PLAYER)` pays it out. `fill 0xdead` still lands, and the
+value stays in the receiver with an `Unroutable` event, for the timelock to
+`recover`. Calling `handleV3AcrossMessage` on the receiver directly reverts with
+`NotSpokePool`.

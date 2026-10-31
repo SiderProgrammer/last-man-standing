@@ -82,9 +82,10 @@ or is lost to a server restart, is cancelled and refunded rather than resumed.
 
 Around that core:
 
-- **Cross-chain** — hub-and-spoke. All value and match state live on the hub;
-  `SpokeEscrow` on other chains only forwards stakes through a
-  transport-agnostic messenger (LayerZero adapter).
+- **Cross-chain** — hub-and-spoke over Across. All value and match state live on
+  the hub; `SpokeRouter` on other chains bridges a stake to the hub's
+  `BridgeJoinReceiver`, which seats the player or credits them. A player with no gas
+  on the hub can have their balance bridged home by signing for it.
 - **Pay in any token** — `ZapJoin` swaps an ERC-20 for exactly the stake in ETH
   through Uniswap v4.
 - **Governance** — every parameter lives in `ProtocolConfig`, owned by a
@@ -189,7 +190,7 @@ packages/engine     deterministic resolution kernel, match state machine, replay
 packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge, fee keeper
 packages/client     PixiJS arena, wallet login, history and reads, staking and governance screens
 packages/harness    headless bot clients for load and chaos testing
-contracts/          Foundry: escrow, spoke, config, governance, oracles, messengers, zap, avatars, 7702 delegate
+contracts/          Foundry: escrow, config, governance, oracles, bridge router and receiver, zap, avatars, 7702 delegate
 scripts/            mainnet-fork dev environment, balance sim, load generator
 ```
 
@@ -254,8 +255,9 @@ On anything but a local node the script also requires `SAFE` (the governance
 multisig) and `VRF_SUBSCRIPTION_ID`, a Chainlink VRF v2.5 subscription the Safe
 owns and funds with ETH. The script deploys the VRF adapter, makes the escrow
 its consumer and hands it to the timelock; the Safe then adds the adapter to
-the subscription. The mocks it falls back to are for chain 31337 only.
-`MESSENGER` is optional — unset means a hub with no spokes yet. Then:
+the subscription. The mocks it falls back to are for chain 31337 only. It also
+deploys the `BridgeJoinReceiver` that takes cross-chain joins, on the Across
+SpokePool `contracts/config/across.json` lists for the chain. Then:
 
 ```bash
 forge script script/Deploy.s.sol --root contracts --rpc-url $RPC_URL --broadcast
@@ -279,9 +281,13 @@ configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
 until that collection exists.
 
 The VRF adapter has a fork test against the Base Sepolia coordinator
-(`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`); the LayerZero
-adapter has so far only run against local mocks. `npm run dev:fork` runs a hub and a spoke together, with a local relayer
-between them; open the client with `?chain=spoke` to stake from the spoke.
+(`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`), and the Across
+router and receiver against the real SpokePools on Base, Arbitrum, Optimism and
+Ethereum (`BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `MAINNET_RPC_URL`).
+No real Across testnet deposit has been made yet; [docs/ACROSS.md](docs/ACROSS.md)
+says how. `npm run dev:fork` runs a hub and a spoke together, with mock Across pools
+and a local relayer between them; open the client with `?chain=spoke` to stake from
+the spoke.
 [docs/TESTNET.md](docs/TESTNET.md) walks through the same thing on two public
 testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.
 

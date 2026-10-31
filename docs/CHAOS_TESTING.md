@@ -82,6 +82,7 @@ Each of these was a failing seed before its fix.
 
 - Chain-side chaos: RPC errors and stale blocks under the bridge, `anvil_reorg`
   of `MatchCreated` or `MatchStarted`. That needs a fork run.
-- Cross-chain delivery faults: dropped, delayed or duplicated LayerZero
-  messages, and a reverting `lzReceive`, through `MockLayerZeroEndpoint`.
+- Cross-chain delivery faults: delayed or never-filled Across deposits, fills
+  with unreadable messages, and a receiver the escrow no longer trusts, through
+  `MockAcrossSpokePool`.
 - Network faults between the server and its RPC (Toxiproxy).
