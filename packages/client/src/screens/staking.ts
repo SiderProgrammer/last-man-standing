@@ -2,6 +2,7 @@ import { chainInfo, errorFirstLine } from '@lms/protocol';
 import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
+import * as stakingCalls from '../wallet/staking.js';
 
 /**
  * The staking panel: stake, unstake, withdraw, claim the ETH that staking
@@ -41,7 +42,7 @@ export async function renderStakingPanel(): Promise<void> {
     error = `Staking LMS happens on ${chainInfo(app.chainId).name}. Switch your wallet there to stake or vote.`;
   } else if (wallet && info) {
     try {
-      position = await wallet.stakingPosition(info.vault);
+      position = await stakingCalls.stakingPosition(wallet, info.vault);
     } catch (err) {
       position = null;
       // Almost always a wallet pointed at a chain the vault is not on.
@@ -54,7 +55,7 @@ export async function renderStakingPanel(): Promise<void> {
   playRewards = null;
   if (wallet && info?.rewards && !error) {
     try {
-      playRewards = await wallet.playRewards(info.rewards);
+      playRewards = await stakingCalls.playRewards(wallet, info.rewards);
     } catch (err) {
       // The stake read fine, so this is the distributor alone: show the rest.
       console.warn('[staking] could not read play rewards', err);
@@ -117,7 +118,7 @@ async function stake(): Promise<`0x${string}` | null> {
   if (!wallet || !vault) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to stake.');
-  return wallet.stake(vault, amount);
+  return stakingCalls.stake(wallet, vault, amount);
 }
 
 async function unstake(): Promise<`0x${string}` | null> {
@@ -127,21 +128,21 @@ async function unstake(): Promise<`0x${string}` | null> {
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
   // One sLMS is one LMS; more than the position unstakes all of it.
-  return wallet.requestUnstake(vault, amount < position.staked ? amount : position.staked);
+  return stakingCalls.requestUnstake(wallet, vault, amount < position.staked ? amount : position.staked);
 }
 
 async function claimRewards(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.claimRewards(vault);
+  return stakingCalls.claimRewards(wallet, vault);
 }
 
 async function claimPlayRewards(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const distributor = app.staking?.rewards;
   if (!wallet || !distributor || !playRewards || playRewards.epochs.length === 0) return null;
-  return wallet.claimPlayRewards(distributor, playRewards.epochs);
+  return stakingCalls.claimPlayRewards(wallet, distributor, playRewards.epochs);
 }
 
 async function delegate(): Promise<`0x${string}` | null> {
@@ -150,7 +151,7 @@ async function delegate(): Promise<`0x${string}` | null> {
   if (!wallet || !vault) return null;
   const parsed = parseDelegatee(dom.delegateTo.value);
   if (!parsed.ok) throw new Error(parsed.error);
-  const hash = await wallet.delegateVotes(vault, parsed.address);
+  const hash = await stakingCalls.delegateVotes(wallet, vault, parsed.address);
   dom.delegateTo.value = '';
   return hash;
 }
@@ -159,14 +160,14 @@ async function undelegate(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.delegateVotes(vault, wallet.address);
+  return stakingCalls.delegateVotes(wallet, vault, wallet.address);
 }
 
 async function withdraw(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.claimUnstaked(vault);
+  return stakingCalls.claimUnstaked(wallet, vault);
 }
 
 /**

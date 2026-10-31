@@ -1,6 +1,7 @@
 import { keccak256, toHex } from 'viem';
 import { commitMove, type BotDifficulty, type SealedMove } from '@lms/protocol';
-import { Prng, smartStrategy, type Match } from '@lms/engine';
+import type { Match } from '@lms/engine';
+import { Prng, smartStrategy } from '@lms/engine/bots';
 
 /**
  * Plays the seats the server fills with house bots.

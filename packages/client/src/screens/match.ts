@@ -20,7 +20,7 @@ import {
 } from '@lms/protocol';
 import { verifyTypedData } from 'viem';
 import { describeRound } from '@lms/engine';
-import { Arena } from '../arena/arena.js';
+import type { Arena } from '../arena/arena.js';
 import { app, dom, net, store, type AppState } from '../context.js';
 import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
@@ -47,6 +47,12 @@ import type { GrantedKey } from '../wallet/grant.js';
  */
 
 let arena: Arena | null = null;
+/**
+ * The arena while it mounts: its module (Pixi, most of the bundle) loads on
+ * demand, so the first renders of a match can arrive before it is ready, and
+ * they must share one canvas rather than each make their own.
+ */
+let mounting: Promise<Arena> | null = null;
 /** Ends the current replay hold. Owned here, not by the renderer, so the
  *  controls still unlock if the canvas never managed to mount. */
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -377,14 +383,19 @@ function renderTable(): void {
 }
 
 async function renderArena(state: PublicMatchState, you: number | null): Promise<void> {
-  const mounting = arena === null;
-  arena ??= await Arena.mount(dom.arena);
+  const fresh = arena === null;
+  arena ??= await (mounting ??= mountArena());
   arena.onPick ??= pickTarget;
   arena.render(state, you);
   renderMove();
   // Avatars for this match may have landed while the canvas was still being
   // created, in which case nothing has handed them to the arena yet.
-  if (mounting && app.avatars.length > 0) arena.setAvatars(app.avatars);
+  if (fresh && app.avatars.length > 0) arena.setAvatars(app.avatars);
+}
+
+async function mountArena(): Promise<Arena> {
+  const { Arena } = await import('../arena/arena.js');
+  return Arena.mount(dom.arena);
 }
 
 /** The phase heading, the move buttons, the lock-in button and the status line. */

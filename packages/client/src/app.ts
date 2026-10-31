@@ -1,15 +1,10 @@
 import { DEFAULT_SERVER_PORT, MatchPhase, type ServerMessage } from '@lms/protocol';
-import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { onCrossChain, onLobbies, onMatched, wireLobbyControls } from './screens/lobby.js';
-import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
-import {
-  governanceVisible,
-  renderGovernance,
-  wireGovernanceControls,
-} from './screens/governance.js';
+import { refreshStaking, wireStakingPanel } from './screens/stakingPanel.js';
+import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
   onAvatars,
   onDossier,
@@ -63,7 +58,12 @@ export function start(): void {
 
   // In parallel with everything below: the loading screen covers the page
   // until the arena's textures are cached, while the socket connects behind it.
-  void loadAssets(showLoadProgress).then(hideLoader);
+  // The loader is Pixi's, which the lobby never needs, so it is fetched as a
+  // chunk of its own; one that fails to arrive costs the textures, not the page.
+  void import('./assets/loader.js')
+    .then(({ loadAssets }) => loadAssets(showLoadProgress))
+    .catch((error: unknown) => console.warn('[assets] could not load the arena', error))
+    .then(hideLoader);
 
   net.on(onServerMessage);
   net.connect();
@@ -75,13 +75,13 @@ export function start(): void {
   wireResultControls(httpOrigin(SERVER_URL));
   wireHelpControls();
   wireHistoryControls();
-  wireStakingControls();
-  wireGovernanceControls(httpOrigin(SERVER_URL));
+  wireStakingPanel();
+  wireGovernanceNav(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
   // Keeps the unstake countdown and the share price current while the page is open.
   setInterval(() => {
-    if (app.wallet && app.staking) void renderStakingPanel();
-    if (governanceVisible()) void renderGovernance();
+    refreshStaking();
+    refreshGovernance();
   }, 30_000);
 }
 
@@ -115,8 +115,8 @@ function onServerMessage(message: ServerMessage): void {
       net.send({ type: 'lobbies' });
       requestHistory();
       void renderWinnings();
-      void renderStakingPanel();
-      if (governanceVisible()) void renderGovernance();
+      refreshStaking();
+      refreshGovernance();
       // A reconnect drops the socket, not the seat: ask to be re-attached to the
       // match that is still running on the server.
       if (app.match && app.match.phase !== MatchPhase.Finished) {

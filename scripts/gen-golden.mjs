@@ -30,7 +30,8 @@ import {
   historySeed,
   revealTypedData,
 } from '@lms/protocol';
-import { Match, Prng, readerStrategy, smartStrategy } from '@lms/engine';
+import { Match } from '@lms/engine';
+import { Prng, readerStrategy, smartStrategy } from '@lms/engine/bots';
 
 const CHAIN_ID = 84532;
 const OUT = new URL('../contracts/test/fixtures/golden/', import.meta.url);

@@ -11,6 +11,7 @@ import {
   type ProposalContext,
 } from '../ui/proposalBuilder.js';
 import { formatLms } from '../ui/staking.js';
+import * as governorCalls from '../wallet/governance.js';
 
 /**
  * The "New proposal" form on the governance screen.
@@ -54,7 +55,7 @@ export async function loadProposalContext(): Promise<{ power: bigint; threshold:
   const wallet = app.wallet;
   const staking = app.staking;
   if (!wallet || !staking?.governor) return null;
-  const result = await wallet.proposalContext(staking.governor, {
+  const result = await governorCalls.proposalContext(wallet, staking.governor, {
     vault: staking.vault,
     feeRouter: staking.feeRouter,
     escrow: app.escrow,
@@ -178,8 +179,7 @@ async function submit(): Promise<void> {
   dom.submitProposal.disabled = true;
   dom.proposalStatus.textContent = 'Submitting…';
   try {
-    const hash = await wallet.propose(
-      governor,
+    const hash = await governorCalls.propose(wallet, governor,
       draft,
       proposalDescription(dom.proposalTitle.value, dom.proposalBody.value),
     );

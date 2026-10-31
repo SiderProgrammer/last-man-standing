@@ -1,11 +1,13 @@
 import { VoteSupport, errorFirstLine, type ProposalSummary, type VoteSupportValue } from '@lms/protocol';
-import { app, dom, store } from '../context.js';
+import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { proposalCard, type ProposalCard, type ProposalLive } from '../ui/governance.js';
 import { knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
+import * as governorCalls from '../wallet/governance.js';
 
 /**
  * The governance screen: every proposal, its result so far, and the vote.
+ * Loaded the first time the screen opens (`governanceNav.ts`).
  *
  * The list comes from the game server, which indexes the governor's events;
  * everything that changes — state, tallies, quorum, this wallet's power — is
@@ -27,9 +29,6 @@ export function wireGovernanceControls(origin: string): void {
     void renderGovernance();
     setTimeout(() => void renderGovernance(), 16_000);
   });
-  dom.navGovernance.onclick = () => showGovernance(true);
-  dom.governanceBack.onclick = () => showGovernance(false);
-  store.subscribe(['staking'], renderGovernanceNav);
   // One listener for every card's buttons, which are rebuilt on each render.
   dom.proposalList.onclick = (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-step]');
@@ -37,23 +36,6 @@ export function wireGovernanceControls(origin: string): void {
     const proposal = proposals.find((p) => p.id === button.dataset.id);
     if (proposal) void act(proposal, button.dataset.step!, button);
   };
-}
-
-/** The entry point is only offered when the server indexes a governor. */
-export function renderGovernanceNav(): void {
-  dom.navGovernance.classList.toggle('hidden', !app.staking?.governor || !dom.matchScreen.classList.contains('hidden'));
-}
-
-export function governanceVisible(): boolean {
-  return !dom.governanceScreen.classList.contains('hidden');
-}
-
-function showGovernance(show: boolean): void {
-  dom.governanceScreen.classList.toggle('hidden', !show);
-  dom.lobbyScreen.classList.toggle('hidden', show);
-  dom.navGovernance.textContent = show ? 'Lobby' : 'Governance';
-  dom.navGovernance.onclick = () => showGovernance(!show);
-  if (show) void renderGovernance();
 }
 
 export async function renderGovernance(): Promise<void> {
@@ -79,7 +61,7 @@ export async function renderGovernance(): Promise<void> {
     let live: ProposalLive | null = null;
     if (wallet) {
       try {
-        live = await wallet.proposalLive(governor, vault, proposal);
+        live = await governorCalls.proposalLive(wallet, governor, vault, proposal);
       } catch (error) {
         // Almost always a wallet on the wrong chain; show the text regardless.
         readError = `Could not read results: ${errorFirstLine(error)}`;
@@ -169,11 +151,11 @@ async function act(proposal: ProposalSummary, step: string, origin: HTMLButtonEl
   try {
     let hash: `0x${string}`;
     if (step === 'queue' || step === 'execute') {
-      hash = await wallet.advanceProposal(governor, proposal, step);
+      hash = await governorCalls.advanceProposal(wallet, governor, proposal, step);
     } else {
       const reason =
         origin.closest('.proposal')?.querySelector<HTMLInputElement>('input[data-reason-for]')?.value ?? '';
-      hash = await wallet.castVote(governor, proposal.id, SUPPORT[step]!, reason);
+      hash = await governorCalls.castVote(wallet, governor, proposal.id, SUPPORT[step]!, reason);
     }
     await wallet.waitFor(hash);
     toast(step === 'queue' ? 'Queued in the timelock.' : step === 'execute' ? 'Executed.' : 'Vote cast.');

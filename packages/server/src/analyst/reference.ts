@@ -9,7 +9,9 @@ import {
   type Seat,
   type Transcript,
 } from '@lms/protocol';
-import { Match, Prng, strategyByName, type Strategy, type StrategyName } from '@lms/engine';
+import { Match } from '@lms/engine';
+import { Prng, type Strategy } from '@lms/engine/bots';
+import { strategyByName, type StrategyName } from '@lms/engine/sim';
 import type { ArchivedMatch } from '../lobby/store.js';
 
 /**

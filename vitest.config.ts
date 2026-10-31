@@ -1,13 +1,16 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
-const pkg = (name: string) =>
-  fileURLToPath(new URL(`./packages/${name}/src/index.ts`, import.meta.url));
+const pkg = (name: string, entry = 'index.ts') =>
+  fileURLToPath(new URL(`./packages/${name}/src/${entry}`, import.meta.url));
 
 export default defineConfig({
   resolve: {
     alias: {
       '@lms/protocol': pkg('protocol'),
+      // Before `@lms/engine`, which would otherwise claim these as its subpaths.
+      '@lms/engine/bots': pkg('engine', 'bots/strategy.ts'),
+      '@lms/engine/sim': pkg('engine', 'sim/simulate.ts'),
       '@lms/engine': pkg('engine'),
       '@lms/server': pkg('server'),
       '@lms/harness': pkg('harness'),
