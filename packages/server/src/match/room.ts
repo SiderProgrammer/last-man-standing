@@ -301,6 +301,11 @@ export class Room {
     this.clients.delete(client);
   }
 
+  /** Every client attached now. */
+  get attached(): ReadonlySet<Client> {
+    return this.clients;
+  }
+
   /**
    * @param hold The move behind `commitment`, if the player wants the server to
    *        reveal it for them. Checked against the commitment and against the

@@ -98,3 +98,36 @@ describe('opening a staked room', () => {
     expect(() => lobby.attach(setupWithBots(4, 'nobody').matchId, client)).toThrow(/unknown match/);
   });
 });
+
+describe('one table at a time', () => {
+  function lobby() {
+    return new Lobby({ archive: new MemoryArchive(), relayer: nullRelayer, commitMs: COMMIT_MS, revealMs: 5_000 });
+  }
+
+  it('leaves the room a client watched when it watches another', () => {
+    const rooms = lobby();
+    const first = rooms.adopt(setupWithBots(4, 'first'), [1, 2, 3], 0);
+    const second = rooms.adopt(setupWithBots(4, 'second'), [1, 2, 3], 0);
+    const watcher = new FakeClient(null);
+
+    rooms.attach(first.matchId, watcher, 0);
+    rooms.attach(second.matchId, watcher, 0);
+    expect(first.attached.has(watcher)).toBe(false);
+    expect(second.attached.has(watcher)).toBe(true);
+    expect(rooms.watchedBy(watcher)).toBe(second);
+
+    rooms.detach(watcher);
+    expect(second.attached.has(watcher)).toBe(false);
+    expect(rooms.watchedBy(watcher)).toBeNull();
+  });
+
+  it('finds the room a wallet sits in from the index, and forgets it once the room closes', () => {
+    const rooms = lobby();
+    const room = rooms.createPractice(HUMAN, 3, 0);
+    expect(rooms.roomFor(HUMAN)).toBe(room);
+    // A second practice room replaces the first, in the index too.
+    const next = rooms.createPractice(HUMAN, 3, 0);
+    expect(rooms.roomFor(HUMAN)).toBe(next);
+    expect(rooms.get(room.matchId)).toBeNull();
+  });
+});

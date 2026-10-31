@@ -113,6 +113,13 @@ export class Lobby {
   /** Clients holding a `watch` for a staked match whose room has not opened, by lower-cased id. */
   private readonly waiting = new Map<string, Set<Client>>();
   /**
+   * The one match each client watches, room or held watch, by lower-cased
+   * id: a client watches one table at a time, and leaves the last for the next.
+   */
+  private readonly watching = new Map<Client, string>();
+  /** The rooms each wallet holds a seat in, by lower-cased address and match id. */
+  private readonly seatsOf = new Map<string, Set<string>>();
+  /**
    * Each journalled room's writes, chained in order, by lower-cased id, and
    * how many entries it has. A failed write is logged; the chain goes on.
    */
@@ -152,12 +159,19 @@ export class Lobby {
     return this.rooms.get(matchId.toLowerCase()) ?? null;
   }
 
-  /** The room a wallet currently holds a seat in, if any. */
+  /** A room the wallet holds a seat in and is still being played, if any. */
   roomFor(address: `0x${string}`): Room | null {
-    for (const room of this.rooms.values()) {
-      if (room.seatOf(address) !== null && !room.finished) return room;
+    for (const key of this.seatsOf.get(address.toLowerCase()) ?? []) {
+      const room = this.rooms.get(key);
+      if (room && !room.finished) return room;
     }
     return null;
+  }
+
+  /** The match `client` watches, if any. */
+  watchedBy(client: Client): Room | null {
+    const key = this.watching.get(client);
+    return key ? (this.rooms.get(key) ?? null) : null;
   }
 
   /**
@@ -176,10 +190,7 @@ export class Lobby {
   ): Room {
     const owner = human.toLowerCase();
     const previous = this.practiceOf.get(owner);
-    if (previous) {
-      this.rooms.delete(previous);
-      this.practiceOf.delete(owner);
-    }
+    if (previous) this.close(previous);
     const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
     if (this.practiceOf.size >= ceiling) {
       throw new RequestError('BUSY', 'the server is at its practice-room limit; try again shortly');
@@ -250,7 +261,7 @@ export class Lobby {
       return null;
     }
     room.rebase(now);
-    this.rooms.set(key, room);
+    this.register(room);
     void this.decorate(room, setup);
     void this.brief(room, setup);
     console.log(`[lobby] resumed ${setup.matchId} at round ${room.match.round} from ${entries.length} journal entries`);
@@ -265,7 +276,9 @@ export class Lobby {
   /** A staked room has opened: attach the watches held for it, and tell its players. */
   private opened(room: Room, now: number): Room {
     const key = room.matchId.toLowerCase();
-    for (const client of this.waiting.get(key) ?? []) room.attach(client, now);
+    for (const client of this.waiting.get(key) ?? []) {
+      if (this.watching.get(client) === key) room.attach(client, now);
+    }
     this.waiting.delete(key);
     this.options.onLive?.(room);
     return room;
@@ -303,12 +316,7 @@ export class Lobby {
       }
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
-      if (room.finished && now > room.deadline + 60_000) {
-        this.rooms.delete(key);
-        for (const [owner, matchKey] of this.practiceOf) {
-          if (matchKey === key) this.practiceOf.delete(owner);
-        }
-      }
+      if (room.finished && now > room.deadline + 60_000) this.close(key);
     }
   }
 
@@ -323,8 +331,11 @@ export class Lobby {
     if (abandoned) {
       throw new RequestError('MATCH_ABANDONED', `this match will not be played: ${abandoned}; every stake is being refunded`);
     }
+    if (!room && !this.options.expects?.(matchId)) throw new RequestError('NOT_FOUND', 'unknown match');
+    // One table at a time: watching this one leaves the last.
+    if (this.watching.get(client) !== key) this.detach(client);
+    this.watching.set(client, key);
     if (!room) {
-      if (!this.options.expects?.(matchId)) throw new RequestError('NOT_FOUND', 'unknown match');
       let held = this.waiting.get(key);
       if (!held) this.waiting.set(key, (held = new Set()));
       held.add(client);
@@ -335,12 +346,40 @@ export class Lobby {
     return room;
   }
 
-  /** Drops every watch `client` holds, on rooms and on matches still to open. */
+  /** Drops the watch `client` holds, on a room or on a match still to open. */
   detach(client: Client): void {
-    for (const room of this.rooms.values()) room.detach(client);
-    for (const [key, held] of this.waiting) {
-      held.delete(client);
-      if (held.size === 0) this.waiting.delete(key);
+    const key = this.watching.get(client);
+    if (key === undefined) return;
+    this.watching.delete(client);
+    this.rooms.get(key)?.detach(client);
+    const held = this.waiting.get(key);
+    held?.delete(client);
+    if (held?.size === 0) this.waiting.delete(key);
+  }
+
+  /** Forgets a room and every index entry pointing at it. */
+  private close(key: string): void {
+    const room = this.rooms.get(key);
+    this.rooms.delete(key);
+    if (!room) return;
+    for (const seat of room.match.seats) {
+      const rooms = this.seatsOf.get(seat.address.toLowerCase());
+      rooms?.delete(key);
+      if (rooms?.size === 0) this.seatsOf.delete(seat.address.toLowerCase());
+    }
+    for (const client of room.attached) if (this.watching.get(client) === key) this.watching.delete(client);
+    for (const [owner, matchKey] of this.practiceOf) if (matchKey === key) this.practiceOf.delete(owner);
+  }
+
+  /** Puts a new room in the table, and its seats in the index. */
+  private register(room: Room): void {
+    const key = room.matchId.toLowerCase();
+    this.rooms.set(key, room);
+    for (const seat of room.match.seats) {
+      const address = seat.address.toLowerCase();
+      let rooms = this.seatsOf.get(address);
+      if (!rooms) this.seatsOf.set(address, (rooms = new Set()));
+      rooms.add(key);
     }
   }
 
@@ -356,7 +395,7 @@ export class Lobby {
     botDifficulty: BotDifficulty = 'normal',
   ): Room {
     const room = new Room(setup, this.roomOptions(setup, botSeats, staked, botDifficulty), now);
-    this.rooms.set(room.matchId.toLowerCase(), room);
+    this.register(room);
     void this.decorate(room, setup);
     if (staked) void this.brief(room, setup);
     return room;

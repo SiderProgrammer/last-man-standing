@@ -364,7 +364,7 @@ export class Gateway {
       }
       case 'practice': {
         const room = this.options.lobby.createPractice(address, message.bots ?? 3, now, message.difficulty);
-        room.attach(session);
+        this.options.lobby.attach(room.matchId, session, now);
         return;
       }
       case 'watch': {
@@ -411,7 +411,7 @@ export class Gateway {
       }
       case 'commit': {
         const grant = this.requireGrant(session);
-        const room = this.requireRoom(address);
+        const room = this.requireRoom(address, message.matchId);
         const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
         await this.requireKeySigned(grant, commitTypedData(this.options.chainId, place, message.commitment), message.signature);
         const hold = message.hold;
@@ -435,7 +435,7 @@ export class Gateway {
       }
       case 'reveal': {
         const grant = this.requireGrant(session);
-        const room = this.requireRoom(address);
+        const room = this.requireRoom(address, message.matchId);
         const move = { action: message.action, target: message.target, salt: message.salt };
         const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
         await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, move), message.signature);
@@ -608,9 +608,10 @@ export class Gateway {
     return archive;
   }
 
-  private requireRoom(address: `0x${string}`) {
-    const room = this.options.lobby.roomFor(address);
-    if (!room) throw new RequestError('NOT_SEATED', 'you are not in a live match');
+  /** The room a move names, by the match it is aimed at, if the wallet has a seat there. */
+  private requireRoom(address: `0x${string}`, matchId: `0x${string}`) {
+    const room = this.options.lobby.get(matchId);
+    if (!room || room.seatOf(address) === null) throw new RequestError('NOT_SEATED', 'you are not in a live match');
     return room;
   }
 

@@ -38,7 +38,7 @@ import type {
   SignatureVerifier,
   Socket,
 } from '@lms/server';
-import { lastOfType, transcriptOf, viewOf } from './helpers.js';
+import { lastOfType, setupWithBots, transcriptOf, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -768,6 +768,14 @@ describe('gateway session grants and signed moves', () => {
     // House bots sign nothing.
     expect(round?.proofs[1]).toEqual({ index: 1, commitSignature: null, revealSignature: null, receivedAt: null });
     expect(lobby.list()[0]?.grants.map((grant) => grant.grant.sessionKey)).toEqual([player.key.address]);
+  });
+
+  it('looks a move up by the match it names, and refuses one for a match the wallet does not sit in', async () => {
+    const { socket, lobby } = await seated();
+    const other = lobby.adopt(setupWithBots(4, 'elsewhere'), [1, 2, 3], 0);
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    await socket.deliver(await player.commit({ matchId: other.matchId, round: 1, seat: 0 }, move));
+    expect(socket.last('error')).toMatchObject({ code: 'NOT_SEATED' });
   });
 
   it('answers a commit with a receipt signed by the key hello named', async () => {
