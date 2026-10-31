@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Registry} from "./Registry.sol";
+import {AcrossBook} from "./AcrossBook.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
@@ -9,6 +10,11 @@ import {GameEscrow} from "../src/GameEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
+import {BridgeJoinReceiver} from "../src/periphery/BridgeJoinReceiver.sol";
+import {IAcrossSpokePool} from "../src/vendor/across/IAcrossSpokePool.sol";
+import {IWETH9} from "../src/vendor/across/IWETH9.sol";
+import {MockAcrossSpokePool} from "../src/mocks/MockAcrossSpokePool.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
@@ -61,10 +67,18 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      Sepolia (`VRF_COORDINATOR`, `VRF_KEY_HASH` override them). `ORACLE`
 ///      passes an adapter deployed separately instead.
 ///
+///      Cross-chain joins arrive through Across, at a `BridgeJoinReceiver`
+///      this script deploys, owned by the timelock and named in the config.
+///      The hub's SpokePool comes from `config/across.json` (`ACROSS_SPOKE_POOL`
+///      overrides it); with the mocks it is a `MockAcrossSpokePool`, which
+///      `npm run dev:fork` fills. A chain with neither gets no receiver, and
+///      so no cross-chain joins. Spokes come after, each with
+///      `DeploySpoke.s.sol` on its own chain; the hub needs no change for one.
+///
 ///      On a broadcast it writes `deployments/<chainId>.json` (see `Registry`),
 ///      which the server reads for its addresses. Add `--verify` to the
 ///      `forge script` command to verify every contract on the explorer.
-contract Deploy is Registry {
+contract Deploy is Registry, AcrossBook {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
     /// @dev The hub's home.
@@ -110,6 +124,11 @@ contract Deploy is Registry {
         SessionKeyDelegate sessionDelegate;
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
+        /// @dev Takes Across fills for cross-chain joins. Zero when this chain
+        ///      has no SpokePool.
+        BridgeJoinReceiver bridgeReceiver;
+        /// @dev The SpokePool it takes them from: Across's, or a mock.
+        address acrossSpokePool;
         TimelockController timelock;
         LmsToken lms;
         StakedLms stakedLms;
@@ -165,6 +184,7 @@ contract Deploy is Registry {
         _configure(deployment.config, deployment.oracle, deployment.guardian, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
+        _bridge(deployment);
         _wireVrf(deployment);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
@@ -195,6 +215,8 @@ contract Deploy is Registry {
         _entry("avatars", address(deployment.avatars));
         _entry("sessionDelegate", address(deployment.sessionDelegate));
         _entry("zapJoin", address(deployment.zap));
+        _entry("bridgeReceiver", address(deployment.bridgeReceiver));
+        _entry("acrossSpokePool", deployment.acrossSpokePool);
         _entry("timelock", address(deployment.timelock));
         _entry("lmsToken", address(deployment.lms));
         _entry("stakedLms", address(deployment.stakedLms));
@@ -382,6 +404,22 @@ contract Deploy is Registry {
         rules.stallGraceRounds = uint16(vm.parseJsonUint(json, ".stallGraceRounds"));
         rules.stallDamage = uint32(vm.parseJsonUint(json, ".stallDamage"));
         rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
+    }
+
+    /// @dev Owned by the timelock from the start: nothing about it needs
+    ///      setting up. The config names it while the deployer still owns the
+    ///      config.
+    function _bridge(Deployment memory deployment) private {
+        (address pool,) = _across(block.chainid);
+        pool = vm.envOr("ACROSS_SPOKE_POOL", pool);
+        if (pool == address(0)) {
+            if (!_mocks(block.chainid == LOCAL_CHAIN_ID)) return;
+            pool = address(new MockAcrossSpokePool(IWETH9(address(new MockWETH()))));
+        }
+        deployment.acrossSpokePool = pool;
+        deployment.bridgeReceiver =
+            new BridgeJoinReceiver(address(deployment.timelock), deployment.escrow, IAcrossSpokePool(pool));
+        deployment.config.setBridgeReceiver(address(deployment.bridgeReceiver));
     }
 
     /// @dev Only where Uniswap v4 is deployed. Ownerless, so there is nothing

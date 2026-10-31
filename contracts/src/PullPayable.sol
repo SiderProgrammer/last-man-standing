@@ -62,7 +62,7 @@ abstract contract PullPayable is ReentrancyGuardTransient {
         amount = _payOut(account, account);
     }
 
-    function _payOut(address account, address to) private returns (uint256 amount) {
+    function _payOut(address account, address to) internal returns (uint256 amount) {
         amount = withdrawable[account];
         if (amount == 0) revert NothingToWithdraw();
 

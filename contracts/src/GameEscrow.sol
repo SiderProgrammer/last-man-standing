@@ -457,6 +457,15 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         if (extra > 0) _credit(player, extra);
     }
 
+    /// @notice Pays `account`'s whole balance to the bridge receiver, which
+    ///         bridges it to the chain and address the account signed for.
+    /// @dev The receiver checks that signature; this only checks the caller.
+    ///      Like every withdrawal, it works while paused.
+    function withdrawToBridge(address account) external nonReentrant returns (uint256 amount) {
+        if (msg.sender != config.bridgeReceiver()) revert NotBridgeReceiver(msg.sender);
+        amount = _payOut(account, msg.sender);
+    }
+
     /// @notice Closes the lobby and asks the oracle for a seed.
     /// @dev Permissionless: anyone may close a full lobby, and anyone may close
     ///      an under-filled but quorate one once the join window has expired.

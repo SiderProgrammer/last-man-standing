@@ -274,8 +274,9 @@ contract ProtocolConfig is Ownable2Step {
     }
 
     /// @notice Sets, or with zero removes, the bridge receiver.
-    /// @dev Whoever this names decides which player a bridged stake seats, so
-    ///      it is a contract the timelock has reviewed, never an account.
+    /// @dev Whoever this names decides which player a bridged stake seats, and
+    ///      can take any player's balance out through `GameEscrow.withdrawToBridge`,
+    ///      so it is a contract the timelock has reviewed, never an account.
     function setBridgeReceiver(address receiver) external onlyOwner {
         emit BridgeReceiverUpdated(bridgeReceiver, receiver);
         bridgeReceiver = receiver;
