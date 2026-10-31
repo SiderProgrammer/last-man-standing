@@ -3,12 +3,14 @@ import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AUTH_PREFIX,
   Action,
+  applyDelta,
   legalActions,
   MatchPhase,
   commitMove,
   commitTypedData,
   grantTypedData,
   revealTypedData,
+  withRound,
   type ActionValue,
   type ClientMessage,
   type PublicMatchState,
@@ -123,6 +125,9 @@ export class BotClient {
   /** The match this bot is seated in, until it finishes. */
   private matchId: `0x${string}` | null = null;
   private pending: Pending | null = null;
+  /** The match as the last `state`, every `delta` and every `round` since have it. */
+  private state: PublicMatchState | null = null;
+  private you: number | null = null;
   /** Round a commit is already scheduled for, so repeated `state` frames do not stack timers. */
   private thinkingFor: string | null = null;
   private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'signer'>> &
@@ -225,9 +230,19 @@ export class BotClient {
         return;
       }
       case 'state':
+        this.state = message.state;
+        this.you = message.you;
         this.onState(message.state, message.you);
         return;
+      case 'delta': {
+        // Folded into the last full state; one for another match is stale.
+        if (!this.state || this.state.matchId !== message.delta.matchId) return;
+        this.state = applyDelta(this.state, message.delta);
+        this.onState(this.state, this.you);
+        return;
+      }
       case 'round': {
+        if (this.state) this.state = withRound(this.state, message.record);
         const pending = this.pending;
         const acted = pending && pending.round === message.record.round ? pending : null;
         this.emit({

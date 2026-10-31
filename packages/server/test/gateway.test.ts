@@ -22,6 +22,7 @@ import {
   Gateway,
   HISTORY_PAGE,
   Lobby,
+  Matchmaker,
   MemoryArchive,
   SessionRelay,
   nullRelayer,
@@ -37,7 +38,7 @@ import type {
   SignatureVerifier,
   Socket,
 } from '@lms/server';
-import { lastOfType, transcriptOf } from './helpers.js';
+import { lastOfType, setupWithBots, transcriptOf, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -106,6 +107,8 @@ function openLobby(): LobbyInfo {
     joinDeadline: 1_800_000_000,
     status: 'open',
     players: [{ address: account.address, chainId: 11155111 }],
+    cancellableAt: 1_800_000_600,
+    matchmade: false,
   };
 }
 
@@ -120,6 +123,8 @@ interface Extras {
   archive: MemoryArchive;
   spokes: SpokeInfo[];
   receipts: ReceiptSigner;
+  practiceReceipts: ReceiptSigner;
+  matchmaker: Matchmaker;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -143,6 +148,8 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.analyst ? { analyst: extras.analyst } : {}),
     ...(extras.archive ? { archive: extras.archive } : {}),
     ...(extras.receipts ? { receipts: extras.receipts } : {}),
+    ...(extras.practiceReceipts ? { practiceReceipts: extras.practiceReceipts } : {}),
+    ...(extras.matchmaker ? { matchmaker: extras.matchmaker } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -627,19 +634,73 @@ describe('gateway match history', () => {
   });
 });
 
+describe('gateway matchmaking', () => {
+  const STAKE = '1000000000000000';
+  function queueing() {
+    const matchmaker = new Matchmaker({
+      port: { create: async () => `0x${'12'.repeat(32)}` },
+      tiers: [{ stake: STAKE, seats: 4 }],
+      minSeats: 4,
+      notify: (player, message) => gateway.notify(player, message),
+    });
+    const { socket, gateway } = harness({ matchmaker });
+    return { socket, matchmaker };
+  }
+
+  it('lists the tiers it runs in hello, and none without a matchmaker', () => {
+    expect(queueing().socket.last('hello')?.matchmaking).toEqual([{ stake: STAKE, seats: 4 }]);
+    expect(harness().socket.last('hello')?.matchmaking).toEqual([]);
+  });
+
+  it('queues the wallet, tells it how many are waiting, and takes it out when asked', async () => {
+    const { socket, matchmaker } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    expect(socket.last('queued')).toEqual({ type: 'queued', stake: STAKE, seats: 4, waiting: 1 });
+
+    await socket.deliver({ type: 'dequeue' });
+    expect(socket.last('dequeued')).toEqual({ type: 'dequeued' });
+    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+  });
+
+  it('takes the wallet out of the queue when its socket closes', async () => {
+    const { socket, matchmaker } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    socket.close();
+    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+  });
+
+  it('refuses a tier it does not run, and a queue on a server with none', async () => {
+    const { socket } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: '5', seats: 4 });
+    expect(socket.last('error')?.code).toBe('BAD_QUEUE');
+
+    const plain = harness().socket;
+    await login(plain);
+    await plain.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    expect(plain.last('error')?.code).toBe('UNAVAILABLE');
+  });
+});
+
 describe('gateway session grants and signed moves', () => {
   const player = new TestPlayer('gateway', 11155111);
   const nonceOf = (socket: FakeSocket) => socket.last('hello')?.nonce ?? '';
   const SALT = `0x${'5a'.repeat(32)}` as const;
 
   const RECEIPT_KEY = `0x${'7e'.repeat(32)}` as const;
+  const ATTESTOR_KEY = `0x${'7f'.repeat(32)}` as const;
 
   /** Logs `player` in with a grant and opens a practice room; returns the seat's place in round 1. */
   async function seated() {
-    const { socket, lobby } = harness({ receipts: receiptSigner(RECEIPT_KEY, 11155111) });
+    const { socket, lobby } = harness({
+      receipts: receiptSigner(ATTESTOR_KEY, 11155111),
+      practiceReceipts: receiptSigner(RECEIPT_KEY, 11155111),
+    });
     await socket.deliver(await player.auth(nonceOf(socket)));
     await socket.deliver({ type: 'practice', bots: 3 });
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     return { socket, lobby, place: { matchId: state.matchId, round: state.round, seat: 0 } };
   }
@@ -686,7 +747,7 @@ describe('gateway session grants and signed moves', () => {
     const { socket } = harness();
     await login(socket);
     await socket.deliver({ type: 'practice', bots: 3 });
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     const place = { matchId: state.matchId, round: state.round, seat: 0 };
     await socket.deliver(await new TestPlayer('anyone', 11155111).commit(place, { action: 2, target: 0, salt: SALT }));
@@ -709,9 +770,19 @@ describe('gateway session grants and signed moves', () => {
     expect(lobby.list()[0]?.grants.map((grant) => grant.grant.sessionKey)).toEqual([player.key.address]);
   });
 
+  it('looks a move up by the match it names, and refuses one for a match the wallet does not sit in', async () => {
+    const { socket, lobby } = await seated();
+    const other = lobby.adopt(setupWithBots(4, 'elsewhere'), [1, 2, 3], 0);
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+    await socket.deliver(await player.commit({ matchId: other.matchId, round: 1, seat: 0 }, move));
+    expect(socket.last('error')).toMatchObject({ code: 'NOT_SEATED' });
+  });
+
   it('answers a commit with a receipt signed by the key hello named', async () => {
     const { socket } = await seated();
-    const signer = socket.last('hello')?.receiptSigner;
+    // A practice room: signed by the practice key, never the attestor's.
+    const signer = socket.last('hello')?.practiceReceiptSigner;
+    expect(signer).not.toBe(socket.last('hello')?.receiptSigner);
     expect(signer).toBe(privateKeyToAccount(RECEIPT_KEY).address);
 
     const move = { action: Action.Guard, target: 0, salt: SALT } as const;
@@ -728,7 +799,7 @@ describe('gateway session grants and signed moves', () => {
     expect(valid).toBe(true);
 
     // The bots had committed, so the reveal is open, and the whole set is public.
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     expect(state?.commitments.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
     expect(state?.commitments[0]?.commitment).toBe(commit.commitment);
 
@@ -746,7 +817,7 @@ describe('gateway session grants and signed moves', () => {
 
     await socket.deliver(await player.commit({ ...place(socket), seat: 1 }, move));
     expect(socket.last('error')?.code).toBe('BAD_SIGNATURE');
-    expect(socket.last('state')?.state.committed).not.toContain(0);
+    expect(viewOf(socket.sent)?.state.committed).not.toContain(0);
   });
 
   it('refuses a held move whose reveal signature does not match it', async () => {
@@ -759,7 +830,7 @@ describe('gateway session grants and signed moves', () => {
   });
 
   function place(socket: FakeSocket) {
-    const state = socket.last('state')?.state;
+    const state = viewOf(socket.sent)?.state;
     if (!state) throw new Error('no match state');
     return { matchId: state.matchId, round: state.round, seat: 0 };
   }

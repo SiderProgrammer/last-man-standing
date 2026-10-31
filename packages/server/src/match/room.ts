@@ -1,6 +1,7 @@
 import {
   MatchPhase,
   addressKey,
+  matchDelta,
   commitMove,
   errorMessage,
   type AvatarEntry,
@@ -21,6 +22,7 @@ import {
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
 import { RequestError } from '../errors.js';
+import type { JournalEntry } from './journal.js';
 
 /** Anything the room can push a message to. The gateway supplies a WebSocket. */
 export interface Client {
@@ -59,6 +61,20 @@ export interface RoomOptions {
   chainId?: number;
   /** The key that signs commit receipts, recorded in the transcript. */
   receiptSigner?: `0x${string}` | null;
+  /** Whether the room holds escrowed stakes. Defaults to false: a practice room. */
+  staked?: boolean;
+  /**
+   * The ready phase: round 1's clock starts once every player's seat has a
+   * client attached, or this long after the room opens, whichever is first.
+   * Zero (the default) starts it at once.
+   */
+  readyMs?: number;
+  /**
+   * Told everything that moves the room on, as it happens, for
+   * `Room.replay` to rebuild it from after a restart. Synchronous: the
+   * caller queues the write.
+   */
+  journal?: (entry: JournalEntry) => void;
   onFinished?: MatchFinished;
 }
 
@@ -90,6 +106,14 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  /** Round 1's clock is running: everyone arrived, or the ready phase ran out. */
+  private started: boolean;
+  /** When the ready phase runs out. */
+  private readyUntil: number;
+  /** Where entries go; off while a journal is being replayed. */
+  private journal: ((entry: JournalEntry) => void) | undefined;
+  /** The latest time the room was driven at, which `msRemaining` is counted from. */
+  private clock: number;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
   /** The reveal signature that came with each held move, by seat. */
@@ -113,8 +137,92 @@ export class Room {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
     }
 
-    this.deadlineAt = now + options.commitMs;
+    this.clock = now;
+    this.readyUntil = now + (options.readyMs ?? 0);
+    this.started = this.readyUntil <= now || this.absent().length === 0;
+    this.deadlineAt = (this.started ? now : this.readyUntil) + options.commitMs;
     this.bots.commit(this.match);
+    this.journal = options.journal;
+    this.journal?.({ kind: 'open', at: now });
+  }
+
+  /**
+   * Rebuilds a room from its journal: the same setup and options, and every
+   * entry applied in order with its own timestamp, which brings it to the
+   * state it was in when the last entry was written. Throws on a journal
+   * that does not replay.
+   */
+  static replay(setup: MatchSetup, options: RoomOptions, entries: readonly JournalEntry[]): Room {
+    const [first, ...rest] = entries;
+    if (first?.kind !== 'open') throw new Error('the journal does not begin with the room opening');
+    const quiet: RoomOptions = { ...options };
+    delete quiet.journal;
+    const room = new Room(setup, quiet, first.at);
+    for (const entry of rest) room.apply(entry);
+    room.journal = options.journal;
+    return room;
+  }
+
+  private apply(entry: JournalEntry): void {
+    const address = (seat: number) => {
+      const found = this.match.seats[seat]?.address;
+      if (!found) throw new Error(`the journal names seat ${seat}, which this match does not have`);
+      return found;
+    };
+    switch (entry.kind) {
+      case 'open':
+        throw new Error('the journal opens the room twice');
+      case 'commit':
+        this.submitCommit(address(entry.seat), entry.commitment, entry.at, entry.hold, entry.aim, entry.proof);
+        return;
+      case 'reveal':
+        this.submitReveal(address(entry.seat), entry.move, entry.at, entry.aim, entry.proof);
+        return;
+      case 'tick':
+        this.tick(entry.at);
+        return;
+      case 'start':
+        this.start(entry.at);
+        return;
+      case 'rebase':
+        this.rebase(entry.at);
+        return;
+    }
+  }
+
+  /**
+   * Gives the players their clock back after a restart: a fresh ready phase
+   * for them to reconnect in, then the window the room was in, in full. The
+   * round, its commitments and its reveals are as they were.
+   */
+  rebase(now: number): void {
+    if (this.match.finished) return;
+    this.started = false;
+    this.readyUntil = now + (this.options.readyMs ?? 0);
+    this.replayUntil = 0;
+    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+    this.deadlineAt = this.readyUntil + window;
+    this.journal?.({ kind: 'rebase', at: now });
+  }
+
+  /** Seats whose player has no client attached yet: the ready phase waits on these. Empty once round 1 has started. */
+  absent(): number[] {
+    if (this.started) return [];
+    const here = new Set<number>();
+    for (const client of this.clients) {
+      const seat = client.address ? this.seatOf(client.address) : null;
+      if (seat !== null) here.add(seat);
+    }
+    return this.match.seats.map((seat) => seat.index).filter((index) => !this.bots.has(index) && !here.has(index));
+  }
+
+  /** Starts the clock now, everyone being here. */
+  private start(now: number): void {
+    this.started = true;
+    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+    this.deadlineAt = Math.min(this.deadlineAt, now + window);
+    this.journal?.({ kind: 'start', at: now });
+    this.broadcastState();
   }
 
   /** Tells everyone watching how the match settled on-chain. */
@@ -129,6 +237,11 @@ export class Room {
 
   get finished(): boolean {
     return this.match.finished;
+  }
+
+  /** True for a match played for escrowed stakes; false for practice. */
+  get staked(): boolean {
+    return this.options.staked ?? false;
   }
 
   get deadline(): number {
@@ -149,9 +262,13 @@ export class Room {
     return this.seatByAddress.get(addressKey(address)) ?? null;
   }
 
-  attach(client: Client): void {
+  attach(client: Client, now: number = Date.now()): void {
+    this.clock = now;
     this.clients.add(client);
     this.pushState(client);
+    // While the table fills, everyone sees who is still to come.
+    if (!this.started && this.absent().length === 0) this.start(now);
+    else if (!this.started) this.broadcastState();
     if (this.avatars.length > 0) this.pushAvatars(client);
     if (this.dossier.length > 0) this.pushDossier(client);
   }
@@ -184,6 +301,11 @@ export class Room {
     this.clients.delete(client);
   }
 
+  /** Every client attached now. */
+  get attached(): ReadonlySet<Client> {
+    return this.clients;
+  }
+
   /**
    * @param hold The move behind `commitment`, if the player wants the server to
    *        reveal it for them. Checked against the commitment and against the
@@ -203,6 +325,7 @@ export class Room {
   ): CommitReceipt {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    this.clock = now;
     const round = this.match.round;
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
@@ -212,6 +335,15 @@ export class Room {
       this.match.assertPlayable(seat, hold);
     }
     this.match.submitCommit(seat, commitment);
+    this.journal?.({
+      kind: 'commit',
+      at: now,
+      seat,
+      commitment,
+      aim: { matchId: this.matchId, round },
+      ...(hold ? { hold } : {}),
+      ...(proof ? { proof } : {}),
+    });
     this.receivedAt.set(seat, now);
     if (hold) this.held.set(seat, hold);
     if (proof) {
@@ -235,7 +367,10 @@ export class Room {
   ): void {
     const seat = this.requireSeat(address);
     this.requireAim(aim);
+    this.clock = now;
+    const round = this.match.round;
     this.match.submitReveal(seat, move);
+    this.journal?.({ kind: 'reveal', at: now, seat, move, aim: { matchId: this.matchId, round }, ...(proof ? { proof } : {}) });
     if (proof) {
       this.recordGrant(proof.grant);
       this.revealSignatures.set(seat, proof.signature);
@@ -247,6 +382,23 @@ export class Room {
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
+    this.clock = now;
+    const before = this.position();
+    this.advance(now);
+    if (this.position() !== before) this.journal?.({ kind: 'tick', at: now });
+  }
+
+  /** Where the room is: what a tick that moved it changes. */
+  private position(): string {
+    return `${this.started}:${this.match.round}:${this.match.phase}`;
+  }
+
+  private advance(now: number): void {
+    if (!this.started && now >= this.readyUntil) {
+      // Not everyone came: play starts without them, on the clock it was always going to.
+      this.started = true;
+      this.broadcastState();
+    }
     // A table that finished committing during the replay hold was waiting only
     // on the hold, not on the clock.
     if (
@@ -383,22 +535,36 @@ export class Room {
     };
   }
 
+  /**
+   * Tells every client what changed. One object for the whole table, so the
+   * gateway serialises it once however many sockets it goes to.
+   */
   private broadcastState(): void {
-    // Computed once: only `you` differs between the clients.
-    const state = this.match.publicState();
-    for (const client of this.clients) this.pushState(client, state);
+    const message = {
+      type: 'delta',
+      delta: matchDelta(this.match.publicState()),
+      msRemaining: this.remaining(),
+      waitingFor: this.absent(),
+    } as const;
+    for (const client of this.clients) client.send(message);
+  }
+
+  private remaining(): number {
+    return Math.max(0, this.deadlineAt - this.clock);
   }
 
   private pushAvatars(client: Client): void {
     client.send({ type: 'avatars', matchId: this.matchId, entries: this.avatars });
   }
 
-  private pushState(client: Client, state: PublicMatchState = this.match.publicState()): void {
+  /** The whole match, for a client that has just attached. */
+  private pushState(client: Client): void {
     client.send({
       type: 'state',
-      state,
+      state: this.match.publicState(),
       you: client.address ? this.seatOf(client.address) : null,
-      deadline: this.deadlineAt,
+      msRemaining: this.remaining(),
+      waitingFor: this.absent(),
     });
   }
 }

@@ -156,8 +156,9 @@ contract RewardsDistributorTest is Fixtures {
     ///      full refund. Unsettled seats count for nothing.
     function test_claim_aLobbyThatNeverPlaysEarnsNothing() public {
         _playTwoMatches();
-        vm.prank(players[7]);
-        bytes32 unfillable = escrow.createMatch(STAKE, 8);
+        address[] memory roster = new address[](1);
+        roster[0] = players[7];
+        bytes32 unfillable = _createMatchmade(8, roster);
         vm.prank(players[7]);
         escrow.join{value: STAKE}(unfillable);
 
@@ -172,10 +173,10 @@ contract RewardsDistributorTest is Fixtures {
     /// @dev A match still in play when its week ends counts in the week it
     ///      settles: the ended week's totals, and so its claims, never move.
     function test_claim_aMatchSettlingAfterTheWeekEndsCountsInTheNext() public {
-        bytes32 early = _createAndFill(4);
+        bytes32 early = _createMatchmadeAndFill(4);
         _lockAndSeed(early, bytes32(uint256(1)));
         _settleAndFinalize(early);
-        bytes32 late = _createAndFill(4);
+        bytes32 late = _createMatchmadeAndFill(4);
         _lockAndSeed(late, bytes32(uint256(2)));
 
         vm.warp(rewards.claimableFrom(0));
@@ -388,8 +389,7 @@ contract RewardsDistributorTest is Fixtures {
 
         for (uint256 m = 0; m < matches; ++m) {
             uint16 seats = uint16(4 + (uint256(keccak256(abi.encode(seed, m))) % 5));
-            vm.prank(players[0]);
-            bytes32 matchId = escrow.createMatch(STAKE, seats);
+            bytes32 matchId = _createMatchmade(seats, _firstPlayers(8));
             for (uint16 s = 0; s < seats; ++s) {
                 // A rotating window of players, so their shares differ.
                 address player = players[(m + s) % 8];
@@ -415,12 +415,11 @@ contract RewardsDistributorTest is Fixtures {
 
     /// @dev Plays and settles two matches: players 0–3, then 0 and 4–6.
     function _playTwoMatches() private {
-        bytes32 first = _createAndFill(4);
+        bytes32 first = _createMatchmadeAndFill(4);
         _lockAndSeed(first, bytes32(uint256(1)));
         _settleAndFinalize(first);
 
-        vm.prank(players[0]);
-        bytes32 second = escrow.createMatch(STAKE, 4);
+        bytes32 second = _createMatchmade(4, _firstPlayers(8));
         vm.prank(players[0]);
         escrow.join{value: STAKE}(second);
         for (uint256 i = 4; i < 7; ++i) {

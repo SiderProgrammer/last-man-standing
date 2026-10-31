@@ -221,20 +221,34 @@ instead of drifting silently.
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
 | **`match/`** | **One live match** |
-| `match/room.ts` | Phases, the round clock, client fan-out, held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop), each round's signatures and receive times, and the transcript it hands the lobby at the end |
+| `match/room.ts` | Phases, the round clock and the ready phase before round 1, client fan-out (the whole state on attach, deltas after), held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop), each round's signatures and receive times, the journal entries a restart replays, and the transcript it hands the lobby at the end |
+| `match/journal.ts` | `RoomJournal`: a staked room's commits, reveals and clock moves, in order, in memory or Postgres |
 | **`bots/`** | **The house players** |
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
-| `lobby/lobby.ts` | Room registry; creates practice lobbies, adopts on-chain matches, finalises results; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
-| `lobby/store.ts` | Match archive, transcripts included: in-memory by default, Postgres when `DATABASE_URL` is set |
+| `lobby/lobby.ts` | Room registry, indexed by match, by watching client and by seated wallet; creates practice lobbies, adopts on-chain matches, resumes them from their journal after a restart, holds a watch for a lobby still to open; finalises results through a retry queue; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
+| `lobby/matchmaker.ts` | `Matchmaker`: a queue per tier, and a matchmade lobby opened with its roster once a tier has a table |
+| `lobby/store.ts` | Match archive, transcripts included: in memory, or the Postgres repository when `DATABASE_URL` is set |
+| `lobby/styles.ts` | Play styles by wallet, in memory or the Postgres repository |
 | `lobby/transcripts.ts` | `GET /transcripts/<hash>`: a staked match's transcript, by the hash the escrow stored |
+| **`db/`** | **Postgres** |
+| `db/database.ts` | The one pool, transactions, the migration runner, and the lock that keeps a second server off the database |
+| `db/migrations.ts` | The schema, as an append-only list of migrations |
+| `db/storage.ts` | Every repository over one database, or all in memory |
+| **`attestor/`** | **The attestor's own process** |
+| `attestor/service.ts` | Replays a transcript, checks it against the escrow, and only then signs its result; signs aborts and receipts |
+| `attestor/process.ts` | The child process that holds the attestor key and nothing else |
+| `attestor/remote.ts` | The server's side: forks the child, forwards calls, restarts it if it dies |
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, login under a session grant, move-signature checks, commit receipts, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
 | **`chain/`** | **Everything that talks to a chain** |
 | `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
-| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it |
-| `chain/attestor.ts` | Signs the EIP-712 result, packs signatures, submits `settle`; signs commit receipts |
+| `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it, reading every tracked match in one Multicall3 batch |
+| `chain/attestor.ts` | The relayer: the attestor's signature, sent by the keeper; packs signatures |
+| `chain/txSender.ts` | `TxSender`, one per key: ordered nonces, one transaction in flight per action, receipts, and replacement of a stuck one |
+| `chain/signer.ts` | `Signer`, the interface every key signs through, where a KMS would plug in |
+| `chain/logs.ts` | The one chunked `getLogs` scan, and the confirmation depth every scan stops at |
 | `chain/sessionRelay.ts` | Submits and pays for joins and withdrawals a player's session key signed, under a daily quota |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
@@ -276,14 +290,23 @@ seed exists, and cannot choose moves against a roll it already knows. Locking a 
 expired lobby is permissionless; the keeper key is a convenience, and if it is offline
 any player can lock the lobby themselves.
 
-**Restarts.** A room lives only in memory, so a restart loses every match in progress.
-Those matches are not resumed or replayed from round one — players have seen rounds and
-know moves that a fresh room would deal again. Instead, on its first poll the bridge
-treats every match that is already `Live` as abandoned: it has the attestor quorum sign
-`MatchAbort` and call `GameEscrow.abortMatch`, which refunds every seat at once, and it
-tells a player who reconnects that the match was cancelled. If no attestor key is
-configured, the match is refunded through the permissionless `cancelMatch` once its
-settlement deadline passes. Practice rooms are simply gone.
+**Restarts.** A staked room journals everything that moves it on — every commit and
+reveal with its signatures, and every move its clock makes — and a commit's receipt is
+not sent until its entry is written. The bridge does nothing until one poll has read
+every tracked match, and the matches live at that point are the ones the previous
+process was playing. Each is replayed from its journal into a fresh room: the same
+round, the same commitments and so the same rolls, with a new ready phase for its players
+to reconnect in and the window it was in given back in full. A restart cannot re-roll a
+round. Only a match with no journal (an in-memory server) or one that does not replay is
+abandoned: the attestor signs `MatchAbort` and the keeper calls `GameEscrow.abortMatch`,
+refunding every seat at once, or the permissionless `cancelMatch` does at the settlement
+deadline. Practice rooms are simply gone.
+
+**One instance.** Rooms, the matchmaking queue and every rate limit live in the
+process, and each key's transactions go out of one `TxSender` in nonce order. A second
+instance would split the rooms and the queue, double the limits and race for nonces, so
+the server runs as one: with Postgres it takes an advisory lock on the database at
+start, and a second server is refused.
 
 ### `packages/client` — the player's view
 
@@ -677,9 +700,15 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |
 | `ESCROW_ADDRESS` | zero | `GameEscrow` to watch and settle against |
-| `ATTESTOR_PK` | — | Attestor key; without it results are archived but not submitted |
-| `KEEPER_PK` | `ATTESTOR_PK` | Pays for the permissionless `lockMatch` call |
-| `DATABASE_URL` | — | Postgres (e.g. Neon) for the archive, analysis cache and play styles; falls back to in-memory |
+| `ATTESTOR_PK` | — | Attestor key, held by its own process; signs results, aborts and receipts, sends nothing |
+| `KEEPER_PK` | — | Sends lock, settle, abort, finalise, cancel and harvest. Without it, nothing reaches the chain |
+| `MATCHMAKER_PK` | — | Opens matchmade lobbies; without it there is no queue |
+| `MATCHMAKING_TIERS` | 0.001 ETH × 4 and × 8, 0.01 ETH × 4 | The queues, as JSON |
+| `MATCHMAKING_FILL_AFTER_MS` | `30000` | A short table opens once its first player has waited this long |
+| `READY_MS` | `30000` | How long a staked room waits for every player before round 1's clock starts |
+| `CONFIRMATIONS` | `3` | Blocks behind the head every log scan stops at |
+| `TRUSTED_PROXY_HOPS` | `0` | Proxies of your own in front of the server; `X-Forwarded-For` is ignored at 0 |
+| `DATABASE_URL` | — | Postgres (e.g. Neon) for the archive, analysis cache, play styles and room journals. Unreachable stops the server; blank or `ARCHIVE=memory` keeps everything in memory |
 | `SESSION_DELEGATE` | registry | `SessionKeyDelegate` for one-click play. Offered only with `RPC_URL`, an escrow and `SESSION_RELAYER_PK` |
 | `SESSION_RELAYER_PK` | — | Pays relayed gas. Its own key, holding only gas money |
 | `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |

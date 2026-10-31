@@ -21,7 +21,7 @@ import {
   type Pingable,
   type Socket,
 } from '@lms/server';
-import { lastOfType } from './helpers.js';
+import { lastOfType, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'33'.repeat(32)}`);
@@ -358,12 +358,12 @@ describe('message limits', () => {
 
     // The general bucket is empty; a commit still reaches the room.
     const errors = socket.sent.filter((message) => message.type === 'error').length;
-    const live = lastOfType(socket.sent, 'state')?.state;
+    const live = viewOf(socket.sent)?.state;
     if (!live) throw new Error('no match state yet');
     const place = { matchId: live.matchId, round: live.round, seat: 0 };
     await socket.deliver(await player.commit(place, { action: 1, target: 1, salt: BYTES32 }));
     expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(errors);
-    expect(lastOfType(socket.sent, 'state')?.state.committed).toContain(0);
+    expect(viewOf(socket.sent)?.state.committed).toContain(0);
   });
 });
 
@@ -443,14 +443,27 @@ describe('heartbeat', () => {
 describe('peer identification', () => {
   const request = (headers: Record<string, string>) => ({ headers, socket: { remoteAddress: '1.2.3.4' } });
 
-  it('ignores X-Forwarded-For unless the proxy is trusted', () => {
-    const spoofed = request({ 'x-forwarded-for': '9.9.9.9' });
-    expect(peerFrom(spoofed, false).ip).toBe('1.2.3.4');
-    expect(peerFrom(request({ 'x-forwarded-for': '5.5.5.5, 10.0.0.1' }), true).ip).toBe('5.5.5.5');
-    expect(peerFrom(request({}), true).ip).toBe('1.2.3.4');
+  it('ignores X-Forwarded-For with no trusted proxy', () => {
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9' })).ip).toBe('1.2.3.4');
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9' }), 0).ip).toBe('1.2.3.4');
+  });
+
+  it('takes the right-most entry no trusted proxy wrote, never what the client sent before it', () => {
+    // One proxy (1.2.3.4) took the connection from 5.5.5.5; the client claimed 9.9.9.9 itself.
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9, 5.5.5.5' }), 1).ip).toBe('5.5.5.5');
+    // Two: a CDN appended the client, the load balancer appended the CDN.
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9, 5.5.5.5, 10.0.0.7' }), 2).ip).toBe('5.5.5.5');
+    // Several headers read as one chain.
+    const split = { headers: { 'x-forwarded-for': ['9.9.9.9', '5.5.5.5'] }, socket: { remoteAddress: '1.2.3.4' } };
+    expect(peerFrom(split, 1).ip).toBe('5.5.5.5');
+  });
+
+  it('falls back to the left-most address when the chain is shorter than the trusted hops', () => {
+    expect(peerFrom(request({}), 1).ip).toBe('1.2.3.4');
+    expect(peerFrom(request({ 'x-forwarded-for': '5.5.5.5' }), 3).ip).toBe('5.5.5.5');
   });
 
   it('carries the origin through', () => {
-    expect(peerFrom(request({ origin: 'https://play.example' }), false).origin).toBe('https://play.example');
+    expect(peerFrom(request({ origin: 'https://play.example' })).origin).toBe('https://play.example');
   });
 });

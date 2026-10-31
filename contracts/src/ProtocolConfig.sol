@@ -5,6 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {BPS_DENOMINATOR, DISPUTE_EXTENSION, LOCK_GRACE, RANDOMNESS_TIMEOUT} from "./Constants.sol";
 import {ZeroAddress} from "./Errors.sol";
+import {SignatureLib} from "./libraries/SignatureLib.sol";
 
 /// @title ProtocolConfig
 /// @notice Every governable parameter of the protocol, in one place.
@@ -102,12 +103,19 @@ contract ProtocolConfig is Ownable2Step {
     ///         no cross-chain joins.
     address public bridgeReceiver;
 
+    /// @notice The one account that may open matchmade lobbies, with the
+    ///         roster of players it assigned to each
+    ///         (`GameEscrow.createMatchmade`). Zero means none: every lobby is
+    ///         private, joined by id, and earns no play-mining.
+    address public matchmaker;
+
     event ParamsUpdated(Params params);
     event RulesHashUpdated(bytes32 indexed previous, bytes32 indexed current);
     event PayoutScheduleUpdated(uint16[] payoutBps);
     event RandomnessOracleUpdated(address indexed previous, address indexed current);
     event AttestorSetUpdated(uint32 indexed version, address[] attestors, uint32 threshold);
     event BridgeReceiverUpdated(address indexed previous, address indexed current);
+    event MatchmakerUpdated(address indexed previous, address indexed current);
     event GuardianUpdated(address indexed previous, address indexed current);
     event ChallengeWindowUpdated(uint64 previous, uint64 current);
     event SequencerUptimeFeedUpdated(address indexed previous, address indexed current);
@@ -127,6 +135,8 @@ contract ProtocolConfig is Ownable2Step {
     error InvalidRulesHash();
     error InvalidChallengeWindow(uint64 window);
     error LmsTokenAlreadySet(address token);
+    error QuorumNotMet(uint256 signers, uint32 threshold);
+    error NotAnAttestor(address signer);
 
     constructor(address owner_, Params memory initialParams, uint16[] memory initialPayoutBps)
         Ownable(owner_)
@@ -169,6 +179,22 @@ contract ProtocolConfig is Ownable2Step {
 
     function getAttestors(uint32 version) external view returns (address[] memory) {
         return attestorsOf[version];
+    }
+
+    /// @notice Reverts unless `signatures` over `digest` come from a quorum of
+    ///         attestor set `version`: at least its threshold of them, every
+    ///         one a member, each once.
+    /// @dev Here rather than in the escrow, beside the sets it checks against.
+    ///      A zero threshold — a version never set — accepts nothing, where it
+    ///      would otherwise accept an empty signature blob.
+    /// @param signatures Concatenated 65-byte signatures in ascending signer order.
+    function checkQuorum(uint32 version, bytes32 digest, bytes calldata signatures) external view {
+        address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
+        uint32 threshold = thresholdOf[version];
+        if (threshold == 0 || signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
+        for (uint256 i = 0; i < signers.length; ++i) {
+            if (!attestorIn[version][signers[i]]) revert NotAnAttestor(signers[i]);
+        }
     }
 
     /// @notice The longest a match can take from its lobby opening to its
@@ -280,6 +306,14 @@ contract ProtocolConfig is Ownable2Step {
     function setBridgeReceiver(address receiver) external onlyOwner {
         emit BridgeReceiverUpdated(bridgeReceiver, receiver);
         bridgeReceiver = receiver;
+    }
+
+    /// @notice Sets, or with zero removes, the matchmaker.
+    /// @dev It decides who plays whom in every lobby that earns play-mining,
+    ///      and can do nothing else: it holds no stake and signs no result.
+    function setMatchmaker(address newMatchmaker) external onlyOwner {
+        emit MatchmakerUpdated(matchmaker, newMatchmaker);
+        matchmaker = newMatchmaker;
     }
 
     // --- Internal ----------------------------------------------------------

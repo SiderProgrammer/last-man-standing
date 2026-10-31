@@ -3,7 +3,7 @@ import { loadAssets } from './assets/loader.js';
 import { app, dom, initContext, net } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { onCrossChain, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
+import { onCrossChain, onMatched, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
 import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
 import {
   governanceVisible,
@@ -17,6 +17,7 @@ import {
   onFinished,
   onReceipt,
   onRound,
+  onDelta,
   onState,
   updateTimer,
   wireMatchControls,
@@ -99,6 +100,7 @@ function onServerMessage(message: ServerMessage): void {
       app.sessionDelegate = message.sessionDelegate;
       app.relayQuota = message.relayQuota;
       app.receiptSigner = message.receiptSigner;
+      app.practiceReceiptSigner = message.practiceReceiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
       app.staking = message.staking;
@@ -134,7 +136,20 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'state':
-      onState(message.state, message.you, message.deadline);
+      onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor);
+      break;
+
+    case 'delta':
+      onDelta(message);
+      break;
+
+    // A match this wallet sits in has its room now: go to the table.
+    case 'live':
+      if (app.match?.matchId !== message.matchId) net.send({ type: 'watch', matchId: message.matchId });
+      break;
+
+    // The watch is held until the room opens; `state` follows then.
+    case 'waiting':
       break;
 
     case 'avatars':
@@ -173,6 +188,16 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'crossChain':
       onCrossChain(message.event);
+      break;
+
+    case 'matched':
+      onMatched(message);
+      break;
+
+    // The queue's own screen comes with the matchmaking UI; until then the
+    // only news worth showing is a table being ready.
+    case 'queued':
+    case 'dequeued':
       break;
 
     case 'analysis.step':

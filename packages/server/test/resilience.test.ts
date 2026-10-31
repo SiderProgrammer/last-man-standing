@@ -117,6 +117,40 @@ describe('archive first', () => {
   });
 });
 
+describe('practice and the chain', () => {
+  it('archives a practice match, and never hands it to the relayer', async () => {
+    const calls: string[] = [];
+    const archive = new MemoryArchive();
+    const lobby = new Lobby({
+      archive,
+      relayer: {
+        settle: async () => {
+          calls.push('settle');
+          return null;
+        },
+        abort: async () => {
+          calls.push('abort');
+          return null;
+        },
+      },
+      commitMs: COMMIT_MS,
+      revealMs: REVEAL_MS,
+      receiptSigner: '0x00000000000000000000000000000000000000a7',
+      practiceReceiptSigner: '0x00000000000000000000000000000000000000b7',
+    });
+    const room = lobby.createPractice(HUMAN, 3, 0);
+    expect(room.staked).toBe(false);
+    for (let now = 0; !room.finished && now < 10_000_000; now += COMMIT_MS + 1) lobby.tick(now);
+    await lobby.drain();
+
+    expect(calls).toEqual([]);
+    const archived = await archive.load(room.matchId);
+    expect(archived?.staked).toBe(false);
+    // Its receipts were signed by the practice key, which the transcript names.
+    expect(archived?.transcript.receiptSigner).toBe('0x00000000000000000000000000000000000000b7');
+  });
+});
+
 describe('practice limits', () => {
   it('keeps one practice room per wallet, replacing the old one', () => {
     const lobby = lobbyWith();
@@ -200,7 +234,7 @@ describe('gateway limits', () => {
 });
 
 describe('settlement retry', () => {
-  async function settleWith(outcomes: boolean[]) {
+  async function settleWith(outcomes: boolean[], settleRetryForMs = 2) {
     const attempts: boolean[] = [];
     const archive = new MemoryArchive();
     const lobby = new Lobby({
@@ -217,12 +251,15 @@ describe('settlement retry', () => {
       commitMs: COMMIT_MS,
       revealMs: REVEAL_MS,
       settleBackoffMs: [1, 1],
+      settleRetryForMs,
       sleep: () => new Promise((resolve) => setImmediate(resolve)),
     });
     const setup = setupWithBots(4, `retry-${outcomes.join()}`);
     const room = lobby.adopt(setup, botSeats(4), 0);
     for (let now = 0; !room.finished && now < 10_000_000; now += 5_000) lobby.tick(now);
-    for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    expect(lobby.pendingSettlements).toBe(1);
+    await lobby.drain();
+    expect(lobby.pendingSettlements).toBe(0);
     return { attempts, archived: await archive.load(setup.matchId) };
   }
 
@@ -232,9 +269,32 @@ describe('settlement retry', () => {
     expect(archived?.settledTx).toBe(`0x${'7a'.repeat(32)}`);
   });
 
-  it('gives up after the last attempt and leaves the refund to the escrow', async () => {
+  it('gives up once it has retried for settleRetryForMs and leaves the refund to the escrow', async () => {
     const { attempts, archived } = await settleWith([false, false, false, true]);
     expect(attempts).toEqual([false, false, false]);
     expect(archived?.settledTx).toBeNull();
+  });
+
+  it('keeps retrying at the last wait while there is time left', async () => {
+    const { attempts, archived } = await settleWith([false, false, false, false, false, true], 10);
+    expect(attempts).toEqual([false, false, false, false, false, true]);
+    expect(archived?.settledTx).toBe(`0x${'7a'.repeat(32)}`);
+  });
+
+  it('contains a failure anywhere in finalising, rather than leaving it unhandled', async () => {
+    const archive = new MemoryArchive();
+    // Throws synchronously inside `finalise`, past every guarded step.
+    archive.recordSettlement = undefined as unknown as MemoryArchive['recordSettlement'];
+    const lobby = new Lobby({
+      archive,
+      relayer: { settle: async () => `0x${'7a'.repeat(32)}`, abort: async () => null },
+      commitMs: COMMIT_MS,
+      revealMs: REVEAL_MS,
+    });
+    const room = lobby.adopt(setupWithBots(4, 'finalise-throws'), botSeats(4), 0);
+    for (let now = 0; !room.finished && now < 10_000_000; now += 5_000) lobby.tick(now);
+    await lobby.drain();
+    expect(lobby.pendingSettlements).toBe(0);
+    expect(await archive.load(room.matchId)).not.toBeNull();
   });
 });

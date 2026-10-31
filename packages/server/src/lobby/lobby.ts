@@ -20,6 +20,7 @@ import type { AvatarRegistry } from '../chain/avatars.js';
 import type { ArchivedMatch, MatchArchive } from './store.js';
 import type { StyleBook } from './styles.js';
 import type { Relayer } from '../chain/attestor.js';
+import type { JournalEntry, RoomJournal } from '../match/journal.js';
 import { RequestError } from '../errors.js';
 
 export interface LobbyOptions {
@@ -37,10 +38,18 @@ export interface LobbyOptions {
   /** Play styles by wallet, for the reads panel. Omitted, nobody has a record. */
   styles?: StyleBook;
   /**
-   * Waits before each settlement retry, in order; one attempt more than there
-   * are entries. Defaults to 2 s then 10 s. Empty never retries.
+   * Waits before each archive or settlement retry, in order. Defaults to 2 s,
+   * 10 s, 30 s, then 60 s. Empty never retries. An archive write gets one
+   * attempt more than there are entries; a settlement keeps retrying at the
+   * last wait until `settleRetryForMs` of waiting has passed.
    */
   settleBackoffMs?: readonly number[];
+  /**
+   * How long a settlement is retried before it is left to the escrow's
+   * refund. Defaults to an hour, the settle window `Deploy.s.sol` sets: after
+   * that `settle` reverts and only `cancelMatch` is left.
+   */
+  settleRetryForMs?: number;
   /** Injectable for tests running on virtual time. */
   sleep?: (ms: number) => Promise<void>;
   /** First practice nonce. Defaults to a random 64-bit offset; see `practiceNonce`. Tests pin it to replay a run. */
@@ -49,11 +58,31 @@ export interface LobbyOptions {
   practiceSeed?: () => `0x${string}`;
   /** The hub chain, which moves and receipts are signed for. Recorded in every transcript. */
   chainId?: number;
-  /** The key that signs commit receipts, recorded in every transcript. */
+  /** The key that signs staked rooms' commit receipts — the attestor — recorded in their transcripts. */
   receiptSigner?: `0x${string}` | null;
+  /** The key that signs practice rooms' commit receipts: never the attestor. */
+  practiceReceiptSigner?: `0x${string}` | null;
+  /** A staked room's ready phase; see `RoomOptions.readyMs`. Practice rooms have none. */
+  readyMs?: number;
+  /**
+   * Whether a staked match with no room yet will get one: a lobby still
+   * open or waiting on its seed. A `watch` for one is held until it opens.
+   * Omitted, such a watch is refused as unknown.
+   */
+  expects?: (matchId: `0x${string}`) => boolean;
+  /** Called with each staked room as it opens, so its players can be told. */
+  onLive?: (room: Room) => void;
+  /**
+   * Where staked rooms journal everything that moves them on, so a restart
+   * resumes them (`resume`) instead of refunding them. Omitted, nothing is
+   * journalled and a restart refunds every live match.
+   */
+  journal?: RoomJournal;
 }
 
-const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000];
+const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
+
+const DEFAULT_SETTLE_RETRY_FOR_MS = 60 * 60 * 1000;
 
 const DEFAULT_MAX_PRACTICE_ROOMS = 200;
 
@@ -77,6 +106,25 @@ export class Lobby {
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
   /**
+   * Finished matches still being archived or settled, by lower-cased id: the
+   * retry queue. A match is in it once, however often its room reports it.
+   */
+  private readonly settling = new Map<string, Promise<void>>();
+  /** Clients holding a `watch` for a staked match whose room has not opened, by lower-cased id. */
+  private readonly waiting = new Map<string, Set<Client>>();
+  /**
+   * The one match each client watches, room or held watch, by lower-cased
+   * id: a client watches one table at a time, and leaves the last for the next.
+   */
+  private readonly watching = new Map<Client, string>();
+  /** The rooms each wallet holds a seat in, by lower-cased address and match id. */
+  private readonly seatsOf = new Map<string, Set<string>>();
+  /**
+   * Each journalled room's writes, chained in order, by lower-cased id, and
+   * how many entries it has. A failed write is logged; the chain goes on.
+   */
+  private readonly writes = new Map<string, { seq: number; done: Promise<void> }>();
+  /**
    * Starts at a random 64-bit offset rather than zero. From zero, every
    * process handed out the same practice match ids, so after a restart a
    * player re-attaching to its old match id landed — as a spectator — in a
@@ -93,6 +141,16 @@ export class Lobby {
     return this.rooms.size;
   }
 
+  /** Finished matches whose archive write or settlement has not landed yet. */
+  get pendingSettlements(): number {
+    return this.settling.size;
+  }
+
+  /** Resolves once every queued archive write and settlement has landed or been given up. */
+  async drain(): Promise<void> {
+    while (this.settling.size > 0) await Promise.all(this.settling.values());
+  }
+
   list(): Room[] {
     return [...this.rooms.values()];
   }
@@ -101,12 +159,19 @@ export class Lobby {
     return this.rooms.get(matchId.toLowerCase()) ?? null;
   }
 
-  /** The room a wallet currently holds a seat in, if any. */
+  /** A room the wallet holds a seat in and is still being played, if any. */
   roomFor(address: `0x${string}`): Room | null {
-    for (const room of this.rooms.values()) {
-      if (room.seatOf(address) !== null && !room.finished) return room;
+    for (const key of this.seatsOf.get(address.toLowerCase()) ?? []) {
+      const room = this.rooms.get(key);
+      if (room && !room.finished) return room;
     }
     return null;
+  }
+
+  /** The match `client` watches, if any. */
+  watchedBy(client: Client): Room | null {
+    const key = this.watching.get(client);
+    return key ? (this.rooms.get(key) ?? null) : null;
   }
 
   /**
@@ -125,10 +190,7 @@ export class Lobby {
   ): Room {
     const owner = human.toLowerCase();
     const previous = this.practiceOf.get(owner);
-    if (previous) {
-      this.rooms.delete(previous);
-      this.practiceOf.delete(owner);
-    }
+    if (previous) this.close(previous);
     const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
     if (this.practiceOf.size >= ceiling) {
       throw new RequestError('BUSY', 'the server is at its practice-room limit; try again shortly');
@@ -165,7 +227,77 @@ export class Lobby {
   adopt(setup: MatchSetup, botSeats: readonly number[] = [], now: number = Date.now()): Room {
     const existing = this.get(setup.matchId);
     if (existing) return existing;
-    return this.open(setup, botSeats, now, true);
+    return this.opened(this.open(setup, botSeats, now, true), now);
+  }
+
+  /**
+   * Brings back a staked match's room from its journal after a restart, at
+   * the round and phase it was in, its commitments and reveals intact, with
+   * the clock given back to its players. Null when there is nothing to
+   * resume from — no journal, or one that does not replay — and the match
+   * must be refunded instead.
+   */
+  async resume(setup: MatchSetup, now: number = Date.now()): Promise<Room | null> {
+    const existing = this.get(setup.matchId);
+    if (existing) return existing;
+    const journal = this.options.journal;
+    if (!journal) return null;
+    let entries: JournalEntry[];
+    try {
+      entries = await journal.load(setup.matchId);
+    } catch (error) {
+      console.error(`[lobby] could not read the journal of ${setup.matchId}:`, errorMessage(error));
+      return null;
+    }
+    if (entries.length === 0) return null;
+    const key = setup.matchId.toLowerCase();
+    let room: Room;
+    try {
+      this.writes.set(key, { seq: entries.length, done: Promise.resolve() });
+      room = Room.replay(setup, this.roomOptions(setup, [], true, 'normal'), entries);
+    } catch (error) {
+      this.writes.delete(key);
+      console.error(`[lobby] the journal of ${setup.matchId} does not replay:`, errorMessage(error));
+      return null;
+    }
+    room.rebase(now);
+    this.register(room);
+    void this.decorate(room, setup);
+    void this.brief(room, setup);
+    console.log(`[lobby] resumed ${setup.matchId} at round ${room.match.round} from ${entries.length} journal entries`);
+    return this.opened(room, now);
+  }
+
+  /** Resolves once every journal entry written so far for the match has landed. */
+  async persisted(matchId: `0x${string}`): Promise<void> {
+    await this.writes.get(matchId.toLowerCase())?.done;
+  }
+
+  /** A staked room has opened: attach the watches held for it, and tell its players. */
+  private opened(room: Room, now: number): Room {
+    const key = room.matchId.toLowerCase();
+    for (const client of this.waiting.get(key) ?? []) {
+      if (this.watching.get(client) === key) room.attach(client, now);
+    }
+    this.waiting.delete(key);
+    this.options.onLive?.(room);
+    return room;
+  }
+
+  /** Queues one journal entry behind the match's earlier ones. */
+  private record(matchId: `0x${string}`, entry: JournalEntry): void {
+    const journal = this.options.journal;
+    if (!journal) return;
+    const key = matchId.toLowerCase();
+    const chain = this.writes.get(key) ?? { seq: 0, done: Promise.resolve() };
+    const seq = chain.seq;
+    chain.seq += 1;
+    chain.done = chain.done.then(() =>
+      journal.append(matchId, seq, entry).catch((error: unknown) => {
+        console.error(`[lobby] journal entry ${seq} of ${matchId} was not written:`, errorMessage(error));
+      }),
+    );
+    this.writes.set(key, chain);
   }
 
   /** Records a staked match this server will not play: see `abandoned`. */
@@ -184,24 +316,71 @@ export class Lobby {
       }
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
-      if (room.finished && now > room.deadline + 60_000) {
-        this.rooms.delete(key);
-        for (const [owner, matchKey] of this.practiceOf) {
-          if (matchKey === key) this.practiceOf.delete(owner);
-        }
-      }
+      if (room.finished && now > room.deadline + 60_000) this.close(key);
     }
   }
 
-  attach(matchId: `0x${string}`, client: Client): Room {
+  /**
+   * Attaches `client` to a match's room; or, for a staked match whose room
+   * has not opened yet, holds the watch until it does and returns null.
+   */
+  attach(matchId: `0x${string}`, client: Client, now: number = Date.now()): Room | null {
+    const key = matchId.toLowerCase();
     const room = this.get(matchId);
-    const abandoned = room ? undefined : this.abandoned.get(matchId.toLowerCase());
+    const abandoned = room ? undefined : this.abandoned.get(key);
     if (abandoned) {
       throw new RequestError('MATCH_ABANDONED', `this match will not be played: ${abandoned}; every stake is being refunded`);
     }
-    if (!room) throw new RequestError('NOT_FOUND', 'unknown match');
-    room.attach(client);
+    if (!room && !this.options.expects?.(matchId)) throw new RequestError('NOT_FOUND', 'unknown match');
+    // One table at a time: watching this one leaves the last.
+    if (this.watching.get(client) !== key) this.detach(client);
+    this.watching.set(client, key);
+    if (!room) {
+      let held = this.waiting.get(key);
+      if (!held) this.waiting.set(key, (held = new Set()));
+      held.add(client);
+      client.send({ type: 'waiting', matchId });
+      return null;
+    }
+    room.attach(client, now);
     return room;
+  }
+
+  /** Drops the watch `client` holds, on a room or on a match still to open. */
+  detach(client: Client): void {
+    const key = this.watching.get(client);
+    if (key === undefined) return;
+    this.watching.delete(client);
+    this.rooms.get(key)?.detach(client);
+    const held = this.waiting.get(key);
+    held?.delete(client);
+    if (held?.size === 0) this.waiting.delete(key);
+  }
+
+  /** Forgets a room and every index entry pointing at it. */
+  private close(key: string): void {
+    const room = this.rooms.get(key);
+    this.rooms.delete(key);
+    if (!room) return;
+    for (const seat of room.match.seats) {
+      const rooms = this.seatsOf.get(seat.address.toLowerCase());
+      rooms?.delete(key);
+      if (rooms?.size === 0) this.seatsOf.delete(seat.address.toLowerCase());
+    }
+    for (const client of room.attached) if (this.watching.get(client) === key) this.watching.delete(client);
+    for (const [owner, matchKey] of this.practiceOf) if (matchKey === key) this.practiceOf.delete(owner);
+  }
+
+  /** Puts a new room in the table, and its seats in the index. */
+  private register(room: Room): void {
+    const key = room.matchId.toLowerCase();
+    this.rooms.set(key, room);
+    for (const seat of room.match.seats) {
+      const address = seat.address.toLowerCase();
+      let rooms = this.seatsOf.get(address);
+      if (!rooms) this.seatsOf.set(address, (rooms = new Set()));
+      rooms.add(key);
+    }
   }
 
   /**
@@ -216,7 +395,7 @@ export class Lobby {
     botDifficulty: BotDifficulty = 'normal',
   ): Room {
     const room = new Room(setup, this.roomOptions(setup, botSeats, staked, botDifficulty), now);
-    this.rooms.set(room.matchId.toLowerCase(), room);
+    this.register(room);
     void this.decorate(room, setup);
     if (staked) void this.brief(room, setup);
     return room;
@@ -255,10 +434,15 @@ export class Lobby {
       botSeats,
       botDifficulty,
       ...(this.options.chainId !== undefined ? { chainId: this.options.chainId } : {}),
-      receiptSigner: this.options.receiptSigner ?? null,
-      onFinished: (transcript) => {
-        void this.finalise(transcript, staked);
-      },
+      receiptSigner: (staked ? this.options.receiptSigner : this.options.practiceReceiptSigner) ?? null,
+      staked,
+      readyMs: staked ? (this.options.readyMs ?? 0) : 0,
+      // Only a staked room of players is journalled: house bots draw their
+      // moves afresh, so a room with any would not replay to the same state.
+      ...(staked && botSeats.length === 0 && this.options.journal
+        ? { journal: (entry: JournalEntry) => this.record(setup.matchId, entry) }
+        : {}),
+      onFinished: (transcript) => this.enqueue(transcript, staked),
     };
   }
 
@@ -283,27 +467,63 @@ export class Lobby {
   }
 
   /**
+   * Queues a finished match for archiving and settlement. Nothing it does can
+   * escape as an unhandled rejection: the room calls this from its clock, and
+   * a rejection there would take the whole server down.
+   */
+  private enqueue(transcript: Transcript, staked: boolean): void {
+    const key = transcript.matchId.toLowerCase();
+    if (this.settling.has(key)) return;
+    const job = this.finalise(transcript, staked)
+      .catch((error: unknown) => {
+        console.error(`[lobby] finalising ${transcript.matchId} failed:`, errorMessage(error));
+      })
+      .then(() => this.forgetJournal(transcript.matchId))
+      .finally(() => this.settling.delete(key));
+    this.settling.set(key, job);
+  }
+
+  /**
+   * Drops a finished match's journal once its archiving and settlement are
+   * done or given up: nothing will resume it now. A crash before this point
+   * resumes the room, which finishes at once and is finalised again.
+   */
+  private async forgetJournal(matchId: `0x${string}`): Promise<void> {
+    const key = matchId.toLowerCase();
+    if (!this.writes.has(key)) return;
+    await this.persisted(matchId);
+    this.writes.delete(key);
+    await this.options.journal?.drop(matchId).catch((error: unknown) => {
+      console.warn(`[lobby] could not drop the journal of ${matchId}:`, errorMessage(error));
+    });
+  }
+
+  /**
    * Runs `attempt` until it succeeds, waiting `settleBackoffMs` between tries.
-   * Returns null, after logging, once the last try fails.
+   * Returns null, after logging, once it gives up: after the last wait in the
+   * list, or with `forMs`, once the next wait would take the time spent
+   * waiting past it, repeating the last wait until then.
    *
    * A failure is usually transient — an RPC timeout, a nonce race, a gas
    * spike, a dropped database connection — so a retry a few seconds later
    * normally lands.
    */
-  private async withRetry<T>(what: string, attempt: () => Promise<T>): Promise<T | null> {
+  private async withRetry<T>(what: string, attempt: () => Promise<T>, forMs?: number): Promise<T | null> {
     const backoff = this.options.settleBackoffMs ?? DEFAULT_SETTLE_BACKOFF_MS;
     const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let waited = 0;
     for (let tries = 0; ; tries += 1) {
       try {
         return await attempt();
       } catch (error) {
-        const wait = backoff[tries];
-        if (wait === undefined) {
+        const wait = backoff[tries] ?? (forMs !== undefined ? backoff[backoff.length - 1] : undefined);
+        if (wait === undefined || (forMs !== undefined && waited + wait > forMs)) {
           console.error(`[lobby] ${what} failed after ${tries + 1} attempts:`, errorMessage(error));
           return null;
         }
         console.warn(`[lobby] ${what} failed; retrying in ${wait} ms:`, errorMessage(error));
         await sleep(wait);
+        waited += wait;
       }
     }
   }
@@ -319,7 +539,8 @@ export class Lobby {
    *
    * Retrying a settlement that did in fact land is harmless: the escrow is no
    * longer `Live`, so the relayer's simulation reverts before spending gas.
-   * After the last attempt the match refunds at its deadline.
+   * A settlement is retried for `settleRetryForMs`; after that the match
+   * refunds at its deadline.
    */
   private async finalise(transcript: Transcript, staked: boolean): Promise<void> {
     const result = transcript.result;
@@ -348,23 +569,29 @@ export class Lobby {
       return;
     }
 
+    // A practice match is archived for its player, and that is all: nothing
+    // in it reaches the relayer or the attestor.
+    if (!staked) return;
+
     const attested: AttestedResult = { ...result, transcriptHash };
-    const settledTx = staked
-      ? await this.withRetry(`settlement of ${result.matchId}`, () => this.options.relayer.settle(attested))
-      : await this.options.relayer.settle(attested).catch(() => null);
+    const settledTx = await this.withRetry(
+      `settlement of ${result.matchId}`,
+      () => this.options.relayer.settle(attested, transcript),
+      this.options.settleRetryForMs ?? DEFAULT_SETTLE_RETRY_FOR_MS,
+    );
     if (settledTx) {
       await this.options.archive.recordSettlement(result.matchId, settledTx).catch((error: unknown) => {
         console.warn(`[lobby] could not record the settlement of ${result.matchId}:`, errorMessage(error));
       });
     }
-    if (staked && this.options.styles) {
+    if (this.options.styles) {
       try {
         await this.options.styles.record(tallyStyles(result, entry.history, transcript.seats.map((seat) => seat.address)));
       } catch (error) {
         console.warn('[lobby] style record failed:', errorMessage(error));
       }
     }
-    if (staked) this.get(result.matchId)?.announceSettled(settledTx);
+    this.get(result.matchId)?.announceSettled(settledTx);
   }
 }
 

@@ -44,6 +44,8 @@ export interface AppState {
   grantKey: GrantedKey | null;
   /** The key the server signs commit receipts with, or null when it issues none. */
   receiptSigner: `0x${string}` | null;
+  /** Signs practice rooms' receipts instead. */
+  practiceReceiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
@@ -54,6 +56,11 @@ export interface AppState {
    * `crossChain` report, or by the seat showing up in the directory.
    */
   inTransit: Set<string>;
+  /**
+   * Matchmade lobbies the server's queue put this wallet in, by lowercased
+   * match id: the only matchmade lobbies it can take a seat in.
+   */
+  matched: Set<string>;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   /** True when the server can write match analyses. */
@@ -69,6 +76,8 @@ export interface AppState {
   dossier: Map<string, PlayStyle>;
   you: number | null;
   deadline: number;
+  /** Seats round 1 is still waiting to see connected. Empty once it has started. */
+  waitingFor: number[];
   /** Action the player has selected but not yet sealed. */
   draft: { action: ActionValue; target: number } | null;
   /** Round whose commitment is already on the server. */
@@ -100,9 +109,11 @@ export const app: AppState = {
   oneClick: false,
   grantKey: null,
   receiptSigner: null,
+  practiceReceiptSigner: null,
   zap: null,
   spokes: [],
   inTransit: new Set(),
+  matched: new Set(),
   staking: null,
   analyst: false,
   match: null,
@@ -110,6 +121,7 @@ export const app: AppState = {
   dossier: new Map(),
   you: null,
   deadline: 0,
+  waitingFor: [],
   draft: null,
   committedRound: null,
   revealedRound: null,

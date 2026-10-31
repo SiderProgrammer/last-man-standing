@@ -1,15 +1,4 @@
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  createPublicClient,
-  createWalletClient,
-  decodeErrorResult,
-  http,
-  nonceManager,
-  type Address,
-  type Hex,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import { BaseError, ContractFunctionRevertedError, decodeErrorResult, type Address, type Hex } from 'viem';
 import {
   gameEscrowAbi,
   isDelegatedTo,
@@ -19,7 +8,8 @@ import {
   type SessionCallKind,
 } from '@lms/protocol';
 import { RequestError } from '../errors.js';
-import { rpcChain } from './viem.js';
+import { RevertedError, type TxSender } from './txSender.js';
+import { readClient } from './viem.js';
 
 /**
  * Submits calls a player's session key signed, and pays their gas.
@@ -43,7 +33,8 @@ export interface RelayPort {
   codeOf(account: Address): Promise<Hex | undefined>;
   /**
    * Simulates `executeWithSession` on `account` from the relayer, then sends
-   * it and waits for it to be mined. Throws on a revert at either stage.
+   * it and waits for it to be mined. Throws on a revert at either stage, or
+   * if the same call is already being relayed.
    */
   submit(account: Address, call: RelayedCall): Promise<Hex>;
 }
@@ -133,6 +124,7 @@ export class SessionRelay {
  * `MatchFull`), and the first line of the message otherwise.
  */
 export function revertReason(error: unknown): string {
+  if (error instanceof RevertedError && error.cause) return revertReason(error.cause);
   if (error instanceof BaseError) {
     const reverted = error.walk((cause) => cause instanceof ContractFunctionRevertedError);
     if (reverted instanceof ContractFunctionRevertedError && reverted.data) {
@@ -155,33 +147,23 @@ function escrowErrorName(reason: unknown): string | undefined {
 }
 
 /**
- * `RelayPort` over viem, with the relayer's own key. A key of its own, not
- * the attestor's or the keeper's: it pays strangers' gas all day, so it holds
- * only what that needs, and a drained relayer stops nothing else.
+ * `RelayPort` over viem, sending through the relayer's own key's sender. A key
+ * of its own, not the attestor's or the keeper's: it pays strangers' gas all
+ * day, so it holds only what that needs, and a drained relayer stops nothing
+ * else.
  */
-export function viemRelayPort(options: { rpcUrl: string; chainId: number; relayerKey: Hex }): RelayPort {
-  const chain = rpcChain(options.chainId, options.rpcUrl);
-  const transport = http(options.rpcUrl);
-  // Calls from many players go out of one account; the nonce manager hands
-  // each its own nonce instead of asking the node, which would race.
-  const account = privateKeyToAccount(options.relayerKey, { nonceManager });
-  const publicClient = createPublicClient({ chain, transport });
-  const walletClient = createWalletClient({ account, chain, transport });
-
+export function viemRelayPort(options: { rpcUrl: string; chainId: number; sender: TxSender }): RelayPort {
+  const client = readClient(options.chainId, options.rpcUrl);
   return {
-    codeOf: (address) => publicClient.getCode({ address }),
-    async submit(address, call) {
-      const { request } = await publicClient.simulateContract({
-        account,
+    codeOf: (address) => client.getCode({ address }),
+    submit: (address, call) =>
+      // Keyed by account and session nonce: a call is relayed once, however
+      // often the client asks.
+      options.sender.sendAndWait(`relay:${address.toLowerCase()}:${call.nonce}`, {
         address,
         abi: sessionKeyDelegateAbi,
         functionName: 'executeWithSession',
         args: [call.target, BigInt(call.value), call.data, BigInt(call.nonce), call.signature],
-      });
-      const hash = await walletClient.writeContract(request);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== 'success') throw new Error(`relayed transaction ${hash} reverted`);
-      return hash;
-    },
+      }),
   };
 }

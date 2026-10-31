@@ -22,3 +22,9 @@ export const MatchStatus = {
 } as const;
 
 export type MatchStatusValue = (typeof MatchStatus)[keyof typeof MatchStatus];
+
+/**
+ * Mirrors `Constants.sol`'s `LOCK_GRACE`, in seconds: how long past its join
+ * deadline a lobby with enough seats can still only be locked, not cancelled.
+ */
+export const LOCK_GRACE_SECONDS = 10 * 60;

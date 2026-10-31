@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {Attest} from "../helpers/Attest.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 
 /// @dev A server that loses a live match — a restart drops the room — has the
 ///      quorum abort it so every stake comes back at once, instead of after
@@ -62,7 +63,7 @@ contract AbortMatchTest is Fixtures {
         one[0] = ATTESTOR_PK_A;
         bytes memory sigs = _abortSignatures(one, matchId);
 
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.QuorumNotMet.selector, uint256(1), uint32(2)));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.QuorumNotMet.selector, uint256(1), uint32(2)));
         escrow.abortMatch(matchId, sigs);
     }
 
@@ -78,7 +79,7 @@ contract AbortMatchTest is Fixtures {
         assertEq(uint8(escrow.getMatch(before).status), uint8(GameEscrow.MatchStatus.Cancelled));
 
         bytes memory sigs = _abortSignatures(_twoAttestors(), afterwards);
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, attestorB));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.NotAnAttestor.selector, attestorB));
         escrow.abortMatch(afterwards, sigs);
     }
 
@@ -98,7 +99,7 @@ contract AbortMatchTest is Fixtures {
         (bytes memory sigsForOther, address lowest) =
             a < b ? (bytes.concat(first, second), a) : (bytes.concat(second, first), b);
 
-        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotAnAttestor.selector, lowest));
+        vm.expectRevert(abi.encodeWithSelector(ProtocolConfig.NotAnAttestor.selector, lowest));
         escrow.abortMatch(matchId, sigsForOther);
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
     }

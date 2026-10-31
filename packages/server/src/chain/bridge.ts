@@ -1,6 +1,7 @@
 import type { Address, Hex } from 'viem';
 import {
   DEFAULT_RULES,
+  LOCK_GRACE_SECONDS,
   MatchStatus,
   hashRules,
   addressKey,
@@ -10,20 +11,29 @@ import {
   type LobbySeat,
   type Seat,
 } from '@lms/protocol';
-import type { MatchSetup } from '@lms/engine';
+import { rankingHash, type MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
-import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
+import type { MatchArchive } from '../lobby/store.js';
+import { viemEscrowReader, type EscrowMatch, type EscrowMatchRead, type EscrowReader } from './escrowReader.js';
+import { chunkedLogs, confirmedHead } from './logs.js';
+import type { TxSender } from './txSender.js';
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
   chainId: number;
   escrow: Address;
   lobby: Lobby;
-  /** Funds the permissionless `lockMatch` call. Without it, someone else must lock. */
-  keeperKey?: Hex;
+  /** Sends the permissionless `lockMatch`, `finalize` and `cancelMatch`. Without it, someone else must. */
+  keeper?: TxSender;
   pollMs?: number;
   /** Aborts a live match this server cannot finish. See `ChainBridgeDeps.abort`. */
   abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
+  /** The escrow's deploy block, from the registry. See `ChainBridgeDeps.fromBlock`. */
+  fromBlock?: bigint;
+  /** See `ChainBridgeDeps.confirmations`. */
+  confirmations?: number;
+  /** See `ChainBridgeDeps.archive`. */
+  archive?: Pick<MatchArchive, 'load'>;
 }
 
 /** What the bridge needs once the transport has been chosen. */
@@ -41,7 +51,31 @@ export interface ChainBridgeDeps {
    * permissionless `cancelMatch` once its settlement deadline passes instead.
    */
   abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
+  /**
+   * No log scan starts before this block: the escrow's deploy block. The
+   * first scan starts `BACKFILL_BLOCKS` behind the head, or here if that is
+   * later. Defaults to zero.
+   */
+  fromBlock?: bigint;
+  /**
+   * Blocks behind the head a log scan stops at, so that a log the chain may
+   * still reorg away is never read and then skipped past. Defaults to zero.
+   */
+  confirmations?: number;
+  /**
+   * Finished matches. A proposed result's ranking is read from here, where
+   * this server archived it, and only scanned for in the logs if missing.
+   */
+  archive?: Pick<MatchArchive, 'load'>;
 }
+
+/**
+ * How far back the first scan after a start reaches: a little over two days
+ * of Base blocks, longer than any match lasts — join window, lock grace, the
+ * oracle's timeout, the settle window, the challenge window and a dispute's
+ * 48 hours.
+ */
+const BACKFILL_BLOCKS = 100_000n;
 
 interface TrackedMatch {
   info: LobbyInfo;
@@ -50,6 +84,8 @@ interface TrackedMatch {
   proposed: boolean;
   /** Was live before this server started: being cancelled, never played. */
   abandoned: boolean;
+  /** Created under rules this server does not play: never listed, never locked. */
+  foreign: boolean;
   /**
    * Chain each seat staked from, keyed by lowercased address and already
    * normalised to an EVM chain id. Filled from `PlayerJoined` as it is seen and
@@ -81,11 +117,14 @@ export class ChainBridge {
   private cursor: bigint | null = null;
   private polling = false;
   /**
-   * False until the first refresh has run. A match already live at that point
-   * went live before this process existed, so whatever was played of it died
-   * with the previous one.
+   * Matches that were live when this process started, by lower-cased id:
+   * whatever was played of them died with the previous process. Read once,
+   * by the first poll that reads every tracked match without failing, and
+   * fixed from then on, so a match that goes live later is always played,
+   * however many polls failed before. Null until then, and until then the
+   * bridge does nothing at all: no lock, no cancel, no room.
    */
-  private booted = false;
+  private liveAtBoot: Set<string> | null = null;
 
   constructor(private readonly deps: ChainBridgeDeps) {
     this.reader = deps.reader;
@@ -99,11 +138,15 @@ export class ChainBridge {
         rpcUrl: options.rpcUrl,
         chainId: options.chainId,
         escrow: options.escrow,
-        ...(options.keeperKey ? { keeperKey: options.keeperKey } : {}),
+        ...(options.keeper ? { keeper: options.keeper } : {}),
+        ...(options.fromBlock !== undefined ? { fromBlock: options.fromBlock } : {}),
       }),
       lobby: options.lobby,
       chainId: options.chainId,
       ...(options.abort ? { abort: options.abort } : {}),
+      ...(options.fromBlock !== undefined ? { fromBlock: options.fromBlock } : {}),
+      ...(options.confirmations !== undefined ? { confirmations: options.confirmations } : {}),
+      ...(options.archive ? { archive: options.archive } : {}),
     });
     void bridge.poll();
     bridge.timer = setInterval(() => void bridge.poll(), options.pollMs ?? 4_000);
@@ -116,12 +159,22 @@ export class ChainBridge {
     this.timer = null;
   }
 
+  /**
+   * Whether `matchId` is a lobby of these rules that will get a room once
+   * it is seeded: still open, or waiting on the oracle.
+   */
+  expects(matchId: `0x${string}`): boolean {
+    const entry = this.tracked.get(matchId.toLowerCase());
+    if (!entry || entry.foreign || entry.abandoned || entry.adopted || entry.proposed) return false;
+    return entry.info.status === 'open' || entry.info.status === 'pending';
+  }
+
   /** Lobby directory served to clients. */
   directory(): { open: LobbyInfo[]; live: LobbyInfo[] } {
     const open: LobbyInfo[] = [];
     const live: LobbyInfo[] = [];
     for (const entry of this.tracked.values()) {
-      if (entry.proposed || entry.abandoned) continue;
+      if (entry.proposed || entry.abandoned || entry.foreign) continue;
       if (entry.info.status === 'open') open.push(entry.info);
       else live.push(entry.info);
     }
@@ -134,8 +187,8 @@ export class ChainBridge {
     this.polling = true;
     try {
       await this.discover();
-      await this.refresh();
-      this.booted = true;
+      this.liveAtBoot ??= await this.snapshot();
+      await this.refresh(this.liveAtBoot);
     } catch (error) {
       console.error('[chain] poll failed:', errorMessage(error));
     } finally {
@@ -144,20 +197,30 @@ export class ChainBridge {
   }
 
   private async discover(): Promise<void> {
-    const latest = await this.reader.blockNumber();
-    // First pass starts a little way back so a restart still sees a fresh lobby.
-    const from = this.cursor ?? (latest > 5_000n ? latest - 5_000n : 0n);
+    const latest = confirmedHead(await this.reader.blockNumber(), this.deps.confirmations ?? 0);
+    if (latest === null) return;
+    // The first scan after a start reaches back far enough to find every
+    // match that can still be in play, but never before the deploy.
+    const floor = this.deps.fromBlock ?? 0n;
+    const from = this.cursor ?? (latest > floor + BACKFILL_BLOCKS ? latest - BACKFILL_BLOCKS : floor);
     if (from > latest) return;
 
-    for (const { matchId } of await this.reader.matchCreatedLogs(from, latest)) {
+    for (const { matchId } of await chunkedLogs(from, latest, (a, b) => this.reader.matchCreatedLogs(a, b))) {
       const key = matchId.toLowerCase();
       if (this.tracked.has(key)) continue;
-      this.tracked.set(key, { adopted: false, proposed: false, abandoned: false, info: placeholder(matchId), origins: new Map() });
+      this.tracked.set(key, {
+        adopted: false,
+        proposed: false,
+        abandoned: false,
+        foreign: false,
+        info: placeholder(matchId),
+        origins: new Map(),
+      });
     }
 
     // Joins are read from the log rather than by polling `seatOrigin` per seat:
     // the event already carries the origin, and an origin never changes.
-    for (const join of await this.reader.playerJoinedLogs(from, latest)) {
+    for (const join of await chunkedLogs(from, latest, (a, b) => this.reader.playerJoinedLogs(a, b))) {
       const entry = this.tracked.get(join.matchId.toLowerCase());
       if (!entry) continue;
       entry.origins.set(
@@ -169,44 +232,71 @@ export class ChainBridge {
     this.cursor = latest + 1n;
   }
 
-  private async refresh(): Promise<void> {
-    for (const [key, entry] of this.tracked) {
-      const matchId = entry.info.matchId;
-      const raw = await this.reader.getMatch(matchId);
+  /** Every tracked match, read in one batch, keyed as `tracked` is. */
+  private async readAll(): Promise<Array<[string, EscrowMatchRead]>> {
+    const entries = [...this.tracked];
+    const reads = await this.reader.getMatches(entries.map(([, entry]) => entry.info.matchId));
+    return entries.map(([key], i) => [key, reads[i] as EscrowMatchRead]);
+  }
 
-      if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled) {
+  /** Which tracked matches are live now. Reads only, and all or nothing. */
+  private async snapshot(): Promise<Set<string>> {
+    const live = new Set<string>();
+    for (const [key, { match }] of await this.readAll()) {
+      if (match.status === MatchStatus.Live) live.add(key);
+    }
+    if (live.size > 0) console.warn(`[chain] ${live.size} matches were live before this server started`);
+    return live;
+  }
+
+  private async refresh(liveAtBoot: ReadonlySet<string>): Promise<void> {
+    for (const [key, { match: raw, seats: players }] of await this.readAll()) {
+      const entry = this.tracked.get(key);
+      if (!entry) continue;
+      const matchId = entry.info.matchId;
+
+      // `None` is a creation the chain reorged away.
+      if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled || raw.status === MatchStatus.None) {
         this.tracked.delete(key);
         continue;
       }
+      const nowSeconds = Math.floor(this.now() / 1000);
+      const cancellableAt = cancellableFrom(raw);
       if (raw.status === MatchStatus.Proposed) {
         entry.proposed = true;
-        await this.maybeFinalize(matchId, raw.deadline);
+        await this.maybeFinalize(matchId, raw);
         continue;
       }
       if (entry.abandoned) {
         await this.maybeCancel(matchId, raw.deadline);
+        if (nowSeconds >= Number(raw.deadline) + PRUNE_AFTER_SECONDS) this.tracked.delete(key);
         continue;
       }
       // The escrow pins the rule set a match was created under, and the history
       // root a result is signed over is seeded with it. A match created under
       // other rules — before a rules change, or by a config this server does
       // not run — cannot be played honestly here: players staked on rules this
-      // server would not apply. It is called off and refunded, never re-ruled.
-      const foreign = raw.rulesHash.toLowerCase() !== RULES_HASH;
-      if (raw.status === MatchStatus.Live && !entry.adopted && foreign) {
+      // server would not apply. It is not listed and never locked, and is
+      // called off and refunded if it goes live anyway: never re-ruled.
+      entry.foreign = raw.rulesHash.toLowerCase() !== RULES_HASH;
+      if (raw.status === MatchStatus.Live && !entry.adopted && entry.foreign) {
         await this.abandon(entry, matchId, 'it was created under rules this server does not play');
         continue;
       }
-      if (raw.status === MatchStatus.Live && !entry.adopted && !this.booted) {
-        await this.abandon(entry, matchId, 'it was cancelled after a server restart');
-        continue;
-      }
-
-      const players = await this.reader.getSeats(matchId);
-
       const seats: LobbySeat[] = [];
       for (const address of players) {
         seats.push({ address, chainId: await this.originOf(entry, matchId, address) });
+      }
+
+      // Live before this process started: resumed from its journal where
+      // there is one, refunded where there is not.
+      if (raw.status === MatchStatus.Live && !entry.adopted && liveAtBoot.has(key)) {
+        if (await this.deps.lobby.resume(setupOf(matchId, raw.seed, seats))) {
+          entry.adopted = true;
+        } else {
+          await this.abandon(entry, matchId, 'it was cancelled after a server restart');
+          continue;
+        }
       }
 
       entry.info = {
@@ -218,11 +308,29 @@ export class ChainBridge {
         joinDeadline: Number(raw.joinDeadline),
         status: raw.status === MatchStatus.Open ? 'open' : raw.status === MatchStatus.Pending ? 'pending' : 'live',
         players: seats,
+        cancellableAt: cancellableAt ?? Number(raw.deadline),
+        matchmade: raw.matchmade,
       };
+
+      // A match that can only be cancelled now is cancelled: an Open lobby
+      // whose join window closed short of seats, or past its lock grace; one
+      // the oracle never seeded; one that was never settled in time. Every
+      // seat is refunded. The keeper only saves a player the call.
+      if (cancellableAt !== null && nowSeconds >= cancellableAt) {
+        await this.maybeCancel(matchId, BigInt(cancellableAt));
+        // Nothing can cancel it from here, and nothing else will happen to
+        // it: forget it rather than read it every poll forever. Anyone can
+        // still cancel it on-chain.
+        if (nowSeconds >= cancellableAt + PRUNE_AFTER_SECONDS) {
+          console.warn(`[chain] forgetting ${matchId}: cancellable since ${cancellableAt} and still not cancelled`);
+          this.tracked.delete(key);
+        }
+        continue;
+      }
 
       // Not locked: locking spends an oracle request on a match that would be
       // abandoned the moment its seed arrived.
-      if (raw.status === MatchStatus.Open && !foreign) {
+      if (raw.status === MatchStatus.Open && !entry.foreign) {
         await this.maybeLock(entry.info);
       } else if (raw.status === MatchStatus.Live && !entry.adopted) {
         entry.adopted = true;
@@ -252,10 +360,10 @@ export class ChainBridge {
     }
   }
 
-  /** The fallback for an abandoned match: the permissionless refund at its deadline. */
+  /** The permissionless refund, once `deadline` has passed: for an abandoned match, and every dead one. */
   private async maybeCancel(matchId: `0x${string}`, deadline: bigint): Promise<void> {
     if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
-    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelled ${matchId}`);
+    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelling ${matchId}`);
   }
 
   /**
@@ -264,11 +372,23 @@ export class ChainBridge {
    * Driven from the chain's state rather than a timer, so a restart during
    * the window loses nothing.
    */
-  private async maybeFinalize(matchId: `0x${string}`, deadline: bigint): Promise<void> {
-    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
-    const ranking = await this.reader.proposedRanking(matchId);
+  private async maybeFinalize(matchId: `0x${string}`, match: EscrowMatch): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < match.deadline) return;
+    const ranking = await this.rankingOf(matchId, match.rankingHash);
     if (!ranking) return;
-    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalised ${matchId}`);
+    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalising ${matchId}`);
+  }
+
+  /**
+   * The ranking a proposed result pays, which `finalize` must be handed
+   * back: from the archive, where this server kept the result it settled,
+   * when it hashes to the one the escrow stored; from the logs otherwise.
+   */
+  private async rankingOf(matchId: `0x${string}`, stored: `0x${string}`): Promise<readonly Address[] | null> {
+    const archived = await this.deps.archive?.load(matchId).catch(() => null);
+    const ranking = archived?.result.ranking;
+    if (ranking && rankingHash(ranking).toLowerCase() === stored.toLowerCase()) return ranking;
+    return this.reader.proposedRanking(matchId);
   }
 
   /**
@@ -282,7 +402,7 @@ export class ChainBridge {
     if (info.seatCount < info.minSeats) return;
 
     if (await this.reader.lockMatch(info.matchId)) {
-      console.log(`[chain] locked ${info.matchId}`);
+      console.log(`[chain] locking ${info.matchId}`);
     }
   }
 
@@ -308,15 +428,39 @@ export class ChainBridge {
   }
 
   private adopt(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): void {
-    const seats: Seat[] = lobbySeats.map((seat, index) => ({
-      index,
-      address: seat.address,
-      chainId: seat.chainId,
-    }));
+    this.deps.lobby.adopt(setupOf(matchId, seed, lobbySeats));
+    console.log(`[chain] opened room for ${matchId} with ${lobbySeats.length} seats`);
+  }
+}
 
-    const setup: MatchSetup = { matchId, seats, seed, rules: DEFAULT_RULES };
-    this.deps.lobby.adopt(setup);
-    console.log(`[chain] opened room for ${matchId} with ${seats.length} seats`);
+/** The room a live match is played in: its seats in stake order, its seed, and these rules. */
+function setupOf(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): MatchSetup {
+  const seats: Seat[] = lobbySeats.map((seat, index) => ({ index, address: seat.address, chainId: seat.chainId }));
+  return { matchId, seats, seed, rules: DEFAULT_RULES };
+}
+
+/**
+ * After this long cancellable and still not cancelled — no keeper here, and
+ * nobody else bothered — a match is dropped from `tracked`.
+ */
+const PRUNE_AFTER_SECONDS = 60 * 60;
+
+/**
+ * Unix seconds from which `cancelMatch` accepts the match, as the escrow
+ * decides it, or null once a result is proposed, which only `finalize` or
+ * `veto` can end.
+ */
+export function cancellableFrom(
+  match: Pick<EscrowMatch, 'status' | 'seatCount' | 'minSeats' | 'joinDeadline' | 'deadline'>,
+): number | null {
+  switch (match.status) {
+    case MatchStatus.Open:
+      return Number(match.joinDeadline) + (match.seatCount >= match.minSeats ? LOCK_GRACE_SECONDS : 0);
+    case MatchStatus.Pending:
+    case MatchStatus.Live:
+      return Number(match.deadline);
+    default:
+      return null;
   }
 }
 
@@ -333,6 +477,7 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
     joinDeadline: 0,
     status: 'open',
     players: [],
+    cancellableAt: 0,
+    matchmade: false,
   };
 }
-

@@ -4,7 +4,17 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ConfigError, loadConfig, readDeployment, relayerFrom, nullRelayer, type Deployment } from '@lms/server';
+import {
+  ConfigError,
+  loadConfig,
+  readDeployment,
+  relayerFrom,
+  nullRelayer,
+  viemTxSender,
+  keySigner,
+  AttestorService,
+  type Deployment,
+} from '@lms/server';
 
 const ESCROW = `0x${'11'.repeat(20)}` as const;
 const GOVERNOR = `0x${'22'.repeat(20)}` as const;
@@ -83,7 +93,8 @@ describe('server configuration', () => {
     expect(() => loadConfig({ ESCROW_ADDRESS: 'oops' })).toThrow(/ESCROW_ADDRESS must be a 20-byte hex address/);
     expect(() => loadConfig({ ATTESTOR_PK: '0x1234' })).toThrow(/ATTESTOR_PK must be a 32-byte hex private key/);
     expect(() => loadConfig({ RPC_URL: 'localhost:8545 typo' })).toThrow(/RPC_URL must be an http\(s\) or ws\(s\) URL/);
-    expect(() => loadConfig({ TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY must be true or false/);
+    expect(() => loadConfig({ TRUSTED_PROXY_HOPS: 'one' })).toThrow(/TRUSTED_PROXY_HOPS must be a whole number/);
+    expect(() => loadConfig({ TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS/);
     expect(() => loadConfig({ GATEWAY_LIMITS: '{nope' })).toThrow(/GATEWAY_LIMITS must be valid JSON/);
   });
 
@@ -117,11 +128,11 @@ describe('server configuration', () => {
     const defaults = loadConfig({});
     expect(defaults.maxConnectionsPerIp).toBe(20);
     expect(defaults.allowedOrigins).toEqual([]);
-    expect(defaults.trustProxy).toBe(false);
+    expect(defaults.trustedProxyHops).toBe(0);
 
-    const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUST_PROXY: 'true' });
+    const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUSTED_PROXY_HOPS: '2' });
     expect(tuned.allowedOrigins).toEqual(['https://a.example', 'https://b.example']);
-    expect(tuned.trustProxy).toBe(true);
+    expect(tuned.trustedProxyHops).toBe(2);
 
     expect(loadConfig({ GATEWAY_LIMITS: '{"messageRate":50,"bogus":"x"}' }).gatewayLimits).toEqual({ messageRate: 50 });
     expect(loadConfig({ VERIFY_THREADS: '0' }).verifyThreads).toBe(0);
@@ -145,36 +156,45 @@ describe('server configuration', () => {
     expect(onChain).toBe(true);
   });
 
-  it('silently reuses the attestor key as the keeper key', () => {
-    // Known wrong: one key quietly takes three roles — result attestor, lobby
-    // keeper, and (via index.ts) session relayer — with nothing logged.
-    // Separated in docs/FIX_PLAN.md step 7.4.
+  it('gives every job its own key, and refuses one key for two', () => {
     const pk = `0x${'22'.repeat(32)}`;
-    expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBe(pk);
-    expect(loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: `0x${'33'.repeat(32)}` }).keeperPk).toBe(
-      `0x${'33'.repeat(32)}`,
+    // The keeper no longer falls back to the attestor's key.
+    expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBeUndefined();
+    expect(() => loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: pk })).toThrow(/ATTESTOR_PK, KEEPER_PK are the same key/);
+    expect(() => loadConfig({ SESSION_RELAYER_PK: pk, MATCHMAKER_PK: pk.toUpperCase().replace('0X', '0x') })).toThrow(
+      /SESSION_RELAYER_PK, MATCHMAKER_PK are the same key/,
     );
+    const distinct = loadConfig({
+      ATTESTOR_PK: pk,
+      KEEPER_PK: `0x${'33'.repeat(32)}`,
+      SESSION_RELAYER_PK: `0x${'44'.repeat(32)}`,
+      MATCHMAKER_PK: `0x${'55'.repeat(32)}`,
+    });
+    expect([distinct.attestorPk, distinct.keeperPk, distinct.sessionRelayerPk, distinct.matchmakerPk]).toEqual([
+      pk,
+      `0x${'33'.repeat(32)}`,
+      `0x${'44'.repeat(32)}`,
+      `0x${'55'.repeat(32)}`,
+    ]);
   });
 });
 
 describe('relayer selection', () => {
-  it('is the null relayer without a key or without a chain', () => {
-    expect(relayerFrom(loadConfig({}))).toBe(nullRelayer);
-    expect(relayerFrom(loadConfig({ ATTESTOR_PK: `0x${'22'.repeat(32)}` }))).toBe(nullRelayer);
-    expect(
-      relayerFrom(loadConfig({ RPC_URL: 'http://x', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` })),
-    ).toBe(nullRelayer);
+  const keeper = viemTxSender({ signer: keySigner(`0x${'33'.repeat(32)}`), chainId: 84532, rpcUrl: 'http://localhost:8545' });
+  const attestor = new AttestorService({
+    signer: keySigner(`0x${'22'.repeat(32)}`),
+    chainId: 84532,
+    escrow: `0x${'11'.repeat(20)}`,
+  });
+  const onChain = loadConfig({ RPC_URL: 'http://localhost:8545', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` });
+
+  it('is the null relayer without an attestor, a keeper or a chain', () => {
+    expect(relayerFrom(loadConfig({}), attestor, keeper)).toBe(nullRelayer);
+    expect(relayerFrom(onChain, null, keeper)).toBe(nullRelayer);
+    expect(relayerFrom(onChain, attestor, null)).toBe(nullRelayer);
   });
 
-  it('builds a submitting relayer once a key and a chain are both present', () => {
-    const relayer = relayerFrom(
-      loadConfig({
-        ATTESTOR_PK: `0x${'22'.repeat(32)}`,
-        RPC_URL: 'http://localhost:8545',
-        ESCROW_ADDRESS: `0x${'11'.repeat(20)}`,
-      }),
-    );
-
-    expect(relayer).not.toBe(nullRelayer);
+  it('builds a submitting relayer once an attestor, a keeper and a chain are all present', () => {
+    expect(relayerFrom(onChain, attestor, keeper)).not.toBe(nullRelayer);
   });
 });

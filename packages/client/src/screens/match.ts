@@ -1,6 +1,9 @@
 import {
   Action,
   MatchPhase,
+  PRACTICE_CHAIN_ID,
+  applyDelta,
+  withRound,
   commitMove,
   isActionValue,
   errorFirstLine,
@@ -53,6 +56,8 @@ let timerTotal = 1;
 // ---------------------------------------------------------------- server feed
 
 export function onRound(message: Extract<ServerMessage, { type: 'round' }>): void {
+  // The history grows here: deltas never carry it.
+  if (app.match) app.match = withRound(app.match, message.record);
   appendRound(message.lines, message.record.round, message.record.eliminated);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
@@ -73,7 +78,8 @@ export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>
 export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt' }>): Promise<void> {
   const { receipt, signature } = message;
   const stored = recallMove(receipt.matchId, receipt.round);
-  const signer = app.receiptSigner;
+  const practice = app.match?.matchId === receipt.matchId && app.match.players.every((player) => player.chainId === PRACTICE_CHAIN_ID);
+  const signer = practice ? app.practiceReceiptSigner : app.receiptSigner;
   if (!stored || !signer) return;
   const sealed = commitMove(receipt.matchId, receipt.round, receipt.seat, stored);
   if (sealed.toLowerCase() !== receipt.commitment.toLowerCase()) return;
@@ -174,15 +180,23 @@ export function replayRound(round: number): void {
   arena.rewindTo(before, record);
 }
 
+/** Folds what changed into the match on screen, and redraws it. A delta for another match is stale and dropped. */
+export function onDelta(message: Extract<ServerMessage, { type: 'delta' }>): void {
+  if (!app.match || app.match.matchId !== message.delta.matchId) return;
+  onState(applyDelta(app.match, message.delta), app.you, Date.now() + message.msRemaining, message.waitingFor);
+}
+
 export function onState(
   state: PublicMatchState,
   you: number | null,
   deadline: number,
+  waitingFor: readonly number[] = [],
 ): void {
   const switched = app.match?.matchId !== state.matchId;
   app.match = state;
   app.you = you;
   app.deadline = deadline;
+  app.waitingFor = [...waitingFor];
 
   if (switched) {
     app.committedRound = null;
@@ -503,7 +517,7 @@ export function updateTimer(): void {
   const now = Date.now();
   const state = app.match;
   const phase = state?.phase ?? null;
-  dom.timer.textContent = formatCountdown(phase, app.deadline, now);
+  dom.timer.textContent = formatCountdown(phase, app.deadline, now, app.waitingFor.length);
 
   const key = `${app.deadline}|${app.replaying}`;
   if (key !== timerKey) {

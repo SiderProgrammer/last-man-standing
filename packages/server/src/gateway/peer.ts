@@ -9,14 +9,20 @@ export interface UpgradeRequest {
 /**
  * Identifies the client behind a WebSocket upgrade.
  *
- * With `trustProxy`, the IP is the left-most `X-Forwarded-For` entry — the one
- * the first proxy saw. Without it the header is ignored entirely, because a
- * client talking to the server directly can put anything in it.
+ * `trustedHops` is how many proxies of this deployment's own sit in front of
+ * the server. Each appends the address it took the connection from to
+ * `X-Forwarded-For`, so the client is the entry that many places from the
+ * right of the chain, the socket's own address counted as the last: the
+ * right-most entry no trusted proxy wrote. Everything left of it a client
+ * could have sent itself, which is why the left-most entry is never taken.
+ * Zero, the default, ignores the header entirely.
  */
-export function peerFrom(request: UpgradeRequest, trustProxy: boolean): Peer {
+export function peerFrom(request: UpgradeRequest, trustedHops = 0): Peer {
   const peer: Peer = {};
-  const forwarded = first(request.headers['x-forwarded-for'])?.split(',')[0]?.trim();
-  const ip = trustProxy && forwarded ? forwarded : request.socket.remoteAddress;
+  const remote = request.socket.remoteAddress;
+  const forwarded = trustedHops > 0 ? all(request.headers['x-forwarded-for']) : [];
+  const chain = remote ? [...forwarded, remote] : forwarded;
+  const ip = chain[Math.max(0, chain.length - 1 - trustedHops)];
   if (ip) peer.ip = ip;
   const origin = first(request.headers.origin);
   if (origin) peer.origin = origin;
@@ -25,4 +31,10 @@ export function peerFrom(request: UpgradeRequest, trustProxy: boolean): Peer {
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+/** Every address in every `X-Forwarded-For` header, in order. */
+function all(value: string | string[] | undefined): string[] {
+  const headers = Array.isArray(value) ? value : value ? [value] : [];
+  return headers.flatMap((header) => header.split(',')).map((entry) => entry.trim()).filter(Boolean);
 }

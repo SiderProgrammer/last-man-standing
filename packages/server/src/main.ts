@@ -13,20 +13,22 @@ import { Heartbeat } from './gateway/heartbeat.js';
 import { peerFrom } from './gateway/peer.js';
 import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
-import { createArchive } from './lobby/store.js';
+import { openStorage } from './db/storage.js';
 import { transcriptResponse } from './lobby/transcripts.js';
-import { createStyleBook } from './lobby/styles.js';
 import { generatePrivateKey } from 'viem/accounts';
-import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
+import { attestorReceipts, receiptSigner, relayerFrom } from './chain/attestor.js';
+import { keySigner } from './chain/signer.js';
+import { viemTxSender, type TxSender } from './chain/txSender.js';
+import { AttestorProcess } from './attestor/remote.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
-import { Analyst } from './analyst/analyst.js';
-import { geminiModel } from './analyst/gemini.js';
-import { AnalystLimits } from './analyst/limits.js';
+import { AnalystWorker } from './analyst/remote.js';
+import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
+import { DEFAULT_RULES } from '@lms/protocol';
 import { SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 
 const TICK_MS = 250;
@@ -36,11 +38,40 @@ const SWEEP_MS = 1_000;
 const HEARTBEAT_MS = 30_000;
 
 async function main(): Promise<void> {
-  const archive = await createArchive(config.databaseUrl);
-  const relayer = relayerFromEnv();
-  // The attestor key where there is one. A practice-only server has none,
-  // and signs with a key of its own that lasts as long as the process.
-  const receipts = receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId);
+  // A promise nobody awaited that rejects would otherwise end the process,
+  // taking every room in play with it. Each such rejection is a bug to fix,
+  // so it is logged loudly, but one bug must not refund every live match.
+  process.on('unhandledRejection', (reason) => {
+    console.error('[server] unhandled rejection:', reason);
+  });
+
+  const storage = await openStorage(config.databaseUrl);
+  const { archive, styles, journal } = storage;
+  console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
+  // One key per job, and one sender per key: a key's nonces are a single
+  // sequence, and `loadConfig` refuses two jobs on one key.
+  const senderFor = (privateKey: `0x${string}` | undefined, label: string): TxSender | null =>
+    privateKey && config.rpcUrl
+      ? viemTxSender({ signer: keySigner(privateKey), chainId: config.chainId, rpcUrl: config.rpcUrl }, { label })
+      : null;
+  const keeper = senderFor(config.keeperPk, 'keeper');
+  // The attestor key lives in a process of its own, which replays every
+  // transcript before it signs one; this process only forwards.
+  const attestor =
+    config.attestorPk && config.onChain
+      ? await AttestorProcess.start({
+          privateKey: config.attestorPk,
+          chainId: config.chainId,
+          escrow: config.escrow,
+          rpcUrl: config.rpcUrl,
+        })
+      : null;
+  if (attestor) console.log(`[server] attestor ${attestor.address} in its own process`);
+  const relayer = relayerFrom(config, attestor, keeper);
+  // Staked rooms' receipts come from the attestor. Practice rooms' never do:
+  // they are signed with a key of their own that lasts as long as the process.
+  const receipts = attestor ? attestorReceipts(attestor) : null;
+  const practiceReceipts = receiptSigner(generatePrivateKey(), config.chainId);
 
   const avatarCollections = parseCollections(config.avatarCollections);
   const avatars = new AvatarRegistry({
@@ -48,10 +79,19 @@ async function main(): Promise<void> {
     gateway: config.ipfsGateway,
   });
 
-  const styles = await createStyleBook(config.databaseUrl);
+  // Late-bound: the gateway that tells players things is built after the
+  // lobby and the matchmaker that need to.
+  let notify: (player: `0x${string}`, message: Parameters<Gateway['notify']>[1]) => void = () => undefined;
+  let bridge: ChainBridge | null = null;
   const lobby = new Lobby({
     archive,
     relayer,
+    readyMs: config.readyMs,
+    journal,
+    expects: (matchId) => bridge?.expects(matchId) ?? false,
+    onLive: (room) => {
+      for (const seat of room.match.seats) notify(seat.address, { type: 'live', matchId: room.matchId });
+    },
     commitMs: config.commitMs,
     revealMs: config.revealMs,
     replayMs: config.replayMs,
@@ -59,17 +99,21 @@ async function main(): Promise<void> {
     styles,
     maxPracticeRooms: config.maxPracticeRooms,
     chainId: config.chainId,
-    receiptSigner: receipts.address,
+    receiptSigner: receipts?.address ?? null,
+    practiceReceiptSigner: practiceReceipts.address,
   });
 
 
-  const bridge = config.onChain
+  bridge = config.onChain
     ? ChainBridge.start({
         rpcUrl: config.rpcUrl,
         chainId: config.chainId,
         escrow: config.escrow,
         lobby,
-        ...(config.keeperPk ? { keeperKey: config.keeperPk } : {}),
+        ...(keeper ? { keeper } : {}),
+        ...(config.escrowFromBlock !== undefined ? { fromBlock: config.escrowFromBlock } : {}),
+        confirmations: config.confirmations,
+        archive,
         // A restart loses every room in progress. Matches that were live are
         // aborted and refunded rather than restarted from round one.
         abort: (matchId) => relayer.abort(matchId),
@@ -101,6 +145,7 @@ async function main(): Promise<void> {
           chainId: config.chainId,
           governor: config.governor,
           fromBlock: config.governorFromBlock,
+          confirmations: config.confirmations,
         })
       : null;
 
@@ -111,39 +156,60 @@ async function main(): Promise<void> {
   const relay =
     config.onChain && config.sessionDelegate !== ZERO_ADDRESS && config.sessionRelayerPk
       ? new SessionRelay({
-          port: viemRelayPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, relayerKey: config.sessionRelayerPk }),
+          port: viemRelayPort({
+            rpcUrl: config.rpcUrl,
+            chainId: config.chainId,
+            sender: senderFor(config.sessionRelayerPk, 'relay') as TxSender,
+          }),
           escrow: config.escrow,
           delegate: config.sessionDelegate,
           quotaPerDay: config.relayQuotaPerDay,
         })
       : null;
 
-  // Reads finished matches from the archive and nothing else; see `analyst/analyst.ts`.
-  const analystLimits = new AnalystLimits({
-    perWalletPerHour: config.analyst.quotaPerHour,
-    maxConcurrent: config.analyst.maxConcurrent,
-    dailyBudgetUsd: config.analyst.dailyBudgetUsd,
-    requestsPerMinute: config.analyst.requestsPerMinute,
-    requestsPerDay: config.analyst.requestsPerDay,
-  });
+  // Reads finished matches from the archive and nothing else, in a worker
+  // thread of its own; see `analyst/analyst.ts`.
   const analyst = config.analyst.enabled
-    ? new Analyst({
+    ? new AnalystWorker({
         archive,
-        model: geminiModel({
-          apiKey: config.analyst.geminiApiKey,
-          baseUrl: config.analyst.geminiBaseUrl,
-          timeoutMs: config.analyst.timeoutMs,
-          maxRetries: config.analyst.maxRetries,
-        }),
-        modelId: config.analyst.model,
-        effort: config.analyst.effort,
-        maxTokens: config.analyst.maxTokens,
-        deadlineMs: config.analyst.deadlineMs,
-        maxTurns: config.analyst.maxTurns,
-        limits: analystLimits,
         styles,
+        config: {
+          model: {
+            apiKey: config.analyst.geminiApiKey,
+            baseUrl: config.analyst.geminiBaseUrl,
+            timeoutMs: config.analyst.timeoutMs,
+            maxRetries: config.analyst.maxRetries,
+          },
+          analyst: {
+            modelId: config.analyst.model,
+            effort: config.analyst.effort,
+            maxTokens: config.analyst.maxTokens,
+            deadlineMs: config.analyst.deadlineMs,
+            maxTurns: config.analyst.maxTurns,
+          },
+          limits: {
+            perWalletPerHour: config.analyst.quotaPerHour,
+            maxConcurrent: config.analyst.maxConcurrent,
+            dailyBudgetUsd: config.analyst.dailyBudgetUsd,
+            requestsPerMinute: config.analyst.requestsPerMinute,
+            requestsPerDay: config.analyst.requestsPerDay,
+          },
+        },
       })
     : undefined;
+
+  // Opens matchmade lobbies, the only ones that earn play-mining, with its
+  // own key. Told who to notify once the gateway exists.
+  const matchmakerSender = config.onChain ? senderFor(config.matchmakerPk, 'matchmaker') : null;
+  const matchmaker = matchmakerSender
+    ? new Matchmaker({
+        port: viemMatchmakerPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: matchmakerSender }),
+        tiers: parseTiers(config.matchmakingTiers),
+        minSeats: DEFAULT_RULES.minPlayers,
+        fillAfterMs: config.matchmakingFillAfterMs,
+        notify: (player, message) => notify(player, message),
+      })
+    : null;
 
   const gateway = new Gateway({
     lobby,
@@ -156,11 +222,13 @@ async function main(): Promise<void> {
     // A contract wallet's grant can only be checked by asking the wallet.
     verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
     verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
-    receipts,
+    ...(receipts ? { receipts } : {}),
+    practiceReceipts,
     ...(relay ? { relay } : {}),
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,
+    ...(matchmaker ? { matchmaker } : {}),
     staking:
       config.stakedLms !== ZERO_ADDRESS
         ? {
@@ -207,14 +275,15 @@ async function main(): Promise<void> {
         JSON.stringify({
           ok: true,
           rooms: lobby.size,
+          pendingSettlements: lobby.pendingSettlements,
           clients: gateway.connections,
           onChain: config.onChain,
           lobbies: { open: directory.open.length, live: directory.live.length },
           analyst: analyst
             ? {
                 model: config.analyst.model,
-                requestsToday: analystLimits.requests,
-                spentTodayUsd: Math.round(analystLimits.spent * 1e4) / 1e4,
+                requestsToday: analyst.requests,
+                spentTodayUsd: Math.round(analyst.spent * 1e4) / 1e4,
               }
             : null,
         }),
@@ -257,7 +326,7 @@ async function main(): Promise<void> {
         onMessage: (listener) => void socket.on('message', listener),
         onClose: (listener) => void socket.on('close', listener),
       },
-      peerFrom(request, config.trustProxy),
+      peerFrom(request, config.trustedProxyHops),
     );
     if (!admitted) return;
     const pingable = {
@@ -269,11 +338,14 @@ async function main(): Promise<void> {
     socket.on('close', () => heartbeat.untrack(pingable));
   });
 
+  notify = (player, message) => gateway.notify(player, message);
   const ticker = setInterval(() => lobby.tick(), TICK_MS);
   ticker.unref();
+  const matching = matchmaker ? setInterval(() => void matchmaker.tick(), 1_000) : null;
+  matching?.unref();
+  if (matchmaker) console.log(`[server] matchmaking ${matchmaker.tiers.length} tiers`);
   const sweeper = setInterval(() => {
     gateway.sweep();
-    analystLimits.sweep(Date.now());
   }, SWEEP_MS);
   sweeper.unref();
   const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
@@ -297,6 +369,7 @@ async function main(): Promise<void> {
       hubChainId: config.chainId,
       notify: (player, event) => gateway.notify(player, { type: 'crossChain', event }),
       ...(config.crossChainFromBlock !== undefined ? { fromBlock: config.crossChainFromBlock } : {}),
+      confirmations: config.confirmations,
     });
     crossChain.start(4_000);
     console.log(`[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ')}`);
@@ -305,12 +378,12 @@ async function main(): Promise<void> {
   // Harvests fees on a timer so they reach stakers. Holds no authority:
   // `harvest` is open to anyone and pays only where the router already sends.
   let feeKeeper: FeeKeeper | null = null;
-  if (config.rpcUrl && config.keeperPk && config.feeRouter !== ZERO_ADDRESS) {
+  if (keeper && config.feeRouter !== ZERO_ADDRESS) {
     const port = await viemFeeRouter({
       rpcUrl: config.rpcUrl,
       chainId: config.chainId,
       router: config.feeRouter,
-      keeperKey: config.keeperPk,
+      keeper,
     });
     feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
     feeKeeper.start(config.feeKeeperPollMs);
@@ -338,11 +411,15 @@ async function main(): Promise<void> {
     crossChain?.stop();
     proposals?.stop();
     clearInterval(ticker);
+    if (matching) clearInterval(matching);
     clearInterval(sweeper);
     clearInterval(beat);
     wss.close();
     http.close();
     void verifyPool.close();
+    void analyst?.close();
+    attestor?.stop();
+    void lobby.drain().finally(() => storage.close());
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

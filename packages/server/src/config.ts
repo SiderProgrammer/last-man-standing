@@ -103,6 +103,7 @@ const ENV = z.object({
   COMMIT_MS: whole(20_000, 1),
   REVEAL_MS: whole(12_000, 1),
   REPLAY_MS: whole(2_500),
+  READY_MS: whole(30_000),
   RPC_URL: url(/^(https?|wss?)$/, 'an http(s) or ws(s)'),
   ESCROW_ADDRESS: address,
   ATTESTOR_PK: privateKey,
@@ -114,16 +115,28 @@ const ENV = z.object({
   MAX_CONNECTIONS_PER_IP: whole(20, 1),
   LOGIN_TIMEOUT_MS: whole(120_000, 1),
   ALLOWED_ORIGINS: text(),
-  TRUST_PROXY: flag(false),
+  TRUSTED_PROXY_HOPS: whole(0),
+  /** Replaced by `TRUSTED_PROXY_HOPS`; read only to refuse it. */
+  TRUST_PROXY: text(),
   GATEWAY_LIMITS: json,
   VERIFY_THREADS: whole(Math.max(1, Math.min(4, availableParallelism() - 1))),
   AVATAR_COLLECTIONS: text(),
   IPFS_GATEWAY: text('https://ipfs.io/ipfs/'),
   SESSION_DELEGATE: address,
   SESSION_RELAYER_PK: privateKey,
+  MATCHMAKER_PK: privateKey,
+  MATCHMAKING_TIERS: text(
+    JSON.stringify([
+      { stake: '1000000000000000', seats: 4 },
+      { stake: '1000000000000000', seats: 8 },
+      { stake: '10000000000000000', seats: 4 },
+    ]),
+  ),
+  MATCHMAKING_FILL_AFTER_MS: whole(30_000),
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
   CROSS_CHAIN_FROM_BLOCK: bigint,
+  CONFIRMATIONS: whole(3),
   ZAP_JOIN: address,
   V4_QUOTER: address,
   ZAP_TOKENS: text(),
@@ -186,6 +199,27 @@ export function loadConfig(
       'invalid server configuration:\n  ALLOWED_ORIGINS is required in production; set ALLOWED_ORIGINS=* to accept any origin',
     );
   }
+  // One key per job, as `Deploy.s.sol` gives every role its own address: a
+  // drained relayer must not stop settlement, and a leaked keeper key must
+  // not sign results.
+  const keys = Object.entries({
+    ATTESTOR_PK: e.ATTESTOR_PK,
+    KEEPER_PK: e.KEEPER_PK,
+    SESSION_RELAYER_PK: e.SESSION_RELAYER_PK,
+    MATCHMAKER_PK: e.MATCHMAKER_PK,
+  }).flatMap(([name, key]) => (key ? [[name, key.toLowerCase()] as const] : []));
+  const shared = keys.filter(([, key], i) => keys.some(([, other], j) => j !== i && other === key));
+  if (shared.length > 0) {
+    throw new ConfigError(
+      `invalid server configuration:\n  ${shared.map(([name]) => name).join(', ')} are the same key; each job needs its own`,
+    );
+  }
+  // Its meaning, the left-most forwarded address, was the one a client can forge.
+  if (e.TRUST_PROXY) {
+    throw new ConfigError(
+      'invalid server configuration:\n  TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS to the number of proxies in front of the server',
+    );
+  }
   if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
     throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
   }
@@ -197,11 +231,30 @@ export function loadConfig(
     revealMs: e.REVEAL_MS,
     /** Hold after each round so clients can replay it before the next clock starts. */
     replayMs: e.REPLAY_MS,
+    /** How long a staked room waits for every player to connect before round 1's clock starts anyway. */
+    readyMs: e.READY_MS,
     rpcUrl: e.RPC_URL ?? '',
     escrow: e.ESCROW_ADDRESS ?? deployed('escrow'),
+    /**
+     * Signs results, aborts and commit receipts, in a process of its own
+     * (`attestor/process.ts`). Never sends a transaction.
+     */
     attestorPk: e.ATTESTOR_PK,
-    /** Optional key that pays for the permissionless `lockMatch` call. */
-    keeperPk: e.KEEPER_PK ?? e.ATTESTOR_PK,
+    /**
+     * Sends every transaction that needs no authority: lock, finalise,
+     * cancel, harvest, and the attestor's signed settle and abort. Without
+     * it, nothing reaches the chain from here.
+     */
+    keeperPk: e.KEEPER_PK,
+    /** Opens matchmade lobbies with their rosters. See `lobby/matchmaker.ts`. */
+    matchmakerPk: e.MATCHMAKER_PK,
+    /**
+     * The queues the matchmaker runs, as JSON: `[{"stake":"<wei>","seats":4}]`.
+     * Each stake must be one the escrow accepts. Only with `MATCHMAKER_PK`.
+     */
+    matchmakingTiers: e.MATCHMAKING_TIERS,
+    /** A tier with enough players for a table, but not a full one, opens it after the first has waited this long. */
+    matchmakingFillAfterMs: e.MATCHMAKING_FILL_AFTER_MS,
     /** Blank, or `ARCHIVE=memory`, keeps the archive in memory. */
     databaseUrl: e.ARCHIVE === 'memory' ? '' : (e.DATABASE_URL ?? ''),
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */
@@ -222,11 +275,13 @@ export function loadConfig(
       .map((origin) => origin.trim())
       .filter((origin) => origin && origin !== '*'),
     /**
-     * Take the client IP from `X-Forwarded-For` instead of the socket. Only
-     * behind a proxy that sets it: otherwise any client can claim any IP and
-     * walk straight past the per-IP limits.
+     * Proxies of this deployment's own in front of the server, each of which
+     * appends to `X-Forwarded-For`: the client IP is the right-most entry
+     * none of them wrote. Zero ignores the header, which is right without a
+     * proxy: a client talking to the server directly could put anything in
+     * it and walk straight past the per-IP limits. See `gateway/peer.ts`.
      */
-    trustProxy: e.TRUST_PROXY,
+    trustedProxyHops: e.TRUSTED_PROXY_HOPS,
     /**
      * Overrides for any field of `DEFAULT_GATEWAY_LIMITS`, as JSON, e.g.
      * `{"connectRatePerIp":1000,"connectBurstPerIp":10000}` for a load test
@@ -268,6 +323,13 @@ export function loadConfig(
      * See `chain/crossChain.ts`.
      */
     spokes: e.SPOKES,
+    /** The escrow's deploy block, from the registry: no scan of its events starts before it. */
+    escrowFromBlock: fromBlock,
+    /**
+     * Blocks behind the head every log scan stops at. Base's sequencer can
+     * still reorg its newest blocks; three is six seconds of them.
+     */
+    confirmations: e.CONFIRMATIONS,
     /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
     crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK ?? fromBlock,
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */

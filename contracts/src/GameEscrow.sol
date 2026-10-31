@@ -25,7 +25,6 @@ import {IRandomnessOracle, IRandomnessConsumer} from "./interfaces/IRandomnessOr
 import {IFeeLedger} from "./interfaces/IFeeLedger.sol";
 import {ISequencerUptimeFeed} from "./interfaces/ISequencerUptimeFeed.sol";
 import {SettlementLib} from "./libraries/SettlementLib.sol";
-import {SignatureLib} from "./libraries/SignatureLib.sol";
 
 /// @title GameEscrow
 /// @notice Holds match stakes and pays out against an attested off-chain result.
@@ -69,6 +68,13 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 ///      the seat, until the match ends: burned when it settles, refunded with
 ///      the stake when it is cancelled, vetoed or aborted. Fee totals count
 ///      only the ETH part, the net fee.
+///
+///      Matchmaking. A lobby is private unless the config's `matchmaker`
+///      opened it (`createMatchmade`), with the roster of players its queue
+///      put together: only those may take a seat in it, by any route. Fee
+///      totals, and so play-mining, count matchmade lobbies only. A private
+///      lobby is anyone's to open and to fill, so a farmer could fill one with
+///      their own wallets; a matchmade one is filled from the queue.
 contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, IFeeLedger {
     enum MatchStatus {
         None,
@@ -115,6 +121,9 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         uint16 seatCount;
         MatchStatus status;
         uint40 joinDeadline;
+        /// @dev Opened by the matchmaker: only its roster may join, and its
+        ///      fees count for play-mining.
+        bool matchmade;
         /// @dev Snapshotted at lock: the oracle asked for the seed, and the
         ///      attestor set that signs the result.
         address oracle;
@@ -165,7 +174,8 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         WindowClosed,
         LobbyFull,
         AlreadyJoined,
-        StakeTooLow
+        StakeTooLow,
+        NotRostered
     }
 
     /// @notice Length of a fee epoch. Epoch `n` is `[n * FEE_EPOCH, (n + 1) * FEE_EPOCH)`.
@@ -186,6 +196,8 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     mapping(bytes32 matchId => mapping(address player => uint256)) private seatNumber;
     /// @notice Chain a seat originated from. Zero means this chain.
     mapping(bytes32 matchId => mapping(address player => uint32)) public seatOrigin;
+    /// @notice Players the matchmaker assigned to a matchmade lobby.
+    mapping(bytes32 matchId => mapping(address player => bool)) public rostered;
 
     /// @notice Fees `player` paid in matches that settled during `epoch`.
     mapping(address player => mapping(uint256 epoch => uint256)) public feesPaid;
@@ -217,6 +229,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         uint32 indexed termsId,
         bytes32 rulesHash
     );
+    event MatchRostered(bytes32 indexed matchId, address[] roster);
     event PlayerJoined(bytes32 indexed matchId, address indexed player, uint16 seat, uint32 originChainId);
     event MatchLocked(bytes32 indexed matchId, bytes32 indexed requestId, uint16 seatCount);
     event MatchStarted(bytes32 indexed matchId, bytes32 seed, uint40 settleDeadline);
@@ -257,8 +270,6 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     error NotEnoughPlayers(uint16 seatCount, uint16 minSeats);
     error LobbyNotReady(bytes32 matchId);
     error NotOracle(address caller);
-    error QuorumNotMet(uint256 signers, uint32 threshold);
-    error NotAnAttestor(address signer);
     error CannotCancelYet(bytes32 matchId);
     error RoundsOutOfRange(uint32 rounds);
     error ConfigIncomplete();
@@ -274,6 +285,8 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     error DiscountOff();
     error NoDiscount(uint256 lmsIn);
     error NotBridgeReceiver(address caller);
+    error NotMatchmaker(address caller);
+    error NotRostered(bytes32 matchId, address player);
 
     using SafeERC20 for IERC20;
 
@@ -286,7 +299,36 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     /// @notice Opens a lobby with terms fixed from the current configuration.
     /// @param stake Per-seat stake in wei.
     /// @param maxSeats Seats in the lobby.
+    ///         A private lobby: anyone may join it by id, and its fees earn no
+    ///         play-mining.
     function createMatch(uint128 stake, uint16 maxSeats) external whenNotPaused returns (bytes32 matchId) {
+        (matchId,) = _create(stake, maxSeats);
+    }
+
+    /// @notice Opens a lobby for the players the matchmaker's queue put
+    ///         together. Only they may take a seat, by any route; the rest of
+    ///         the lobby is as `createMatch` opens it.
+    /// @dev The roster may name more players than there are seats, so that a
+    ///      no-show does not sink the lobby: the first to stake sit.
+    function createMatchmade(uint128 stake, uint16 maxSeats, address[] calldata roster)
+        external
+        whenNotPaused
+        returns (bytes32 matchId)
+    {
+        if (msg.sender != config.matchmaker()) revert NotMatchmaker(msg.sender);
+        MatchInfo storage info;
+        (matchId, info) = _create(stake, maxSeats);
+        info.matchmade = true;
+        for (uint256 i = 0; i < roster.length; ++i) {
+            rostered[matchId][roster[i]] = true;
+        }
+        emit MatchRostered(matchId, roster);
+    }
+
+    function _create(uint128 stake, uint16 maxSeats)
+        private
+        returns (bytes32 matchId, MatchInfo storage info)
+    {
         // A config deploys with none of these set. A lobby opened against it
         // could never be seeded, would snapshot a rule set nobody plays
         // under, or could never settle.
@@ -299,7 +341,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         (uint32 termsId, bytes32 rulesHash) = _currentTerms(params);
         matchId = keccak256(abi.encode(block.chainid, address(this), matchNonce++));
 
-        MatchInfo storage info = matchInfo[matchId];
+        info = matchInfo[matchId];
         info.stake = stake;
         info.termsId = termsId;
         info.maxSeats = maxSeats;
@@ -540,7 +582,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         }
         if (rounds == 0 || rounds > type(uint16).max) revert RoundsOutOfRange(rounds);
 
-        _checkQuorum(
+        config.checkQuorum(
             info.attestorSetVersion,
             _hashTypedDataV4(
                 SettlementLib.hashMatchResult(matchId, rounds, historyRoot, transcriptHash, ranking)
@@ -560,18 +602,6 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         info.transcriptHash = transcriptHash;
 
         emit ResultProposed(matchId, historyRoot, rounds, transcriptHash, ranking, deadline);
-    }
-
-    /// @dev Reverts unless `signatures` over `digest` come from a quorum of
-    ///      the attestor set the match locked under.
-    function _checkQuorum(uint32 version, bytes32 digest, bytes calldata signatures) private view {
-        address[] memory signers = SignatureLib.recoverAscending(digest, signatures);
-        uint32 threshold = config.thresholdOf(version);
-        // A zero threshold would accept an empty signature blob.
-        if (threshold == 0 || signers.length < threshold) revert QuorumNotMet(signers.length, threshold);
-        for (uint256 i = 0; i < signers.length; ++i) {
-            if (!config.isAttestorAt(version, signers[i])) revert NotAnAttestor(signers[i]);
-        }
     }
 
     /// @dev Reverts unless `ranking` is exactly the match's seats, each once:
@@ -612,7 +642,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         totalEscrowed -= uint256(info.stake) * info.seatCount - discount.eth;
         Terms storage matchTerms = terms[info.termsId];
         _distribute(matchId, info, matchTerms, ranking, discount.eth);
-        _recordFees(matchId, info.stake, matchTerms.feeBps, ranking, discount.eth != 0);
+        if (info.matchmade) _recordFees(matchId, info.stake, matchTerms.feeBps, ranking, discount.eth != 0);
 
         if (discount.lms != 0) {
             totalLmsEscrowed -= discount.lms;
@@ -633,7 +663,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     }
 
     /// @dev Adds every seat's net fee — what it paid in ETH — to this epoch's
-    ///      totals, now that it is paid. `ranking` was checked against the seat
+    ///      totals, now that it is paid. Matchmade lobbies only. `ranking` was checked against the seat
     ///      set when it was proposed, and again by hash above, so it is exactly
     ///      the seats.
     function _recordFees(
@@ -790,7 +820,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         if (info.status != MatchStatus.Live) {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
-        _checkQuorum(
+        config.checkQuorum(
             info.attestorSetVersion,
             _hashTypedDataV4(keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))),
             signatures
@@ -941,6 +971,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         if (info.seatCount >= info.maxSeats) return JoinFailure.LobbyFull;
         if (hasSeat(matchId, player)) return JoinFailure.AlreadyJoined;
         if (value < info.stake) return JoinFailure.StakeTooLow;
+        if (info.matchmade && !rostered[matchId][player]) return JoinFailure.NotRostered;
         return JoinFailure.None;
     }
 
@@ -955,6 +986,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         if (block.timestamp >= info.joinDeadline) revert JoinWindowClosed(matchId);
         if (info.seatCount >= info.maxSeats) revert LobbyFull(matchId);
         if (hasSeat(matchId, player)) revert AlreadyJoined(matchId, player);
+        if (info.matchmade && !rostered[matchId][player]) revert NotRostered(matchId, player);
 
         uint16 seat = info.seatCount;
         seatNumber[matchId][player] = uint256(seat) + 1;

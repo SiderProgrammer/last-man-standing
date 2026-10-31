@@ -5,10 +5,28 @@
  * every server test does — never opens a port, starts a ticker or reads the
  * environment beyond `config`.
  */
-export { Room, type Client, type MatchFinished, type RoomOptions } from './match/room.js';
+export { Room, type Client, type MatchFinished, type MoveProof, type RoomOptions } from './match/room.js';
+export { MemoryJournal, PostgresJournal, type JournalEntry, type RoomJournal } from './match/journal.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
 export { transcriptResponse } from './lobby/transcripts.js';
-export { MemoryStyleBook, PostgresStyleBook, createStyleBook, type StyleBook } from './lobby/styles.js';
+export { MemoryStyleBook, PostgresStyleBook, type StyleBook } from './lobby/styles.js';
+export {
+  InstanceLockHeld,
+  claimInstance,
+  connectDatabase,
+  migrate,
+  type Database,
+  type Queryable,
+} from './db/database.js';
+export { MIGRATIONS, type Migration } from './db/migrations.js';
+export { openStorage, storageOn, type Storage } from './db/storage.js';
+export {
+  Matchmaker,
+  parseTiers,
+  viemMatchmakerPort,
+  type MatchmakerOptions,
+  type MatchmakerPort,
+} from './lobby/matchmaker.js';
 export {
   Gateway,
   HISTORY_PAGE,
@@ -31,10 +49,32 @@ export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions } from './chain/sessionRelay.js';
+export { keySigner, signerAccount, type Signer } from './chain/signer.js';
+export {
+  AttestationRefused,
+  AttestorService,
+  escrowMatchReader,
+  type Attestor,
+  type AttestorServiceOptions,
+  type StakedMatch,
+} from './attestor/service.js';
+export { AttestorProcess, type AttestorProcessOptions } from './attestor/remote.js';
+export { AnalystWorker, type AnalystWorkerConfig } from './analyst/remote.js';
+export { Rpc, RemoteError, type Channel, type Handlers } from './util/rpc.js';
+export {
+  RevertedError,
+  TxSender,
+  viemTxPort,
+  viemTxSender,
+  type ContractCall,
+  type Fees,
+  type SentTx,
+  type TxPort,
+  type TxSenderOptions,
+} from './chain/txSender.js';
 export {
   MemoryArchive,
   PostgresArchive,
-  createArchive,
   type ArchivedAnalysis,
   type ArchivedMatch,
   type MatchArchive,
@@ -43,6 +83,7 @@ export {
   signResult,
   receiptSigner,
   packSignatures,
+  attestorReceipts,
   createRelayer,
   relayerFrom,
   nullRelayer,
@@ -51,10 +92,13 @@ export {
 export { BotDriver } from './bots/bots.js';
 export { RequestError } from './errors.js';
 export { FrameError, errorFrame, parseClientMessage } from './gateway/frames.js';
-export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
+export { ChainBridge, cancellableFrom, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
+export { LOG_CHUNK, chunkedLogs, confirmedHead } from './chain/logs.js';
 export {
+  MULTICALL3,
   viemEscrowReader,
   type EscrowMatch,
+  type EscrowMatchRead,
   type EscrowReader,
   type MatchCreatedLog,
   type PlayerJoinedLog,

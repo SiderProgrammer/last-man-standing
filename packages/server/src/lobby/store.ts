@@ -1,5 +1,5 @@
+import type { Queryable } from '../db/database.js';
 import {
-  errorMessage,
   type MatchAnalysis,
   type MatchResult,
   type RoundRecord,
@@ -129,77 +129,17 @@ export class MemoryArchive implements MatchArchive {
   }
 }
 
-interface PgPool {
-  query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
-}
-
-/** What `pg` actually constructs; `fromPool` needs only the queries. */
-interface PgClientPool extends PgPool {
-  on(event: 'error', listener: (error: Error) => void): unknown;
-}
-
 /**
- * Postgres-backed archive. `pg` is loaded through a computed specifier so the
- * package stays an optional dependency: a deployment without a database just
- * keeps the in-memory archive.
+ * Postgres-backed archive: the repository over the `matches` and
+ * `match_analyses` tables, which `db/migrations.ts` creates. It takes the
+ * server's one pool, and holds no SQL that is not about matches.
+ *
+ * Every match id is lower-cased on the way in and on the way out, as the
+ * memory archive keys them, so a lookup never depends on the case an id was
+ * first written in.
  */
 export class PostgresArchive implements MatchArchive {
-  private constructor(private readonly pool: PgPool) {}
-
-  /** Wraps a pool whose tables already exist; `connect` is the normal way in. */
-  static fromPool(pool: PgPool): PostgresArchive {
-    return new PostgresArchive(pool);
-  }
-
-  static async connect(connectionString: string): Promise<PostgresArchive> {
-    const specifier = 'pg';
-    const pg = (await import(specifier)) as {
-      default?: { Pool: new (config: { connectionString: string }) => PgClientPool };
-      Pool?: new (config: { connectionString: string }) => PgClientPool;
-    };
-    const Pool = pg.Pool ?? pg.default?.Pool;
-    if (!Pool) throw new Error('pg is installed but does not export Pool');
-
-    const pool = new Pool({ connectionString });
-    // A serverless host such as Neon drops idle connections when it scales to
-    // zero. The pool reports that on an idle client as an `error` event, which
-    // would crash the process if nothing listened; the next query reconnects.
-    pool.on('error', (error) => console.warn('[store] idle database connection lost:', errorMessage(error)));
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS matches (
-        match_id     TEXT PRIMARY KEY,
-        rounds       INTEGER NOT NULL,
-        history_root TEXT NOT NULL,
-        ranking      JSONB NOT NULL,
-        history      JSONB NOT NULL,
-        settled_tx   TEXT,
-        seats        JSONB NOT NULL,
-        rules        JSONB NOT NULL,
-        staked       BOOLEAN NOT NULL,
-        seed         TEXT NOT NULL,
-        -- Lower-cased seat addresses, so one wallet's history is an index lookup.
-        players      TEXT[] NOT NULL,
-        created_at   TIMESTAMPTZ NOT NULL,
-        transcript   JSONB NOT NULL,
-        -- Lower-cased, as the transcript route looks it up.
-        transcript_hash TEXT NOT NULL
-      )
-    `);
-    await pool.query('CREATE INDEX IF NOT EXISTS matches_players ON matches USING GIN (players)');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS matches_transcript_hash ON matches (transcript_hash)');
-    await pool.query('CREATE INDEX IF NOT EXISTS matches_created_at ON matches (created_at DESC)');
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS match_analyses (
-        match_id   TEXT NOT NULL,
-        seat       INTEGER NOT NULL,
-        version    TEXT NOT NULL,
-        analysis   JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        PRIMARY KEY (match_id, seat, version)
-      )
-    `);
-    return new PostgresArchive(pool);
-  }
+  constructor(private readonly pool: Queryable) {}
 
   async save(entry: ArchivedMatch): Promise<void> {
     await this.pool.query(
@@ -207,9 +147,15 @@ export class PostgresArchive implements MatchArchive {
          (match_id, rounds, history_root, ranking, history, settled_tx, seats, rules, staked, seed, players, created_at,
           transcript, transcript_hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000), $13, $14)
-       ON CONFLICT (match_id) DO UPDATE SET settled_tx = EXCLUDED.settled_tx`,
+       -- Saved again, the match is replaced whole, as the memory archive replaces it.
+       ON CONFLICT (match_id) DO UPDATE SET
+         rounds = EXCLUDED.rounds, history_root = EXCLUDED.history_root, ranking = EXCLUDED.ranking,
+         history = EXCLUDED.history, settled_tx = EXCLUDED.settled_tx, seats = EXCLUDED.seats,
+         rules = EXCLUDED.rules, staked = EXCLUDED.staked, seed = EXCLUDED.seed, players = EXCLUDED.players,
+         created_at = EXCLUDED.created_at, transcript = EXCLUDED.transcript,
+         transcript_hash = EXCLUDED.transcript_hash`,
       [
-        entry.result.matchId,
+        entry.result.matchId.toLowerCase(),
         entry.result.rounds,
         entry.result.historyRoot,
         JSON.stringify(entry.result.ranking),
@@ -230,7 +176,7 @@ export class PostgresArchive implements MatchArchive {
   }
 
   async recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void> {
-    await this.pool.query('UPDATE matches SET settled_tx = $2 WHERE match_id = $1', [matchId, settledTx]);
+    await this.pool.query('UPDATE matches SET settled_tx = $2 WHERE match_id = $1', [matchId.toLowerCase(), settledTx]);
   }
 
   async loadByTranscript(transcriptHash: `0x${string}`): Promise<ArchivedMatch | null> {
@@ -242,7 +188,7 @@ export class PostgresArchive implements MatchArchive {
   }
 
   async load(matchId: `0x${string}`): Promise<ArchivedMatch | null> {
-    const { rows } = await this.pool.query('SELECT * FROM matches WHERE match_id = $1', [matchId]);
+    const { rows } = await this.pool.query('SELECT * FROM matches WHERE match_id = $1', [matchId.toLowerCase()]);
     const row = rows[0];
     return row ? rowToEntry(row) : null;
   }
@@ -315,14 +261,3 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
 function playersOf(entry: ArchivedMatch): string[] {
   return entry.seats.map((seat) => seat.address.toLowerCase());
 }
-
-export async function createArchive(databaseUrl: string): Promise<MatchArchive> {
-  if (!databaseUrl) return new MemoryArchive();
-  try {
-    return await PostgresArchive.connect(databaseUrl);
-  } catch (error) {
-    console.warn('[store] falling back to in-memory archive:', errorMessage(error));
-    return new MemoryArchive();
-  }
-}
-

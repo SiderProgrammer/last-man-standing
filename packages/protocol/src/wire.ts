@@ -3,6 +3,7 @@ import type { ZapInfo } from './chain/zap.js';
 import type { CrossChainEvent, SpokeInfo } from './chain/spokes.js';
 import type { StakingInfo } from './chain/governance.js';
 import type { ActionValue, BotDifficulty, MatchResult, PublicMatchState, RoundRecord, Seat } from './game/types.js';
+import type { MatchDelta } from './game/delta.js';
 import type { Rules } from './game/rules.js';
 import type { CommitReceipt, SeatProof, SignedGrant } from './chain/moves.js';
 import type { RelayedCall, SessionCallKind } from './chain/session.js';
@@ -66,6 +67,8 @@ export type RequestErrorCode =
   | 'RELAY_REFUSED'
   /** The wallet has used today's relayed calls. Its own transactions still work. */
   | 'RELAY_QUOTA'
+  /** A matchmaking tier this server does not run, or a wallet already queued. */
+  | 'BAD_QUEUE'
   /** A failure with no specific code. The message says what happened. */
   | 'INTERNAL';
 
@@ -137,7 +140,15 @@ export type ClientMessage =
    * `relay.error` carrying the same `id`. The call runs from the
    * authenticated wallet, through `SessionKeyDelegate.executeWithSession`.
    */
-  | { type: 'relay'; id: string; call: RelayedCall };
+  | { type: 'relay'; id: string; call: RelayedCall }
+  /**
+   * Joins the matchmaking queue for one of the tiers `hello` lists. Answered
+   * with `queued`, then `matched` once the queue has put a table together.
+   * One queue per wallet; joining another leaves the first.
+   */
+  | { type: 'queue'; stake: string; seats: number }
+  /** Leaves the matchmaking queue. Answered with `dequeued`. */
+  | { type: 'dequeue' };
 
 export type ServerMessage =
   | {
@@ -183,6 +194,18 @@ export type ServerMessage =
        * attestor set vouches for it.
        */
       receiptSigner: `0x${string}` | null;
+      /**
+       * The key that signs commit receipts in practice rooms, never the
+       * attestor: a practice match settles nothing, so nothing in it is
+       * signed with a key the escrow trusts.
+       */
+      practiceReceiptSigner: `0x${string}` | null;
+      /**
+       * The tiers this server matchmakes, each a stake in wei and a table
+       * size. Empty when it runs no matchmaker: every lobby is then one a
+       * player opened, joined by id, and none earns play-mining.
+       */
+      matchmaking: MatchmakingTier[];
     }
   | { type: 'authed'; address: `0x${string}` }
   /**
@@ -191,12 +214,32 @@ export type ServerMessage =
    */
   | { type: 'receipt'; receipt: CommitReceipt; signature: `0x${string}` }
   | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
+  /**
+   * The whole match, sent once when a client attaches. Everything after it is
+   * a `delta`, and each finished round a `round`.
+   */
   | {
       type: 'state';
       state: PublicMatchState;
       you: number | null;
-      deadline: number;
+      /**
+       * Milliseconds until the current window closes, as of sending. Relative,
+       * like `replayMs`, so the client never reconciles its clock with the
+       * server's.
+       */
+      msRemaining: number;
+      /**
+       * Seats the room is still waiting to see connected before round 1's
+       * clock starts. Empty once it has: everyone came, or the wait ran out.
+       */
+      waitingFor: number[];
     }
+  /**
+   * What changed since the last `state` or `delta`: everything that can,
+   * without the seed, the rules or the history. Fold it in with `applyDelta`,
+   * and each `round` with `withRound`. One object for the whole table.
+   */
+  | { type: 'delta'; delta: MatchDelta; msRemaining: number; waitingFor: number[] }
   | {
       type: 'round';
       record: RoundRecord;
@@ -247,6 +290,27 @@ export type ServerMessage =
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
   | { type: 'review'; match: ReviewedMatch }
+  /**
+   * A staked match this wallet sits in has gone live and its room is open.
+   * Sent to every socket of every seat, so a player who staked and walked
+   * away from the lobby screen is brought to the table.
+   */
+  | { type: 'live'; matchId: `0x${string}` }
+  /**
+   * A `watch` for a lobby that has no room yet: it is still filling, or
+   * waiting on its seed. The server holds the watch, and `state` follows
+   * the moment the room opens.
+   */
+  | { type: 'waiting'; matchId: `0x${string}` }
+  /** In the queue for this tier, with `waiting` wallets in it now, this one included. */
+  | { type: 'queued'; stake: string; seats: number; waiting: number }
+  | { type: 'dequeued' }
+  /**
+   * The queue put a table together, and the escrow holds a matchmade lobby
+   * for it, with this wallet on its roster. Stake into it, by any route,
+   * within its join window to take the seat.
+   */
+  | { type: 'matched'; matchId: `0x${string}`; stake: string; seats: number }
   | { type: 'error'; code: ErrorCode; message: string };
 
 /** One finished match in a player's history, as seen from their seat. */
@@ -276,6 +340,12 @@ export interface ReviewedMatch {
   finishedAt: number;
 }
 
+/** A matchmaking queue: a stake in wei, as a decimal string, and a table size. */
+export interface MatchmakingTier {
+  stake: string;
+  seats: number;
+}
+
 /** A `PlayerAvatars` deployment, as advertised to the client. */
 export interface AvatarCollectionInfo {
   chainId: number;
@@ -302,6 +372,20 @@ export interface LobbyInfo {
   joinDeadline: number;
   status: 'open' | 'pending' | 'live';
   players: LobbySeat[];
+  /**
+   * Unix seconds from which anyone may `cancelMatch` it and refund every
+   * seat: the join deadline for a lobby short of seats, `LOCK_GRACE_SECONDS`
+   * after it for one with enough, the oracle's timeout while it waits for a
+   * seed, the settle deadline while it is played. The server's keeper
+   * cancels it then; a seated player may too.
+   */
+  cancellableAt: number;
+  /**
+   * Opened by the server's matchmaker for the players its queue put
+   * together: only they can take a seat. Every other lobby is private, open
+   * to anyone with its id, and earns no play-mining.
+   */
+  matchmade: boolean;
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

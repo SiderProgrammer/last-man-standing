@@ -274,3 +274,31 @@ describe('move aim', () => {
     expect(instance.match.publicState().committed).toContain(0);
   });
 });
+
+describe('room wire', () => {
+  it('sends the whole match once, then only what changed, with the time left rather than a deadline', () => {
+    const room = new Room(setupWithBots(4, 'wire'), { commitMs: 10_000, revealMs: 5_000, botSeats: [1, 2, 3] }, 0);
+    const human = new FakeClient(HUMAN);
+    const watcher = new FakeClient(null);
+    room.attach(human, 1_000);
+    room.attach(watcher, 1_000);
+    expect(human.all('state')).toHaveLength(1);
+    expect(human.last('state')?.msRemaining).toBe(9_000);
+
+    // Nobody but the bots committed; the window closes on the clock and the round resolves.
+    room.tick(10_000);
+    room.tick(15_000);
+    const delta = human.last('delta');
+    expect(delta).toBeDefined();
+    expect(Object.keys(delta?.delta ?? {})).not.toEqual(expect.arrayContaining(['history']));
+    expect(delta?.delta).not.toHaveProperty('seed');
+    expect(delta?.delta).not.toHaveProperty('rules');
+    expect(delta?.msRemaining).toBe(10_000);
+    // One object for the table, serialised once by the gateway.
+    expect(watcher.last('delta')).toBe(delta);
+    expect(human.all('state')).toHaveLength(1);
+
+    // Folded together, the client's view is the match.
+    expect(human.view()?.state).toEqual(room.match.publicState());
+  });
+});

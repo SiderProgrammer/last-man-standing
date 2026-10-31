@@ -112,6 +112,8 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
     ...aim,
   }),
   reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, signature, ...aim }),
+  queue: z.object({ type: z.literal('queue'), stake: wei, seats: integer(2, 256) }),
+  dequeue: z.object({ type: z.literal('dequeue') }),
   relay: z.object({
     type: z.literal('relay'),
     id: z.string({ error: 'must be a string' }).min(1).max(64, 'is too long'),
