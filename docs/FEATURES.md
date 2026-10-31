@@ -1104,14 +1104,14 @@ Two supporting decisions:
 - **Seat origins come from `PlayerJoined`**, which already carries them, cached
   per seat. Purpose: the escrow is only read for a seat that joined before the
   backfill window, instead of once per seat per poll.
-- **The archive is best-effort.** Everything needed to audit a match is in the
-  signed result plus the move log, so losing the archive costs history browsing,
-  not correctness.
-
-> **Known issues.** No rate limiting, message size cap or connection cap; any
-> authenticated wallet can create unlimited practice rooms; round state is held
-> only in memory, so a restart mid-match loses the round and the match can then
-> only end by cancellation.
+- **Archive first.** A staked match is settled only once its transcript is
+  archived, and a named database that cannot be reached stops the server rather
+  than falling back to memory. Purpose: the evidence for a result is fetchable
+  for as long as it can be disputed.
+- **A staked room journals what moves it on.** Purpose: a restart resumes the
+  match where it was, with the same commitments, instead of refunding it.
+- **One instance.** Rooms, the matchmaking queue and the rate limits live in the
+  process; with Postgres, a second server against the same database is refused.
 
 ---
 
@@ -1240,15 +1240,16 @@ MAINNET_RPC_URL=https://… forge test --root contracts --match-path 'test/fork/
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
 | `RPC_URL` | — | Chain bridge, ERC-1271 logins |
 | `ESCROW_ADDRESS` | zero | The escrow to watch and settle against |
-| `ATTESTOR_PK` | — | Result signing and settlement relay |
-| `KEEPER_PK` | `ATTESTOR_PK` | Permissionless `lockMatch`, `finalize` and `cancelMatch` |
+| `ATTESTOR_PK` | — | Result, abort and receipt signing, in the attestor's own process |
+| `KEEPER_PK` | — | Sends settle, abort, `lockMatch`, `finalize`, `cancelMatch` and harvests |
+| `MATCHMAKER_PK` | — | The matchmaking queue, and the lobbies that earn play-mining |
 | `SESSION_DELEGATE` | registry | One-click play (needs `RPC_URL`, an escrow and `SESSION_RELAYER_PK`) |
 | `SESSION_RELAYER_PK` | — | Pays relayed gas |
 | `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |
 | `ZAP_JOIN` / `V4_QUOTER` / `ZAP_TOKENS` | zero / zero / — | Paying in tokens; all three or none |
 | `AVATAR_COLLECTIONS` | — | Per-chain avatar collections, as JSON |
 | `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Avatar metadata resolution |
-| `DATABASE_URL` | — | Postgres (e.g. Neon): match archive, analysis cache, play styles |
+| `DATABASE_URL` | — | Postgres (e.g. Neon): match archive, analysis cache, play styles, room journals |
 | `VITE_WS_URL` | host `:8787` | Server the browser connects to |
 | `VITE_DEV_KEY` | — | Dev-only burner wallet |
 

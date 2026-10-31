@@ -9,6 +9,8 @@ import {
   PostgresStyleBook,
   migrate,
   openStorage,
+  claimInstance,
+  InstanceLockHeld,
   type MatchArchive,
   type StyleBook,
   nullRelayer,
@@ -236,5 +238,34 @@ describe('migrations', () => {
 
     await migrate(database);
     expect((await new PostgresArchive(database).load(id))?.result.matchId).toBe(id);
+  });
+});
+
+describe('one server per database', () => {
+  it('claims the database with a lock held for as long as the server runs', async () => {
+    const database = await pglite();
+    const release = await claimInstance(database);
+    const { rows } = await database.query("SELECT count(*)::int AS locks FROM pg_locks WHERE locktype = 'advisory'");
+    expect(rows[0]?.locks).toBe(1);
+    await release();
+    const after = await database.query("SELECT count(*)::int AS locks FROM pg_locks WHERE locktype = 'advisory'");
+    expect(after.rows[0]?.locks).toBe(0);
+  });
+
+  it('refuses to start a second server while another holds the lock, and gives its connection back', async () => {
+    let released = 0;
+    const database = {
+      query: async () => ({ rows: [] }),
+      transaction: async () => undefined as never,
+      close: async () => undefined,
+      session: async () => ({
+        query: async () => ({ rows: [{ held: false }] }),
+        release: () => {
+          released += 1;
+        },
+      }),
+    };
+    await expect(claimInstance(database)).rejects.toBeInstanceOf(InstanceLockHeld);
+    expect(released).toBe(1);
   });
 });

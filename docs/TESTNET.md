@@ -23,14 +23,16 @@ unfilled deposit is **not** refunded. Use small amounts. See
 ```bash
 cd contracts
 DEPLOYER_PK=0x… SAFE=0x… GUARDIAN=0x… TEAM_BENEFICIARY=0x… \
-VRF_SUBSCRIPTION_ID=… \
+VRF_SUBSCRIPTION_ID=… MATCHMAKER=0x… \
 ATTESTORS=0x…,0x…,0x… ETHERSCAN_API_KEY=… \
 forge script script/Deploy.s.sol:Deploy --rpc-url $BASE_SEPOLIA_RPC --broadcast --verify
 ```
 
 Besides the escrow and governance, the script deploys the `BridgeJoinReceiver`
 on Base Sepolia's SpokePool, owned by the timelock, and names it in the config.
-`--verify` verifies every contract on the explorer.
+`MATCHMAKER` is the address of the server's `MATCHMAKER_PK`: the only account
+that can open the lobbies that earn play-mining. `--verify` verifies every
+contract on the explorer.
 
 The script writes `contracts/deployments/84532.json`: every address it created
 (the receiver as `bridgeReceiver`) and the block to start scanning logs from.
@@ -55,6 +57,10 @@ Nothing needs registering on the hub: the receiver takes a fill from any chain
 Across serves.
 
 ## 3. Point the server and the client at both
+
+The server needs four keys, each its own, and refuses to start if two are the
+same: `ATTESTOR_PK` (one of `ATTESTORS`), `KEEPER_PK` and `SESSION_RELAYER_PK`
+(gas money only), and `MATCHMAKER_PK` (the `MATCHMAKER` address). Then:
 
 ```bash
 SPOKES='[{"chainId":421614,"router":"0x…"}]'

@@ -10,8 +10,8 @@ Items are ordered roughly by what blocks the next demo.
 > **Closed on `fix/protocol-review`**:
 > withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
 > entries (§2.2), the Redis decision — dropped (§2.3),
-> unlimited practice rooms, a restart mid-match (now aborted and refunded rather
-> than resumed) and gateway rate limiting (§3.2),
+> unlimited practice rooms, a restart mid-match (now resumed from a journal, FIX_PLAN
+> 7.11) and gateway rate limiting (§3.2),
 > the stored ranking (§3.3), and the hardwired deploy mocks. Cross-chain joins
 > moved from LayerZero to Across (§2.1, FIX_PLAN Phase 6); no two-testnet run has
 > happened yet.
@@ -27,11 +27,12 @@ The pieces exist and typecheck, but they have only run against mocks:
 - `ChainBridge` (`packages/server/src/chain/bridge.ts`) polls `MatchCreated`, publishes a lobby
   directory, locks a full or expired lobby with the keeper key, and opens a room when the
   match goes `Live`. It has **never been run against a real RPC** — no integration test
-  covers the poll loop, and the 5 000-block backfill window on restart is a guess.
+  covers the poll loop.
 - The client can `createMatch`, `join` and watch, but the flow has only been exercised in
   practice mode. Needs a run against a local Anvil fork with the deploy script.
-- **Reconnect on the staked path:** the client re-sends `watch` after re-auth, but a
-  player who joins on-chain before the room exists gets no feedback beyond a toast.
+- ~~**Reconnect on the staked path:** a player who joins on-chain before the room exists
+  gets no feedback beyond a toast.~~ The server holds a `watch` for a lobby still filling
+  or waiting on its seed, and tells every seat `live` when the room opens (FIX_PLAN 7.10).
 - Reconcile the two id spaces: practice matches use `deriveMatchId(0, 0x0, nonce)`, staked
   matches use the escrow's nonce. They cannot currently collide, but nothing enforces it.
   Practice nonces now start at a random 64-bit offset per process, after the chaos tests
@@ -124,16 +125,16 @@ mainnet. Still open:
   per-IP login budget ahead of the ERC-1271 verifier, a per-connection payout-push cooldown, a strike
   bucket that disconnects persistent offenders, slow-consumer eviction, and a ping/pong
   heartbeat. Limits are per process: a second instance would need shared state.
-- Commitments and reveals are held only in memory, deliberately. A match that was live
-  when the server restarts is not resumed: `ChainBridge` has the attestor quorum call
-  `GameEscrow.abortMatch`, which refunds every seat at once, and falls back to the
-  permissionless `cancelMatch` at the settlement deadline when it cannot.
+- ~~Commitments and reveals are held only in memory.~~ A staked room journals every
+  commit and reveal (FIX_PLAN 7.11), and a match live when the server restarts resumes
+  where it was. Only one with no journal — `ARCHIVE=memory` — is aborted, refunding every
+  seat at once, or cancelled at its settlement deadline when the abort cannot be sent.
 - ~~The practice-room path lets any authenticated wallet create unlimited rooms.~~ One
   per wallet and a global ceiling (`MAX_PRACTICE_ROOMS`).
 - ~~The login nonce is single-use per connection but never expires within it.~~ A socket
   that has not logged in within `LOGIN_TIMEOUT_MS` is closed, which expires its nonce.
-- The keeper key doubles as the attestor key by default. Splitting them would mean a
-  compromised keeper cannot also sign results.
+- ~~The keeper key doubles as the attestor key by default.~~ Every job has its own key,
+  and the attestor signs in a process of its own (FIX_PLAN 7.4).
 
 ### 3.3 Contract review items
 
@@ -257,6 +258,7 @@ These are open questions, not bugs:
 - **Anti-collusion.** Nothing prevents two players from splitting a lobby, and with the
   current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
   in validation (1.09× under the old storm rules). See "Known risk: collusion" in
-  `ARCHITECTURE.md`. Candidates: random matchmaking instead of lobbies joined by id,
-  flagging seat pairs that never strike each other from the public history, and a
-  payout schedule that pays a pact less.
+  `ARCHITECTURE.md`. Matchmaking (FIX_PLAN 7.9) now assigns the lobbies that earn
+  play-mining, though wallets with one owner queueing together in a quiet tier can still
+  be matched with each other. Candidates still open: flagging seat pairs that never
+  strike each other from the public history, and a payout schedule that pays a pact less.

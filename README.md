@@ -77,8 +77,11 @@ What you still trust, stated plainly:
   the reveal.
 
 There is no on-chain fraud proof or attestor slashing; that is a deliberate
-trust level while the rules are still moving. A match that blows its deadline,
-or is lost to a server restart, is cancelled and refunded rather than resumed.
+trust level while the rules are still moving. A match that blows its deadline
+is cancelled and refunded. A server restart resumes a match where it was, from
+a journal of every commit and reveal written before the commit's receipt goes
+out, so the round and its rolls are the ones already committed to; only a
+match the server has no journal for is refunded instead.
 
 Around that core:
 
@@ -99,7 +102,15 @@ Around that core:
   `RewardsDistributor`. Each week's reward vests over six months in
   `RewardVesting` and votes only once released and staked. Two caps: 10,000
   LMS per ETH of fees (the real bound on farming) and a per-wallet cap per
-  week (which stops one wallet taking a quiet week, not sybils).
+  week (which stops one wallet taking a quiet week, not sybils). Only
+  matchmade lobbies count.
+- **Matchmaking** — players queue for a tier (a stake and a table size); when
+  a tier has a table, the server's matchmaker key opens a lobby on the escrow
+  with exactly those players on its roster, and only they can take a seat in
+  it, by any route. A lobby a player opens is private: anyone with its id
+  joins, and it earns no play-mining, because its creator could fill it with
+  their own wallets. The queue cannot stop that either: several wallets with
+  one owner queueing together in a quiet tier can be matched with each other.
 - **LMS fee discount** — a seat may pay up to half its fee in LMS at a
   governance-set rate (`joinWithLms`). The LMS is held with the stake, burned
   when the match settles and refunded if it does not.
@@ -174,10 +185,18 @@ two coincide.
 | Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
 | Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
-| Operator | Runs the game server; holds the attestor key and the receipt key | Plays each match; signs its result and proposes it with the transcript hash; aborts a live match it cannot finish, refunding every seat; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
+| Operator | Runs the game server, and the keys below | Plays each match; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal, or by restarting the server; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
+| Attestor | The server's `ATTESTOR_PK`, in a process of its own | Signs a result, after replaying its transcript and checking the seed, rules and seats against the escrow; signs an abort, which refunds every seat of a live match; signs commit receipts in staked rooms. Sends no transactions. | Sign a result its transcript does not replay to. |
+| Keeper | The server's `KEEPER_PK`, holding only gas money | Sends the attestor's signed results and aborts, and the permissionless `lockMatch`, `finalize`, `cancelMatch` and fee harvests. | Anything a stranger could not: every one of those checks signatures or deadlines, not the sender. |
+| Matchmaker | The server's `MATCHMAKER_PK`, named in `ProtocolConfig` | Opens matchmade lobbies with the roster its queue put together: who plays whom in every lobby that earns play-mining. | Hold a stake, seat anyone off the roster, or sign a result. |
 | Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
 | Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
 | Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, or exceed a session's caps. |
+
+The server's four keys are four addresses: it refuses to start if two of them
+are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
+the guardian and the timelock. Each signs through a `Signer` interface, which
+is where a KMS would plug in; today every key is in the server's memory.
 
 This is a testnet project. Real-money play would also need a gambling licence,
 which is out of scope.
@@ -266,19 +285,28 @@ forge script script/Deploy.s.sol --root contracts --rpc-url $RPC_URL --broadcast
 On Base mainnet the config also reads Chainlink's sequencer uptime feed, so a
 result cannot be finalised during an outage or within an hour after it.
 
-Point the server at the deployment with `RPC_URL`, `ESCROW_ADDRESS` and
-`ATTESTOR_PK`, and restart it. It watches the escrow, locks lobbies once they
-fill, opens a room when the randomness oracle seeds the match, submits the
-signed result, finalises it once the challenge window closes, and cancels a
-match that can no longer finish. The optional features — one-click play, token
-payment, avatars, the fee keeper, staking and governance screens, a Postgres
-archive — each switch on with their own variables; `.env.example` documents
-every one.
+Point the server at the deployment with `RPC_URL`, `ESCROW_ADDRESS`,
+`ATTESTOR_PK` and `KEEPER_PK`, and `MATCHMAKER_PK` for the address the deploy
+named with `MATCHMAKER`, and restart it. It watches the escrow, locks lobbies
+once they fill, opens a room when the randomness oracle seeds the match,
+submits the signed result, finalises it once the challenge window closes, and
+cancels a match that can no longer finish. The optional features — one-click
+play, token payment, avatars, the fee keeper, staking and governance screens, a
+Postgres archive — each switch on with their own variables; `.env.example`
+documents every one.
 
-The server signs and relays with its single `ATTESTOR_PK`; it does not yet
-gather signatures from other attestors. The escrow enforces whatever quorum is
+The server signs with its single `ATTESTOR_PK`; it does not yet gather
+signatures from other attestors. The escrow enforces whatever quorum is
 configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
 until that collection exists.
+
+**One server instance.** Rooms, the matchmaking queue, and every rate limit and
+quota live in the server's memory, and its keys send transactions in nonce
+order from one process. A second instance would split the rooms and the
+queue, double every limit, and race the first for nonces. So it is one
+instance by design: with Postgres, it takes a lock on the database at start
+and a second server against the same database refuses to start. Scaling out
+would mean moving rooms, queue and limits into shared storage first.
 
 The VRF adapter has a fork test against the Base Sepolia coordinator
 (`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`), and the Across

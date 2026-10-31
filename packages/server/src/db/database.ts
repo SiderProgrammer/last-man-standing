@@ -15,7 +15,43 @@ export interface Queryable {
 export interface Database extends Queryable {
   /** Runs `work` on one connection inside BEGIN … COMMIT, rolled back if it throws. */
   transaction<T>(work: (tx: Queryable) => Promise<T>): Promise<T>;
+  /** A connection of its own, out of the pool until released: what a session-level lock needs. */
+  session(): Promise<Queryable & { release(): void }>;
   close(): Promise<void>;
+}
+
+/** Another server is already running against this database. */
+export class InstanceLockHeld extends Error {
+  override name = 'InstanceLockHeld';
+}
+
+/** The advisory lock key one server instance holds for its whole life. */
+const INSTANCE_LOCK = 7429;
+
+/**
+ * Claims the database for this process, or throws `InstanceLockHeld`.
+ *
+ * The server is one instance by design: rooms, the matchmaking queue and
+ * every rate limit live in its memory, and a second instance would split
+ * them, and send the keeper's transactions twice. So the first thing a
+ * server does with its database is take a session-level advisory lock on a
+ * connection it keeps for as long as it runs; a second server against the
+ * same database is refused at start. The lock goes with the connection, so
+ * a crashed server frees it.
+ *
+ * @returns Releases the lock and its connection.
+ */
+export async function claimInstance(database: Database): Promise<() => Promise<void>> {
+  const session = await database.session();
+  const { rows } = await session.query('SELECT pg_try_advisory_lock($1) AS held', [INSTANCE_LOCK]);
+  if (rows[0]?.held !== true) {
+    session.release();
+    throw new InstanceLockHeld('another server instance is already running against this database; run one');
+  }
+  return async () => {
+    await session.query('SELECT pg_advisory_unlock($1)', [INSTANCE_LOCK]).catch(() => undefined);
+    session.release();
+  };
 }
 
 /** The parts of `pg.Pool` used here. */
@@ -73,6 +109,7 @@ function pgDatabase(pool: PgPool): Database {
         client.release();
       }
     },
+    session: () => pool.connect(),
     close: () => pool.end(),
   };
 }
