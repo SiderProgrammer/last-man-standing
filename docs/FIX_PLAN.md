@@ -8,9 +8,10 @@ coverage table at the end maps each finding to its step.
 Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
 `design-rework-phase-2-core-contracts`, Phase 3 on
 `design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
-Phase 5 on `design-rework-phase-5-sessions`, and Phase 6 on
-`design-rework-phase-6-cross-chain`, each building on the last. Nothing after that is,
-except the Privy check in 5.1 and the live Across testnet deposit in 6.1.
+Phase 5 on `design-rework-phase-5-sessions`, Phase 6 on
+`design-rework-phase-6-cross-chain`, and Phase 7 on `design-rework-phase-7-server`, each
+building on the last. Nothing after that is, except the Privy check in 5.1 and the live
+Across testnet deposit in 6.1.
 
 ---
 
@@ -373,6 +374,72 @@ one for these docs. Where it differs from the table:
 ---
 
 ## Phase 7: Server
+
+**Done**, one commit per step, plus one making the attestor process retry a call its child
+died under. Where it differs from the table:
+- 7.1: the retry queue is the lobby's: a finished match is queued once, and nothing in
+  finalising can escape as an unhandled rejection. An archive write keeps its short
+  backoff and then aborts, as in 4.5; a settlement repeats its last wait (60 s) until an
+  hour of waiting, the settle window, has passed. A named database that cannot be reached
+  stops the server.
+- 7.2: the migration tool is a small runner of our own (`db/migrations.ts`, append-only,
+  each migration in a transaction under an advisory lock), not node-pg-migrate. The first
+  two migrations take over the tables the repositories created for themselves; the third
+  lower-cases old ids. Repository and migration tests run on PGlite, a real Postgres in
+  process, added as a dev dependency.
+- 7.3: a transaction that would revert is refused before it is sent, as `RevertedError`.
+  A stuck one is replaced at the same nonce after 30 s with fees raised a quarter, up to
+  five times. The escrow reader reports a keeper call as sent, not mined; its receipt is
+  the sender's to follow.
+- 7.4: the attestor process is a forked child (`attestor/process.ts`) holding only its
+  key; it replays the transcript with `auditTranscript` and, with an RPC, checks the
+  seed, rules and seats against the escrow before it signs. It signs aborts and commit
+  receipts too, and sends nothing: the keeper sends what it signs. The parent still reads
+  `ATTESTOR_PK` from its environment to hand it over; moving the attestor to another host
+  is the same IPC over a socket, not done. The analyst runs in a worker thread with its
+  own limits and reads the archive through the server. The config refuses one key for two
+  jobs, so `KEEPER_PK` no longer defaults to `ATTESTOR_PK`. `MATCHMAKER_PK` is the
+  matchmaker's key, not a ticket signer: see 7.9.
+- 7.5: `cancellableAt` is in every lobby the directory lists, computed as the escrow
+  decides it; a match still not cancelled an hour after it could be is dropped from
+  `tracked`. The client's button is "Cancel & refund", for a seated player.
+- 7.6: nothing at all happens until one poll has read every tracked match; the live ones
+  then are the snapshot.
+- 7.7: the first scan reaches 100k blocks back (longer than a match can last, dispute
+  included), never before the deploy block. Match reads are one Multicall3 batch, call by
+  call on a chain without one. `CONFIRMATIONS` defaults to 3.
+- 7.8: practice receipts are signed by a key of the process's own, named in `hello` as
+  `practiceReceiptSigner`; a server with no attestor issues staked rooms none.
+- 7.9: **no join tickets.** The matchmaker opens the lobby itself with
+  `createMatchmade(stake, maxSeats, roster)`, and the escrow seats only the roster, by any
+  route; every join path, the session delegate's and the Across message's included, is
+  unchanged, so 6.3's queue ticket is not needed either. A bridged stake for someone off
+  the roster is credited back as `NotRostered`. The roster may be longer than the table.
+  Only matchmade lobbies add to the fee totals, which is 3.6's "public, matchmade lobbies
+  only". To fit under EIP-170, the quorum check moved to `ProtocolConfig.checkQuorum`
+  (GameEscrow: 24,216 bytes, 360 under the limit; via-IR fitted too but took eleven
+  minutes to build every test). The server queues per (stake, seats) tier, opens a short
+  table after 30 s, and pushes `matched`. The client marks a matchmade lobby it was not
+  matched into and handles `matched`; the queue screen is 8.5's. **Slither was not run**:
+  this machine's Python is 3.12.0, which its dependencies exclude, so CI is the first to
+  run it on the new code.
+- 7.10: `READY_MS` defaults to 30 s; practice rooms have none. The watch is held by the
+  server rather than retried by the client: a `watch` for a lobby still filling or
+  waiting on its seed is answered `waiting` and attached when the room opens.
+- 7.11: the journal is per event, not per round: every commit and reveal with its
+  signatures, and every clock move, so a resumed round keeps its commitments and so its
+  rolls, and a restart cannot re-roll one. A receipt waits for its commit's entry. A
+  resumed room gets a new ready phase and its open window in full. Rooms with house bots
+  are not journalled.
+- 7.12: a full `state` on attach, then `delta`s: the state without seed, rules and
+  history, one object for the table. `applyDelta` and `withRound` in `@lms/protocol` fold
+  them back. Checked in a browser: a practice match played to the end and its result
+  verified in the browser from the folded history.
+- 7.13: `TRUST_PROXY` is gone, and set it stops the server with a message naming
+  `TRUSTED_PROXY_HOPS`.
+- 7.14: moves are looked up by the match their aim names, not the wallet's room.
+- 7.15: also enforced: with Postgres, the server holds an advisory lock on the database
+  for its whole life, and a second instance is refused at start.
 
 | Step | Work | Findings |
 |---|---|---|
