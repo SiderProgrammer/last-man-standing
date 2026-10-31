@@ -37,10 +37,18 @@ export interface LobbyOptions {
   /** Play styles by wallet, for the reads panel. Omitted, nobody has a record. */
   styles?: StyleBook;
   /**
-   * Waits before each settlement retry, in order; one attempt more than there
-   * are entries. Defaults to 2 s then 10 s. Empty never retries.
+   * Waits before each archive or settlement retry, in order. Defaults to 2 s,
+   * 10 s, 30 s, then 60 s. Empty never retries. An archive write gets one
+   * attempt more than there are entries; a settlement keeps retrying at the
+   * last wait until `settleRetryForMs` of waiting has passed.
    */
   settleBackoffMs?: readonly number[];
+  /**
+   * How long a settlement is retried before it is left to the escrow's
+   * refund. Defaults to an hour, the settle window `Deploy.s.sol` sets: after
+   * that `settle` reverts and only `cancelMatch` is left.
+   */
+  settleRetryForMs?: number;
   /** Injectable for tests running on virtual time. */
   sleep?: (ms: number) => Promise<void>;
   /** First practice nonce. Defaults to a random 64-bit offset; see `practiceNonce`. Tests pin it to replay a run. */
@@ -53,7 +61,9 @@ export interface LobbyOptions {
   receiptSigner?: `0x${string}` | null;
 }
 
-const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000];
+const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
+
+const DEFAULT_SETTLE_RETRY_FOR_MS = 60 * 60 * 1000;
 
 const DEFAULT_MAX_PRACTICE_ROOMS = 200;
 
@@ -77,6 +87,11 @@ export class Lobby {
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
   /**
+   * Finished matches still being archived or settled, by lower-cased id: the
+   * retry queue. A match is in it once, however often its room reports it.
+   */
+  private readonly settling = new Map<string, Promise<void>>();
+  /**
    * Starts at a random 64-bit offset rather than zero. From zero, every
    * process handed out the same practice match ids, so after a restart a
    * player re-attaching to its old match id landed — as a spectator — in a
@@ -91,6 +106,16 @@ export class Lobby {
 
   get size(): number {
     return this.rooms.size;
+  }
+
+  /** Finished matches whose archive write or settlement has not landed yet. */
+  get pendingSettlements(): number {
+    return this.settling.size;
+  }
+
+  /** Resolves once every queued archive write and settlement has landed or been given up. */
+  async drain(): Promise<void> {
+    while (this.settling.size > 0) await Promise.all(this.settling.values());
   }
 
   list(): Room[] {
@@ -256,9 +281,7 @@ export class Lobby {
       botDifficulty,
       ...(this.options.chainId !== undefined ? { chainId: this.options.chainId } : {}),
       receiptSigner: this.options.receiptSigner ?? null,
-      onFinished: (transcript) => {
-        void this.finalise(transcript, staked);
-      },
+      onFinished: (transcript) => this.enqueue(transcript, staked),
     };
   }
 
@@ -283,27 +306,47 @@ export class Lobby {
   }
 
   /**
+   * Queues a finished match for archiving and settlement. Nothing it does can
+   * escape as an unhandled rejection: the room calls this from its clock, and
+   * a rejection there would take the whole server down.
+   */
+  private enqueue(transcript: Transcript, staked: boolean): void {
+    const key = transcript.matchId.toLowerCase();
+    if (this.settling.has(key)) return;
+    const job = this.finalise(transcript, staked)
+      .catch((error: unknown) => {
+        console.error(`[lobby] finalising ${transcript.matchId} failed:`, errorMessage(error));
+      })
+      .finally(() => this.settling.delete(key));
+    this.settling.set(key, job);
+  }
+
+  /**
    * Runs `attempt` until it succeeds, waiting `settleBackoffMs` between tries.
-   * Returns null, after logging, once the last try fails.
+   * Returns null, after logging, once it gives up: after the last wait in the
+   * list, or with `forMs`, once the next wait would take the time spent
+   * waiting past it, repeating the last wait until then.
    *
    * A failure is usually transient — an RPC timeout, a nonce race, a gas
    * spike, a dropped database connection — so a retry a few seconds later
    * normally lands.
    */
-  private async withRetry<T>(what: string, attempt: () => Promise<T>): Promise<T | null> {
+  private async withRetry<T>(what: string, attempt: () => Promise<T>, forMs?: number): Promise<T | null> {
     const backoff = this.options.settleBackoffMs ?? DEFAULT_SETTLE_BACKOFF_MS;
     const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let waited = 0;
     for (let tries = 0; ; tries += 1) {
       try {
         return await attempt();
       } catch (error) {
-        const wait = backoff[tries];
-        if (wait === undefined) {
+        const wait = backoff[tries] ?? (forMs !== undefined ? backoff[backoff.length - 1] : undefined);
+        if (wait === undefined || (forMs !== undefined && waited + wait > forMs)) {
           console.error(`[lobby] ${what} failed after ${tries + 1} attempts:`, errorMessage(error));
           return null;
         }
         console.warn(`[lobby] ${what} failed; retrying in ${wait} ms:`, errorMessage(error));
         await sleep(wait);
+        waited += wait;
       }
     }
   }
@@ -319,7 +362,8 @@ export class Lobby {
    *
    * Retrying a settlement that did in fact land is harmless: the escrow is no
    * longer `Live`, so the relayer's simulation reverts before spending gas.
-   * After the last attempt the match refunds at its deadline.
+   * A settlement is retried for `settleRetryForMs`; after that the match
+   * refunds at its deadline.
    */
   private async finalise(transcript: Transcript, staked: boolean): Promise<void> {
     const result = transcript.result;
@@ -350,7 +394,11 @@ export class Lobby {
 
     const attested: AttestedResult = { ...result, transcriptHash };
     const settledTx = staked
-      ? await this.withRetry(`settlement of ${result.matchId}`, () => this.options.relayer.settle(attested))
+      ? await this.withRetry(
+          `settlement of ${result.matchId}`,
+          () => this.options.relayer.settle(attested),
+          this.options.settleRetryForMs ?? DEFAULT_SETTLE_RETRY_FOR_MS,
+        )
       : await this.options.relayer.settle(attested).catch(() => null);
     if (settledTx) {
       await this.options.archive.recordSettlement(result.matchId, settledTx).catch((error: unknown) => {

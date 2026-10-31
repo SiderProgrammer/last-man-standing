@@ -36,7 +36,15 @@ const SWEEP_MS = 1_000;
 const HEARTBEAT_MS = 30_000;
 
 async function main(): Promise<void> {
+  // A promise nobody awaited that rejects would otherwise end the process,
+  // taking every room in play with it. Each such rejection is a bug to fix,
+  // so it is logged loudly, but one bug must not refund every live match.
+  process.on('unhandledRejection', (reason) => {
+    console.error('[server] unhandled rejection:', reason);
+  });
+
   const archive = await createArchive(config.databaseUrl);
+  console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
   const relayer = relayerFromEnv();
   // The attestor key where there is one. A practice-only server has none,
   // and signs with a key of its own that lasts as long as the process.
@@ -207,6 +215,7 @@ async function main(): Promise<void> {
         JSON.stringify({
           ok: true,
           rooms: lobby.size,
+          pendingSettlements: lobby.pendingSettlements,
           clients: gateway.connections,
           onChain: config.onChain,
           lobbies: { open: directory.open.length, live: directory.live.length },

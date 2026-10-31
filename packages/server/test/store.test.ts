@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
-import { Lobby, MemoryArchive, nullRelayer, transcriptResponse, type ArchivedMatch } from '@lms/server';
+import {
+  Lobby,
+  MemoryArchive,
+  createArchive,
+  createStyleBook,
+  nullRelayer,
+  transcriptResponse,
+  type ArchivedMatch,
+} from '@lms/server';
 import { bytes32, setupWithBots, transcriptOf } from './helpers.js';
 
 function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
@@ -125,5 +133,16 @@ describe('transcript route', () => {
     expect((await transcriptResponse(archive, `/transcripts/${bytes32('unknown')}`))?.status).toBe(404);
     expect((await transcriptResponse(archive, '/transcripts/nope'))?.status).toBe(400);
     expect(await transcriptResponse(archive, '/health')).toBeNull();
+  });
+});
+
+describe('choosing an archive', () => {
+  it('keeps the archive in memory when no database is named', async () => {
+    expect(await createArchive('')).toBeInstanceOf(MemoryArchive);
+  });
+
+  it('refuses to start on a database it cannot reach, rather than falling back to memory', async () => {
+    await expect(createArchive('postgres://127.0.0.1:1/unreachable')).rejects.toThrow();
+    await expect(createStyleBook('postgres://127.0.0.1:1/unreachable')).rejects.toThrow();
   });
 });

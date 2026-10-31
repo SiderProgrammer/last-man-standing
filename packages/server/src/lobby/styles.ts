@@ -104,12 +104,8 @@ export class PostgresStyleBook implements StyleBook {
   }
 }
 
+/** Like `createArchive`: a database that is named but unreachable is an error, not memory. */
 export async function createStyleBook(databaseUrl: string): Promise<StyleBook> {
   if (!databaseUrl) return new MemoryStyleBook();
-  try {
-    return await PostgresStyleBook.connect(databaseUrl);
-  } catch (error) {
-    console.warn('[styles] falling back to in-memory style book:', errorMessage(error));
-    return new MemoryStyleBook();
-  }
+  return PostgresStyleBook.connect(databaseUrl);
 }

@@ -190,16 +190,18 @@ describe('chaos: staked tables', () => {
 
     for (let t = 0; t < 30 * 60_000 && !w.lobby.get(setup.matchId)?.finished; t += 1_000) await w.clock.advance(1_000);
     expect(w.lobby.get(setup.matchId)?.finished, `seed ${seed}`).toBe(true);
-    await w.clock.advance(60_000);
+    // The retry queue keeps at it for the settle window; at even odds an
+    // hour of tries all failing does not happen.
+    for (let t = 0; t < 2 * 60 * 60_000 && w.lobby.pendingSettlements > 0; t += 60_000) await w.clock.advance(60_000);
+    expect(w.lobby.pendingSettlements, `seed ${seed}`).toBe(0);
 
     const attempts = flaky.calls.filter((call) => call.matchId === setup.matchId);
     const archived = await archive.load(setup.matchId);
     expect(archived, `seed ${seed}`).toBeDefined();
-    // Settled on the first successful attempt, or refunded after the last one.
-    const succeeded = attempts.some((call) => call.ok);
-    expect(archived?.settledTx !== null).toBe(succeeded);
-    expect(attempts.filter((call) => call.ok).length).toBeLessThanOrEqual(1);
-    expect(attempts.length).toBeLessThanOrEqual(3);
+    // Settled on the first successful attempt, and never tried again after it.
+    expect(archived?.settledTx).not.toBeNull();
+    expect(attempts.filter((call) => call.ok)).toHaveLength(1);
+    expect(attempts[attempts.length - 1]?.ok).toBe(true);
     await audit(archive, new Map([[setup.matchId, setup]]));
   });
 });

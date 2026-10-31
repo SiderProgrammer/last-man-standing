@@ -316,13 +316,16 @@ function playersOf(entry: ArchivedMatch): string[] {
   return entry.seats.map((seat) => seat.address.toLowerCase());
 }
 
+/**
+ * The archive a configuration names: Postgres for a database URL, memory for
+ * none. A database that is named but cannot be reached is an error, never a
+ * quiet fall back to memory: a staked match is settled only once its
+ * transcript is archived, and a transcript in memory dies with the process,
+ * taking the evidence for a result still inside its challenge window with it.
+ * `loadConfig` turns `ARCHIVE=memory` into no URL, and refuses a production
+ * server with neither.
+ */
 export async function createArchive(databaseUrl: string): Promise<MatchArchive> {
   if (!databaseUrl) return new MemoryArchive();
-  try {
-    return await PostgresArchive.connect(databaseUrl);
-  } catch (error) {
-    console.warn('[store] falling back to in-memory archive:', errorMessage(error));
-    return new MemoryArchive();
-  }
+  return PostgresArchive.connect(databaseUrl);
 }
-
