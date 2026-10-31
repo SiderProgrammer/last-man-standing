@@ -83,11 +83,14 @@ export class ChainBridge {
   private cursor: bigint | null = null;
   private polling = false;
   /**
-   * False until the first refresh has run. A match already live at that point
-   * went live before this process existed, so whatever was played of it died
-   * with the previous one.
+   * Matches that were live when this process started, by lower-cased id:
+   * whatever was played of them died with the previous process. Read once,
+   * by the first poll that reads every tracked match without failing, and
+   * fixed from then on, so a match that goes live later is always played,
+   * however many polls failed before. Null until then, and until then the
+   * bridge does nothing at all: no lock, no cancel, no room.
    */
-  private booted = false;
+  private liveAtBoot: Set<string> | null = null;
 
   constructor(private readonly deps: ChainBridgeDeps) {
     this.reader = deps.reader;
@@ -136,8 +139,8 @@ export class ChainBridge {
     this.polling = true;
     try {
       await this.discover();
-      await this.refresh();
-      this.booted = true;
+      this.liveAtBoot ??= await this.snapshot();
+      await this.refresh(this.liveAtBoot);
     } catch (error) {
       console.error('[chain] poll failed:', errorMessage(error));
     } finally {
@@ -171,7 +174,17 @@ export class ChainBridge {
     this.cursor = latest + 1n;
   }
 
-  private async refresh(): Promise<void> {
+  /** Which tracked matches are live now. Reads only, and all or nothing. */
+  private async snapshot(): Promise<Set<string>> {
+    const live = new Set<string>();
+    for (const [key, entry] of this.tracked) {
+      if ((await this.reader.getMatch(entry.info.matchId)).status === MatchStatus.Live) live.add(key);
+    }
+    if (live.size > 0) console.warn(`[chain] ${live.size} matches were live before this server started`);
+    return live;
+  }
+
+  private async refresh(liveAtBoot: ReadonlySet<string>): Promise<void> {
     for (const [key, entry] of this.tracked) {
       const matchId = entry.info.matchId;
       const raw = await this.reader.getMatch(matchId);
@@ -202,7 +215,7 @@ export class ChainBridge {
         await this.abandon(entry, matchId, 'it was created under rules this server does not play');
         continue;
       }
-      if (raw.status === MatchStatus.Live && !entry.adopted && !this.booted) {
+      if (raw.status === MatchStatus.Live && !entry.adopted && liveAtBoot.has(key)) {
         await this.abandon(entry, matchId, 'it was cancelled after a server restart');
         continue;
       }

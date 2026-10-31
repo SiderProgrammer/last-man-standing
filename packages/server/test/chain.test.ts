@@ -369,6 +369,56 @@ describe('chain bridge after a restart', () => {
     expect(lobby.size).toBe(0);
   });
 
+  it('does nothing at all until it has read every match once', async () => {
+    const { reader, id } = liveBeforeBoot();
+    const open = bytes32('full-at-boot');
+    reader.created = [id, open];
+    reader.matches.set(open, match({ status: MatchStatus.Open, seatCount: 4, maxSeats: 4 }));
+    const aborted: string[] = [];
+    const { bridge } = bridgeOver(reader, () => 1_000_000, async (matchId) => {
+      aborted.push(matchId);
+      return null;
+    });
+
+    // The RPC fails partway through the first read of the open lobby.
+    const getMatch = reader.getMatch.bind(reader);
+    reader.getMatch = async (matchId) => {
+      if (matchId === open) throw new Error('rpc down');
+      return getMatch(matchId);
+    };
+    await bridge.poll();
+    expect(aborted).toEqual([]);
+    expect(reader.locked).toEqual([]);
+
+    reader.getMatch = getMatch;
+    await bridge.poll();
+    expect(aborted).toEqual([id]);
+    expect(reader.locked).toEqual([open]);
+  });
+
+  it('plays a match that goes live after it started, even when polls failed before', async () => {
+    const { reader, id } = liveBeforeBoot();
+    const later = bytes32('live-after-boot');
+    reader.created = [id, later];
+    reader.matches.set(later, match({ status: MatchStatus.Pending, seatCount: 4 }));
+    reader.seats.set(later, [seat(0), seat(1), seat(2), seat(3)]);
+    const { bridge, lobby } = bridgeOver(reader, () => 1_000_000, async () => null);
+    await bridge.poll();
+
+    // Polls fail after the snapshot, while the second match goes live.
+    const getSeats = reader.getSeats.bind(reader);
+    reader.getSeats = async () => {
+      throw new Error('rpc down');
+    };
+    reader.matches.set(later, match({ status: MatchStatus.Live, seatCount: 4 }));
+    await bridge.poll();
+    reader.getSeats = getSeats;
+    await bridge.poll();
+
+    expect(lobby.get(later)).not.toBeNull();
+    expect(lobby.get(id)).toBeNull();
+  });
+
   it('falls back to the permissionless refund at the deadline when it cannot abort', async () => {
     const { reader, id } = liveBeforeBoot();
     let nowMs = 1_000_000; // 1 000 s: before the 5 000 s deadline
