@@ -3,58 +3,44 @@ pragma solidity 0.8.28;
 
 import {console} from "forge-std/Script.sol";
 import {Registry} from "./Registry.sol";
+import {AcrossBook} from "./AcrossBook.sol";
 
-import {SpokeEscrow} from "../src/SpokeEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
-import {LayerZeroMessenger} from "../src/adapters/LayerZeroMessenger.sol";
-import {ILayerZeroEndpoint} from "../src/interfaces/ILayerZeroEndpoint.sol";
-import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
+import {SpokeRouter} from "../src/periphery/SpokeRouter.sol";
+import {IAcrossSpokePool} from "../src/vendor/across/IAcrossSpokePool.sol";
+import {IWETH9} from "../src/vendor/across/IWETH9.sol";
+import {MockAcrossSpokePool} from "../src/mocks/MockAcrossSpokePool.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 
-/// @notice Spoke deploy: the chain's `SpokeEscrow`, its `LayerZeroMessenger`,
-///         and its own avatar collection. Run once per spoke, on that chain,
-///         after the hub exists.
-/// @dev Ends up as:
-///
-///        SpokeEscrow ----sends through----> LayerZeroMessenger --peer--> hub messenger
-///             \_ both owned by SPOKE_OWNER (the spoke's timelock) _/
-///        PlayerAvatars, owned by SPOKE_OWNER too
-///
-///      The spoke side is wired here, while the deployer still owns it. The
-///      hub side cannot be: the hub's config and messenger belong to its
-///      timelock, so registering this spoke is a governance proposal with two
-///      calls, which the script prints and the governance screen's "Add a
-///      spoke chain" template builds:
-///
-///        config.setRemoteChain(thisChainId, hubMessenger, spokeEscrow)
-///        hubMessenger.setPeer(thisChainId, thisEid, spokeMessenger)
-///
-///      Joins sent before that executes park in the hub messenger and are
-///      retried into their seats afterwards, so opening the spoke first loses
-///      nothing; it only makes those players wait for the vote.
+/// @notice Spoke deploy: the chain's `SpokeRouter`, and its own avatar
+///         collection. Run once per spoke, on that chain, after the hub exists.
+/// @dev The router has no owner and needs no registration on the hub: the
+///      hub's `BridgeJoinReceiver` takes a fill from any chain Across serves.
+///      So a new spoke is live as soon as this script has run and the server
+///      lists it in `SPOKES`.
 ///
 ///      Environment:
 ///        DEPLOYER_PK    pays for the deploy; holds nothing afterwards
 ///        HUB_CHAIN_ID   the hub's EVM chain id
-///        HUB_EID        the hub's LayerZero endpoint id
-///        HUB_ESCROW     the hub `GameEscrow`
-///        HUB_MESSENGER  the hub `LayerZeroMessenger`
-///        LZ_ENDPOINT    this chain's LayerZero endpoint (a mock on a local node if unset)
-///        SPOKE_OWNER    this chain's timelock; required off a local node
-///        SAFE           owns the avatar collection; required off a local node
-///        RECEIVE_GAS    gas for `lzReceive` on the hub, default 350k
+///        HUB_RECEIVER   the hub's `BridgeJoinReceiver`
+///        HUB_WETH       the hub's WETH; defaults to `config/across.json`
+///        SPOKE_POOL     this chain's Across SpokePool; defaults to `config/across.json`,
+///                       or a `MockAcrossSpokePool` on a local node
+///        SPOKE_OWNER    owns the avatar collection: this chain's timelock;
+///                       required off a local node
 ///        AVATARS        false to skip the avatar collection
 ///
 ///      On a broadcast it writes `deployments/<chainId>.json` (see `Registry`).
-contract DeploySpoke is Registry {
+contract DeploySpoke is Registry, AcrossBook {
     /// @dev The two chains `npm run dev:fork` runs: the hub fork and a spoke.
     uint256 private constant LOCAL_HUB = 31_337;
     uint256 private constant LOCAL_SPOKE = 31_338;
-    uint256 private constant DEFAULT_RECEIVE_GAS = 350_000;
 
     struct SpokeDeployment {
-        SpokeEscrow spoke;
-        LayerZeroMessenger messenger;
-        address endpoint;
+        SpokeRouter router;
+        /// @dev The SpokePool the router deposits into: Across's, or a mock.
+        address spokePool;
+        address weth;
         PlayerAvatars avatars;
         address owner;
         /// @dev The head when the script started: no contract here is older.
@@ -62,18 +48,17 @@ contract DeploySpoke is Registry {
     }
 
     error OwnerRequired();
-    error SafeRequired();
-    error EndpointRequired();
     error HubRequired();
+    error SpokePoolRequired();
 
     function run() external returns (SpokeDeployment memory d) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk);
-        uint32 hubChainId = uint32(vm.envUint("HUB_CHAIN_ID"));
-        uint32 hubEid = uint32(vm.envUint("HUB_EID"));
-        address hubEscrow = vm.envAddress("HUB_ESCROW");
-        address hubMessenger = vm.envAddress("HUB_MESSENGER");
-        if (hubEscrow == address(0) || hubMessenger == address(0) || hubChainId == block.chainid) {
+        uint256 hubChainId = vm.envUint("HUB_CHAIN_ID");
+        address hubReceiver = vm.envAddress("HUB_RECEIVER");
+        (, address hubWeth) = _across(hubChainId);
+        hubWeth = vm.envOr("HUB_WETH", hubWeth);
+        if (hubReceiver == address(0) || hubWeth == address(0) || hubChainId == block.chainid) {
             revert HubRequired();
         }
 
@@ -84,31 +69,21 @@ contract DeploySpoke is Registry {
             if (!_local()) revert OwnerRequired();
             d.owner = deployer;
         }
-        address safe = vm.envOr("SAFE", address(0));
-        if (safe == address(0)) {
-            if (!_local()) revert SafeRequired();
-            safe = deployer;
-        }
 
         d.deployBlock = block.number;
         vm.startBroadcast(pk);
 
-        d.endpoint = vm.envOr("LZ_ENDPOINT", address(0));
-        if (d.endpoint == address(0)) {
-            if (!_local()) revert EndpointRequired();
-            d.endpoint = address(new MockLayerZeroEndpoint());
+        (d.spokePool, d.weth) = _across(block.chainid);
+        d.spokePool = vm.envOr("SPOKE_POOL", d.spokePool);
+        if (d.spokePool == address(0)) {
+            if (!_local()) revert SpokePoolRequired();
+            // A relayer stand-in: `npm run dev:fork` fills its deposits on the hub.
+            d.weth = address(new MockWETH());
+            d.spokePool = address(new MockAcrossSpokePool(IWETH9(d.weth)));
+        } else {
+            d.weth = IAcrossSpokePool(d.spokePool).wrappedNativeToken();
         }
-
-        // Deployer-owned until the end, so the spoke side can be wired here.
-        d.messenger = new LayerZeroMessenger(
-            deployer,
-            ILayerZeroEndpoint(d.endpoint),
-            address(0),
-            uint128(vm.envOr("RECEIVE_GAS", DEFAULT_RECEIVE_GAS))
-        );
-        d.spoke = new SpokeEscrow(deployer, address(d.messenger), hubChainId, hubEscrow);
-        d.messenger.setApp(address(d.spoke));
-        d.messenger.setPeer(hubChainId, hubEid, bytes32(uint256(uint160(hubMessenger))));
+        d.router = new SpokeRouter(IAcrossSpokePool(d.spokePool), d.weth, hubChainId, hubReceiver, hubWeth);
 
         if (vm.envOr("AVATARS", true)) {
             d.avatars = new PlayerAvatars(
@@ -119,27 +94,19 @@ contract DeploySpoke is Registry {
                 vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
             );
         }
-
-        // Both are `Ownable2Step`: this only proposes the owner, which must
-        // call `acceptOwnership` on each — one proposal on the spoke's own
-        // timelock. The delegate moves at once, so the timelock can set the
-        // messenger's verifiers in that same proposal.
-        if (d.owner != deployer) {
-            d.messenger.setDelegate(d.owner);
-            d.messenger.transferOwnership(d.owner);
-            d.spoke.transferOwnership(d.owner);
-        }
-
         vm.stopBroadcast();
-        _report(d, hubMessenger);
+
+        console.log("SpokeRouter      ", address(d.router));
+        console.log("Across SpokePool ", d.spokePool);
+        if (address(d.avatars) != address(0)) console.log("PlayerAvatars    ", address(d.avatars));
         _record(registry(d));
     }
 
     /// @notice The `deployments/<chainId>.json` contents for `d`.
     function registry(SpokeDeployment memory d) public returns (string memory) {
-        _entry("spokeEscrow", address(d.spoke));
-        _entry("messenger", address(d.messenger));
-        _entry("endpoint", d.endpoint);
+        _entry("spokeRouter", address(d.router));
+        _entry("acrossSpokePool", d.spokePool);
+        _entry("weth", d.weth);
         _entry("avatars", address(d.avatars));
         _entry("owner", d.owner);
         return _registry(d.deployBlock);
@@ -147,25 +114,5 @@ contract DeploySpoke is Registry {
 
     function _local() private view returns (bool) {
         return block.chainid == LOCAL_HUB || block.chainid == LOCAL_SPOKE;
-    }
-
-    function _report(SpokeDeployment memory d, address hubMessenger) private view {
-        console.log("SpokeEscrow       ", address(d.spoke));
-        console.log("LayerZeroMessenger", address(d.messenger));
-        console.log("Endpoint          ", d.endpoint);
-        if (address(d.avatars) != address(0)) console.log("PlayerAvatars     ", address(d.avatars));
-        console.log("");
-        console.log("Register this spoke on the hub with one governance proposal:");
-        console.log("  config.setRemoteChain(chainId, hubMessenger, spokeEscrow)");
-        console.log("    chainId     ", block.chainid);
-        console.log("    hubMessenger", hubMessenger);
-        console.log("    spokeEscrow ", address(d.spoke));
-        console.log("  hubMessenger.setPeer(chainId, eid, spokeMessenger)");
-        console.log("    eid          this chain's LayerZero endpoint id");
-        console.log("    spokeMessenger", address(d.messenger));
-        if (d.owner != vm.addr(vm.envUint("DEPLOYER_PK"))) {
-            console.log("");
-            console.log("Then have SPOKE_OWNER call acceptOwnership() on both contracts above.");
-        }
     }
 }

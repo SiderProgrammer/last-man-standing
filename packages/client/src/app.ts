@@ -101,7 +101,6 @@ function onServerMessage(message: ServerMessage): void {
       app.receiptSigner = message.receiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
-      app.hubMessenger = message.hubMessenger ?? null;
       app.staking = message.staking;
       app.analyst = message.analyst ?? false;
       renderPayWith();

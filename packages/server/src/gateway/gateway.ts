@@ -117,8 +117,6 @@ export interface GatewayOptions {
   zap?: ZapInfo | null;
   /** Spoke chains a player may stake from. Omitted or empty is hub-only. */
   spokes?: SpokeInfo[];
-  /** The hub `LayerZeroMessenger`, for proposals that register a spoke. */
-  hubMessenger?: `0x${string}` | null;
   /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
   /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
@@ -248,7 +246,6 @@ export class Gateway {
       analyst: this.options.analyst !== undefined,
       spokes: this.options.spokes ?? [],
       receiptSigner: this.options.receipts?.address ?? null,
-      hubMessenger: this.options.hubMessenger ?? null,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));

@@ -207,7 +207,7 @@ describe('gateway', () => {
   });
 
   it('advertises the spokes a player may stake from, and none by default', () => {
-    const spokes = [{ chainId: 31338, escrow: ESCROW }];
+    const spokes = [{ chainId: 31338, router: ESCROW }];
     expect(harness({ spokes }).socket.last('hello')?.spokes).toEqual(spokes);
     expect(harness().socket.last('hello')?.spokes).toEqual([]);
   });

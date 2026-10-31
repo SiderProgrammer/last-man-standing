@@ -4,11 +4,10 @@ pragma solidity 0.8.28;
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ExpiringPause} from "../../src/ExpiringPause.sol";
-import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {PullPayable} from "../../src/PullPayable.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "../../src/interfaces/IRandomnessOracle.sol";
-import {NothingToWithdraw, UntrustedMessenger, UntrustedPeer, ZeroAddress} from "../../src/Errors.sol";
+import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -345,10 +344,9 @@ contract GameEscrowTest is Fixtures {
         address dusty = makeAddr("dusty");
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        bytes32 peer = config.peerFor(421_614);
         uint256 dust = escrow.MIN_WITHDRAW_FOR() - 1;
-        // A wrong-stake cross-chain join is credited back as is.
-        messenger.deliver{value: dust}(address(escrow), 421_614, peer, abi.encode(matchId, dusty), dust);
+        // A bridged join below the stake is credited back as is.
+        _bridgeJoin(matchId, dusty, dust);
         assertEq(escrow.withdrawable(dusty), dust);
 
         vm.expectRevert(abi.encodeWithSelector(PullPayable.BelowMinimumWithdrawal.selector, dust, dust + 1));
@@ -363,18 +361,24 @@ contract GameEscrowTest is Fixtures {
         escrow.withdrawFor(players[0]);
     }
 
-    // --- Cross-chain joins that cannot seat are refunded, never reverted ---
+    // --- Bridged joins that cannot seat are refunded, never reverted ---
 
-    /// @dev Delivers a cross-chain join through the trusted messenger and
-    ///      checks it was refunded for `reason` rather than seated or reverted.
+    /// @dev What `BridgeJoinReceiver` does once a fill lands.
+    function _bridgeJoin(bytes32 matchId, address player, uint256 value) internal {
+        vm.deal(bridge, bridge.balance + value);
+        vm.prank(bridge);
+        escrow.bridgeJoin{value: value}(matchId, player, 421_614);
+    }
+
+    /// @dev Delivers a bridged join and checks it was refunded for `reason`
+    ///      rather than seated or reverted.
     function _assertRefunded(bytes32 matchId, address player, uint256 value, GameEscrow.JoinFailure reason)
         internal
     {
-        bytes32 peer = config.peerFor(421_614);
         uint256 owedBefore = escrow.withdrawable(player);
         vm.expectEmit(true, true, false, true, address(escrow));
         emit GameEscrow.JoinRefunded(matchId, player, value, reason);
-        messenger.deliver{value: value}(address(escrow), 421_614, peer, abi.encode(matchId, player), value);
+        _bridgeJoin(matchId, player, value);
 
         assertEq(escrow.withdrawable(player), owedBefore + value);
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
@@ -398,10 +402,24 @@ contract GameEscrowTest is Fixtures {
         assertFalse(escrow.hasSeat(matchId, makeAddr("late")));
     }
 
-    function test_crossChainJoin_refundsAWrongStake() public {
+    function test_crossChainJoin_refundsTooLittle() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        _assertRefunded(matchId, makeAddr("remote"), STAKE / 2, GameEscrow.JoinFailure.WrongStake);
+        _assertRefunded(matchId, makeAddr("remote"), STAKE / 2, GameEscrow.JoinFailure.StakeTooLow);
+    }
+
+    /// @dev A fill may carry more than the stake: the seat takes the stake and
+    ///      the player is credited the rest.
+    function test_crossChainJoin_seatsAndCreditsTheExtra() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        address remote = makeAddr("remote");
+        _bridgeJoin(matchId, remote, STAKE + 0.3 ether);
+
+        assertTrue(escrow.hasSeat(matchId, remote));
+        assertEq(escrow.withdrawable(remote), 0.3 ether);
+        assertEq(escrow.totalEscrowed(), STAKE);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
     }
 
     function test_crossChainJoin_refundsADuplicateSeat() public {
@@ -433,7 +451,7 @@ contract GameEscrowTest is Fixtures {
         assertEq(remote.balance, STAKE);
     }
 
-    function test_crossChainJoin_viaTrustedMessenger() public {
+    function test_crossChainJoin_viaTheBridgeReceiver() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
 
@@ -441,34 +459,42 @@ contract GameEscrowTest is Fixtures {
         escrow.join{value: STAKE}(matchId);
 
         address remotePlayer = makeAddr("remote");
-        bytes32 peer = config.peerFor(421_614);
-        messenger.deliver{value: STAKE}(
-            address(escrow), 421_614, peer, abi.encode(matchId, remotePlayer), STAKE
-        );
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit GameEscrow.PlayerJoined(matchId, remotePlayer, 1, 421_614);
+        _bridgeJoin(matchId, remotePlayer, STAKE);
 
         assertTrue(escrow.hasSeat(matchId, remotePlayer));
         assertEq(escrow.seatOrigin(matchId, remotePlayer), 421_614);
         assertEq(escrow.getSeats(matchId).length, 2);
     }
 
-    function test_crossChainJoin_rejectsUntrustedMessengerAndPeer() public {
+    function test_crossChainJoin_onlyFromTheBridgeReceiver() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        bytes32 peer = config.peerFor(421_614);
-        bytes memory payload = abi.encode(matchId, players[1]);
 
-        // The delivery carries the stake, so whoever makes the call needs the
-        // balance: without it the call fails in the caller's frame and never
-        // reaches the authentication checks being tested here.
-        vm.deal(address(this), STAKE * 2);
-        vm.deal(address(messenger), STAKE * 2);
+        vm.deal(address(this), STAKE);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotBridgeReceiver.selector, address(this)));
+        escrow.bridgeJoin{value: STAKE}(matchId, players[1], 421_614);
 
-        vm.expectRevert(abi.encodeWithSelector(UntrustedMessenger.selector, uint32(421_614), address(this)));
-        escrow.receiveMessage{value: STAKE}(421_614, peer, payload);
+        // Turned off: nobody is the receiver.
+        vm.prank(owner);
+        config.setBridgeReceiver(address(0));
+        vm.deal(bridge, STAKE);
+        vm.prank(bridge);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotBridgeReceiver.selector, bridge));
+        escrow.bridgeJoin{value: STAKE}(matchId, players[1], 421_614);
+    }
 
-        vm.prank(address(messenger));
-        vm.expectRevert(abi.encodeWithSelector(UntrustedPeer.selector, uint32(421_614), bytes32(uint256(1))));
-        escrow.receiveMessage{value: STAKE}(421_614, bytes32(uint256(1)), payload);
+    /// @dev Crediting the zero address would lose the stake, so that is the
+    ///      one case that reverts past the caller check. The receiver never
+    ///      sends it.
+    function test_crossChainJoin_refusesTheZeroPlayer() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 4);
+        vm.deal(bridge, STAKE);
+        vm.prank(bridge);
+        vm.expectRevert(ZeroAddress.selector);
+        escrow.bridgeJoin{value: STAKE}(matchId, address(0), 421_614);
     }
 
     function test_pause_blocksJoinButNotWithdrawOrCancel() public {

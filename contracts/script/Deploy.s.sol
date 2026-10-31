@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Registry} from "./Registry.sol";
+import {AcrossBook} from "./AcrossBook.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
@@ -9,15 +10,16 @@ import {GameEscrow} from "../src/GameEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
+import {BridgeJoinReceiver} from "../src/periphery/BridgeJoinReceiver.sol";
+import {IAcrossSpokePool} from "../src/vendor/across/IAcrossSpokePool.sol";
+import {IWETH9} from "../src/vendor/across/IWETH9.sol";
+import {MockAcrossSpokePool} from "../src/mocks/MockAcrossSpokePool.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 import {IPoolManager} from "../src/interfaces/IPoolManager.sol";
 import {HashLib} from "../src/libraries/HashLib.sol";
 import {MockRandomnessOracle} from "../src/mocks/MockRandomnessOracle.sol";
 import {ChainlinkVrfAdapter} from "../src/oracles/ChainlinkVrfAdapter.sol";
 import {IVRFCoordinatorV2Plus} from "../src/vendor/chainlink/IVRFCoordinatorV2Plus.sol";
-import {MockMessenger} from "../src/mocks/MockMessenger.sol";
-import {MockLayerZeroEndpoint} from "../src/mocks/MockLayerZeroEndpoint.sol";
-import {LayerZeroMessenger} from "../src/adapters/LayerZeroMessenger.sol";
-import {ILayerZeroEndpoint} from "../src/interfaces/ILayerZeroEndpoint.sol";
 import {LmsToken} from "../src/governance/LmsToken.sol";
 import {StakedLms} from "../src/governance/StakedLms.sol";
 import {LmsGovernor} from "../src/governance/LmsGovernor.sol";
@@ -55,7 +57,7 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
-///      `MOCKS` picks the mock oracle and messenger or real ones. It defaults
+///      `MOCKS` picks the mock oracle or the real one. It defaults
 ///      to true on a local node and must be false anywhere else. With it false
 ///      the oracle is Chainlink VRF v2.5: pass `VRF_SUBSCRIPTION_ID`, a native-
 ///      funded subscription the Safe owns, and this script deploys a
@@ -63,26 +65,20 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      it to the timelock. The Safe then adds the adapter to the subscription.
 ///      The coordinator and key hash default to Chainlink's on Base and Base
 ///      Sepolia (`VRF_COORDINATOR`, `VRF_KEY_HASH` override them). `ORACLE`
-///      passes an adapter deployed separately instead. Cross-chain joins need a
-///      hub `LayerZeroMessenger`: pass `LZ_ENDPOINT` and this script deploys
-///      one, points it at the escrow and hands it to the timelock with the
-///      config — or pass `MESSENGER` for one deployed separately, which must
-///      then be owned by the timelock, never an EOA: whoever owns it can forge
-///      cross-chain joins. On a local node, `MOCK_LZ=true` puts the messenger
-///      over a `MockLayerZeroEndpoint`, which `npm run dev:fork` relays.
+///      passes an adapter deployed separately instead.
+///
+///      Cross-chain joins arrive through Across, at a `BridgeJoinReceiver`
+///      this script deploys, owned by the timelock and named in the config.
+///      The hub's SpokePool comes from `config/across.json` (`ACROSS_SPOKE_POOL`
+///      overrides it); with the mocks it is a `MockAcrossSpokePool`, which
+///      `npm run dev:fork` fills. A chain with neither gets no receiver, and
+///      so no cross-chain joins. Spokes come after, each with
+///      `DeploySpoke.s.sol` on its own chain; the hub needs no change for one.
 ///
 ///      On a broadcast it writes `deployments/<chainId>.json` (see `Registry`),
 ///      which the server reads for its addresses. Add `--verify` to the
 ///      `forge script` command to verify every contract on the explorer.
-///
-///      Spokes come after, each with `DeploySpoke.s.sol` on its own chain,
-///      behind its own Safe and timelock. The hub learns about each one by a
-///      governance proposal — `setRemoteChain` on the config and `setPeer` on
-///      the messenger, which the governance screen's "Add a spoke chain"
-///      template builds — because both are the timelock's by then. A join sent
-///      before that executes is not lost: the messenger parks it, and it is
-///      retried into the seat once the proposal lands.
-contract Deploy is Registry {
+contract Deploy is Registry, AcrossBook {
     /// @dev Anvil and Hardhat: the only chain on which `SAFE` may be left unset.
     uint256 private constant LOCAL_CHAIN_ID = 31_337;
     /// @dev The hub's home.
@@ -128,6 +124,11 @@ contract Deploy is Registry {
         SessionKeyDelegate sessionDelegate;
         /// @dev Join-with-any-token. Zero when `POOL_MANAGER` is unset.
         ZapJoin zap;
+        /// @dev Takes Across fills for cross-chain joins. Zero when this chain
+        ///      has no SpokePool.
+        BridgeJoinReceiver bridgeReceiver;
+        /// @dev The SpokePool it takes them from: Across's, or a mock.
+        address acrossSpokePool;
         TimelockController timelock;
         LmsToken lms;
         StakedLms stakedLms;
@@ -141,20 +142,12 @@ contract Deploy is Registry {
         address safe;
         address guardian;
         address oracle;
-        address messenger;
-        /// @dev The hub messenger this script deployed, if any; it is also
-        ///      `messenger`. Zero when `MESSENGER` was passed or no endpoint was.
-        LayerZeroMessenger hubLz;
         /// @dev The VRF adapter this script deployed, if any; it is also
         ///      `oracle`. Zero with the mocks, or when `ORACLE` was passed.
         ChainlinkVrfAdapter vrf;
         /// @dev The head when the script started: no contract here is older.
         uint256 deployBlock;
     }
-
-    /// @dev Gas the executor gives `lzReceive` on the far side: a hub join is
-    ///      about 120k, and the messenger keeps a reserve to park a failure.
-    uint256 private constant DEFAULT_RECEIVE_GAS = 350_000;
 
     error SafeRequired();
     error MockOffLocal();
@@ -187,11 +180,11 @@ contract Deploy is Registry {
         // The treasury is a placeholder until `_governance` puts the fee
         // router there.
         deployment.config = new ProtocolConfig(deployer, _params(address(deployment.timelock)), _payout());
-        _transport(deployment, deployer);
+        _oracle(deployment, deployer);
         _configure(deployment.config, deployment.oracle, deployment.guardian, deployer);
 
         deployment.escrow = new GameEscrow(deployment.config);
-        _wireHubMessenger(deployment);
+        _bridge(deployment);
         _wireVrf(deployment);
         // Cosmetic and per-chain: the same deployment is repeated on every
         // spoke, and the collections are independent of each other.
@@ -222,6 +215,11 @@ contract Deploy is Registry {
         _entry("avatars", address(deployment.avatars));
         _entry("sessionDelegate", address(deployment.sessionDelegate));
         _entry("zapJoin", address(deployment.zap));
+        _entry("bridgeReceiver", address(deployment.bridgeReceiver));
+        _entry("acrossSpokePool", deployment.acrossSpokePool);
+        if (deployment.acrossSpokePool != address(0)) {
+            _entry("weth", IAcrossSpokePool(deployment.acrossSpokePool).wrappedNativeToken());
+        }
         _entry("timelock", address(deployment.timelock));
         _entry("lmsToken", address(deployment.lms));
         _entry("stakedLms", address(deployment.stakedLms));
@@ -235,7 +233,6 @@ contract Deploy is Registry {
         _entry("safe", deployment.safe);
         _entry("guardian", deployment.guardian);
         _entry("randomnessOracle", deployment.oracle);
-        _entry("messenger", deployment.messenger);
         return _registry(deployment.deployBlock);
     }
 
@@ -277,14 +274,10 @@ contract Deploy is Registry {
     ///      is open to anyone, so on any other chain whoever calls it first
     ///      chooses the seed of every match.
     ///
-    ///      Without mocks the oracle is VRF (see the contract notes) and a
-    ///      messenger is optional: neither `LZ_ENDPOINT` nor `MESSENGER` means a
-    ///      hub with no spokes yet. `MOCKS=false` on a local node is a fork run
-    ///      against the real ones.
-    function _transport(Deployment memory deployment, address deployer) private {
+    ///      Without mocks the oracle is VRF (see the contract notes).
+    ///      `MOCKS=false` on a local node is a fork run against the real one.
+    function _oracle(Deployment memory deployment, address deployer) private {
         address oracle = vm.envOr("ORACLE", address(0));
-        address messenger = vm.envOr("MESSENGER", address(0));
-        address endpoint = vm.envOr("LZ_ENDPOINT", address(0));
         bool local = block.chainid == LOCAL_CHAIN_ID;
         bool mocks = _mocks(local);
 
@@ -297,29 +290,6 @@ contract Deploy is Registry {
         // `lockMatch`, as a VRF node would. `npm run dev:fork` does.
         if (oracle == address(0)) oracle = address(new MockRandomnessOracle());
         deployment.oracle = oracle;
-
-        if (messenger != address(0)) {
-            deployment.messenger = messenger;
-            return;
-        }
-        LayerZeroMessenger hubLz;
-        if (endpoint == address(0) && mocks && vm.envOr("MOCK_LZ", false)) {
-            endpoint = address(new MockLayerZeroEndpoint());
-        }
-        if (endpoint != address(0)) {
-            // Owned by the deployer only until `_handOver`, like the config.
-            hubLz = new LayerZeroMessenger(
-                deployer,
-                ILayerZeroEndpoint(endpoint),
-                address(0),
-                uint128(vm.envOr("RECEIVE_GAS", DEFAULT_RECEIVE_GAS))
-            );
-            messenger = address(hubLz);
-        } else if (mocks) {
-            messenger = address(new MockMessenger());
-        }
-        deployment.messenger = messenger;
-        deployment.hubLz = hubLz;
     }
 
     /// @dev Owned by the deployer only until `_handOver`, like the config.
@@ -368,17 +338,6 @@ contract Deploy is Registry {
     ///      process would see.
     function _mocks(bool local) internal view virtual returns (bool) {
         return vm.envOr("MOCKS", local);
-    }
-
-    /// @dev Points the hub messenger at the escrow and makes the timelock its
-    ///      endpoint delegate, the one that sets its verifiers. Ownership
-    ///      follows in `_handOver`.
-    function _wireHubMessenger(Deployment memory deployment) private {
-        LayerZeroMessenger hubLz = deployment.hubLz;
-        if (address(hubLz) == address(0)) return;
-        hubLz.setApp(address(deployment.escrow));
-        hubLz.setDelegate(address(deployment.timelock));
-        hubLz.transferOwnership(address(deployment.timelock));
     }
 
     function _params(address treasury) private pure returns (ProtocolConfig.Params memory) {
@@ -448,6 +407,22 @@ contract Deploy is Registry {
         rules.stallGraceRounds = uint16(vm.parseJsonUint(json, ".stallGraceRounds"));
         rules.stallDamage = uint32(vm.parseJsonUint(json, ".stallDamage"));
         rules.maxRounds = uint16(vm.parseJsonUint(json, ".maxRounds"));
+    }
+
+    /// @dev Owned by the timelock from the start: nothing about it needs
+    ///      setting up. The config names it while the deployer still owns the
+    ///      config.
+    function _bridge(Deployment memory deployment) private {
+        (address pool,) = _across(block.chainid);
+        pool = vm.envOr("ACROSS_SPOKE_POOL", pool);
+        if (pool == address(0)) {
+            if (!_mocks(block.chainid == LOCAL_CHAIN_ID)) return;
+            pool = address(new MockAcrossSpokePool(IWETH9(address(new MockWETH()))));
+        }
+        deployment.acrossSpokePool = pool;
+        deployment.bridgeReceiver =
+            new BridgeJoinReceiver(address(deployment.timelock), deployment.escrow, IAcrossSpokePool(pool));
+        deployment.config.setBridgeReceiver(address(deployment.bridgeReceiver));
     }
 
     /// @dev Only where Uniswap v4 is deployed. Ownerless, so there is nothing
@@ -618,12 +593,11 @@ contract Deploy is Registry {
         if (delay <= matchLifetime) revert DelayTooShort(delay, matchLifetime);
 
         // The delay is raised first: the config refuses an owner whose delay
-        // is shorter than a match. The hub messenger and the VRF adapter, if
-        // this script deployed them, are accepted in the same batch: like the
-        // config, never owned by a zero-delay timelock.
-        bool withLz = address(deployment.hubLz) != address(0);
+        // is shorter than a match. The VRF adapter, if this script deployed
+        // it, is accepted in the same batch: like the config, never owned by
+        // a zero-delay timelock.
         bool withVrf = address(deployment.vrf) != address(0);
-        uint256 calls = 2 + (withLz ? 1 : 0) + (withVrf ? 1 : 0);
+        uint256 calls = 2 + (withVrf ? 1 : 0);
         address[] memory targets = new address[](calls);
         uint256[] memory values = new uint256[](calls);
         bytes[] memory payloads = new bytes[](calls);
@@ -631,10 +605,6 @@ contract Deploy is Registry {
         payloads[0] = abi.encodeCall(timelock.updateDelay, (delay));
         targets[1] = address(config);
         payloads[1] = abi.encodeCall(config.acceptOwnership, ());
-        if (withLz) {
-            targets[2] = address(deployment.hubLz);
-            payloads[2] = abi.encodeCall(deployment.hubLz.acceptOwnership, ());
-        }
         if (withVrf) {
             targets[calls - 1] = address(deployment.vrf);
             payloads[calls - 1] = abi.encodeCall(deployment.vrf.acceptOwnership, ());

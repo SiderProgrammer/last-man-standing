@@ -15,22 +15,24 @@
  *      later, as it would from Chainlink VRF,
  *   5. funds the browser's dev burner (and `FORK_PLAYER`, if set) with USDC,
  *      USDT and DAI, and opens two lobbies,
- *   6. starts a second, plain anvil as a spoke chain (31338), deploys
- *      `SpokeEscrow` there with `DeploySpoke.s.sol`, and registers it on the
- *      hub as the governance proposal would,
- *   7. plays LayerZero between the two: every join sent on the spoke is
- *      delivered to the hub a few seconds later, stake and all,
+ *   6. starts a second, plain anvil as a spoke chain (31338) and deploys
+ *      `SpokeRouter` there with `DeploySpoke.s.sol`, over a mock Across
+ *      SpokePool; the hub deploy has its own mock pool and `BridgeJoinReceiver`,
+ *   7. plays an Across relayer between the two: every deposit made on the
+ *      spoke is filled on the hub a few seconds later, as it would be for real,
  *   8. starts the server and the client wired to all of it.
  *
- * Ctrl+C stops everything. Nothing is written outside `contracts/broadcast/`,
- * which is gitignored, and no `.env` is read or written.
+ * Ctrl+C stops everything. Nothing is written outside `contracts/broadcast/`
+ * and `contracts/deployments/`, both gitignored, and no `.env` is read or
+ * written. Delete `contracts/deployments/31337.json` before `forge test`:
+ * `Deploy.t.sol` checks that a test run writes no registry there.
  *
  * Environment (all optional):
  *   FORK_RPC_URL      mainnet RPC to fork     default: https://ethereum-rpc.publicnode.com
  *   FORK_PLAYER       an address to fund too, e.g. your wallet extension's account
  *   FORK_ANVIL_PORT   default 8545
  *   FORK_SPOKE_PORT   the spoke anvil, default 8546
- *   FORK_LZ_DELAY_MS  how long a spoke join spends "in transit", default 5000
+ *   FORK_FILL_DELAY_MS  how long a spoke join waits for its fill, default 5000
  *   FORK_SERVER_PORT  default 8788, so it does not collide with a normal `npm run dev` on 8787
  *   FORK_CLIENT_PORT  default 5174, likewise beside 5173
  */
@@ -67,20 +69,12 @@ const SPOKE_PORT = Number(process.env.FORK_SPOKE_PORT || 8546);
 const SERVER_PORT = Number(process.env.FORK_SERVER_PORT || 8788);
 const CLIENT_PORT = Number(process.env.FORK_CLIENT_PORT || 5174);
 const EXTRA_PLAYER = process.env.FORK_PLAYER || '';
-const LZ_DELAY_MS = Number(process.env.FORK_LZ_DELAY_MS || 5_000);
+const FILL_DELAY_MS = Number(process.env.FORK_FILL_DELAY_MS || 5_000);
 
 const CHAIN_ID = 31337;
 const RPC = `http://127.0.0.1:${ANVIL_PORT}`;
 const SPOKE_CHAIN_ID = 31338;
 const SPOKE_RPC = `http://127.0.0.1:${SPOKE_PORT}`;
-/**
- * Made-up LayerZero endpoint ids for the two local chains. The mock endpoints
- * ignore them; the messengers only need each side to agree on the other's.
- */
-const HUB_EID = 50337;
-const SPOKE_EID = 50338;
-/** What the spoke's mock endpoint charges per message, so the client has a fee to show. */
-const SPOKE_LZ_FEE = '0.0005';
 
 // Anvil's first two default accounts, from its public test mnemonic. They are
 // funded on every anvil node and worthless anywhere else.
@@ -95,8 +89,8 @@ const PLAYER_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b
  * unlocked one, so anvil signs for it and no key is needed here.
  */
 const ORACLE_NODE = '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720';
-/** Plays LayerZero's executor on the hub. Another unlocked anvil account, for the same reason. */
-const LZ_EXECUTOR = '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f';
+/** Plays the Across relayer on the hub. Another unlocked anvil account, for the same reason. */
+const RELAYER = '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f';
 
 // Uniswap v4 on mainnet.
 const POOL_MANAGER = '0x000000000004444c5dc75cB358380D2e3dE08A90';
@@ -166,7 +160,7 @@ let stopping = false;
 
 // ------------------------------------------------------------------ output
 
-const COLORS = { anvil: 90, spoke: 90, server: 36, client: 35, fork: 32, oracle: 33, lz: 34 };
+const COLORS = { anvil: 90, spoke: 90, server: 36, client: 35, fork: 32, oracle: 33, across: 34 };
 
 function log(tag, line) {
   process.stdout.write(`\x1b[${COLORS[tag] ?? 0}m[${tag}]\x1b[0m ${line}\n`);
@@ -309,20 +303,43 @@ const DEPLOY_KEYS = [
   ...['LMS_SUPPLY', 'STAKE_COOLDOWN', 'VOTING_DELAY', 'VOTING_PERIOD', 'PROPOSAL_THRESHOLD', 'QUORUM_PERCENT'],
   ...['STAKER_FEE_BPS', 'QUORUM_FLOOR', 'REWARD_DURATION', 'TEAM_BENEFICIARY'],
   ...['REWARDS_FIRST_EPOCH', 'MAX_REWARD_PER_ETH', 'MAX_REWARD_PER_WALLET', 'LMS_PER_ETH_DISCOUNT'],
-  ...['ORACLE', 'MESSENGER', 'LZ_ENDPOINT', 'MOCK_LZ', 'RECEIVE_GAS'],
-  ...['HUB_CHAIN_ID', 'HUB_EID', 'HUB_ESCROW', 'HUB_MESSENGER', 'SPOKE_OWNER', 'AVATARS'],
+  ...['ORACLE', 'ACROSS_SPOKE_POOL'],
+  ...['HUB_CHAIN_ID', 'HUB_RECEIVER', 'HUB_WETH', 'SPOKE_POOL', 'SPOKE_OWNER', 'AVATARS'],
 ];
 
-/** The contracts a broadcast created, by name. */
-function created(script, chainId) {
-  const broadcast = JSON.parse(
-    readFileSync(new URL(`../contracts/broadcast/${script}/${chainId}/run-latest.json`, import.meta.url), 'utf8'),
+/** Registry keys, as the contract names the rest of this script uses. */
+const REGISTRY_NAMES = {
+  config: 'ProtocolConfig',
+  escrow: 'GameEscrow',
+  avatars: 'PlayerAvatars',
+  sessionDelegate: 'SessionKeyDelegate',
+  zapJoin: 'ZapJoin',
+  timelock: 'TimelockController',
+  lmsToken: 'LmsToken',
+  stakedLms: 'StakedLms',
+  governor: 'LmsGovernor',
+  feeRouter: 'FeeRouter',
+  rewardsDistributor: 'RewardsDistributor',
+  randomnessOracle: 'MockRandomnessOracle',
+  bridgeReceiver: 'BridgeJoinReceiver',
+  acrossSpokePool: 'MockAcrossSpokePool',
+  weth: 'MockWETH',
+  spokeRouter: 'SpokeRouter',
+};
+
+/**
+ * The contracts a deploy created, by name, from the `deployments/<chainId>.json`
+ * it wrote. Not from the broadcast log: with GameEscrow under its own compiler
+ * profile, forge leaves most contract names there blank.
+ */
+function created(chainId) {
+  const registry = JSON.parse(
+    readFileSync(new URL(`../contracts/deployments/${chainId}.json`, import.meta.url), 'utf8'),
   );
-  const addresses = {};
-  for (const tx of broadcast.transactions) {
-    if (tx.transactionType === 'CREATE') addresses[tx.contractName] = tx.contractAddress;
+  const addresses = { deployBlock: registry.deployBlock };
+  for (const [key, address] of Object.entries(registry.contracts)) {
+    addresses[REGISTRY_NAMES[key] ?? key] = address;
   }
-  addresses.deployBlock = Math.min(...broadcast.receipts.map((receipt) => Number(receipt.blockNumber)));
   return addresses;
 }
 
@@ -331,8 +348,6 @@ function deploy() {
   for (const key of DEPLOY_KEYS) {
     delete env[key];
   }
-  // A hub messenger over a mock endpoint, so the spoke has something to talk to.
-  env.MOCK_LZ = 'true';
   // Votes that open in a minute and last half an hour, so a proposal can be
   // voted on, and run to completion, in one sitting.
   env.VOTING_DELAY = '60';
@@ -349,8 +364,8 @@ function deploy() {
   });
 
   // `deployBlock` is where the server starts looking for proposals.
-  const addresses = created('Deploy.s.sol', CHAIN_ID);
-  const required = ['GameEscrow', 'ZapJoin', 'MockRandomnessOracle', 'FeeRouter', 'LayerZeroMessenger', 'MockLayerZeroEndpoint'];
+  const addresses = created(CHAIN_ID);
+  const required = ['GameEscrow', 'ZapJoin', 'MockRandomnessOracle', 'FeeRouter', 'BridgeJoinReceiver', 'MockAcrossSpokePool', 'MockWETH'];
   const missing = required.filter((name) => !addresses[name]);
   if (missing.length > 0) fail(`Deploy did not produce: ${missing.join(', ')}.`);
   return addresses;
@@ -364,64 +379,31 @@ function deploySpoke(hub) {
   }
   Object.assign(env, {
     HUB_CHAIN_ID: String(CHAIN_ID),
-    HUB_EID: String(HUB_EID),
-    HUB_ESCROW: hub.GameEscrow,
-    HUB_MESSENGER: hub.LayerZeroMessenger,
+    HUB_RECEIVER: hub.BridgeJoinReceiver,
+    // The hub's mock WETH: a local chain is not in `config/across.json`.
+    HUB_WETH: hub.MockWETH,
   });
   run('forge script', 'forge', ['script', 'script/DeploySpoke.s.sol:DeploySpoke', '--rpc-url', SPOKE_RPC, '--broadcast'], {
     cwd: CONTRACTS,
     env,
   });
-  const spoke = created('DeploySpoke.s.sol', SPOKE_CHAIN_ID);
-  const missing = ['SpokeEscrow', 'LayerZeroMessenger', 'MockLayerZeroEndpoint', 'PlayerAvatars'].filter((name) => !spoke[name]);
+  const spoke = created(SPOKE_CHAIN_ID);
+  const missing = ['SpokeRouter', 'MockAcrossSpokePool', 'PlayerAvatars'].filter((name) => !spoke[name]);
   if (missing.length > 0) fail(`DeploySpoke did not produce: ${missing.join(', ')}.`);
   return spoke;
 }
 
-const bytes32Of = (address) => pad(address, { size: 32 });
-
 /**
- * Registers the spoke on the hub: the two calls the "Add a spoke chain"
- * proposal makes, sent here as the timelock itself, which anvil lets us
- * impersonate. On a real deployment this is a vote.
- */
-async function registerSpoke(publicClient, hub, spoke) {
-  const timelock = hub.TimelockController;
-  await rpc('anvil_impersonateAccount', [timelock]);
-  await rpc('anvil_setBalance', [timelock, numberToHex(parseEther('1'))]);
-  const asTimelock = createWalletClient({ account: timelock, transport: http(RPC) });
-  const calls = [
-    [hub.ProtocolConfig, 'ProtocolConfig', 'setRemoteChain', [SPOKE_CHAIN_ID, hub.LayerZeroMessenger, bytes32Of(spoke.SpokeEscrow)]],
-    [hub.LayerZeroMessenger, 'LayerZeroMessenger', 'setPeer', [SPOKE_CHAIN_ID, SPOKE_EID, bytes32Of(spoke.LayerZeroMessenger)]],
-  ];
-  for (const [address, contract, functionName, args] of calls) {
-    const hash = await asTimelock.writeContract({ chain: null, address, abi: abiOf(contract), functionName, args });
-    await publicClient.waitForTransactionReceipt({ hash });
-  }
-  await rpc('anvil_stopImpersonatingAccount', [timelock]);
-
-  // A fee of its own, so the client has a LayerZero fee to show beside the stake.
-  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(SPOKE_RPC) });
-  const spokeClient = createPublicClient({ transport: http(SPOKE_RPC) });
-  const hash = await operator.writeContract({
-    chain: null,
-    address: spoke.MockLayerZeroEndpoint,
-    abi: abiOf('MockLayerZeroEndpoint'),
-    functionName: 'setFee',
-    args: [parseEther(SPOKE_LZ_FEE)],
-  });
-  await spokeClient.waitForTransactionReceipt({ hash });
-}
-
-/**
- * Plays LayerZero between the two mock endpoints: reads each message the spoke
- * sent and, `LZ_DELAY_MS` later, has the hub endpoint deliver it to the hub
- * messenger with the stake it carries — what a DVN and an executor do for
- * real. The delay is there so the client's "in transit" state can be seen.
+ * Plays an Across relayer: reads each deposit made into the spoke's mock pool
+ * and, `FILL_DELAY_MS` later, fills it on the hub's — paying the receiver and
+ * calling its handler with the deposit's message, which is what a relayer and
+ * the real SpokePool do. The delay is there so the client's "in transit" state
+ * can be seen.
  */
 function runRelayer(hub, spoke) {
   const spokeClient = createPublicClient({ transport: http(SPOKE_RPC) });
-  const executor = createWalletClient({ account: LZ_EXECUTOR, transport: http(RPC) });
+  const relayer = createWalletClient({ account: RELAYER, transport: http(RPC) });
+  const pool = abiOf('MockAcrossSpokePool');
   let next = 0n;
   let busy = false;
 
@@ -429,39 +411,39 @@ function runRelayer(hub, spoke) {
     if (busy) return;
     busy = true;
     try {
-      const count = await spokeClient.readContract({ address: spoke.MockLayerZeroEndpoint, abi: abiOf('MockLayerZeroEndpoint'), functionName: 'sentCount' });
+      const count = await spokeClient.readContract({ address: spoke.MockAcrossSpokePool, abi: pool, functionName: 'depositCount' });
       for (; next < count; next++) {
-        const sent = await spokeClient.readContract({
-          address: spoke.MockLayerZeroEndpoint,
-          abi: abiOf('MockLayerZeroEndpoint'),
-          functionName: 'getSent',
+        const deposit = await spokeClient.readContract({
+          address: spoke.MockAcrossSpokePool,
+          abi: pool,
+          functionName: 'getDeposit',
           args: [next],
         });
-        if (sent.dstEid !== HUB_EID) continue;
+        if (deposit.destinationChainId !== BigInt(CHAIN_ID)) continue;
         const index = next;
-        log('lz', `message ${index} in transit to the hub with ${formatUnits(sent.value, 18)} ETH…`);
-        setTimeout(() => void deliver(index, sent), LZ_DELAY_MS);
+        log('across', `deposit ${index} waiting for a fill: ${formatUnits(deposit.outputAmount, 18)} ETH to the hub…`);
+        setTimeout(() => void fill(index, deposit), FILL_DELAY_MS);
       }
     } catch (error) {
-      log('lz', `could not read the spoke: ${error.shortMessage ?? error.message}`);
+      log('across', `could not read the spoke: ${error.shortMessage ?? error.message}`);
     } finally {
       busy = false;
     }
   };
 
-  const deliver = async (index, sent) => {
+  const fill = async (index, deposit) => {
     try {
-      await executor.writeContract({
+      await relayer.writeContract({
         chain: null,
-        address: hub.MockLayerZeroEndpoint,
-        abi: abiOf('MockLayerZeroEndpoint'),
-        functionName: 'deliver',
-        args: [hub.LayerZeroMessenger, SPOKE_EID, bytes32Of(spoke.LayerZeroMessenger), sent.message, sent.value],
-        value: sent.value,
+        address: hub.MockAcrossSpokePool,
+        abi: pool,
+        functionName: 'fill',
+        args: [deposit.recipient, deposit.outputToken, deposit.outputAmount, deposit.fillDeadline, deposit.message],
+        value: deposit.outputAmount,
       });
-      log('lz', `message ${index} delivered`);
+      log('across', `deposit ${index} filled`);
     } catch (error) {
-      log('lz', `message ${index} failed to deliver: ${error.shortMessage ?? error.message}`);
+      log('across', `deposit ${index} could not be filled: ${error.shortMessage ?? error.message}`);
     }
   };
 
@@ -664,10 +646,9 @@ async function main() {
   log('fork', `GameEscrow ${addresses.GameEscrow} · ZapJoin ${addresses.ZapJoin}`);
   log('fork', `LMS ${addresses.LmsToken} · sLMS ${addresses.StakedLms} · FeeRouter ${addresses.FeeRouter}`);
 
-  log('fork', 'Deploying the spoke and registering it on the hub…');
+  log('fork', 'Deploying the spoke…');
   const spoke = deploySpoke(addresses);
-  await registerSpoke(publicClient, addresses, spoke);
-  log('fork', `SpokeEscrow ${spoke.SpokeEscrow} on ${SPOKE_CHAIN_ID} · hub messenger ${addresses.LayerZeroMessenger}`);
+  log('fork', `SpokeRouter ${spoke.SpokeRouter} on ${SPOKE_CHAIN_ID} · hub receiver ${addresses.BridgeJoinReceiver}`);
 
   runOracleNode(publicClient, addresses.MockRandomnessOracle);
   runRelayer(addresses, spoke);
@@ -705,8 +686,7 @@ async function main() {
         { chainId: CHAIN_ID, address: addresses.PlayerAvatars, rpcUrl: RPC },
         { chainId: SPOKE_CHAIN_ID, address: spoke.PlayerAvatars, rpcUrl: SPOKE_RPC },
       ]),
-      SPOKES: JSON.stringify([{ chainId: SPOKE_CHAIN_ID, escrow: spoke.SpokeEscrow }]),
-      HUB_MESSENGER: addresses.LayerZeroMessenger,
+      SPOKES: JSON.stringify([{ chainId: SPOKE_CHAIN_ID, router: spoke.SpokeRouter }]),
       CROSS_CHAIN_FROM_BLOCK: String(addresses.deployBlock),
     },
   });
@@ -734,7 +714,7 @@ async function main() {
   log('fork', 'No wallet extension: the page signs with the funded dev burner automatically.');
   log('fork', `Stake from the spoke: http://localhost:${CLIENT_PORT}/?chain=spoke puts the burner on ${SPOKE_CHAIN_ID}.`);
   log('fork', `With one: add network RPC ${RPC}, chain id ${CHAIN_ID}, and rerun with FORK_PLAYER=<your address>.`);
-  log('fork', `The spoke is RPC ${SPOKE_RPC}, chain id ${SPOKE_CHAIN_ID}; joins reach the hub ${LZ_DELAY_MS / 1000}s after they are sent.`);
+  log('fork', `The spoke is RPC ${SPOKE_RPC}, chain id ${SPOKE_CHAIN_ID}; joins are filled on the hub ${FILL_DELAY_MS / 1000}s after they are sent.`);
   log('fork', 'Ctrl+C stops everything.');
 }
 

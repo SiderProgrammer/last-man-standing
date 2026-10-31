@@ -9,7 +9,9 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {Deploy} from "../../script/Deploy.s.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
-import {MockLayerZeroEndpoint} from "../../src/mocks/MockLayerZeroEndpoint.sol";
+import {MockAcrossSpokePool} from "../../src/mocks/MockAcrossSpokePool.sol";
+import {MockWETH} from "../../src/mocks/MockWETH.sol";
+import {IWETH9} from "../../src/vendor/across/IWETH9.sol";
 import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
 import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
 
@@ -55,23 +57,20 @@ contract DeployTest is Test {
         vm.setEnv("SAFE", vm.toString(safe));
         poolManager = address(new MockPoolManager());
         vm.setEnv("POOL_MANAGER", vm.toString(poolManager));
-        vm.setEnv("MOCK_LZ", "true");
         d = new Deploy().run();
     }
 
-    /// @dev Like the config: deployed by the script, then the timelock's,
-    ///      accepted in the same batch that raised the delay.
-    function test_hubMessengerServesTheEscrow_ownedAndConfiguredByTheTimelock() public view {
-        assertTrue(address(d.hubLz) != address(0));
-        assertEq(d.messenger, address(d.hubLz));
-        assertEq(d.hubLz.app(), address(d.escrow));
-        assertEq(d.hubLz.owner(), address(d.timelock));
-        assertEq(d.hubLz.pendingOwner(), address(0));
+    /// @dev On a local node the hub's SpokePool is a mock, and the receiver
+    ///      takes its fills. The timelock owns it from the start.
+    function test_bridgeReceiverIsTheConfigsAndTheTimelocks() public view {
+        assertTrue(address(d.bridgeReceiver) != address(0));
+        assertEq(d.config.bridgeReceiver(), address(d.bridgeReceiver));
+        assertEq(address(d.bridgeReceiver.escrow()), address(d.escrow));
+        assertEq(d.bridgeReceiver.spokePool(), d.acrossSpokePool);
+        assertEq(d.bridgeReceiver.owner(), address(d.timelock));
         assertEq(
-            MockLayerZeroEndpoint(address(d.hubLz.endpoint())).delegates(address(d.hubLz)),
-            address(d.timelock)
+            address(d.bridgeReceiver.weth()), address(MockAcrossSpokePool(payable(d.acrossSpokePool)).weth())
         );
-        assertEq(d.hubLz.receiveGas(), 350_000);
     }
 
     function test_timelockOwnsConfigVaultAndRouter() public view {
@@ -369,6 +368,10 @@ contract DeployTest is Test {
     ///      is the Safe's step, so nothing here calls the coordinator.
     function test_onBaseSepolia_deploysAVrfAdapterForTheSubscription() public {
         vm.chainId(84_532);
+        vm.etch(
+            0x82B564983aE7274c86695917BBf8C99ECb6F0F8F,
+            address(new MockAcrossSpokePool(IWETH9(address(new MockWETH())))).code
+        );
         Deploy.Deployment memory deployment = new DeployOnBaseSepolia().run();
         ChainlinkVrfAdapter vrf = deployment.vrf;
 
@@ -381,6 +384,20 @@ contract DeployTest is Test {
         assertTrue(vrf.isConsumer(address(deployment.escrow)));
         assertEq(vrf.owner(), address(deployment.timelock));
         assertEq(vrf.pendingOwner(), address(0));
+    }
+
+    /// @dev Off a local node the hub's SpokePool comes from
+    ///      `config/across.json`. Across's pool is not on this test chain, so
+    ///      a mock's code stands at its address.
+    function test_onBaseSepolia_theReceiverTakesAcrossFills() public {
+        vm.chainId(84_532);
+        address baseSepoliaPool = 0x82B564983aE7274c86695917BBf8C99ECb6F0F8F;
+        vm.etch(baseSepoliaPool, address(new MockAcrossSpokePool(IWETH9(address(new MockWETH())))).code);
+        Deploy.Deployment memory deployment = new DeployOnBaseSepolia().run();
+
+        assertEq(deployment.acrossSpokePool, baseSepoliaPool);
+        assertEq(deployment.bridgeReceiver.spokePool(), baseSepoliaPool);
+        assertEq(deployment.config.bridgeReceiver(), address(deployment.bridgeReceiver));
     }
 
     /// @dev `MOCKS=true` off a local node must be refused.
@@ -406,7 +423,13 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".contracts.governor"), address(deployment.governor));
         assertEq(vm.parseJsonAddress(json, ".contracts.timelock"), address(deployment.timelock));
         assertEq(vm.parseJsonAddress(json, ".contracts.zapJoin"), address(deployment.zap));
-        assertEq(vm.parseJsonAddress(json, ".contracts.messenger"), deployment.messenger);
+        assertEq(vm.parseJsonAddress(json, ".contracts.bridgeReceiver"), address(deployment.bridgeReceiver));
+        assertEq(vm.parseJsonAddress(json, ".contracts.acrossSpokePool"), deployment.acrossSpokePool);
+        assertEq(
+            vm.parseJsonAddress(json, ".contracts.weth"),
+            address(deployment.bridgeReceiver.weth()),
+            "the hub WETH, which a spoke deploy needs"
+        );
         assertEq(vm.parseJsonAddress(json, ".contracts.randomnessOracle"), deployment.oracle);
         assertEq(vm.parseJsonAddress(json, ".contracts.multisigPhase"), address(deployment.multisigPhase));
         assertEq(vm.parseJsonAddress(json, ".contracts.guardian"), GUARDIAN);
@@ -414,7 +437,7 @@ contract DeployTest is Test {
             vm.parseJsonAddress(json, ".contracts.liquidityReserve"), address(deployment.liquidityReserve)
         );
         assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 19);
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 21);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

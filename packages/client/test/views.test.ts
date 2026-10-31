@@ -98,20 +98,20 @@ describe('hub label', () => {
   });
 
   it('does not warn on a listed spoke: it says where the stake goes', () => {
-    const label = hubLabel(SEPOLIA, BASE_SEPOLIA, true, [{ chainId: BASE_SEPOLIA, escrow: ZERO_ADDRESS }]);
+    const label = hubLabel(SEPOLIA, BASE_SEPOLIA, true, [{ chainId: BASE_SEPOLIA, router: ZERO_ADDRESS }]);
     expect(label).toMatchObject({ text: 'Staking from Base Sepolia → Sepolia hub', mismatch: false });
     expect(label.title).toMatch(/paid there, not on Base Sepolia/);
   });
 
   it('still warns on a chain that is neither the hub nor a spoke, and names the spokes', () => {
-    const label = hubLabel(SEPOLIA, 1, true, [{ chainId: BASE_SEPOLIA, escrow: ZERO_ADDRESS }]);
+    const label = hubLabel(SEPOLIA, 1, true, [{ chainId: BASE_SEPOLIA, router: ZERO_ADDRESS }]);
     expect(label.mismatch).toBe(true);
     expect(label.title).toBe('Switch your wallet to the hub chain or a spoke (Base Sepolia) to stake.');
   });
 });
 
 describe('spoke joins', () => {
-  const spoke = { chainId: BASE_SEPOLIA, escrow: `0x${'ab'.repeat(20)}` } as const;
+  const spoke = { chainId: BASE_SEPOLIA, router: `0x${'ab'.repeat(20)}` } as const;
   const MATCH = `0x${'cd'.repeat(32)}` as const;
 
   it('finds the spoke the wallet is on, and nothing on the hub', () => {
@@ -122,22 +122,18 @@ describe('spoke joins', () => {
 
   it('labels the button with the stake, then the stake and the fee', () => {
     expect(spokeStakeLabel('10000000000000000', BASE_SEPOLIA)).toBe('Stake 0.01 from BASE');
-    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n + 5n * 10n ** 14n, BASE_SEPOLIA)).toBe('Pay 0.01 + 0.0005 fee');
+    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n + 5n * 10n ** 14n)).toBe('Pay 0.01 + 0.0005 fee');
+    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n)).toBe('Pay 0.01');
   });
 
-  /** Polygon pays in POL: the quote is the ETH stake priced in POL, fee included. */
-  it('labels a spoke that pays in its own token in that token, rounded up, with no ETH arithmetic', () => {
-    const POLYGON = 137;
-    expect(spokeStakeLabel('10000000000000000', POLYGON)).toBe('Stake 0.01 ETH from POL');
-    // 0.01 ETH at ~1,234 POL each, plus a fee: 12.34567891… POL.
-    expect(spokeQuoteLabel(10n ** 16n, 12_345_678_912_345_678_912n, POLYGON)).toBe('Pay ≤ 12.3457 POL');
-    expect(spokeQuoteLabel(10n ** 16n, 2n * 10n ** 18n, 56)).toBe('Pay ≤ 2 BNB');
-    expect(spokeQuoteLabel(10n ** 16n, 5n * 10n ** 17n, 43114)).toBe('Pay ≤ 0.5 AVAX');
-  });
-
-  it('explains a stake above what LayerZero will carry', () => {
-    const raw = 'The contract function "quoteJoin" reverted.\n\nError: Executor_NativeAmountExceedsCap(uint256 amount, uint256 cap)';
-    expect(spokeQuoteError(raw, BASE_SEPOLIA)).toMatch(/more than LayerZero will carry from Base Sepolia/);
+  it('explains a contract wallet, a stake too small to bridge, and anything else', () => {
+    const raw = 'The contract function "join" reverted.\n\nError: HubRecipientRequired(address caller)';
+    expect(spokeQuoteError(raw, BASE_SEPOLIA)).toBe(
+      'A contract wallet cannot join from Base Sepolia as itself. Join from the hub instead.',
+    );
+    expect(spokeQuoteError('Across will not bridge an amount this small.', BASE_SEPOLIA)).toBe(
+      'This stake is below what Across will bridge from Base Sepolia.',
+    );
     expect(spokeQuoteError('boom\nmore detail', BASE_SEPOLIA)).toBe('Could not price the join from Base Sepolia: boom');
   });
 
@@ -148,9 +144,6 @@ describe('spoke joins', () => {
     expect(
       crossChainNotice({ kind: 'refunded', matchId: MATCH, amount: '10000000000000000', reason: 5 }, SEPOLIA),
     ).toBe('Not seated: the lobby filled while your stake was in transit. Your 0.01 ETH is yours to collect on Sepolia.');
-    expect(crossChainNotice({ kind: 'parked', matchId: MATCH, amount: '10000000000000000' }, SEPOLIA)).toMatch(
-      /reached Sepolia, but the hub cannot take it yet/,
-    );
   });
 });
 

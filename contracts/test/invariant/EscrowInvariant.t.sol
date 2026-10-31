@@ -6,7 +6,11 @@ import {Test} from "forge-std/Test.sol";
 import {BPS_DENOMINATOR} from "../../src/Constants.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
-import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
+import {MockAcrossSpokePool} from "../../src/mocks/MockAcrossSpokePool.sol";
+import {MockWETH} from "../../src/mocks/MockWETH.sol";
+import {BridgeJoinReceiver} from "../../src/periphery/BridgeJoinReceiver.sol";
+import {IAcrossSpokePool} from "../../src/vendor/across/IAcrossSpokePool.sol";
+import {IWETH9} from "../../src/vendor/across/IWETH9.sol";
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {SettlementHarness} from "../helpers/SettlementHarness.sol";
 import {Attest} from "../helpers/Attest.sol";
@@ -187,30 +191,48 @@ contract EscrowHandler is Test {
         escrow.withdraw(actor);
     }
 
-    MockMessenger public messenger;
+    MockAcrossSpokePool public pool;
+    address public receiver;
     uint32 public constant REMOTE_CHAIN = 421_614;
-    bytes32 public constant REMOTE_PEER = bytes32(uint256(0xBEEF));
+    /// @dev Ghost: what fills with an unreadable message left in the receiver.
+    uint256 public unroutable;
 
     /// @dev Set once by `setUp`. The fuzzer calls every public function on the
-    ///      handler, so a re-settable messenger would be pointed at junk.
-    function setMessenger(MockMessenger messenger_) external {
-        if (address(messenger) == address(0)) messenger = messenger_;
+    ///      handler, so a re-settable pool would be pointed at junk.
+    function setBridge(MockAcrossSpokePool pool_, address receiver_) external {
+        if (receiver == address(0)) (pool, receiver) = (pool_, receiver_);
     }
 
-    /// @dev A stake arriving from a spoke. Sometimes the wrong amount, often
-    ///      for a lobby that has since filled, locked or settled: every one of
-    ///      those must be refunded on the hub, and the books must still balance.
-    function crossChainJoin(uint256 who, bool wrongStake) public {
-        if (current == bytes32(0) || address(messenger) == address(0)) return;
+    /// @dev A stake bridged from a spoke and filled on the hub: too little,
+    ///      exactly the stake, or more. Often for a lobby that has since
+    ///      filled, locked or settled: every one of those must be credited on
+    ///      the hub, and the books must still balance.
+    function crossChainJoin(uint256 who, uint8 amount) public {
+        if (current == bytes32(0) || receiver == address(0)) return;
         address actor = actors[who % actors.length];
-        uint256 value = wrongStake ? STAKE / 2 : STAKE;
-        vm.deal(address(messenger), address(messenger).balance + value);
-        messenger.deliver(address(escrow), REMOTE_CHAIN, REMOTE_PEER, abi.encode(current, actor), value);
+        uint256 value = [STAKE / 2, STAKE, STAKE + STAKE / 4][amount % 3];
+        _fill(value, abi.encode(current, actor, REMOTE_CHAIN));
+    }
+
+    /// @dev A deposit someone made with a message the receiver cannot read.
+    function junkFill(uint256 value) public {
+        if (receiver == address(0)) return;
+        value = bound(value, 1, 1 ether);
+        _fill(value, hex"0badc0de");
+        unroutable += value;
+    }
+
+    function _fill(uint256 value, bytes memory message) private {
+        address relayer = address(0x7E1A7E);
+        address weth = address(pool.weth());
+        vm.deal(relayer, relayer.balance + value);
+        vm.prank(relayer);
+        pool.fill{value: value}(receiver, weth, value, uint32(block.timestamp + 1 hours), message);
     }
 
     LmsToken public lms;
 
-    /// @dev Set once by `setUp`, like the messenger.
+    /// @dev Set once by `setUp`, like the pool.
     function setLms(LmsToken lms_) external {
         if (address(lms) == address(0)) lms = lms_;
     }
@@ -239,6 +261,8 @@ contract EscrowHandler is Test {
 ///      signing.
 contract EscrowInvariantTest is Fixtures {
     EscrowHandler internal handler;
+    MockAcrossSpokePool internal pool;
+    BridgeJoinReceiver internal receiver;
     LmsToken internal lms;
     uint256 internal initialLmsSupply;
 
@@ -251,7 +275,13 @@ contract EscrowInvariantTest is Fixtures {
         }
 
         handler = new EscrowHandler(escrow, oracle, harness, actors, _twoAttestors());
-        handler.setMessenger(messenger);
+        // Cross-chain joins arrive the real way: a fill of the hub's pool,
+        // handled by the receiver.
+        pool = new MockAcrossSpokePool(IWETH9(address(new MockWETH())));
+        receiver = new BridgeJoinReceiver(owner, escrow, IAcrossSpokePool(address(pool)));
+        vm.prank(owner);
+        config.setBridgeReceiver(address(receiver));
+        handler.setBridge(pool, address(receiver));
 
         lms = new LmsToken(address(this), 1_000_000e18);
         handler.setLms(lms);
@@ -273,6 +303,13 @@ contract EscrowInvariantTest is Fixtures {
 
     function invariant_solvency() public view {
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    /// @dev The receiver keeps nothing a fill brought for a seat: all of it is
+    ///      in the escrow. What it does keep is exactly what it could not route.
+    function invariant_theReceiverHoldsOnlyWhatItCouldNotRoute() public view {
+        assertEq(address(receiver).balance, handler.unroutable());
+        assertEq(pool.weth().balanceOf(address(receiver)), 0);
     }
 
     function invariant_owedNeverExceedsBalance() public view {

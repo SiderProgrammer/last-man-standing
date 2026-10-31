@@ -3,7 +3,11 @@ import {
   chainInfo,
   errorFirstLine,
   errorMessage,
+  joinMessage,
+  localQuote,
+  quoteAcross,
   sameAddress,
+  type BridgeQuote,
   type BotDifficulty,
   type CrossChainEvent,
   type LobbyInfo,
@@ -27,6 +31,7 @@ import {
   stakeButtonLabel,
 } from '../ui/views.js';
 import { renderWinnings } from '../wallet/payouts.js';
+import type { SpokeRoute } from '../wallet/wallet.js';
 import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
@@ -295,10 +300,17 @@ async function payTokenJoin(
 
 // -------------------------------------------------------------- spoke joins
 //
-// Two clicks, like token payment: the first asks the spoke what the join
-// costs — the stake plus LayerZero's fee — and the second pays it. The stake
-// then spends a few minutes in transit, during which the row says so; the
-// server reports how it landed on the hub.
+// Two clicks, like token payment: the first asks Across what bridging the
+// stake to the hub costs and the second pays it, through the spoke's
+// `SpokeRouter`. The stake then waits for a relayer, during which the row
+// says so; the server reports how it landed on the hub.
+//
+// With no Across API configured (`VITE_ACROSS_API`), as on the local stack,
+// whose SpokePools are mocks `npm run dev:fork` fills, the quote has no fee.
+
+const ACROSS_API = import.meta.env.VITE_ACROSS_API ?? '';
+/** Each router's route, read once: it is immutable. */
+const routes = new Map<string, Promise<SpokeRoute>>();
 
 function idleSpokeButton(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo): void {
   button.textContent = spokeStakeLabel(lobby.stake, spoke.chainId);
@@ -316,13 +328,29 @@ async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke
   button.disabled = true;
   button.textContent = 'Quoting…';
   try {
-    const total = await wallet.quoteSpokeJoin(spoke.escrow, lobby.matchId, stake);
-    button.textContent = spokeQuoteLabel(stake, total, spoke.chainId);
+    const key = spoke.router.toLowerCase();
+    if (!routes.has(key)) routes.set(key, wallet.spokeRoute(spoke.router));
+    const route = await routes.get(key)!;
+    const priced = ACROSS_API
+      ? await quoteAcross(
+          ACROSS_API,
+          {
+            originChainId: spoke.chainId,
+            destinationChainId: route.hubChainId,
+            inputToken: route.weth,
+            outputToken: route.hubWeth,
+            recipient: route.hubReceiver,
+            message: joinMessage(lobby.matchId, wallet.address, spoke.chainId),
+          },
+          stake,
+        )
+      : localQuote(stake, await wallet.chainTime());
+    button.textContent = spokeQuoteLabel(stake, priced.inputAmount);
     button.classList.add('primary');
     const expiry = setTimeout(() => idleSpokeButton(button, lobby, spoke), QUOTE_TTL_MS);
     button.onclick = () => {
       clearTimeout(expiry);
-      void paySpokeJoin(button, lobby, spoke, total);
+      void paySpokeJoin(button, lobby, spoke, priced.quote, priced.inputAmount);
     };
     button.disabled = false;
   } catch (error) {
@@ -331,24 +359,30 @@ async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke
   }
 }
 
-async function paySpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo, total: bigint): Promise<void> {
+async function paySpokeJoin(
+  button: HTMLButtonElement,
+  lobby: LobbyInfo,
+  spoke: SpokeInfo,
+  quote: BridgeQuote,
+  total: bigint,
+): Promise<void> {
   const { wallet } = app;
   if (!wallet) return;
 
   button.disabled = true;
   try {
     button.textContent = 'Confirm the join…';
-    const hash = await wallet.joinFromSpoke(spoke.escrow, lobby.matchId, BigInt(lobby.stake), total);
+    const hash = await wallet.joinFromSpoke(spoke.router, lobby.matchId, quote, total);
     button.textContent = 'Sending…';
     await wallet.waitFor(hash);
     app.inTransit.add(lobby.matchId.toLowerCase());
     renderLobbies(shown.open, shown.live);
     toast(
-      `Stake sent from ${chainInfo(spoke.chainId).name}. It reaches ${chainInfo(app.chainId).name} in a few minutes; ` +
-        'you will be told when it is seated.',
+      `Stake sent from ${chainInfo(spoke.chainId).name}. It reaches ${chainInfo(app.chainId).name} once a ` +
+        'relayer fills it, usually within a minute; you will be told when it is seated.',
     );
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(spokeQuoteError(errorFirstLine(error), spoke.chainId));
     idleSpokeButton(button, lobby, spoke);
   }
 }
@@ -369,6 +403,5 @@ export function onCrossChain(event: CrossChainEvent): void {
     app.inTransit.delete(event.matchId.toLowerCase());
     void renderWinnings();
   }
-  // A parked stake is still on its way to a seat: the row stays locked too.
   renderLobbies(shown.open, shown.live);
 }

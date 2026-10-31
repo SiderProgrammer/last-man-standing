@@ -25,6 +25,8 @@ export function contentSecurityPolicy(env: Record<string, string | undefined>, o
   const rpcs = options.dev
     ? [env.VITE_RPC_URL ?? DEV_RPC_URL, env.VITE_SPOKE_RPC_URL].flatMap((url) => (url ? [originOf(url)] : []))
     : [];
+  // Across's fee API, which the page asks to price a join from a spoke.
+  const across = env.VITE_ACROSS_API ? [originOf(env.VITE_ACROSS_API)] : [];
   // Where avatar images come from: the IPFS gateway the server rewrites to.
   const media = (env.VITE_CSP_MEDIA ?? 'https://ipfs.io').split(/\s+/).filter(Boolean);
 
@@ -38,7 +40,7 @@ export function contentSecurityPolicy(env: Record<string, string | undefined>, o
     'worker-src': ["'self'", 'blob:'],
     // Pixi also `fetch`es `data:` and `blob:` URLs to decode images; neither
     // leaves the page, so they open no way out.
-    'connect-src': ["'self'", 'data:', 'blob:', ...server, ...rpcs, ...media],
+    'connect-src': ["'self'", 'data:', 'blob:', ...server, ...rpcs, ...across, ...media],
     'manifest-src': ["'self'"],
     'object-src': ["'none'"],
     'base-uri': ["'none'"],

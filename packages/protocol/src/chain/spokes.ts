@@ -1,29 +1,32 @@
-import { spokeEscrowAbi, layerZeroMessengerAbi } from './abis.js';
+import { encodeAbiParameters, type Address, type Hex, type TypedDataDomain } from 'viem';
+import { bridgeJoinReceiverAbi, spokeRouterAbi } from './abis.js';
+import { EIP712_DOMAIN_NAME, EIP712_DOMAIN_VERSION } from './eip712.js';
 
 /**
- * Joining a hub lobby from a spoke chain.
+ * Joining a hub lobby from a spoke chain, through Across.
  *
- * A player on a spoke stakes into `SpokeEscrow` there; the messenger carries
- * the stake and the join to the hub, which seats the player or, if the seat
- * is gone by the time it lands, credits the stake back to them on the hub.
- * Shared because the server watches the hub end and the client drives the
- * spoke end, and both have to agree with the deployed contracts.
+ * A player on a spoke calls `SpokeRouter.join`, which deposits the stake into
+ * Across's SpokePool there. A relayer fills it on the hub, paying
+ * `BridgeJoinReceiver`, which hands it to the escrow: a seat, or the value
+ * credited to the player on the hub if the seat is gone by then. Shared
+ * because the server watches the hub end and the client drives the spoke end,
+ * and both have to agree with the deployed contracts.
  */
 
-/** The `SpokeEscrow` surface the client calls. */
-export { spokeEscrowAbi };
+/** The `SpokeRouter` surface the client calls. */
+export { spokeRouterAbi };
 
-/** The hub `LayerZeroMessenger`: its parked deliveries, and their retry. */
-export { layerZeroMessengerAbi };
+/** `BridgeJoinReceiver`: its fills, and the signed way back out. */
+export { bridgeJoinReceiverAbi };
 
 /** A spoke the server advertises: where a player on that chain stakes. */
 export interface SpokeInfo {
   chainId: number;
-  /** `SpokeEscrow` on that chain. */
-  escrow: `0x${string}`;
+  /** `SpokeRouter` on that chain. */
+  router: `0x${string}`;
 }
 
-/** Mirrors `GameEscrow.JoinFailure`: why a cross-chain stake was refunded instead of seated. */
+/** Mirrors `GameEscrow.JoinFailure`: why a bridged stake was credited instead of seated. */
 export const JoinFailure = {
   None: 0,
   Paused: 1,
@@ -32,7 +35,7 @@ export const JoinFailure = {
   WindowClosed: 4,
   LobbyFull: 5,
   AlreadyJoined: 6,
-  WrongStake: 7,
+  StakeTooLow: 7,
 } as const;
 
 export type JoinFailureValue = (typeof JoinFailure)[keyof typeof JoinFailure];
@@ -52,8 +55,8 @@ export function joinFailureText(reason: number): string {
       return 'the lobby filled while your stake was in transit';
     case JoinFailure.AlreadyJoined:
       return 'you already had a seat in it';
-    case JoinFailure.WrongStake:
-      return 'the stake did not match the lobby';
+    case JoinFailure.StakeTooLow:
+      return 'less than the stake arrived';
     default:
       return 'the seat could not be taken';
   }
@@ -66,13 +69,174 @@ export function joinFailureText(reason: number): string {
  *   - `seated`: the stake took a seat.
  *   - `refunded`: the seat was gone; the stake is the player's on the hub, to
  *     collect like any other balance.
- *   - `parked`: the hub could not take the delivery at all — a route not yet
- *     registered, say — so the messenger holds the stake until it can be
- *     retried. Nothing is lost; it is waiting on the operator or governance.
  *
  * `amount` is in wei, as a decimal string so it survives JSON.
  */
 export type CrossChainEvent =
   | { kind: 'seated'; matchId: `0x${string}`; chainId: number }
-  | { kind: 'refunded'; matchId: `0x${string}`; amount: string; reason: number }
-  | { kind: 'parked'; matchId: `0x${string}`; amount: string };
+  | { kind: 'refunded'; matchId: `0x${string}`; amount: string; reason: number };
+
+// ------------------------------------------------------------------ Across
+
+/** Across's fee API on mainnet and on testnet. */
+export const ACROSS_API = {
+  mainnet: 'https://app.across.to/api',
+  testnet: 'https://testnet.across.to/api',
+} as const;
+
+/**
+ * The fee terms `SpokeRouter.join` and `BridgeJoinReceiver.withdrawToChainFor`
+ * take as `quote`, from Across's suggested-fees answer.
+ */
+export interface BridgeQuote {
+  /** What arrives: exactly this, or nothing until the deposit is refunded. */
+  outputAmount: bigint;
+  quoteTimestamp: number;
+  fillDeadline: number;
+  exclusiveRelayer: Address;
+  exclusivityParameter: number;
+}
+
+/** One transfer through Across, as its API and the deposit describe it. */
+export interface AcrossRoute {
+  originChainId: number;
+  destinationChainId: number;
+  /** WETH on the origin chain: Across moves ETH as its wrapped token. */
+  inputToken: Address;
+  /** WETH on the destination. */
+  outputToken: Address;
+  recipient: Address;
+  /** The handler's message, which the fee covers the gas of. Empty for none. */
+  message: Hex;
+}
+
+/**
+ * The relayer's share above the quoted fee, in basis points of the fee. A
+ * fill is exact, so a fee that rises before a relayer takes the deposit
+ * leaves it waiting; a little over the quote keeps it worth filling. It goes
+ * to the relayer, not the player.
+ */
+export const FEE_BUFFER_BPS = 1_000n;
+
+/**
+ * What it costs to have exactly `outputAmount` arrive on the far side: the
+ * input to send, and the quote to send it with.
+ *
+ * The API prices a given input; for an exact output this asks for the output
+ * itself, and adds the fee it names, plus `FEE_BUFFER_BPS` of it, on top.
+ */
+export async function quoteAcross(
+  api: string,
+  route: AcrossRoute,
+  outputAmount: bigint,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ inputAmount: bigint; quote: BridgeQuote }> {
+  const params = new URLSearchParams({
+    inputToken: route.inputToken,
+    outputToken: route.outputToken,
+    originChainId: String(route.originChainId),
+    destinationChainId: String(route.destinationChainId),
+    amount: outputAmount.toString(),
+    recipient: route.recipient,
+  });
+  if (route.message !== '0x') params.set('message', route.message);
+
+  const response = await fetchFn(`${api.replace(/\/$/, '')}/suggested-fees?${params}`);
+  const body = (await response.json()) as AcrossFees & { message?: string };
+  if (!response.ok) throw new Error(`Across would not quote: ${body.message ?? response.status}`);
+  if (body.isAmountTooLow) throw new Error('Across will not bridge an amount this small.');
+
+  const fee = BigInt(body.totalRelayFee.total);
+  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
+  return {
+    inputAmount: outputAmount + fee + buffer,
+    quote: {
+      outputAmount,
+      quoteTimestamp: Number(body.timestamp),
+      fillDeadline: Number(body.fillDeadline),
+      exclusiveRelayer: body.exclusiveRelayer,
+      exclusivityParameter: Number(body.exclusivityDeadline),
+    },
+  };
+}
+
+/** The part of the suggested-fees answer read here. */
+interface AcrossFees {
+  totalRelayFee: { total: string };
+  timestamp: string;
+  fillDeadline: string;
+  exclusiveRelayer: Address;
+  exclusivityDeadline: number;
+  isAmountTooLow?: boolean;
+}
+
+/** How long a deposit waits for a fill when there is no API to say. */
+export const LOCAL_FILL_SECONDS = 60 * 60;
+
+/**
+ * A quote with no fee, for a local stack whose SpokePools are mocks that
+ * `npm run dev:fork` fills. `now` is the origin chain's latest block time,
+ * which the pool checks the quote against.
+ */
+export function localQuote(outputAmount: bigint, now: number): { inputAmount: bigint; quote: BridgeQuote } {
+  return {
+    inputAmount: outputAmount,
+    quote: {
+      outputAmount,
+      quoteTimestamp: now,
+      fillDeadline: now + LOCAL_FILL_SECONDS,
+      exclusiveRelayer: '0x0000000000000000000000000000000000000000',
+      exclusivityParameter: 0,
+    },
+  };
+}
+
+/** `SpokeRouter.joinMessage`: what a join tells `BridgeJoinReceiver`. */
+export function joinMessage(matchId: Hex, player: Address, originChainId: number): Hex {
+  return encodeAbiParameters(
+    [{ type: 'bytes32' }, { type: 'address' }, { type: 'uint32' }],
+    [matchId, player, originChainId],
+  );
+}
+
+// -------------------------------------------------------- withdraw to chain
+
+/**
+ * A player's instruction to bridge their whole hub balance to a chain and
+ * address of their choosing, which a relayer submits to
+ * `BridgeJoinReceiver.withdrawToChainFor`.
+ */
+export interface ChainWithdrawal {
+  player: Address;
+  /** The hub's chain id: the domain has none, so it is a field instead. */
+  hubChainId: bigint;
+  destinationChainId: bigint;
+  recipient: Address;
+  /** WETH on the destination. */
+  outputToken: Address;
+  /** The most of the balance Across may take, in wei. */
+  maxFee: bigint;
+  nonce: bigint;
+  deadline: bigint;
+}
+
+export const WITHDRAWAL_TYPES = {
+  Withdrawal: [
+    { name: 'player', type: 'address' },
+    { name: 'hubChainId', type: 'uint256' },
+    { name: 'destinationChainId', type: 'uint256' },
+    { name: 'recipient', type: 'address' },
+    { name: 'outputToken', type: 'address' },
+    { name: 'maxFee', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+} as const;
+
+/**
+ * No chain id, like the session grant's: a wallet on a spoke must be able to
+ * sign it. The receiver's address and `hubChainId` bind it instead.
+ */
+export function withdrawalDomain(receiver: Address): TypedDataDomain {
+  return { name: EIP712_DOMAIN_NAME, version: EIP712_DOMAIN_VERSION, verifyingContract: receiver };
+}

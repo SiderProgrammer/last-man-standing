@@ -30,7 +30,7 @@ export interface ChainBridgeOptions {
 export interface ChainBridgeDeps {
   reader: EscrowReader;
   lobby: Lobby;
-  /** Hub chain id, used to map a seat's origin out of the messenger's id space. */
+  /** Hub chain id, which a seat staked on the hub itself shows as its origin. */
   chainId: number;
   pollMs?: number;
   /** Injectable clock, so the lock window can be tested without waiting. */
@@ -300,8 +300,8 @@ export class ChainBridge {
     if (known !== undefined) return known;
 
     const origin = await this.reader.seatOrigin(matchId, address);
-    // Zero means the player staked on the hub chain itself; anything else is in
-    // the messenger's id space and has to be mapped back to a chain id.
+    // Zero means the player staked on the hub chain itself; anything else is
+    // the chain a bridged stake came from.
     const chainId = originChainId(origin, this.deps.chainId);
     entry.origins.set(key, chainId);
     return chainId;

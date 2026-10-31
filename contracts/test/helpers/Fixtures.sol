@@ -5,9 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
-import {SpokeEscrow} from "../../src/SpokeEscrow.sol";
 import {MockRandomnessOracle} from "../../src/mocks/MockRandomnessOracle.sol";
-import {MockMessenger} from "../../src/mocks/MockMessenger.sol";
 import {Attest} from "./Attest.sol";
 import {SettlementHarness} from "./SettlementHarness.sol";
 
@@ -27,7 +25,8 @@ contract Fixtures is Test {
     ProtocolConfig internal config;
     GameEscrow internal escrow;
     MockRandomnessOracle internal oracle;
-    MockMessenger internal messenger;
+    /// @dev Stands in for `BridgeJoinReceiver`: the one caller of `bridgeJoin`.
+    address internal bridge;
     SettlementHarness internal harness;
 
     uint128 internal constant STAKE = 1 ether;
@@ -52,7 +51,7 @@ contract Fixtures is Test {
         vm.deal(treasury, 0);
 
         oracle = new MockRandomnessOracle();
-        messenger = new MockMessenger();
+        bridge = makeAddr("bridge");
         harness = new SettlementHarness();
 
         ProtocolConfig.Params memory params = ProtocolConfig.Params({
@@ -76,7 +75,7 @@ contract Fixtures is Test {
         config.setRandomnessOracle(address(oracle));
         config.setAttestorSet(_attestors(attestorA, attestorB, attestorC), 2);
         config.setRulesHash(harness.hashRulesDefault());
-        config.setRemoteChain(421_614, address(messenger), bytes32(uint256(uint160(address(0xBEEF)))));
+        config.setBridgeReceiver(bridge);
         config.setChallengeWindow(CHALLENGE_WINDOW);
         vm.stopPrank();
 

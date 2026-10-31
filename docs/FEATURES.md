@@ -41,7 +41,7 @@ A quick index, since most of these are the reason a given file exists at all.
 | **ERC-2612** permit | `LmsToken` | Approve the vault and stake in one transaction |
 | **ERC-1271** contract signature validation | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the game server accept a session grant signed by a contract wallet |
 | **ERC-4337** account abstraction | *considered, not used* | Rejected because it would change every player's address; reasoning in [Account abstraction](#account-abstraction) |
-| **LayerZero v2** messaging | `LayerZeroMessenger` | Concrete transport behind the chain-agnostic messenger interface |
+| **Across** (V3 SpokePool, `depositV3` and `handleV3AcrossMessage`) | `SpokeRouter`, `BridgeJoinReceiver` | Bridges a spoke stake to the hub with a join message, and a hub balance back out |
 | **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | Concrete source behind the chain-agnostic randomness interface |
 | **Uniswap v4** | `ZapJoin` | Swaps any token for exactly the stake in native ETH — see [Paying in any token](#paying-in-any-token) |
 
@@ -260,102 +260,77 @@ It currently targets a minimal local coordinator interface and runs against
 
 ## Cross-chain
 
-`contracts/src/SpokeEscrow.sol` · `contracts/src/interfaces/ICrossChainMessenger.sol` ·
-`contracts/src/adapters/LayerZeroMessenger.sol` · `packages/protocol/src/chain/chains.ts` ·
-**Live on the local fork; not yet on testnets**
+`contracts/src/periphery/SpokeRouter.sol` · `contracts/src/periphery/BridgeJoinReceiver.sol` ·
+`packages/protocol/src/chain/spokes.ts` · [ACROSS.md](ACROSS.md) ·
+**Live on the local fork and on mainnet forks; not yet on testnets**
 
 ### What it does
 
 Lets players on different chains sit in the same lobby and share one prize pool.
 
-The model is **hub and spoke**. The hub chain holds all escrowed value and all
-match state. A spoke holds nothing but a forwarding gate:
+The model is **hub and spoke over a value bridge**, [Across](https://across.to).
+The hub chain holds all escrowed value and all match state. A spoke holds
+nothing:
 
 ```
-player on spoke → SpokeEscrow.join(matchId, stake)
-                → messenger carries (matchId, player) + the staked value
-                → hub GameEscrow.receiveMessage() seats them
-                → hub records seatOrigin[matchId][player] = srcChainId
+player on spoke → SpokeRouter.join(matchId, 0, quote)  with stake + Across's fee
+                → Across SpokePool deposit to the hub's BridgeJoinReceiver,
+                  message (matchId, player, spoke chain id)
+relayer on hub  → fills it: exactly the stake, in WETH, then handleV3AcrossMessage
+                → receiver unwraps, GameEscrow.bridgeJoin() seats the player
+                → hub records seatOrigin[matchId][player] = spoke chain id
 ```
 
 A stake that arrives for a seat that can no longer be taken is credited to the
-player on the hub, never reverted, so nothing is stranded in transit. Payouts
-stay on the hub, where `withdrawFor` lets a keeper push them to the player.
+player on the hub, never reverted, so nothing is stranded in transit. Winnings
+and refunds stay on the hub; a player with no gas there signs a `Withdrawal`
+and anyone submits `withdrawToChainFor`, which bridges the whole balance back
+to the chain and address they named, Across's fee capped by the signature.
 
-### When the hub cannot take a delivery
+### When a fill cannot seat anyone
 
-`LayerZeroMessenger.lzReceive` · `retry` · `packages/server/src/chain/crossChain.ts`
+`BridgeJoinReceiver.handleV3AcrossMessage` · `recover`
 
-The refund above only helps once `receiveMessage` runs. If the hub refuses the
-delivery outright — the spoke went live before governance registered it, a peer
-is registered wrong, the messenger has no app — the escrow reverts. LayerZero's
-executor then keeps the stake it was paid to deliver and only reports the
-failure; the message stays retryable, but whoever retries has to bring the
-stake again.
-
-So the hub messenger never lets that happen. Once a message is authenticated,
-it calls the escrow inside a `try`, with a reserve of gas held back; a refused
-delivery is **parked**: its hash is stored by guid, its value stays in the
-messenger, and `DeliveryParked` carries everything needed to retry it.
-`retry(guid, …)` is permissionless and needs no value: it hands the delivery to
-the escrow again, which authenticates it exactly as on arrival. Purpose: a
-configuration mistake costs players a wait, never their stake. The server's
-`CrossChainWatcher` retries parked deliveries on every poll, so the wait ends
-as soon as the fix executes.
-
-A call with less gas than a real join plus that reserve reverts rather than
-parks. Anyone may execute a verified LayerZero message, and gas estimation
-lands on the cheapest call that "succeeds" — which, with a `try`, is one that
-starves the escrow and parks. Refusing those leaves the message for a properly
-gassed execution. `receiveGas` is bounded below for the same reason.
+A revert in the handler reverts the fill. Relayers simulate first, so the
+deposit simply waits until its deadline, and then Across refunds it on the
+spoke, or, on testnet, may never. So once the caller is the hub's SpokePool,
+the receiver never reverts. Another token, a message it cannot decode, or an
+escrow that refuses (a governance change of receiver while a fill was in
+flight) leaves the value in the receiver with an `Unroutable` event, and the
+timelock can `recover` it. A deposit made through the router always routes;
+the rest is someone sending the receiver something by hand.
 
 ### Joining from a spoke, in the client
 
 `packages/client/src/screens/lobby.ts` · **Live on the local fork**
 
-The server lists each spoke's `SpokeEscrow` in `hello`. A wallet on one of
-them sees "Staking from Base → Ethereum hub" instead of a wrong-network
-warning, and each lobby offers **Stake from BASE**: the first click asks
-`quoteJoin` for the stake plus LayerZero's fee, the second pays it. The row
-then reads *In transit…* until the server reports how the join landed:
-seated, refunded on the hub (with the reason), or parked. Winnings and
-refunds are on the hub, so the payout panel asks the player to switch there
-to collect.
+The server lists each spoke's `SpokeRouter` in `hello`. A wallet on one of
+them sees "Staking from Arbitrum → Base hub" instead of a wrong-network
+warning, and each lobby offers **Stake from ARB**: the first click asks the
+Across API what it costs for exactly the stake to arrive (the stake plus the
+fee, plus a tenth of the fee for the relayer, so a fee that rises before the
+fill does not leave the deposit waiting), the second pays it. The row then
+reads *In transit…* until the server reports how the join landed: seated, or
+refunded on the hub (with the reason). Every spoke uses ETH for gas, so the
+stake is ETH everywhere.
 
-On a spoke whose gas token is not ETH (Polygon, BNB Chain, Avalanche), the
-join is paid in that token: the executor prices the hub ETH it delivers in it
-and folds its fee in. The button then reads "Stake 0.01 ETH from POL", and the
-quote shows the single figure the wallet will charge, "Pay ≤ 12.3457 POL",
-rather than a stake and fee in mismatched units. `ChainInfo.native` names the
-token; a chain without it is taken to pay in ETH.
-
-LayerZero's executor caps the native value one message may deliver
-(`nativeCap`, per destination). A stake above it fails `quoteJoin` on the
-spoke, before anything is sent; the client says so in words.
+A contract wallet cannot be seated as itself from a spoke: its address there
+may be someone else's on the hub. The router refuses it unless it names its hub
+account; an EOA delegated under EIP-7702 is still an EOA and joins as itself.
 
 ### Why
 
 - **All value lives on one chain.** Purpose: the prize pool is never split
   across chains, so settlement is a single transaction against a single balance
   and there is no cross-chain consistency problem at payout time.
-- **The transport is abstracted.** `ICrossChainMessenger` is modelled on
-  LayerZero v2's send/receive shape but names nothing LayerZero-specific.
-  Purpose: the adapter can be swapped for Hyperlane, CCIP or a test double
-  without touching game logic.
-- **Both ends are authenticated.** `receiveMessage` checks that the caller is
-  the configured messenger for that source chain **and** that the origin peer is
-  the configured peer. Purpose: a trusted transport still relays messages from
-  untrusted senders — checking only the messenger would let anyone on a spoke
-  forge a seat.
-
-### Two id spaces
-
-A detail worth knowing because it caused a real bug. LayerZero speaks
-**endpoint ids** (`40245`), not **EVM chain ids** (`84532`); passing one off as
-the other would label a Base Sepolia player "chain 40245". `LayerZeroMessenger`
-translates at its boundary, so `seatOrigin` holds a chain id, or zero for a
-stake placed on the hub, which `originChainId` in `protocol/chains.ts` maps to
-the hub.
+- **A value bridge, not a message bus.** The stake has to move anyway; Across
+  moves it and the join together, with relayers paid by the depositor. No
+  custom messenger, no executor value, nothing of ours to configure on either
+  chain.
+- **Nothing to forge.** `bridgeJoin` takes only the config's receiver, and the
+  receiver only the hub SpokePool, which pays before it calls. The message is
+  not trusted: anyone may deposit with any message, which only ever buys
+  someone a seat with real ETH, like `joinFor`.
 
 ### Showing the origin
 
@@ -369,12 +344,13 @@ stakes from four chains should look like it. The warning exists because
 otherwise every stake from the wrong network reverts with an error the wallet
 renders unreadably.
 
-> **Status.** `LayerZeroMessenger`'s local interface has been checked against
-> `@layerzerolabs/lz-evm-protocol-v2` 3.0.168, each message carries exactly its
-> lobby's stake, and a refused delivery parks rather than strands. Hub and
-> spoke run together in `npm run dev:fork` over mock endpoints and a local
-> relayer, and `DeploySpoke.s.sol` deploys a real spoke. Not yet run between
-> two public testnets; see `TODO.md` §2.1 and `docs/TESTNET.md`.
+> **Status.** The vendored Across interface is pinned to `across-protocol/contracts`
+> v5.0.27. The router and receiver have run against Across's real SpokePools
+> on Base, Arbitrum, Optimism and Ethereum forks, including a real `fillRelay`
+> into the receiver. Hub and spoke run together in `npm run dev:fork` over
+> mock pools and a local relayer. Not yet run on Across's testnet; see
+> `docs/ACROSS.md` and `docs/TESTNET.md`. Withdrawing to a spoke has no screen
+> yet.
 
 ---
 
@@ -490,7 +466,7 @@ How voting power is earned is described in
 | Rules | `rulesHash` — digest of the off-chain rule set |
 | Randomness | `randomnessOracle` address |
 | Attestation | Attestor allowlist, `attestorCount`, `attestorThreshold` |
-| Cross-chain | Trusted `messengerFor` and `peerFor`, per remote chain |
+| Cross-chain | `bridgeReceiver`, the one contract that may seat a bridged stake |
 | Emergency | `guardian` — may pause the escrow, or veto a proposed result, without the delay |
 | Settlement | `challengeWindow` — how long a proposed result waits, open to a veto, before it pays |
 
@@ -539,10 +515,8 @@ How voting power is earned is described in
 ### What is missing
 
 The Safe's veto is meant to be temporary, and nothing removes it yet: a
-proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)` would. The hub `LayerZeroMessenger` is deployed by `Deploy.s.sol` when
-`LZ_ENDPOINT` is set and handed to the timelock with the config;
-`SpokeEscrow` and its messenger by `DeploySpoke.s.sol`, which proposes the
-spoke's own timelock as their owner. `ChainlinkVrfAdapter` is still not
+proposal calling `timelock.revokeRole(CANCELLER_ROLE, safe)` would. The hub `BridgeJoinReceiver` is deployed by `Deploy.s.sol`, owned by the
+timelock; each spoke's ownerless `SpokeRouter` by `DeploySpoke.s.sol`. `ChainlinkVrfAdapter` is still not
 deployed by a script; it must be constructed with the hub timelock as its
 owner. One Safe and timelock per chain. The config
 can also be deployed with a zero `rulesHash` and zero oracle — a valid-looking

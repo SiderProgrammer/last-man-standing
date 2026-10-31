@@ -8,8 +8,9 @@ coverage table at the end maps each finding to its step.
 Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 2 on
 `design-rework-phase-2-core-contracts`, Phase 3 on
 `design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
-and Phase 5 on `design-rework-phase-5-sessions`, each building on the last. Nothing after
-that is, except the Privy check in 5.1.
+Phase 5 on `design-rework-phase-5-sessions`, and Phase 6 on
+`design-rework-phase-6-cross-chain`, each building on the last. Nothing after that is,
+except the Privy check in 5.1 and the live Across testnet deposit in 6.1.
 
 ---
 
@@ -318,6 +319,48 @@ these notes. Where it differs from the table:
 ---
 
 ## Phase 6: Cross-chain over a value bridge (H4, N2, N6)
+
+**Done**, one commit per step, plus one for the TypeScript side and the local stack, and
+one for these docs. Where it differs from the table:
+- 6.1: the interfaces are vendored from `across-protocol/contracts` v5.0.27, not added as a
+  dependency; the addresses are in `contracts/config/across.json`, which both deploy
+  scripts read and copy into the registry. Confirmed from the pinned source: a contract
+  recipient gets WETH (an EOA or a 7702-delegated account gets ETH), then the handler; a
+  handler revert reverts the fill, which waits for its deadline and refunds the depositor
+  on the origin chain in WETH. Fees read from the API: about 0.24% on a 0.001 ETH join,
+  testnet and mainnet alike. **The live testnet deposit is not done**: it needs a funded
+  key. `docs/ACROSS.md` has the findings and the steps.
+- 6.2: the escrow keeps its never-revert cross-chain entry as `bridgeJoin`, callable only by
+  `ProtocolConfig.bridgeReceiver`, which replaces the per-chain messenger and peer
+  registry. More than the stake seats the player and credits the rest; less is credited
+  as `StakeTooLow` (was `WrongStake`). The origin chain is what the message claims, shown
+  and not trusted. `DeploySpoke` keeps the spoke's avatar collection.
+- 6.3: the router has no owner and immutable wiring. The message is
+  `(matchId, player, origin chain)`; the queue ticket joins it with 7.9. The deposit's
+  output is exactly the stake: Across V3 delivers the output a deposit names or nothing,
+  so the "buffer" is on the fee side, a tenth of the quoted fee for the relayer, added by
+  the client. The caller is the depositor, so an unfilled deposit is refunded to them on
+  the spoke.
+- 6.4: failed and extra joins are credited in the escrow, not the receiver, so a player has
+  one balance; `withdrawToChainFor` takes all of it through a new
+  `GameEscrow.withdrawToBridge`, callable only by the receiver. The withdrawal's EIP-712
+  domain has no chain id, so a wallet on a spoke can sign it; `hubChainId` is a field.
+  ERC-1271 for contract wallets. What the receiver cannot route stays there, for the
+  timelock to `recover`. The receiver checks "amount ≥ stake" through the escrow. The
+  server relay and the screen for withdrawing to a spoke come with 8.5; the typed data is
+  in `@lms/protocol`, pinned by a digest vector shared with Solidity. GameEscrow: 24,400
+  bytes, 176 under the limit.
+- 6.5: the fork tests also cover Ethereum, and land a real `fillRelay` into the receiver on
+  Base. They pass on public RPCs. The escrow invariant's cross-chain joins are now fills
+  through the receiver, with a new invariant that the receiver holds only what it could
+  not route.
+- The client prices a join through `VITE_ACROSS_API`, which the CSP admits; unset, the
+  quote has no fee, for the local stack. The governance template "Add a spoke chain" is
+  now "Change the bridge receiver": a new spoke needs no proposal. `dev:fork` puts a mock
+  pool on each chain and plays the relayer, and now reads addresses from the deployment
+  registry: since Phase 3's second compiler profile the broadcast log leaves most contract
+  names blank, which had broken it. A join from the local spoke was checked in the
+  browser: filled, seated with its origin, and reported.
 
 | Step | Work | Findings |
 |---|---|---|

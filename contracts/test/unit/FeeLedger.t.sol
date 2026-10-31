@@ -68,10 +68,9 @@ contract FeeLedgerTest is Fixtures {
     function test_aCrossChainSeatCountsOnceItsMatchSettles() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        bytes32 peer = bytes32(uint256(uint160(address(0xBEEF))));
-        vm.deal(address(messenger), STAKE);
-        vm.prank(address(messenger));
-        escrow.receiveMessage{value: STAKE}(421_614, peer, abi.encode(matchId, players[7]));
+        vm.deal(bridge, STAKE);
+        vm.prank(bridge);
+        escrow.bridgeJoin{value: STAKE}(matchId, players[7], 421_614);
         for (uint256 i = 1; i < 4; ++i) {
             vm.prank(players[i]);
             escrow.join{value: STAKE}(matchId);

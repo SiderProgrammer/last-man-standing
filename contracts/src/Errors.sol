@@ -26,9 +26,3 @@ error UnknownMatch(bytes32 matchId);
 /// @notice A randomness callback named a request that is not pending. VRF
 ///         request ids are `uint256`; they are passed as `bytes32(id)`.
 error UnknownRequest(bytes32 requestId);
-
-/// @notice A cross-chain delivery came from a messenger not registered for its chain.
-error UntrustedMessenger(uint32 srcChainId, address caller);
-
-/// @notice A cross-chain delivery came from an unregistered sender on its chain.
-error UntrustedPeer(uint32 srcChainId, bytes32 peer);

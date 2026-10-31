@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     ? zapInfo(config.zapJoin, config.v4Quoter, parseZapTokens(config.zapTokens))
     : null;
 
-  // Spokes forward stakes into the hub escrow, so likewise.
+  // Spokes bridge stakes into the hub escrow, so likewise.
   const spokes = config.onChain ? parseSpokes(config.spokes, config.chainId) : [];
 
 
@@ -161,7 +161,6 @@ async function main(): Promise<void> {
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,
-    hubMessenger: config.onChain && config.hubMessenger !== ZERO_ADDRESS ? config.hubMessenger : null,
     staking:
       config.stakedLms !== ZERO_ADDRESS
         ? {
@@ -290,27 +289,17 @@ async function main(): Promise<void> {
     console.log(`[server] token joins via ${zap.address}: ${zap.tokens.map((t) => t.symbol).join(', ')}`);
   }
 
-  // Tells spoke players how their join landed on the hub, and retries any the
-  // hub could not take. Holds no authority: `retry` is open to anyone.
+  // Tells spoke players how their join landed on the hub. Holds no authority.
   let crossChain: CrossChainWatcher | null = null;
-  if (config.onChain && (spokes.length > 0 || config.hubMessenger !== ZERO_ADDRESS)) {
+  if (config.onChain && spokes.length > 0) {
     crossChain = new CrossChainWatcher({
-      port: viemCrossChain({
-        rpcUrl: config.rpcUrl,
-        chainId: config.chainId,
-        escrow: config.escrow,
-        messenger: config.hubMessenger !== ZERO_ADDRESS ? config.hubMessenger : null,
-        ...(config.keeperPk ? { keeperKey: config.keeperPk } : {}),
-      }),
+      port: viemCrossChain({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow }),
       hubChainId: config.chainId,
       notify: (player, event) => gateway.notify(player, { type: 'crossChain', event }),
       ...(config.crossChainFromBlock !== undefined ? { fromBlock: config.crossChainFromBlock } : {}),
     });
     crossChain.start(4_000);
-    console.log(
-      `[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ') || 'none'}` +
-        (config.hubMessenger !== ZERO_ADDRESS ? `; watching messenger ${config.hubMessenger}` : ''),
-    );
+    console.log(`[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ')}`);
   }
 
   // Harvests fees on a timer so they reach stakers. Holds no authority:

@@ -227,43 +227,32 @@ export function spokeFor(spokes: readonly SpokeInfo[], walletChainId: number): S
   return spokes.find((spoke) => spoke.chainId === walletChainId) ?? null;
 }
 
-/**
- * An open lobby's join button on a spoke, before the transport fee is known.
- * The stake is hub ETH; on a spoke that pays in another token, saying "ETH"
- * keeps "0.01" from reading as 0.01 of that token.
- */
+/** An open lobby's join button on a spoke, before the bridge fee is known. */
 export function spokeStakeLabel(stakeWei: string, spokeChainId: number): string {
-  const unit = chainInfo(spokeChainId).native ? ' ETH' : '';
-  return `Stake ${formatEther(BigInt(stakeWei))}${unit} from ${chainInfo(spokeChainId).short}`;
+  return `Stake ${formatEther(BigInt(stakeWei))} from ${chainInfo(spokeChainId).short}`;
 }
 
 /**
- * The quoted join, as the button the player confirms. `total` is what
- * `quoteJoin` asked for, in the spoke's own gas token.
- *
- * On an ETH spoke that is the stake plus the transport fee, so the two can be
- * shown apart. On any other, the executor has priced the hub ETH it delivers
- * in that token and folded the fee in: there is no separate fee to subtract,
- * so the label shows the one figure the wallet will charge, rounded up.
+ * The quoted join, as the button the player confirms: the stake, which is
+ * what arrives on the hub, and Across's fee on top of it.
  */
-export function spokeQuoteLabel(stakeWei: bigint, total: bigint, spokeChainId: number): string {
-  const native = chainInfo(spokeChainId).native;
-  if (native) return `Pay ≤ ${formatTokenAmount(total, 18)} ${native}`;
+export function spokeQuoteLabel(stakeWei: bigint, total: bigint): string {
   const fee = total > stakeWei ? total - stakeWei : 0n;
-  return `Pay ${formatEther(stakeWei)} + ${formatEther(fee)} fee`;
+  return fee === 0n ? `Pay ${formatEther(stakeWei)}` : `Pay ${formatEther(stakeWei)} + ${formatEther(fee)} fee`;
 }
 
 /**
- * Why `quoteJoin` refused, in words. The interesting case is LayerZero's cap
- * on how much native value one message may carry: a stake above it cannot be
- * sent from this chain at all, and the raw revert says nothing of the sort.
+ * Why a join could not be priced or sent, in words. The interesting cases
+ * are a contract wallet, which the router will not seat as itself because
+ * its address may be someone else's on the hub, and an amount Across will
+ * not move.
  */
 export function spokeQuoteError(message: string, spokeChainId: number): string {
   const spoke = chainInfo(spokeChainId).name;
-  if (/NativeAmountExceedsCap/.test(message)) {
-    return `This stake is more than LayerZero will carry from ${spoke} in one message. Join from the hub instead.`;
+  if (/HubRecipientRequired/.test(message)) {
+    return `A contract wallet cannot join from ${spoke} as itself. Join from the hub instead.`;
   }
-  if (/UnknownChain/.test(message)) return `${spoke} has no route to the hub configured yet.`;
+  if (/amount this small/.test(message)) return `This stake is below what Across will bridge from ${spoke}.`;
   return `Could not price the join from ${spoke}: ${message.split('\n')[0]}`;
 }
 
@@ -277,11 +266,6 @@ export function crossChainNotice(event: CrossChainEvent, hubChainId: number): st
       return (
         `Not seated: ${joinFailureText(event.reason)}. ` +
         `Your ${formatEther(BigInt(event.amount))} ETH is yours to collect on ${hub}.`
-      );
-    case 'parked':
-      return (
-        `Your ${formatEther(BigInt(event.amount))} ETH reached ${hub}, but the hub cannot take it yet. ` +
-        'It is held safely and will be retried once the route is fixed.'
       );
   }
 }

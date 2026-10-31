@@ -1,5 +1,5 @@
 import { encodeFunctionData, isAddress, isHex, keccak256, pad, parseEther, toBytes, type Address, type Hex } from 'viem';
-import { chainInfo, governableAbi, type ProtocolParams } from '@lms/protocol';
+import { governableAbi, type ProtocolParams } from '@lms/protocol';
 
 /**
  * Builds proposal actions from plain inputs.
@@ -22,10 +22,6 @@ export interface ProposalContext {
   config: Address | null;
   /** The config's current parameters, which `setParams` must resend in full. */
   params: ProtocolParams | null;
-  /** The hub `LayerZeroMessenger`, which a new spoke's messenger must be a peer of. */
-  hubMessenger: Address | null;
-  /** The hub's own chain id, which can never be registered as a spoke. */
-  hubChainId: number;
 }
 
 export interface TemplateField {
@@ -123,19 +119,15 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     fields: [address('account', 'Address to remove (MultisigPhase)')],
   },
   {
-    id: 'addSpoke',
-    label: 'Add a spoke chain',
+    id: 'bridgeReceiver',
+    label: 'Change the bridge receiver',
     help:
-      'Lets players stake from another chain. Two calls: the config trusts the hub messenger to ' +
-      "carry joins from that chain's SpokeEscrow, and the hub messenger trusts the spoke's " +
-      'messenger. Both addresses come from DeploySpoke.s.sol, run on that chain. Joins sent ' +
-      'before this executes are held by the hub messenger and retried once it does.',
-    fields: [
-      { name: 'chainId', label: 'Spoke chain id', placeholder: '8453' },
-      { name: 'eid', label: 'Its LayerZero endpoint id', placeholder: '30184' },
-      address('escrow', 'SpokeEscrow on that chain'),
-      address('messenger', 'LayerZeroMessenger on that chain'),
-    ],
+      'Names the BridgeJoinReceiver that seats players whose stake was bridged from another chain, ' +
+      'and that can bridge a player\'s balance home when they sign for it. The zero address turns ' +
+      'cross-chain joins off. A stake still in flight when this executes is held by the old receiver, ' +
+      'for the timelock to recover. New spokes need no proposal: a SpokeRouter on any chain Across ' +
+      'serves reaches the receiver.',
+    fields: [address('receiver', 'BridgeJoinReceiver')],
   },
   {
     id: 'custom',
@@ -196,32 +188,10 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       if (!isAddress(account)) return { ok: false, error: 'Enter a valid address.' };
       return call(context.timelock, 'No timelock.', encode('revokeRole', [CANCELLER_ROLE, account]));
     }
-    case 'addSpoke': {
-      const chainId = uint32(field('chainId'));
-      const eid = uint32(field('eid'));
-      const escrow = field('escrow');
-      const messenger = field('messenger');
-      if (chainId === null) return { ok: false, error: 'Enter the spoke chain id as a whole number.' };
-      if (chainId === context.hubChainId) return { ok: false, error: 'That is the hub itself.' };
-      if (eid === null) return { ok: false, error: 'Enter the LayerZero endpoint id as a whole number.' };
-      const known = chainInfo(chainId).eid;
-      if (known !== undefined && known !== eid) {
-        return { ok: false, error: `${chainInfo(chainId).name} is LayerZero endpoint ${known}, not ${eid}.` };
-      }
-      if (!isAddress(escrow) || !isAddress(messenger)) return { ok: false, error: 'Enter both spoke addresses.' };
-      if (!context.config) return { ok: false, error: 'Could not find the protocol config.' };
-      if (!context.hubMessenger) return { ok: false, error: 'This server has no hub messenger configured.' };
-      return {
-        ok: true,
-        action: {
-          target: context.config,
-          value: 0n,
-          calldata: encode('setRemoteChain', [chainId, context.hubMessenger, pad(escrow)]),
-        },
-        also: [
-          { target: context.hubMessenger, value: 0n, calldata: encode('setPeer', [chainId, eid, pad(messenger)]) },
-        ],
-      };
+    case 'bridgeReceiver': {
+      const receiver = field('receiver');
+      if (!isAddress(receiver)) return { ok: false, error: 'Enter a valid address, or the zero address to turn it off.' };
+      return call(context.config, 'Could not find the protocol config.', encode('setBridgeReceiver', [receiver]));
     }
     case 'custom': {
       const target = field('target');
