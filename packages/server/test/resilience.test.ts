@@ -117,6 +117,40 @@ describe('archive first', () => {
   });
 });
 
+describe('practice and the chain', () => {
+  it('archives a practice match, and never hands it to the relayer', async () => {
+    const calls: string[] = [];
+    const archive = new MemoryArchive();
+    const lobby = new Lobby({
+      archive,
+      relayer: {
+        settle: async () => {
+          calls.push('settle');
+          return null;
+        },
+        abort: async () => {
+          calls.push('abort');
+          return null;
+        },
+      },
+      commitMs: COMMIT_MS,
+      revealMs: REVEAL_MS,
+      receiptSigner: '0x00000000000000000000000000000000000000a7',
+      practiceReceiptSigner: '0x00000000000000000000000000000000000000b7',
+    });
+    const room = lobby.createPractice(HUMAN, 3, 0);
+    expect(room.staked).toBe(false);
+    for (let now = 0; !room.finished && now < 10_000_000; now += COMMIT_MS + 1) lobby.tick(now);
+    await lobby.drain();
+
+    expect(calls).toEqual([]);
+    const archived = await archive.load(room.matchId);
+    expect(archived?.staked).toBe(false);
+    // Its receipts were signed by the practice key, which the transcript names.
+    expect(archived?.transcript.receiptSigner).toBe('0x00000000000000000000000000000000000000b7');
+  });
+});
+
 describe('practice limits', () => {
   it('keeps one practice room per wallet, replacing the old one', () => {
     const lobby = lobbyWith();

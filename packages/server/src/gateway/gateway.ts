@@ -144,10 +144,13 @@ export interface GatewayOptions {
    */
   verifyKey?: { message: SignatureVerifier; typed: TypedSignatureVerifier };
   /**
-   * Signs commit receipts. Omitted, commits are taken without one, and the
-   * client cannot later prove the server had its move.
+   * Signs staked rooms' commit receipts: the attestor. Omitted, those commits
+   * are taken without one, and the client cannot later prove the server had
+   * its move.
    */
   receipts?: ReceiptSigner;
+  /** Signs practice rooms' commit receipts. Never the attestor: see `hello.practiceReceiptSigner`. */
+  practiceReceipts?: ReceiptSigner;
   /** Overrides for `DEFAULT_GATEWAY_LIMITS`. */
   limits?: Partial<GatewayLimits>;
   /** Wall clock, injectable for tests. */
@@ -246,6 +249,7 @@ export class Gateway {
       analyst: this.options.analyst !== undefined,
       spokes: this.options.spokes ?? [],
       receiptSigner: this.options.receipts?.address ?? null,
+      practiceReceiptSigner: this.options.practiceReceipts?.address ?? null,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -398,7 +402,7 @@ export class Gateway {
           aimOf(message),
           { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
         );
-        const signer = this.options.receipts;
+        const signer = room.staked ? this.options.receipts : this.options.practiceReceipts;
         if (signer) session.send({ type: 'receipt', receipt, signature: await signer.sign(receipt) });
         return;
       }

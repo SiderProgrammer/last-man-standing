@@ -44,6 +44,8 @@ export interface AppState {
   grantKey: GrantedKey | null;
   /** The key the server signs commit receipts with, or null when it issues none. */
   receiptSigner: `0x${string}` | null;
+  /** Signs practice rooms' receipts instead. */
+  practiceReceiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
@@ -100,6 +102,7 @@ export const app: AppState = {
   oneClick: false,
   grantKey: null,
   receiptSigner: null,
+  practiceReceiptSigner: null,
   zap: null,
   spokes: [],
   inTransit: new Set(),

@@ -59,6 +59,8 @@ export interface RoomOptions {
   chainId?: number;
   /** The key that signs commit receipts, recorded in the transcript. */
   receiptSigner?: `0x${string}` | null;
+  /** Whether the room holds escrowed stakes. Defaults to false: a practice room. */
+  staked?: boolean;
   onFinished?: MatchFinished;
 }
 
@@ -129,6 +131,11 @@ export class Room {
 
   get finished(): boolean {
     return this.match.finished;
+  }
+
+  /** True for a match played for escrowed stakes; false for practice. */
+  get staked(): boolean {
+    return this.options.staked ?? false;
   }
 
   get deadline(): number {

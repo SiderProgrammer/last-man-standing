@@ -57,8 +57,10 @@ export interface LobbyOptions {
   practiceSeed?: () => `0x${string}`;
   /** The hub chain, which moves and receipts are signed for. Recorded in every transcript. */
   chainId?: number;
-  /** The key that signs commit receipts, recorded in every transcript. */
+  /** The key that signs staked rooms' commit receipts — the attestor — recorded in their transcripts. */
   receiptSigner?: `0x${string}` | null;
+  /** The key that signs practice rooms' commit receipts: never the attestor. */
+  practiceReceiptSigner?: `0x${string}` | null;
 }
 
 const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
@@ -280,7 +282,8 @@ export class Lobby {
       botSeats,
       botDifficulty,
       ...(this.options.chainId !== undefined ? { chainId: this.options.chainId } : {}),
-      receiptSigner: this.options.receiptSigner ?? null,
+      receiptSigner: (staked ? this.options.receiptSigner : this.options.practiceReceiptSigner) ?? null,
+      staked,
       onFinished: (transcript) => this.enqueue(transcript, staked),
     };
   }
@@ -392,27 +395,29 @@ export class Lobby {
       return;
     }
 
+    // A practice match is archived for its player, and that is all: nothing
+    // in it reaches the relayer or the attestor.
+    if (!staked) return;
+
     const attested: AttestedResult = { ...result, transcriptHash };
-    const settledTx = staked
-      ? await this.withRetry(
-          `settlement of ${result.matchId}`,
-          () => this.options.relayer.settle(attested, transcript),
-          this.options.settleRetryForMs ?? DEFAULT_SETTLE_RETRY_FOR_MS,
-        )
-      : await this.options.relayer.settle(attested, transcript).catch(() => null);
+    const settledTx = await this.withRetry(
+      `settlement of ${result.matchId}`,
+      () => this.options.relayer.settle(attested, transcript),
+      this.options.settleRetryForMs ?? DEFAULT_SETTLE_RETRY_FOR_MS,
+    );
     if (settledTx) {
       await this.options.archive.recordSettlement(result.matchId, settledTx).catch((error: unknown) => {
         console.warn(`[lobby] could not record the settlement of ${result.matchId}:`, errorMessage(error));
       });
     }
-    if (staked && this.options.styles) {
+    if (this.options.styles) {
       try {
         await this.options.styles.record(tallyStyles(result, entry.history, transcript.seats.map((seat) => seat.address)));
       } catch (error) {
         console.warn('[lobby] style record failed:', errorMessage(error));
       }
     }
-    if (staked) this.get(result.matchId)?.announceSettled(settledTx);
+    this.get(result.matchId)?.announceSettled(settledTx);
   }
 }
 

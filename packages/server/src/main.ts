@@ -66,9 +66,10 @@ async function main(): Promise<void> {
       : null;
   if (attestor) console.log(`[server] attestor ${attestor.address} in its own process`);
   const relayer = relayerFrom(config, attestor, keeper);
-  // Receipts from the attestor where there is one. A practice-only server
-  // has none, and signs with a key of its own that lasts as long as the process.
-  const receipts = attestor ? attestorReceipts(attestor) : receiptSigner(generatePrivateKey(), config.chainId);
+  // Staked rooms' receipts come from the attestor. Practice rooms' never do:
+  // they are signed with a key of their own that lasts as long as the process.
+  const receipts = attestor ? attestorReceipts(attestor) : null;
+  const practiceReceipts = receiptSigner(generatePrivateKey(), config.chainId);
 
   const avatarCollections = parseCollections(config.avatarCollections);
   const avatars = new AvatarRegistry({
@@ -86,7 +87,8 @@ async function main(): Promise<void> {
     styles,
     maxPracticeRooms: config.maxPracticeRooms,
     chainId: config.chainId,
-    receiptSigner: receipts.address,
+    receiptSigner: receipts?.address ?? null,
+    practiceReceiptSigner: practiceReceipts.address,
   });
 
 
@@ -195,7 +197,8 @@ async function main(): Promise<void> {
     // A contract wallet's grant can only be checked by asking the wallet.
     verifyGrant: layeredVerifier(verifyPool.verifyTyped, rpc ? (args) => rpc.verifyTypedData(args) : undefined),
     verifyKey: { message: verifyPool.verify, typed: verifyPool.verifyTyped },
-    receipts,
+    ...(receipts ? { receipts } : {}),
+    practiceReceipts,
     ...(relay ? { relay } : {}),
     ...(analyst ? { analyst } : {}),
     zap,

@@ -121,6 +121,7 @@ interface Extras {
   archive: MemoryArchive;
   spokes: SpokeInfo[];
   receipts: ReceiptSigner;
+  practiceReceipts: ReceiptSigner;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -144,6 +145,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.analyst ? { analyst: extras.analyst } : {}),
     ...(extras.archive ? { archive: extras.archive } : {}),
     ...(extras.receipts ? { receipts: extras.receipts } : {}),
+    ...(extras.practiceReceipts ? { practiceReceipts: extras.practiceReceipts } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -634,10 +636,14 @@ describe('gateway session grants and signed moves', () => {
   const SALT = `0x${'5a'.repeat(32)}` as const;
 
   const RECEIPT_KEY = `0x${'7e'.repeat(32)}` as const;
+  const ATTESTOR_KEY = `0x${'7f'.repeat(32)}` as const;
 
   /** Logs `player` in with a grant and opens a practice room; returns the seat's place in round 1. */
   async function seated() {
-    const { socket, lobby } = harness({ receipts: receiptSigner(RECEIPT_KEY, 11155111) });
+    const { socket, lobby } = harness({
+      receipts: receiptSigner(ATTESTOR_KEY, 11155111),
+      practiceReceipts: receiptSigner(RECEIPT_KEY, 11155111),
+    });
     await socket.deliver(await player.auth(nonceOf(socket)));
     await socket.deliver({ type: 'practice', bots: 3 });
     const state = socket.last('state')?.state;
@@ -712,7 +718,9 @@ describe('gateway session grants and signed moves', () => {
 
   it('answers a commit with a receipt signed by the key hello named', async () => {
     const { socket } = await seated();
-    const signer = socket.last('hello')?.receiptSigner;
+    // A practice room: signed by the practice key, never the attestor's.
+    const signer = socket.last('hello')?.practiceReceiptSigner;
+    expect(signer).not.toBe(socket.last('hello')?.receiptSigner);
     expect(signer).toBe(privateKeyToAccount(RECEIPT_KEY).address);
 
     const move = { action: Action.Guard, target: 0, salt: SALT } as const;

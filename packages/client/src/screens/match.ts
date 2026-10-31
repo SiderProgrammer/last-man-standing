@@ -1,6 +1,7 @@
 import {
   Action,
   MatchPhase,
+  PRACTICE_CHAIN_ID,
   commitMove,
   isActionValue,
   errorFirstLine,
@@ -73,7 +74,8 @@ export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>
 export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt' }>): Promise<void> {
   const { receipt, signature } = message;
   const stored = recallMove(receipt.matchId, receipt.round);
-  const signer = app.receiptSigner;
+  const practice = app.match?.matchId === receipt.matchId && app.match.players.every((player) => player.chainId === PRACTICE_CHAIN_ID);
+  const signer = practice ? app.practiceReceiptSigner : app.receiptSigner;
   if (!stored || !signer) return;
   const sealed = commitMove(receipt.matchId, receipt.round, receipt.seat, stored);
   if (sealed.toLowerCase() !== receipt.commitment.toLowerCase()) return;

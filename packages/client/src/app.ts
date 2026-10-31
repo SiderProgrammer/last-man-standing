@@ -99,6 +99,7 @@ function onServerMessage(message: ServerMessage): void {
       app.sessionDelegate = message.sessionDelegate;
       app.relayQuota = message.relayQuota;
       app.receiptSigner = message.receiptSigner;
+      app.practiceReceiptSigner = message.practiceReceiptSigner;
       app.zap = message.zap;
       app.spokes = message.spokes ?? [];
       app.staking = message.staking;

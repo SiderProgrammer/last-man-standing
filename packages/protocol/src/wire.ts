@@ -183,6 +183,12 @@ export type ServerMessage =
        * attestor set vouches for it.
        */
       receiptSigner: `0x${string}` | null;
+      /**
+       * The key that signs commit receipts in practice rooms, never the
+       * attestor: a practice match settles nothing, so nothing in it is
+       * signed with a key the escrow trusts.
+       */
+      practiceReceiptSigner: `0x${string}` | null;
     }
   | { type: 'authed'; address: `0x${string}` }
   /**
