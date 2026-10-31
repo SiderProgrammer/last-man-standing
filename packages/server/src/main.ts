@@ -16,17 +16,17 @@ import { Lobby } from './lobby/lobby.js';
 import { openStorage } from './db/storage.js';
 import { transcriptResponse } from './lobby/transcripts.js';
 import { generatePrivateKey } from 'viem/accounts';
-import { receiptSigner, relayerFrom } from './chain/attestor.js';
+import { attestorReceipts, receiptSigner, relayerFrom } from './chain/attestor.js';
+import { keySigner } from './chain/signer.js';
 import { viemTxSender, type TxSender } from './chain/txSender.js';
+import { AttestorProcess } from './attestor/remote.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
-import { Analyst } from './analyst/analyst.js';
-import { geminiModel } from './analyst/gemini.js';
-import { AnalystLimits } from './analyst/limits.js';
+import { AnalystWorker } from './analyst/remote.js';
 import { SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 
 const TICK_MS = 250;
@@ -46,25 +46,29 @@ async function main(): Promise<void> {
   const storage = await openStorage(config.databaseUrl);
   const { archive, styles } = storage;
   console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
-  // One sender per key: a key's nonces are a single sequence, and two senders
-  // sharing one would race for them. A key configured for two jobs — the
-  // keeper key defaults to the attestor's — shares its sender.
-  const senders = new Map<string, TxSender>();
-  const senderFor = (privateKey: `0x${string}` | undefined, label: string): TxSender | null => {
-    if (!privateKey || !config.rpcUrl) return null;
-    const key = privateKey.toLowerCase();
-    let sender = senders.get(key);
-    if (!sender) {
-      sender = viemTxSender({ privateKey, chainId: config.chainId, rpcUrl: config.rpcUrl }, { label });
-      senders.set(key, sender);
-    }
-    return sender;
-  };
+  // One key per job, and one sender per key: a key's nonces are a single
+  // sequence, and `loadConfig` refuses two jobs on one key.
+  const senderFor = (privateKey: `0x${string}` | undefined, label: string): TxSender | null =>
+    privateKey && config.rpcUrl
+      ? viemTxSender({ signer: keySigner(privateKey), chainId: config.chainId, rpcUrl: config.rpcUrl }, { label })
+      : null;
   const keeper = senderFor(config.keeperPk, 'keeper');
-  const relayer = relayerFrom(config, senderFor(config.attestorPk, 'attestor'));
-  // The attestor key where there is one. A practice-only server has none,
-  // and signs with a key of its own that lasts as long as the process.
-  const receipts = receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId);
+  // The attestor key lives in a process of its own, which replays every
+  // transcript before it signs one; this process only forwards.
+  const attestor =
+    config.attestorPk && config.onChain
+      ? await AttestorProcess.start({
+          privateKey: config.attestorPk,
+          chainId: config.chainId,
+          escrow: config.escrow,
+          rpcUrl: config.rpcUrl,
+        })
+      : null;
+  if (attestor) console.log(`[server] attestor ${attestor.address} in its own process`);
+  const relayer = relayerFrom(config, attestor, keeper);
+  // Receipts from the attestor where there is one. A practice-only server
+  // has none, and signs with a key of its own that lasts as long as the process.
+  const receipts = attestor ? attestorReceipts(attestor) : receiptSigner(generatePrivateKey(), config.chainId);
 
   const avatarCollections = parseCollections(config.avatarCollections);
   const avatars = new AvatarRegistry({
@@ -145,30 +149,34 @@ async function main(): Promise<void> {
         })
       : null;
 
-  // Reads finished matches from the archive and nothing else; see `analyst/analyst.ts`.
-  const analystLimits = new AnalystLimits({
-    perWalletPerHour: config.analyst.quotaPerHour,
-    maxConcurrent: config.analyst.maxConcurrent,
-    dailyBudgetUsd: config.analyst.dailyBudgetUsd,
-    requestsPerMinute: config.analyst.requestsPerMinute,
-    requestsPerDay: config.analyst.requestsPerDay,
-  });
+  // Reads finished matches from the archive and nothing else, in a worker
+  // thread of its own; see `analyst/analyst.ts`.
   const analyst = config.analyst.enabled
-    ? new Analyst({
+    ? new AnalystWorker({
         archive,
-        model: geminiModel({
-          apiKey: config.analyst.geminiApiKey,
-          baseUrl: config.analyst.geminiBaseUrl,
-          timeoutMs: config.analyst.timeoutMs,
-          maxRetries: config.analyst.maxRetries,
-        }),
-        modelId: config.analyst.model,
-        effort: config.analyst.effort,
-        maxTokens: config.analyst.maxTokens,
-        deadlineMs: config.analyst.deadlineMs,
-        maxTurns: config.analyst.maxTurns,
-        limits: analystLimits,
         styles,
+        config: {
+          model: {
+            apiKey: config.analyst.geminiApiKey,
+            baseUrl: config.analyst.geminiBaseUrl,
+            timeoutMs: config.analyst.timeoutMs,
+            maxRetries: config.analyst.maxRetries,
+          },
+          analyst: {
+            modelId: config.analyst.model,
+            effort: config.analyst.effort,
+            maxTokens: config.analyst.maxTokens,
+            deadlineMs: config.analyst.deadlineMs,
+            maxTurns: config.analyst.maxTurns,
+          },
+          limits: {
+            perWalletPerHour: config.analyst.quotaPerHour,
+            maxConcurrent: config.analyst.maxConcurrent,
+            dailyBudgetUsd: config.analyst.dailyBudgetUsd,
+            requestsPerMinute: config.analyst.requestsPerMinute,
+            requestsPerDay: config.analyst.requestsPerDay,
+          },
+        },
       })
     : undefined;
 
@@ -241,8 +249,8 @@ async function main(): Promise<void> {
           analyst: analyst
             ? {
                 model: config.analyst.model,
-                requestsToday: analystLimits.requests,
-                spentTodayUsd: Math.round(analystLimits.spent * 1e4) / 1e4,
+                requestsToday: analyst.requests,
+                spentTodayUsd: Math.round(analyst.spent * 1e4) / 1e4,
               }
             : null,
         }),
@@ -301,7 +309,6 @@ async function main(): Promise<void> {
   ticker.unref();
   const sweeper = setInterval(() => {
     gateway.sweep();
-    analystLimits.sweep(Date.now());
   }, SWEEP_MS);
   sweeper.unref();
   const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
@@ -371,6 +378,8 @@ async function main(): Promise<void> {
     wss.close();
     http.close();
     void verifyPool.close();
+    void analyst?.close();
+    attestor?.stop();
     void lobby.drain().finally(() => storage.close());
   };
   process.once('SIGINT', shutdown);

@@ -177,7 +177,7 @@ describe('chaos: staked tables', () => {
     const w = world(seed, {
       archive,
       relayer: {
-        settle: (result) => (flaky as ReturnType<typeof flakyRelayer>).relayer.settle(result),
+        settle: (result, transcript) => (flaky as ReturnType<typeof flakyRelayer>).relayer.settle(result, transcript),
         abort: async () => null,
       },
     });

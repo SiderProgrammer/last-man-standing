@@ -1,17 +1,18 @@
 import { concatHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
-  MATCH_ABORT_TYPES,
   MATCH_RESULT_TYPES,
   addressKey,
   matchResultDomain,
   matchResultMessage,
   receiptTypedData,
   type AttestedResult,
+  type Transcript,
 } from '@lms/protocol';
 import type { ReceiptSigner } from '../gateway/gateway.js';
 import { gameEscrowAbi } from '@lms/protocol';
 import type { ServerConfig } from '../config.js';
+import type { Attestor } from '../attestor/service.js';
 import type { TxSender } from './txSender.js';
 
 /**
@@ -37,9 +38,9 @@ export async function signResult(
 }
 
 /**
- * Signs commit receipts with `privateKey`. The server uses the attestor key
- * where it has one: then the escrow's attestor set is what vouches for the
- * receipts, and a player can check a receipt against the chain.
+ * Signs commit receipts with `privateKey`. A staked room's receipts come from
+ * the attestor instead (`attestorReceipts`), so the escrow's attestor set
+ * vouches for them; this is for practice rooms and tests.
  */
 export function receiptSigner(privateKey: Hex, chainId: number): ReceiptSigner {
   const account = privateKeyToAccount(privateKey);
@@ -47,6 +48,11 @@ export function receiptSigner(privateKey: Hex, chainId: number): ReceiptSigner {
     address: account.address,
     sign: (receipt) => account.signTypedData(receiptTypedData(chainId, receipt)),
   };
+}
+
+/** Commit receipts signed by the attestor. */
+export function attestorReceipts(attestor: Attestor): ReceiptSigner {
+  return { address: attestor.address, sign: (receipt) => attestor.receipt(receipt) };
 }
 
 /**
@@ -62,11 +68,14 @@ export function packSignatures(signed: ReadonlyArray<{ signer: Address; signatur
 
 export interface Relayer {
   /**
-   * Attests a result and proposes it on-chain. It pays out once the challenge
-   * window closes unvetoed; `ChainBridge` finalises it then.
-   * No-op when unconfigured.
+   * Has the attestor sign a result, then proposes it on-chain. It pays out
+   * once the challenge window closes unvetoed; `ChainBridge` finalises it
+   * then. No-op when unconfigured.
+   *
+   * @param transcript What the result came from: the attestor replays it,
+   *        and signs nothing it does not reproduce.
    */
-  settle(result: AttestedResult): Promise<Hex | null>;
+  settle(result: AttestedResult, transcript: Transcript): Promise<Hex | null>;
   /**
    * Signs and submits an abort for a live match this server cannot finish,
    * refunding every seat at once. Null when unconfigured; the escrow then
@@ -82,39 +91,29 @@ export const nullRelayer: Relayer = {
 };
 
 /**
- * Single-key relayer for testnets: signs with the attestor key, and submits
- * through `sender`.
+ * The attestor's signature, sent by the keeper.
  *
- * Production would collect signatures from independent attestors and only then
- * submit; the escrow enforces the quorum either way, so this is a deployment
- * choice rather than a protocol one.
+ * Two keys, two jobs: the attestor (its own process, `attestor/process.ts`)
+ * signs, and never sends a transaction; the keeper's sender pays the gas and
+ * holds no authority, since `settle` checks the signatures and not the
+ * sender. Production would collect a quorum of independent attestors here;
+ * the escrow enforces the quorum either way, so that is a deployment choice
+ * rather than a protocol one.
  */
-export function createRelayer(options: {
-  privateKey: Hex;
-  chainId: number;
-  escrow: Address;
-  sender: TxSender;
-}): Relayer {
-  const account = privateKeyToAccount(options.privateKey);
-  const { escrow, sender } = options;
-
+export function createRelayer(options: { attestor: Attestor; sender: TxSender; escrow: Address }): Relayer {
+  const { attestor, escrow, sender } = options;
   return {
     async abort(matchId) {
-      const signature = await account.signTypedData({
-        domain: matchResultDomain(options.chainId, escrow),
-        types: MATCH_ABORT_TYPES,
-        primaryType: 'MatchAbort',
-        message: { matchId },
-      });
+      const signature = await attestor.abort(matchId);
       return sender.sendAndWait(`abortMatch:${matchId.toLowerCase()}`, {
         address: escrow,
         abi: gameEscrowAbi,
         functionName: 'abortMatch',
-        args: [matchId, packSignatures([{ signer: account.address, signature }])],
+        args: [matchId, packSignatures([{ signer: attestor.address, signature }])],
       });
     },
-    async settle(result) {
-      const signature = await signResult(options.privateKey, result, options.chainId, escrow);
+    async settle(result, transcript) {
+      const signature = await attestor.attest(transcript);
       return sender.sendAndWait(`settle:${result.matchId.toLowerCase()}`, {
         address: escrow,
         abi: gameEscrowAbi,
@@ -125,7 +124,7 @@ export function createRelayer(options: {
           result.historyRoot,
           result.transcriptHash,
           result.ranking,
-          packSignatures([{ signer: account.address, signature }]),
+          packSignatures([{ signer: attestor.address, signature }]),
         ],
       });
     },
@@ -133,13 +132,11 @@ export function createRelayer(options: {
 }
 
 /**
- * The relayer a given configuration implies, submitting through `sender`.
- *
- * Without an attestor key, or without a chain to submit to, results are still
- * signed and archived but never land on-chain — that is what practice-only
- * mode runs on.
+ * The relayer a configuration implies: an attestor to sign, a keeper to
+ * send, and an escrow to send to. Without all three, results are still
+ * archived but never land on-chain — that is what practice-only mode runs on.
  */
-export function relayerFrom(cfg: ServerConfig, sender: TxSender | null): Relayer {
-  if (!cfg.attestorPk || !cfg.onChain || !sender) return nullRelayer;
-  return createRelayer({ privateKey: cfg.attestorPk, chainId: cfg.chainId, escrow: cfg.escrow, sender });
+export function relayerFrom(cfg: ServerConfig, attestor: Attestor | null, keeper: TxSender | null): Relayer {
+  if (!attestor || !keeper || !cfg.onChain) return nullRelayer;
+  return createRelayer({ attestor, sender: keeper, escrow: cfg.escrow });
 }

@@ -76,12 +76,17 @@ const RPC = `http://127.0.0.1:${ANVIL_PORT}`;
 const SPOKE_CHAIN_ID = 31338;
 const SPOKE_RPC = `http://127.0.0.1:${SPOKE_PORT}`;
 
-// Anvil's first two default accounts, from its public test mnemonic. They are
+// Anvil's first default accounts, from its public test mnemonic. They are
 // funded on every anvil node and worthless anywhere else.
-/** Deploys, attests results, pays for `lockMatch`, and creates the seed lobbies. */
+/** Deploys, attests results, and creates the seed lobbies. */
 const OPERATOR_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 /** The browser's dev burner, used when no wallet extension is installed. */
 const PLAYER_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+/**
+ * Sends the server's transactions: lock, settle, finalise, harvest. Its own
+ * key, as the server requires: the attestor only signs.
+ */
+const KEEPER_KEY = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
 
 /**
  * Answers the mock oracle. A different anvil dev account from the operator,
@@ -667,7 +672,7 @@ async function main() {
       RPC_URL: RPC,
       ESCROW_ADDRESS: addresses.GameEscrow,
       ATTESTOR_PK: OPERATOR_KEY,
-      KEEPER_PK: OPERATOR_KEY,
+      KEEPER_PK: KEEPER_KEY,
       ZAP_JOIN: addresses.ZapJoin,
       V4_QUOTER,
       ZAP_TOKENS: zapTokens(),

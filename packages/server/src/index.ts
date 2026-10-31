@@ -34,6 +34,18 @@ export { Heartbeat, type Pingable } from './gateway/heartbeat.js';
 export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions } from './chain/sessionRelay.js';
+export { keySigner, signerAccount, type Signer } from './chain/signer.js';
+export {
+  AttestationRefused,
+  AttestorService,
+  escrowMatchReader,
+  type Attestor,
+  type AttestorServiceOptions,
+  type StakedMatch,
+} from './attestor/service.js';
+export { AttestorProcess, type AttestorProcessOptions } from './attestor/remote.js';
+export { AnalystWorker, type AnalystWorkerConfig } from './analyst/remote.js';
+export { Rpc, RemoteError, type Channel, type Handlers } from './util/rpc.js';
 export {
   RevertedError,
   TxSender,
@@ -56,6 +68,7 @@ export {
   signResult,
   receiptSigner,
   packSignatures,
+  attestorReceipts,
   createRelayer,
   relayerFrom,
   nullRelayer,

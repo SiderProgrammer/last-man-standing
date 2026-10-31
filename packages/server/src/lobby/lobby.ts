@@ -396,10 +396,10 @@ export class Lobby {
     const settledTx = staked
       ? await this.withRetry(
           `settlement of ${result.matchId}`,
-          () => this.options.relayer.settle(attested),
+          () => this.options.relayer.settle(attested, transcript),
           this.options.settleRetryForMs ?? DEFAULT_SETTLE_RETRY_FOR_MS,
         )
-      : await this.options.relayer.settle(attested).catch(() => null);
+      : await this.options.relayer.settle(attested, transcript).catch(() => null);
     if (settledTx) {
       await this.options.archive.recordSettlement(result.matchId, settledTx).catch((error: unknown) => {
         console.warn(`[lobby] could not record the settlement of ${result.matchId}:`, errorMessage(error));

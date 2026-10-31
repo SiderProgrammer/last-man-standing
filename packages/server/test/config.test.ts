@@ -11,6 +11,8 @@ import {
   relayerFrom,
   nullRelayer,
   viemTxSender,
+  keySigner,
+  AttestorService,
   type Deployment,
 } from '@lms/server';
 
@@ -153,45 +155,45 @@ describe('server configuration', () => {
     expect(onChain).toBe(true);
   });
 
-  it('silently reuses the attestor key as the keeper key', () => {
-    // Known wrong: one key quietly takes three roles — result attestor, lobby
-    // keeper, and (via index.ts) session relayer — with nothing logged.
-    // Separated in docs/FIX_PLAN.md step 7.4.
+  it('gives every job its own key, and refuses one key for two', () => {
     const pk = `0x${'22'.repeat(32)}`;
-    expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBe(pk);
-    expect(loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: `0x${'33'.repeat(32)}` }).keeperPk).toBe(
-      `0x${'33'.repeat(32)}`,
+    // The keeper no longer falls back to the attestor's key.
+    expect(loadConfig({ ATTESTOR_PK: pk }).keeperPk).toBeUndefined();
+    expect(() => loadConfig({ ATTESTOR_PK: pk, KEEPER_PK: pk })).toThrow(/ATTESTOR_PK, KEEPER_PK are the same key/);
+    expect(() => loadConfig({ SESSION_RELAYER_PK: pk, MATCHMAKER_PK: pk.toUpperCase().replace('0X', '0x') })).toThrow(
+      /SESSION_RELAYER_PK, MATCHMAKER_PK are the same key/,
     );
+    const distinct = loadConfig({
+      ATTESTOR_PK: pk,
+      KEEPER_PK: `0x${'33'.repeat(32)}`,
+      SESSION_RELAYER_PK: `0x${'44'.repeat(32)}`,
+      MATCHMAKER_PK: `0x${'55'.repeat(32)}`,
+    });
+    expect([distinct.attestorPk, distinct.keeperPk, distinct.sessionRelayerPk, distinct.matchmakerPk]).toEqual([
+      pk,
+      `0x${'33'.repeat(32)}`,
+      `0x${'44'.repeat(32)}`,
+      `0x${'55'.repeat(32)}`,
+    ]);
   });
 });
 
 describe('relayer selection', () => {
-  const sender = viemTxSender({ privateKey: `0x${'22'.repeat(32)}`, chainId: 84532, rpcUrl: 'http://localhost:8545' });
+  const keeper = viemTxSender({ signer: keySigner(`0x${'33'.repeat(32)}`), chainId: 84532, rpcUrl: 'http://localhost:8545' });
+  const attestor = new AttestorService({
+    signer: keySigner(`0x${'22'.repeat(32)}`),
+    chainId: 84532,
+    escrow: `0x${'11'.repeat(20)}`,
+  });
+  const onChain = loadConfig({ RPC_URL: 'http://localhost:8545', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` });
 
-  it('is the null relayer without a key, a chain or a sender', () => {
-    expect(relayerFrom(loadConfig({}), sender)).toBe(nullRelayer);
-    expect(relayerFrom(loadConfig({ ATTESTOR_PK: `0x${'22'.repeat(32)}` }), sender)).toBe(nullRelayer);
-    expect(
-      relayerFrom(loadConfig({ RPC_URL: 'http://x', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` }), sender),
-    ).toBe(nullRelayer);
-    const configured = loadConfig({
-      ATTESTOR_PK: `0x${'22'.repeat(32)}`,
-      RPC_URL: 'http://localhost:8545',
-      ESCROW_ADDRESS: `0x${'11'.repeat(20)}`,
-    });
-    expect(relayerFrom(configured, null)).toBe(nullRelayer);
+  it('is the null relayer without an attestor, a keeper or a chain', () => {
+    expect(relayerFrom(loadConfig({}), attestor, keeper)).toBe(nullRelayer);
+    expect(relayerFrom(onChain, null, keeper)).toBe(nullRelayer);
+    expect(relayerFrom(onChain, attestor, null)).toBe(nullRelayer);
   });
 
-  it('builds a submitting relayer once a key, a chain and a sender are all present', () => {
-    const relayer = relayerFrom(
-      loadConfig({
-        ATTESTOR_PK: `0x${'22'.repeat(32)}`,
-        RPC_URL: 'http://localhost:8545',
-        ESCROW_ADDRESS: `0x${'11'.repeat(20)}`,
-      }),
-      sender,
-    );
-
-    expect(relayer).not.toBe(nullRelayer);
+  it('builds a submitting relayer once an attestor, a keeper and a chain are all present', () => {
+    expect(relayerFrom(onChain, attestor, keeper)).not.toBe(nullRelayer);
   });
 });

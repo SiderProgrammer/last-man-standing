@@ -121,6 +121,7 @@ const ENV = z.object({
   IPFS_GATEWAY: text('https://ipfs.io/ipfs/'),
   SESSION_DELEGATE: address,
   SESSION_RELAYER_PK: privateKey,
+  MATCHMAKER_PK: privateKey,
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
   CROSS_CHAIN_FROM_BLOCK: bigint,
@@ -186,6 +187,21 @@ export function loadConfig(
       'invalid server configuration:\n  ALLOWED_ORIGINS is required in production; set ALLOWED_ORIGINS=* to accept any origin',
     );
   }
+  // One key per job, as `Deploy.s.sol` gives every role its own address: a
+  // drained relayer must not stop settlement, and a leaked keeper key must
+  // not sign results.
+  const keys = Object.entries({
+    ATTESTOR_PK: e.ATTESTOR_PK,
+    KEEPER_PK: e.KEEPER_PK,
+    SESSION_RELAYER_PK: e.SESSION_RELAYER_PK,
+    MATCHMAKER_PK: e.MATCHMAKER_PK,
+  }).flatMap(([name, key]) => (key ? [[name, key.toLowerCase()] as const] : []));
+  const shared = keys.filter(([, key], i) => keys.some(([, other], j) => j !== i && other === key));
+  if (shared.length > 0) {
+    throw new ConfigError(
+      `invalid server configuration:\n  ${shared.map(([name]) => name).join(', ')} are the same key; each job needs its own`,
+    );
+  }
   if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
     throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
   }
@@ -199,9 +215,19 @@ export function loadConfig(
     replayMs: e.REPLAY_MS,
     rpcUrl: e.RPC_URL ?? '',
     escrow: e.ESCROW_ADDRESS ?? deployed('escrow'),
+    /**
+     * Signs results, aborts and commit receipts, in a process of its own
+     * (`attestor/process.ts`). Never sends a transaction.
+     */
     attestorPk: e.ATTESTOR_PK,
-    /** Optional key that pays for the permissionless `lockMatch` call. */
-    keeperPk: e.KEEPER_PK ?? e.ATTESTOR_PK,
+    /**
+     * Sends every transaction that needs no authority: lock, finalise,
+     * cancel, harvest, and the attestor's signed settle and abort. Without
+     * it, nothing reaches the chain from here.
+     */
+    keeperPk: e.KEEPER_PK,
+    /** Opens matchmade lobbies with their rosters. See `lobby/matchmaker.ts`. */
+    matchmakerPk: e.MATCHMAKER_PK,
     /** Blank, or `ARCHIVE=memory`, keeps the archive in memory. */
     databaseUrl: e.ARCHIVE === 'memory' ? '' : (e.DATABASE_URL ?? ''),
     /** Ceiling on practice rooms across all wallets; each wallet holds at most one. */

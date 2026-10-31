@@ -11,8 +11,8 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
 import { errorMessage } from '@lms/protocol';
+import { signerAccount, type Signer } from './signer.js';
 import { rpcChain } from './viem.js';
 
 /** A contract call, as the sender sends it. */
@@ -233,11 +233,11 @@ function asReverted(error: unknown): unknown {
   return error;
 }
 
-/** `TxPort` over viem, for one private key. */
-export function viemTxPort(options: { privateKey: Hex; chainId: number; rpcUrl: string }): TxPort {
+/** `TxPort` over viem, for one signer. */
+export function viemTxPort(options: { signer: Signer; chainId: number; rpcUrl: string }): TxPort {
   const chain = rpcChain(options.chainId, options.rpcUrl);
   const transport = http(options.rpcUrl);
-  const account = privateKeyToAccount(options.privateKey, { nonceManager });
+  const account = signerAccount(options.signer);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
   const scope = { address: account.address, chainId: options.chainId };
@@ -283,9 +283,9 @@ export function viemTxPort(options: { privateKey: Hex; chainId: number; rpcUrl: 
   };
 }
 
-/** A sender for `privateKey` over viem. */
+/** A sender for `signer` over viem. */
 export function viemTxSender(
-  options: { privateKey: Hex; chainId: number; rpcUrl: string },
+  options: { signer: Signer; chainId: number; rpcUrl: string },
   senderOptions: TxSenderOptions = {},
 ): TxSender {
   return new TxSender(viemTxPort(options), senderOptions);
