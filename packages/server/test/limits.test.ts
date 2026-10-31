@@ -443,14 +443,27 @@ describe('heartbeat', () => {
 describe('peer identification', () => {
   const request = (headers: Record<string, string>) => ({ headers, socket: { remoteAddress: '1.2.3.4' } });
 
-  it('ignores X-Forwarded-For unless the proxy is trusted', () => {
-    const spoofed = request({ 'x-forwarded-for': '9.9.9.9' });
-    expect(peerFrom(spoofed, false).ip).toBe('1.2.3.4');
-    expect(peerFrom(request({ 'x-forwarded-for': '5.5.5.5, 10.0.0.1' }), true).ip).toBe('5.5.5.5');
-    expect(peerFrom(request({}), true).ip).toBe('1.2.3.4');
+  it('ignores X-Forwarded-For with no trusted proxy', () => {
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9' })).ip).toBe('1.2.3.4');
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9' }), 0).ip).toBe('1.2.3.4');
+  });
+
+  it('takes the right-most entry no trusted proxy wrote, never what the client sent before it', () => {
+    // One proxy (1.2.3.4) took the connection from 5.5.5.5; the client claimed 9.9.9.9 itself.
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9, 5.5.5.5' }), 1).ip).toBe('5.5.5.5');
+    // Two: a CDN appended the client, the load balancer appended the CDN.
+    expect(peerFrom(request({ 'x-forwarded-for': '9.9.9.9, 5.5.5.5, 10.0.0.7' }), 2).ip).toBe('5.5.5.5');
+    // Several headers read as one chain.
+    const split = { headers: { 'x-forwarded-for': ['9.9.9.9', '5.5.5.5'] }, socket: { remoteAddress: '1.2.3.4' } };
+    expect(peerFrom(split, 1).ip).toBe('5.5.5.5');
+  });
+
+  it('falls back to the left-most address when the chain is shorter than the trusted hops', () => {
+    expect(peerFrom(request({}), 1).ip).toBe('1.2.3.4');
+    expect(peerFrom(request({ 'x-forwarded-for': '5.5.5.5' }), 3).ip).toBe('5.5.5.5');
   });
 
   it('carries the origin through', () => {
-    expect(peerFrom(request({ origin: 'https://play.example' }), false).origin).toBe('https://play.example');
+    expect(peerFrom(request({ origin: 'https://play.example' })).origin).toBe('https://play.example');
   });
 });

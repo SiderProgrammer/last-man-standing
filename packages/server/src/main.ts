@@ -326,7 +326,7 @@ async function main(): Promise<void> {
         onMessage: (listener) => void socket.on('message', listener),
         onClose: (listener) => void socket.on('close', listener),
       },
-      peerFrom(request, config.trustProxy),
+      peerFrom(request, config.trustedProxyHops),
     );
     if (!admitted) return;
     const pingable = {

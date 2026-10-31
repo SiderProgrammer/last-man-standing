@@ -115,7 +115,9 @@ const ENV = z.object({
   MAX_CONNECTIONS_PER_IP: whole(20, 1),
   LOGIN_TIMEOUT_MS: whole(120_000, 1),
   ALLOWED_ORIGINS: text(),
-  TRUST_PROXY: flag(false),
+  TRUSTED_PROXY_HOPS: whole(0),
+  /** Replaced by `TRUSTED_PROXY_HOPS`; read only to refuse it. */
+  TRUST_PROXY: text(),
   GATEWAY_LIMITS: json,
   VERIFY_THREADS: whole(Math.max(1, Math.min(4, availableParallelism() - 1))),
   AVATAR_COLLECTIONS: text(),
@@ -212,6 +214,12 @@ export function loadConfig(
       `invalid server configuration:\n  ${shared.map(([name]) => name).join(', ')} are the same key; each job needs its own`,
     );
   }
+  // Its meaning, the left-most forwarded address, was the one a client can forge.
+  if (e.TRUST_PROXY) {
+    throw new ConfigError(
+      'invalid server configuration:\n  TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS to the number of proxies in front of the server',
+    );
+  }
   if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
     throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
   }
@@ -267,11 +275,13 @@ export function loadConfig(
       .map((origin) => origin.trim())
       .filter((origin) => origin && origin !== '*'),
     /**
-     * Take the client IP from `X-Forwarded-For` instead of the socket. Only
-     * behind a proxy that sets it: otherwise any client can claim any IP and
-     * walk straight past the per-IP limits.
+     * Proxies of this deployment's own in front of the server, each of which
+     * appends to `X-Forwarded-For`: the client IP is the right-most entry
+     * none of them wrote. Zero ignores the header, which is right without a
+     * proxy: a client talking to the server directly could put anything in
+     * it and walk straight past the per-IP limits. See `gateway/peer.ts`.
      */
-    trustProxy: e.TRUST_PROXY,
+    trustedProxyHops: e.TRUSTED_PROXY_HOPS,
     /**
      * Overrides for any field of `DEFAULT_GATEWAY_LIMITS`, as JSON, e.g.
      * `{"connectRatePerIp":1000,"connectBurstPerIp":10000}` for a load test

@@ -93,7 +93,8 @@ describe('server configuration', () => {
     expect(() => loadConfig({ ESCROW_ADDRESS: 'oops' })).toThrow(/ESCROW_ADDRESS must be a 20-byte hex address/);
     expect(() => loadConfig({ ATTESTOR_PK: '0x1234' })).toThrow(/ATTESTOR_PK must be a 32-byte hex private key/);
     expect(() => loadConfig({ RPC_URL: 'localhost:8545 typo' })).toThrow(/RPC_URL must be an http\(s\) or ws\(s\) URL/);
-    expect(() => loadConfig({ TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY must be true or false/);
+    expect(() => loadConfig({ TRUSTED_PROXY_HOPS: 'one' })).toThrow(/TRUSTED_PROXY_HOPS must be a whole number/);
+    expect(() => loadConfig({ TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS/);
     expect(() => loadConfig({ GATEWAY_LIMITS: '{nope' })).toThrow(/GATEWAY_LIMITS must be valid JSON/);
   });
 
@@ -127,11 +128,11 @@ describe('server configuration', () => {
     const defaults = loadConfig({});
     expect(defaults.maxConnectionsPerIp).toBe(20);
     expect(defaults.allowedOrigins).toEqual([]);
-    expect(defaults.trustProxy).toBe(false);
+    expect(defaults.trustedProxyHops).toBe(0);
 
-    const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUST_PROXY: 'true' });
+    const tuned = loadConfig({ ALLOWED_ORIGINS: 'https://a.example, https://b.example,', TRUSTED_PROXY_HOPS: '2' });
     expect(tuned.allowedOrigins).toEqual(['https://a.example', 'https://b.example']);
-    expect(tuned.trustProxy).toBe(true);
+    expect(tuned.trustedProxyHops).toBe(2);
 
     expect(loadConfig({ GATEWAY_LIMITS: '{"messageRate":50,"bogus":"x"}' }).gatewayLimits).toEqual({ messageRate: 50 });
     expect(loadConfig({ VERIFY_THREADS: '0' }).verifyThreads).toBe(0);
