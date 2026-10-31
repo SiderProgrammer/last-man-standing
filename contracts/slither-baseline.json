@@ -6,6 +6,12 @@
     "triage": "False positive. Only the pool manager can call it, and the manager calls back whoever called unlock, which is only joinWithToken with payer = msg.sender."
   },
   {
+    "key": "arbitrary-send-eth|function:BridgeJoinReceiver._deposit|node:BridgeJoinReceiver._deposit.IAcrossSpokePool(spokePool).depositV3{value: amount}(w.player,w.recipient,address(weth),w.outputToken,amount,q.outputAmount,w.destinationChainId,q.exclusiveRelayer,q.quoteTimestamp,q.fillDeadline,q.exclusivityParameter,)",
+    "impact": "High",
+    "summary": "BridgeJoinReceiver._deposit(BridgeJoinReceiver.Withdrawal,BridgeJoinReceiver.Quote,uint256) (src/periphery/BridgeJoinReceiver.sol#204-219) sends eth to arbitrary user",
+    "triage": "Not arbitrary: the value goes to the immutable Across SpokePool as a deposit whose recipient, chain and fee cap the player signed (EIP-712, checked in withdrawToChainFor), and the amount is the player's own escrow balance."
+  },
+  {
     "key": "arbitrary-send-eth|function:FeeRouter.harvest|node:FeeRouter.harvest.(ok,None) = treasury.call{value: toTreasury}()",
     "impact": "High",
     "summary": "FeeRouter.harvest() (src/governance/FeeRouter.sol#54-67) sends eth to arbitrary user",
@@ -14,14 +20,8 @@
   {
     "key": "arbitrary-send-eth|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)",
     "impact": "High",
-    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-209) sends eth to arbitrary user",
+    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#185-213) sends eth to arbitrary user",
     "triage": "Not arbitrary: _checkCall reverts unless the target is the immutable escrow and the call is join or withdrawFor(account), and the value is the account's own ETH under the session's per-call and total caps."
-  },
-  {
-    "key": "arbitrary-send-eth|function:SpokeEscrow.join|node:SpokeEscrow.join.ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId,hubEscrow,payload,stake)",
-    "impact": "High",
-    "summary": "SpokeEscrow.join(bytes32,uint128) (src/SpokeEscrow.sol#54-68) sends eth to arbitrary user",
-    "triage": "SpokeEscrow and the messenger stack are deleted in FIX_PLAN 6.2."
   },
   {
     "key": "assembly|function:RewardsDistributor.claimable|node:RewardsDistributor.claimable.",
@@ -38,13 +38,13 @@
   {
     "key": "assembly|function:SessionKeyDelegate._layout|node:SessionKeyDelegate._layout.",
     "impact": "Informational",
-    "summary": "SessionKeyDelegate._layout() (src/SessionKeyDelegate.sol#261-265) uses assembly",
+    "summary": "SessionKeyDelegate._layout() (src/SessionKeyDelegate.sol#287-291) uses assembly",
     "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
   },
   {
     "key": "calls-loop|function:GameEscrow._checkQuorum|node:GameEscrow._checkQuorum.! config.isAttestorAt(version,signers[i])",
     "impact": "Low",
-    "summary": "GameEscrow._checkQuorum(uint32,bytes32,bytes) (src/GameEscrow.sol#564-572) has external calls inside a loop: ! config.isAttestorAt(version,signers[i]) (src/GameEscrow.sol#570)",
+    "summary": "GameEscrow._checkQuorum(uint32,bytes32,bytes) (src/GameEscrow.sol#567-575) has external calls inside a loop: ! config.isAttestorAt(version,signers[i]) (src/GameEscrow.sol#573)",
     "triage": "Accepted: one view call per signer to the trusted config, bounded by the attestor set."
   },
   {
@@ -92,7 +92,7 @@
   {
     "key": "divide-before-multiply|function:GameEscrow.quoteLmsDiscount|node:GameEscrow.quoteLmsDiscount.fee = (uint256(info.stake) * terms[info.termsId].feeBps) / BPS_DENOMINATOR|node:GameEscrow.quoteLmsDiscount.maxDiscount = (fee * MAX_DISCOUNT_BPS) / BPS_DENOMINATOR",
     "impact": "Medium",
-    "summary": "GameEscrow.quoteLmsDiscount(bytes32,uint256) (src/GameEscrow.sol#380-394) performs a multiplication on the result of a division:",
+    "summary": "GameEscrow.quoteLmsDiscount(bytes32,uint256) (src/GameEscrow.sol#375-389) performs a multiplication on the result of a division:",
     "triage": "Intended: the seat fee is rounded down exactly as finalize and _recordFees round it, then halved for the cap, so the cap is never above half the fee actually charged."
   },
   {
@@ -114,6 +114,12 @@
     "triage": "False positive: `== 0` on an amount computed here to skip empty tranches, not on a balance anyone can move."
   },
   {
+    "key": "low-level-calls|function:BridgeJoinReceiver.recover|node:BridgeJoinReceiver.recover.(ok,None) = to.call{value: amount}()",
+    "impact": "Informational",
+    "summary": "Low level call in BridgeJoinReceiver.recover(address,address,uint256) (src/periphery/BridgeJoinReceiver.sol#240-249):",
+    "triage": "Intended: plain ETH to the address the timelock names, with the result checked."
+  },
+  {
     "key": "low-level-calls|function:FeeRouter.harvest|node:FeeRouter.harvest.(ok,None) = treasury.call{value: toTreasury}()",
     "impact": "Informational",
     "summary": "Low level call in FeeRouter.harvest() (src/governance/FeeRouter.sol#54-67):",
@@ -122,7 +128,7 @@
   {
     "key": "low-level-calls|function:ProtocolConfig._checkDelay|node:ProtocolConfig._checkDelay.(ok,data) = owner().staticcall(abi.encodeCall(TimelockController.getMinDelay,()))",
     "impact": "Informational",
-    "summary": "Low level call in ProtocolConfig._checkDelay() (src/ProtocolConfig.sol#326-332):",
+    "summary": "Low level call in ProtocolConfig._checkDelay() (src/ProtocolConfig.sol#328-334):",
     "triage": "Intended: asks the owner for getMinDelay and treats no answer as no timelock (an EOA, or the deployer before hand-over)."
   },
   {
@@ -134,14 +140,8 @@
   {
     "key": "low-level-calls|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)",
     "impact": "Informational",
-    "summary": "Low level call in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-226):",
+    "summary": "Low level call in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#185-213):",
     "triage": "Plain ETH transfers and the session call; every result is checked."
-  },
-  {
-    "key": "low-level-calls|function:SpokeEscrow.join|node:SpokeEscrow.join.(ok,None) = msg.sender.call{value: extra}()",
-    "impact": "Informational",
-    "summary": "Low level call in SpokeEscrow.join(bytes32,uint128) (src/SpokeEscrow.sol#54-68):",
-    "triage": "SpokeEscrow and the messenger stack are deleted in FIX_PLAN 6.2."
   },
   {
     "key": "low-level-calls|function:StakedLms.claimRewards|node:StakedLms.claimRewards.(ok,None) = to.call{value: amount}()",
@@ -150,10 +150,10 @@
     "triage": "Plain ETH transfers and the session call; every result is checked."
   },
   {
-    "key": "missing-zero-check|node:LayerZeroMessenger.constructor.app = app_|variable:LayerZeroMessenger.constructor.app_",
+    "key": "missing-zero-check|node:ProtocolConfig.setBridgeReceiver.bridgeReceiver = receiver|variable:ProtocolConfig.setBridgeReceiver.receiver",
     "impact": "Low",
-    "summary": "LayerZeroMessenger.constructor(address,ILayerZeroEndpoint,address,uint128).app_ (src/adapters/LayerZeroMessenger.sol#104) lacks a zero-check on :",
-    "triage": "LayerZeroMessenger is deleted in FIX_PLAN 6.2."
+    "summary": "ProtocolConfig.setBridgeReceiver(address).receiver (src/ProtocolConfig.sol#280) lacks a zero-check on :",
+    "triage": "Intended: zero turns cross-chain joins off (bridgeJoin and withdrawToBridge then refuse everyone). Owner-only, and the owner is the timelock."
   },
   {
     "key": "missing-zero-check|node:ProtocolConfig.setGuardian.guardian = newGuardian|variable:ProtocolConfig.setGuardian.newGuardian",
@@ -166,6 +166,12 @@
     "impact": "Low",
     "summary": "ProtocolConfig.setSequencerUptimeFeed(address).feed (src/ProtocolConfig.sol#251) lacks a zero-check on :",
     "triage": "Intended: zero turns the sequencer check off, for chains with no feed (Base Sepolia, a local node)."
+  },
+  {
+    "key": "missing-zero-check|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)|variable:SessionKeyDelegate.executeWithSession.target",
+    "impact": "Low",
+    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes).target (src/SessionKeyDelegate.sol#186) lacks a zero-check on :",
+    "triage": "False positive: _checkCall reverts unless target is the immutable escrow, so it is never zero."
   },
   {
     "key": "naming-convention|function:IFeeLedger.FEE_EPOCH",
@@ -188,14 +194,14 @@
   {
     "key": "reentrancy-benign|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.seatDiscount[matchId][msg.sender] = seat|node:GameEscrow._joinWithLms.totalLmsEscrowed += lmsUsed|node:GameEscrow._seat.matchSeats[matchId].push(player)|node:GameEscrow._seat.seatNumber[matchId][player] = uint256(seat) + 1|node:GameEscrow._seat.seatOrigin[matchId][player] = originChainId|node:GameEscrow._seat.totalEscrowed += paid|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#362-375):",
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#357-370):",
     "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
   },
   {
-    "key": "reentrancy-benign|function:LayerZeroMessenger.lzReceive|node:LayerZeroMessenger._park.parked[guid] = _deliveryHash(srcChainId,srcApp,payload,value)|node:LayerZeroMessenger._park.totalParked += value|node:LayerZeroMessenger.lzReceive.ICrossChainReceiver(target).receiveMessage{gas: gasleft()() - PARK_GAS,value: msg.value}(srcChainId,srcApp,payload)|node:LayerZeroMessenger.lzReceive._park(guid,srcChainId,srcApp,payload,msg.value,reason)",
+    "key": "reentrancy-events|function:BridgeJoinReceiver.recover|node:BridgeJoinReceiver.recover.(ok,None) = to.call{value: amount}()|node:BridgeJoinReceiver.recover.Recovered(token,to,amount)",
     "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#214-239):",
-    "triage": "LayerZeroMessenger is deleted in FIX_PLAN 6.2."
+    "summary": "Reentrancy in BridgeJoinReceiver.recover(address,address,uint256) (src/periphery/BridgeJoinReceiver.sol#240-249):",
+    "triage": "Benign: owner-only (the timelock), no state changes after the transfer, and the event reports it."
   },
   {
     "key": "reentrancy-events|function:ChainlinkVrfAdapter._deliver|node:ChainlinkVrfAdapter._deliver.DeliveryFailed(vrfId,reason)|node:ChainlinkVrfAdapter._deliver.IRandomnessConsumer(request.consumer).fulfillRandomness(request.context,request.word)|node:ChainlinkVrfAdapter._deliver.RandomnessDelivered(vrfId)",
@@ -212,26 +218,14 @@
   {
     "key": "reentrancy-events|function:GameEscrow.joinWithLmsPermit|node:GameEscrow._joinWithLms.FeeDiscounted(matchId,msg.sender,discount,lmsUsed)|node:GameEscrow._seat.PlayerJoined(matchId,player,seat,originChainId)|node:GameEscrow.joinWithLmsPermit.IERC20Permit(token).permit(msg.sender,address(this),lmsIn,deadline,v,r,s)|node:GameEscrow.joinWithLmsPermit._joinWithLms(matchId,lmsIn)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#362-375):",
+    "summary": "Reentrancy in GameEscrow.joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32) (src/GameEscrow.sol#357-370):",
     "triage": "False positive: the only external call before the writes is permit on the LMS token, set once in the config; it cannot call back."
   },
   {
     "key": "reentrancy-events|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.MatchLocked(matchId,requestId,info.seatCount)|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(oracle).requestRandomness(matchId)",
     "impact": "Low",
-    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#471-490):",
+    "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#474-493):",
     "triage": "Accepted: every state write precedes the oracle call (FIX_PLAN 2.7); only the event follows it, since it carries the request id the oracle returns."
-  },
-  {
-    "key": "reentrancy-events|function:LayerZeroMessenger.lzReceive|node:LayerZeroMessenger._park.DeliveryParked(guid,srcChainId,srcApp,payload,value,reason)|node:LayerZeroMessenger.lzReceive.ICrossChainReceiver(target).receiveMessage{gas: gasleft()() - PARK_GAS,value: msg.value}(srcChainId,srcApp,payload)|node:LayerZeroMessenger.lzReceive._park(guid,srcChainId,srcApp,payload,msg.value,reason)",
-    "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.lzReceive(Origin,bytes32,bytes,address,bytes) (src/adapters/LayerZeroMessenger.sol#214-239):",
-    "triage": "Events after calls to trusted protocol contracts; no state depends on them."
-  },
-  {
-    "key": "reentrancy-events|function:LayerZeroMessenger.retry|node:LayerZeroMessenger.retry.DeliveryRetried(guid)|node:LayerZeroMessenger.retry.ICrossChainReceiver(app).receiveMessage{value: value}(srcChainId,srcApp,payload)",
-    "impact": "Low",
-    "summary": "Reentrancy in LayerZeroMessenger.retry(bytes32,uint32,bytes32,bytes,uint256) (src/adapters/LayerZeroMessenger.sol#245-253):",
-    "triage": "Events after calls to trusted protocol contracts; no state depends on them."
   },
   {
     "key": "reentrancy-events|function:MultisigPhase.retire|node:MultisigPhase.retire.Retired(block.timestamp)|node:MultisigPhase.retire.timelock.renounceRole(timelock.CANCELLER_ROLE(),address(this))|node:MultisigPhase.retire.timelock.renounceRole(timelock.PROPOSER_ROLE(),address(this))",
@@ -242,14 +236,26 @@
   {
     "key": "reentrancy-events|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.(ok,result) = target.call{value: value}(data)|node:SessionKeyDelegate.executeWithSession.SessionCallExecuted(sessionKey,selector,value)",
     "impact": "Low",
-    "summary": "Reentrancy in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-209):",
+    "summary": "Reentrancy in SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#185-213):",
     "triage": "Events after calls to trusted protocol contracts; no state depends on them."
+  },
+  {
+    "key": "reentrancy-events|function:SpokeRouter.join|node:SpokeRouter._deposit.spokePool.depositV3{value: msg.value}(msg.sender,hubReceiver,weth,hubWeth,msg.value,quote.outputAmount,hubChainId,quote.exclusiveRelayer,quote.quoteTimestamp,quote.fillDeadline,quote.exclusivityParameter,message)|node:SpokeRouter.join.JoinBridged(matchId,msg.sender,player,msg.value,quote.outputAmount)|node:SpokeRouter.join._deposit(quote,joinMessage(matchId,player))",
+    "impact": "Low",
+    "summary": "Reentrancy in SpokeRouter.join(bytes32,address,SpokeRouter.Quote) (src/periphery/SpokeRouter.sol#93-106):",
+    "triage": "Benign: the only external call is to the immutable SpokePool, and the router has no state for a reentrant call to corrupt; the event follows the deposit it reports."
   },
   {
     "key": "reentrancy-no-eth|function:ChainlinkVrfAdapter._deliver|node:ChainlinkVrfAdapter._deliver.IRandomnessConsumer(request.consumer).fulfillRandomness(request.context,request.word)|node:ChainlinkVrfAdapter._deliver.delete requests[vrfId]",
     "impact": "Medium",
     "summary": "Reentrancy in ChainlinkVrfAdapter._deliver(uint256,ChainlinkVrfAdapter.Request) (src/oracles/ChainlinkVrfAdapter.sol#127-134):",
     "triage": "Accepted: the consumer is the escrow, registered by governance; the request is deleted after the callback only on success, by design, so a failed delivery can be retried with deliver. The callback never reverts (FIX_PLAN 2.3)."
+  },
+  {
+    "key": "timestamp|function:BridgeJoinReceiver.withdrawToChainFor|node:BridgeJoinReceiver.withdrawToChainFor.block.timestamp > w.deadline",
+    "impact": "Low",
+    "summary": "BridgeJoinReceiver.withdrawToChainFor(BridgeJoinReceiver.Withdrawal,BridgeJoinReceiver.Quote,bytes) (src/periphery/BridgeJoinReceiver.sol#179-201) uses timestamp for comparisons",
+    "triage": "Intended: a signed withdrawal's deadline. Seconds of validator drift do not matter against a deadline of minutes."
   },
   {
     "key": "timestamp|function:ExpiringPause.extendPause|node:ExpiringPause.extendPause.until <= block.timestamp || until <= pausedUntil",
@@ -272,55 +278,55 @@
   {
     "key": "timestamp|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.block.timestamp < until",
     "impact": "Low",
-    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#623-630) uses timestamp for comparisons",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#626-633) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow._joinFailure|node:GameEscrow._joinFailure.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#929-942) uses timestamp for comparisons",
+    "summary": "GameEscrow._joinFailure(bytes32,GameEscrow.MatchInfo,address,uint256) (src/GameEscrow.sol#932-945) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow._seat|node:GameEscrow._seat.block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32,uint256) (src/GameEscrow.sol#945-965) uses timestamp for comparisons",
+    "summary": "GameEscrow._seat(bytes32,GameEscrow.MatchInfo,address,uint32,uint256) (src/GameEscrow.sol#948-968) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow.cancelMatch|node:GameEscrow.cancelMatch.block.timestamp < cancellableAt|node:GameEscrow.cancelMatch.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#807-830) uses timestamp for comparisons",
+    "summary": "GameEscrow.cancelMatch(bytes32) (src/GameEscrow.sol#810-833) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.dismissDispute|node:GameEscrow.dismissDispute.block.timestamp >= info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.dismissDispute(bytes32) (src/GameEscrow.sol#716-730) uses timestamp for comparisons",
+    "summary": "GameEscrow.dismissDispute(bytes32) (src/GameEscrow.sol#719-733) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.dispute|node:GameEscrow.dispute.block.timestamp >= info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.dispute(bytes32,bytes32) (src/GameEscrow.sol#691-709) uses timestamp for comparisons",
+    "summary": "GameEscrow.dispute(bytes32,bytes32) (src/GameEscrow.sol#694-712) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.finalize|node:GameEscrow.finalize.block.timestamp < info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#598-621) uses timestamp for comparisons",
+    "summary": "GameEscrow.finalize(bytes32,address[]) (src/GameEscrow.sol#601-624) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
     "key": "timestamp|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.expired = block.timestamp >= info.joinDeadline",
     "impact": "Low",
-    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#471-490) uses timestamp for comparisons",
+    "summary": "GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#474-493) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:GameEscrow.veto|node:GameEscrow.veto.block.timestamp >= info.deadline",
     "impact": "Low",
-    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#666-677) uses timestamp for comparisons",
+    "summary": "GameEscrow.veto(bytes32) (src/GameEscrow.sol#669-680) uses timestamp for comparisons",
     "triage": "Intended: windows, deadlines, pauses and vesting are measured in seconds; a sequencer can shift a timestamp by seconds, far below any window here."
   },
   {
@@ -374,13 +380,13 @@
   {
     "key": "timestamp|function:SessionKeyDelegate.executeWithSession|node:SessionKeyDelegate.executeWithSession.session.validUntil <= block.timestamp",
     "impact": "Low",
-    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#183-226) uses timestamp for comparisons",
+    "summary": "SessionKeyDelegate.executeWithSession(address,uint256,bytes,uint256,bytes) (src/SessionKeyDelegate.sol#185-213) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
     "key": "timestamp|function:SessionKeyDelegate.grantSession|node:SessionKeyDelegate.grantSession.validUntil <= block.timestamp || validUntil > block.timestamp + MAX_SESSION_DURATION",
     "impact": "Low",
-    "summary": "SessionKeyDelegate.grantSession(address,uint48,uint128,uint128) (src/SessionKeyDelegate.sol#139-150) uses timestamp for comparisons",
+    "summary": "SessionKeyDelegate.grantSession(address,uint48,uint128,uint128) (src/SessionKeyDelegate.sol#138-151) uses timestamp for comparisons",
     "triage": "Windows and deadlines are hours long; validator skew of seconds does not matter."
   },
   {
@@ -410,31 +416,31 @@
   {
     "key": "uninitialized-local|variable:GameEscrow._assertSeatSet.seen",
     "impact": "Medium",
-    "summary": "GameEscrow._assertSeatSet(bytes32,uint256,address[]).seen (src/GameEscrow.sol#580) is a local variable never initialized",
+    "summary": "GameEscrow._assertSeatSet(bytes32,uint256,address[]).seen (src/GameEscrow.sol#583) is a local variable never initialized",
     "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow._distribute.paid",
     "impact": "Medium",
-    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,GameEscrow.Terms,address[],uint256).paid (src/GameEscrow.sol#746) is a local variable never initialized",
+    "summary": "GameEscrow._distribute(bytes32,GameEscrow.MatchInfo,GameEscrow.Terms,address[],uint256).paid (src/GameEscrow.sol#749) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow._recordFees.total",
     "impact": "Medium",
-    "summary": "GameEscrow._recordFees(bytes32,uint128,uint16,address[],bool).total (src/GameEscrow.sol#646) is a local variable never initialized",
+    "summary": "GameEscrow._recordFees(bytes32,uint128,uint16,address[],bool).total (src/GameEscrow.sol#649) is a local variable never initialized",
     "triage": "Intended: a local accumulator or bitmask that starts at zero, Solidity's default."
   },
   {
     "key": "uninitialized-local|variable:GameEscrow.cancelMatch.reason",
     "impact": "Medium",
-    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#809) is a local variable never initialized",
+    "summary": "GameEscrow.cancelMatch(bytes32).reason (src/GameEscrow.sol#812) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
     "key": "uninitialized-local|variable:ProtocolConfig._setPayoutSchedule.total",
     "impact": "Medium",
-    "summary": "ProtocolConfig._setPayoutSchedule(uint16[]).total (src/ProtocolConfig.sol#346) is a local variable never initialized",
+    "summary": "ProtocolConfig._setPayoutSchedule(uint16[]).total (src/ProtocolConfig.sol#348) is a local variable never initialized",
     "triage": "False positive. Relies on the zero default on purpose."
   },
   {
@@ -452,19 +458,19 @@
   {
     "key": "uninitialized-state|function:GameEscrow._joinWithLms|function:GameEscrow._refundAll|function:GameEscrow.finalize|variable:GameEscrow.matchDiscount",
     "impact": "High",
-    "summary": "GameEscrow.matchDiscount (src/GameEscrow.sol#204) is never initialized. It is used in:",
+    "summary": "GameEscrow.matchDiscount (src/GameEscrow.sol#198) is never initialized. It is used in:",
     "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
   },
   {
-    "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.dismissDispute|function:GameEscrow.dispute|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.receiveMessage|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
+    "key": "uninitialized-state|function:GameEscrow._open|function:GameEscrow.abortMatch|function:GameEscrow.bridgeJoin|function:GameEscrow.cancelMatch|function:GameEscrow.createMatch|function:GameEscrow.dismissDispute|function:GameEscrow.dispute|function:GameEscrow.finalize|function:GameEscrow.fulfillRandomness|function:GameEscrow.getMatch|function:GameEscrow.getMatchTerms|function:GameEscrow.getPayoutSchedule|function:GameEscrow.quoteLmsDiscount|function:GameEscrow.settle|function:GameEscrow.veto|variable:GameEscrow.matchInfo",
     "impact": "High",
-    "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#189) is never initialized. It is used in:",
-    "triage": "False positive. Written through storage pointers (`MatchInfo storage info = matchInfo[matchId]`, `Discount storage total = matchDiscount[matchId]`), which this detector does not follow."
+    "summary": "GameEscrow.matchInfo (src/GameEscrow.sol#183) is never initialized. It is used in:",
+    "triage": "False positive, as before bridgeJoin replaced receiveMessage: matchInfo is a mapping, written per match in createMatch."
   },
   {
     "key": "unused-return|function:GameEscrow._checkSequencer|node:GameEscrow._checkSequencer.(None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData()",
     "impact": "Medium",
-    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#623-630) ignores return value by (None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData() (src/GameEscrow.sol#626)",
+    "summary": "GameEscrow._checkSequencer() (src/GameEscrow.sol#626-633) ignores return value by (None,answer,startedAt,None,None) = ISequencerUptimeFeed(feed).latestRoundData() (src/GameEscrow.sol#629)",
     "triage": "Intended: Chainlink's sequencer feed only needs answer and startedAt; the round ids and updatedAt carry nothing for it."
   },
   {
@@ -476,14 +482,8 @@
   {
     "key": "unused-return|function:SessionKeyDelegate.isValidSignature|node:SessionKeyDelegate.isValidSignature.(signer,error,None) = ECDSA.tryRecover(hash,signature)",
     "impact": "Medium",
-    "summary": "SessionKeyDelegate.isValidSignature(bytes32,bytes) (src/SessionKeyDelegate.sol#234-239) ignores return value by (signer,error,None) = ECDSA.tryRecover(hash,signature) (src/SessionKeyDelegate.sol#235)",
+    "summary": "SessionKeyDelegate.isValidSignature(bytes32,bytes) (src/SessionKeyDelegate.sol#219-223) ignores return value by (signer,error,None) = ECDSA.tryRecover(hash,signature) (src/SessionKeyDelegate.sol#220)",
     "triage": "Only the third return (the malleability detail) is ignored; the error code is checked and the signer must be the account."
-  },
-  {
-    "key": "unused-return|function:SpokeEscrow.join|node:SpokeEscrow.join.ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId,hubEscrow,payload,stake)",
-    "impact": "Medium",
-    "summary": "SpokeEscrow.join(bytes32,uint128) (src/SpokeEscrow.sol#54-68) ignores return value by ICrossChainMessenger(messenger).sendMessage{value: required}(hubChainId,hubEscrow,payload,stake) (src/SpokeEscrow.sol#59)",
-    "triage": "SpokeEscrow and the messenger stack are deleted in FIX_PLAN 6.2."
   },
   {
     "key": "unused-return|function:ZapJoin.unlockCallback|node:ZapJoin.unlockCallback.poolManager.settle()",
