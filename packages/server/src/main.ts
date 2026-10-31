@@ -16,7 +16,8 @@ import { Lobby } from './lobby/lobby.js';
 import { openStorage } from './db/storage.js';
 import { transcriptResponse } from './lobby/transcripts.js';
 import { generatePrivateKey } from 'viem/accounts';
-import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
+import { receiptSigner, relayerFrom } from './chain/attestor.js';
+import { viemTxSender, type TxSender } from './chain/txSender.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
@@ -45,7 +46,22 @@ async function main(): Promise<void> {
   const storage = await openStorage(config.databaseUrl);
   const { archive, styles } = storage;
   console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
-  const relayer = relayerFromEnv();
+  // One sender per key: a key's nonces are a single sequence, and two senders
+  // sharing one would race for them. A key configured for two jobs — the
+  // keeper key defaults to the attestor's — shares its sender.
+  const senders = new Map<string, TxSender>();
+  const senderFor = (privateKey: `0x${string}` | undefined, label: string): TxSender | null => {
+    if (!privateKey || !config.rpcUrl) return null;
+    const key = privateKey.toLowerCase();
+    let sender = senders.get(key);
+    if (!sender) {
+      sender = viemTxSender({ privateKey, chainId: config.chainId, rpcUrl: config.rpcUrl }, { label });
+      senders.set(key, sender);
+    }
+    return sender;
+  };
+  const keeper = senderFor(config.keeperPk, 'keeper');
+  const relayer = relayerFrom(config, senderFor(config.attestorPk, 'attestor'));
   // The attestor key where there is one. A practice-only server has none,
   // and signs with a key of its own that lasts as long as the process.
   const receipts = receiptSigner(config.attestorPk ?? generatePrivateKey(), config.chainId);
@@ -76,7 +92,7 @@ async function main(): Promise<void> {
         chainId: config.chainId,
         escrow: config.escrow,
         lobby,
-        ...(config.keeperPk ? { keeperKey: config.keeperPk } : {}),
+        ...(keeper ? { keeper } : {}),
         // A restart loses every room in progress. Matches that were live are
         // aborted and refunded rather than restarted from round one.
         abort: (matchId) => relayer.abort(matchId),
@@ -118,7 +134,11 @@ async function main(): Promise<void> {
   const relay =
     config.onChain && config.sessionDelegate !== ZERO_ADDRESS && config.sessionRelayerPk
       ? new SessionRelay({
-          port: viemRelayPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, relayerKey: config.sessionRelayerPk }),
+          port: viemRelayPort({
+            rpcUrl: config.rpcUrl,
+            chainId: config.chainId,
+            sender: senderFor(config.sessionRelayerPk, 'relay') as TxSender,
+          }),
           escrow: config.escrow,
           delegate: config.sessionDelegate,
           quotaPerDay: config.relayQuotaPerDay,
@@ -313,12 +333,12 @@ async function main(): Promise<void> {
   // Harvests fees on a timer so they reach stakers. Holds no authority:
   // `harvest` is open to anyone and pays only where the router already sends.
   let feeKeeper: FeeKeeper | null = null;
-  if (config.rpcUrl && config.keeperPk && config.feeRouter !== ZERO_ADDRESS) {
+  if (keeper && config.feeRouter !== ZERO_ADDRESS) {
     const port = await viemFeeRouter({
       rpcUrl: config.rpcUrl,
       chainId: config.chainId,
       router: config.feeRouter,
-      keeperKey: config.keeperPk,
+      keeper,
     });
     feeKeeper = new FeeKeeper(port, feeKeeperPolicy(config.feeKeeper));
     feeKeeper.start(config.feeKeeperPollMs);

@@ -4,7 +4,15 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ConfigError, loadConfig, readDeployment, relayerFrom, nullRelayer, type Deployment } from '@lms/server';
+import {
+  ConfigError,
+  loadConfig,
+  readDeployment,
+  relayerFrom,
+  nullRelayer,
+  viemTxSender,
+  type Deployment,
+} from '@lms/server';
 
 const ESCROW = `0x${'11'.repeat(20)}` as const;
 const GOVERNOR = `0x${'22'.repeat(20)}` as const;
@@ -158,21 +166,30 @@ describe('server configuration', () => {
 });
 
 describe('relayer selection', () => {
-  it('is the null relayer without a key or without a chain', () => {
-    expect(relayerFrom(loadConfig({}))).toBe(nullRelayer);
-    expect(relayerFrom(loadConfig({ ATTESTOR_PK: `0x${'22'.repeat(32)}` }))).toBe(nullRelayer);
+  const sender = viemTxSender({ privateKey: `0x${'22'.repeat(32)}`, chainId: 84532, rpcUrl: 'http://localhost:8545' });
+
+  it('is the null relayer without a key, a chain or a sender', () => {
+    expect(relayerFrom(loadConfig({}), sender)).toBe(nullRelayer);
+    expect(relayerFrom(loadConfig({ ATTESTOR_PK: `0x${'22'.repeat(32)}` }), sender)).toBe(nullRelayer);
     expect(
-      relayerFrom(loadConfig({ RPC_URL: 'http://x', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` })),
+      relayerFrom(loadConfig({ RPC_URL: 'http://x', ESCROW_ADDRESS: `0x${'11'.repeat(20)}` }), sender),
     ).toBe(nullRelayer);
+    const configured = loadConfig({
+      ATTESTOR_PK: `0x${'22'.repeat(32)}`,
+      RPC_URL: 'http://localhost:8545',
+      ESCROW_ADDRESS: `0x${'11'.repeat(20)}`,
+    });
+    expect(relayerFrom(configured, null)).toBe(nullRelayer);
   });
 
-  it('builds a submitting relayer once a key and a chain are both present', () => {
+  it('builds a submitting relayer once a key, a chain and a sender are all present', () => {
     const relayer = relayerFrom(
       loadConfig({
         ATTESTOR_PK: `0x${'22'.repeat(32)}`,
         RPC_URL: 'http://localhost:8545',
         ESCROW_ADDRESS: `0x${'11'.repeat(20)}`,
       }),
+      sender,
     );
 
     expect(relayer).not.toBe(nullRelayer);

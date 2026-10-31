@@ -11,8 +11,8 @@ import {
 } from '@lms/protocol';
 import type { ReceiptSigner } from '../gateway/gateway.js';
 import { gameEscrowAbi } from '@lms/protocol';
-import { config, type ServerConfig } from '../config.js';
-import { signerClients } from './viem.js';
+import type { ServerConfig } from '../config.js';
+import type { TxSender } from './txSender.js';
 
 /**
  * Signs a finished match under the escrow's EIP-712 domain.
@@ -82,7 +82,8 @@ export const nullRelayer: Relayer = {
 };
 
 /**
- * Single-key relayer for testnets.
+ * Single-key relayer for testnets: signs with the attestor key, and submits
+ * through `sender`.
  *
  * Production would collect signatures from independent attestors and only then
  * submit; the escrow enforces the quorum either way, so this is a deployment
@@ -90,71 +91,55 @@ export const nullRelayer: Relayer = {
  */
 export function createRelayer(options: {
   privateKey: Hex;
-  rpcUrl: string;
   chainId: number;
   escrow: Address;
+  sender: TxSender;
 }): Relayer {
-  const { account, publicClient, walletClient } = signerClients(
-    options.privateKey,
-    options.chainId,
-    options.rpcUrl,
-  );
+  const account = privateKeyToAccount(options.privateKey);
+  const { escrow, sender } = options;
 
   return {
     async abort(matchId) {
-      const signature = await privateKeyToAccount(options.privateKey).signTypedData({
-        domain: matchResultDomain(options.chainId, options.escrow),
+      const signature = await account.signTypedData({
+        domain: matchResultDomain(options.chainId, escrow),
         types: MATCH_ABORT_TYPES,
         primaryType: 'MatchAbort',
         message: { matchId },
       });
-      const { request } = await publicClient.simulateContract({
-        account,
-        address: options.escrow,
+      return sender.sendAndWait(`abortMatch:${matchId.toLowerCase()}`, {
+        address: escrow,
         abi: gameEscrowAbi,
         functionName: 'abortMatch',
-        args: [matchId, packSignatures([{ signer: account, signature }])],
+        args: [matchId, packSignatures([{ signer: account.address, signature }])],
       });
-      return walletClient.writeContract(request);
     },
     async settle(result) {
-      const signature = await signResult(
-        options.privateKey,
-        result,
-        options.chainId,
-        options.escrow,
-      );
-      const signatures = packSignatures([{ signer: account, signature }]);
-
-      const { request } = await publicClient.simulateContract({
-        account,
-        address: options.escrow,
+      const signature = await signResult(options.privateKey, result, options.chainId, escrow);
+      return sender.sendAndWait(`settle:${result.matchId.toLowerCase()}`, {
+        address: escrow,
         abi: gameEscrowAbi,
         functionName: 'settle',
-        args: [result.matchId, result.rounds, result.historyRoot, result.transcriptHash, result.ranking, signatures],
+        args: [
+          result.matchId,
+          result.rounds,
+          result.historyRoot,
+          result.transcriptHash,
+          result.ranking,
+          packSignatures([{ signer: account.address, signature }]),
+        ],
       });
-      return walletClient.writeContract(request);
     },
   };
 }
 
 /**
- * The relayer a given configuration implies.
+ * The relayer a given configuration implies, submitting through `sender`.
  *
  * Without an attestor key, or without a chain to submit to, results are still
  * signed and archived but never land on-chain — that is what practice-only
  * mode runs on.
  */
-export function relayerFrom(cfg: ServerConfig): Relayer {
-  if (!cfg.attestorPk || !cfg.onChain) return nullRelayer;
-  return createRelayer({
-    privateKey: cfg.attestorPk,
-    rpcUrl: cfg.rpcUrl,
-    chainId: cfg.chainId,
-    escrow: cfg.escrow,
-  });
-}
-
-export function relayerFromEnv(): Relayer {
-  return relayerFrom(config);
+export function relayerFrom(cfg: ServerConfig, sender: TxSender | null): Relayer {
+  if (!cfg.attestorPk || !cfg.onChain || !sender) return nullRelayer;
+  return createRelayer({ privateKey: cfg.attestorPk, chainId: cfg.chainId, escrow: cfg.escrow, sender });
 }

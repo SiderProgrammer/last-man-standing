@@ -13,14 +13,15 @@ import {
 import type { MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
 import { viemEscrowReader, type EscrowReader } from './escrowReader.js';
+import type { TxSender } from './txSender.js';
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
   chainId: number;
   escrow: Address;
   lobby: Lobby;
-  /** Funds the permissionless `lockMatch` call. Without it, someone else must lock. */
-  keeperKey?: Hex;
+  /** Sends the permissionless `lockMatch`, `finalize` and `cancelMatch`. Without it, someone else must. */
+  keeper?: TxSender;
   pollMs?: number;
   /** Aborts a live match this server cannot finish. See `ChainBridgeDeps.abort`. */
   abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
@@ -99,7 +100,7 @@ export class ChainBridge {
         rpcUrl: options.rpcUrl,
         chainId: options.chainId,
         escrow: options.escrow,
-        ...(options.keeperKey ? { keeperKey: options.keeperKey } : {}),
+        ...(options.keeper ? { keeper: options.keeper } : {}),
       }),
       lobby: options.lobby,
       chainId: options.chainId,
@@ -255,7 +256,7 @@ export class ChainBridge {
   /** The fallback for an abandoned match: the permissionless refund at its deadline. */
   private async maybeCancel(matchId: `0x${string}`, deadline: bigint): Promise<void> {
     if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
-    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelled ${matchId}`);
+    if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelling ${matchId}`);
   }
 
   /**
@@ -268,7 +269,7 @@ export class ChainBridge {
     if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
     const ranking = await this.reader.proposedRanking(matchId);
     if (!ranking) return;
-    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalised ${matchId}`);
+    if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalising ${matchId}`);
   }
 
   /**
@@ -282,7 +283,7 @@ export class ChainBridge {
     if (info.seatCount < info.minSeats) return;
 
     if (await this.reader.lockMatch(info.matchId)) {
-      console.log(`[chain] locked ${info.matchId}`);
+      console.log(`[chain] locking ${info.matchId}`);
     }
   }
 

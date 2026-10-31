@@ -35,6 +35,17 @@ export { peerFrom, type UpgradeRequest } from './gateway/peer.js';
 export { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions } from './chain/sessionRelay.js';
 export {
+  RevertedError,
+  TxSender,
+  viemTxPort,
+  viemTxSender,
+  type ContractCall,
+  type Fees,
+  type SentTx,
+  type TxPort,
+  type TxSenderOptions,
+} from './chain/txSender.js';
+export {
   MemoryArchive,
   PostgresArchive,
   type ArchivedAnalysis,

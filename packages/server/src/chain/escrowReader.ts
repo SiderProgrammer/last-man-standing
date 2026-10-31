@@ -1,6 +1,7 @@
 import type { Address } from 'viem';
 import { errorMessage, gameEscrowAbi } from '@lms/protocol';
-import { readClient, signerClients } from './viem.js';
+import type { ContractCall, TxSender } from './txSender.js';
+import { readClient } from './viem.js';
 
 /**
  * A match's on-chain state, as `ChainBridge` needs it: the escrow's `MatchInfo`
@@ -50,11 +51,13 @@ export interface EscrowReader {
   getSeats(matchId: `0x${string}`): Promise<readonly Address[]>;
   seatOrigin(matchId: `0x${string}`, player: Address): Promise<number>;
   /**
-   * Locks a lobby, or reports why it could not.
+   * Sends a lock for a lobby, or reports that it did not.
    *
-   * Returns false rather than throwing when the call reverts: locking is
-   * permissionless, so another caller winning the race is an ordinary outcome
-   * and the next poll reads the truth either way.
+   * True once the transaction is out; its receipt is the keeper's to follow.
+   * False rather than throwing when the call would revert, or one for the
+   * same lobby is still pending: locking is permissionless, so another caller
+   * winning the race is an ordinary outcome and the next poll reads the
+   * truth either way.
    */
   lockMatch(matchId: `0x${string}`): Promise<boolean>;
   /** The ranking a proposed result would pay, from its `ResultProposed` event. */
@@ -72,17 +75,26 @@ export interface ViemEscrowReaderOptions {
   rpcUrl: string;
   chainId: number;
   escrow: Address;
-  /** Funds the permissionless `lockMatch` call. Without it, nothing is locked here. */
-  keeperKey?: `0x${string}`;
+  /** Sends the permissionless keeper calls. Without it, nothing is locked, finalised or cancelled here. */
+  keeper?: TxSender;
 }
 
 /** The production reader: viem against a real RPC. */
 export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader {
-  const signer = options.keeperKey
-    ? signerClients(options.keeperKey, options.chainId, options.rpcUrl)
-    : null;
-  const client = signer?.publicClient ?? readClient(options.chainId, options.rpcUrl);
-  const escrow = options.escrow;
+  const client = readClient(options.chainId, options.rpcUrl);
+  const { escrow, keeper } = options;
+
+  /** Sends `functionName(matchId, ...)` under its own in-flight key. */
+  const keep = async (functionName: string, args: readonly unknown[]): Promise<boolean> => {
+    if (!keeper) return false;
+    const call: ContractCall = { address: escrow, abi: gameEscrowAbi, functionName, args };
+    try {
+      return (await keeper.send(`${functionName}:${String(args[0]).toLowerCase()}`, call)) !== null;
+    } catch (error) {
+      console.warn(`[chain] ${functionName} skipped:`, errorMessage(error));
+      return false;
+    }
+  };
 
   return {
     blockNumber: () => client.getBlockNumber(),
@@ -161,59 +173,8 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
       return logs[logs.length - 1]?.args.ranking ?? null;
     },
 
-    async cancelMatch(matchId) {
-      if (!signer) return false;
-      try {
-        const { request } = await client.simulateContract({
-          account: signer.account,
-          address: escrow,
-          abi: gameEscrowAbi,
-          functionName: 'cancelMatch',
-          args: [matchId],
-        });
-        await signer.walletClient.writeContract(request);
-        return true;
-      } catch (error) {
-        console.warn('[chain] cancel skipped:', errorMessage(error));
-        return false;
-      }
-    },
-
-    async finalize(matchId, ranking) {
-      if (!signer) return false;
-      try {
-        const { request } = await client.simulateContract({
-          account: signer.account,
-          address: escrow,
-          abi: gameEscrowAbi,
-          functionName: 'finalize',
-          args: [matchId, [...ranking]],
-        });
-        await signer.walletClient.writeContract(request);
-        return true;
-      } catch (error) {
-        console.warn('[chain] finalize skipped:', errorMessage(error));
-        return false;
-      }
-    },
-
-    async lockMatch(matchId) {
-      if (!signer) return false;
-      try {
-        const { request } = await client.simulateContract({
-          account: signer.account,
-          address: escrow,
-          abi: gameEscrowAbi,
-          functionName: 'lockMatch',
-          args: [matchId],
-        });
-        await signer.walletClient.writeContract(request);
-        return true;
-      } catch (error) {
-        // Another caller may have locked it first; the next poll reads the truth.
-        console.warn('[chain] lock skipped:', errorMessage(error));
-        return false;
-      }
-    },
+    cancelMatch: (matchId) => keep('cancelMatch', [matchId]),
+    finalize: (matchId, ranking) => keep('finalize', [matchId, [...ranking]]),
+    lockMatch: (matchId) => keep('lockMatch', [matchId]),
   };
 }

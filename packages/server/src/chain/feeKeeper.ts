@@ -1,6 +1,7 @@
-import type { Address, Hex } from 'viem';
+import type { Address } from 'viem';
 import { errorMessage, feeRouterAbi, gameEscrowAbi } from '@lms/protocol';
-import { signerClients } from './viem.js';
+import type { TxSender } from './txSender.js';
+import { readClient } from './viem.js';
 
 /**
  * Everything the keeper needs from the chain, as an interface, for the same
@@ -93,17 +94,13 @@ export interface ViemFeeRouterOptions {
   chainId: number;
   router: Address;
   /** Pays the gas. Holds no role: `harvest` is open to anyone. */
-  keeperKey: Hex;
+  keeper: TxSender;
 }
 
 /** The production port: viem against a real RPC. */
 export async function viemFeeRouter(options: ViemFeeRouterOptions): Promise<FeeRouterPort> {
-  const { account, publicClient: client, walletClient: wallet } = signerClients(
-    options.keeperKey,
-    options.chainId,
-    options.rpcUrl,
-  );
-  const router = options.router;
+  const client = readClient(options.chainId, options.rpcUrl);
+  const { router, keeper } = options;
   const escrow = await client.readContract({ address: router, abi: feeRouterAbi, functionName: 'escrow' });
 
   return {
@@ -111,13 +108,7 @@ export async function viemFeeRouter(options: ViemFeeRouterOptions): Promise<FeeR
       client.readContract({ address: escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [router] }),
 
     async harvest() {
-      const { request } = await client.simulateContract({
-        account,
-        address: router,
-        abi: feeRouterAbi,
-        functionName: 'harvest',
-      });
-      await client.waitForTransactionReceipt({ hash: await wallet.writeContract(request) });
+      await keeper.sendAndWait('harvest', { address: router, abi: feeRouterAbi, functionName: 'harvest' });
     },
   };
 }
