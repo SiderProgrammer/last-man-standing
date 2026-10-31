@@ -8,7 +8,10 @@
 export { Room, type Client, type MatchFinished, type RoomOptions } from './match/room.js';
 export { Lobby, type LobbyOptions } from './lobby/lobby.js';
 export { transcriptResponse } from './lobby/transcripts.js';
-export { MemoryStyleBook, PostgresStyleBook, createStyleBook, type StyleBook } from './lobby/styles.js';
+export { MemoryStyleBook, PostgresStyleBook, type StyleBook } from './lobby/styles.js';
+export { connectDatabase, migrate, type Database, type Queryable } from './db/database.js';
+export { MIGRATIONS, type Migration } from './db/migrations.js';
+export { openStorage, storageOn, type Storage } from './db/storage.js';
 export {
   Gateway,
   HISTORY_PAGE,
@@ -34,7 +37,6 @@ export { SessionRelay, viemRelayPort, type RelayPort, type SessionRelayOptions }
 export {
   MemoryArchive,
   PostgresArchive,
-  createArchive,
   type ArchivedAnalysis,
   type ArchivedMatch,
   type MatchArchive,

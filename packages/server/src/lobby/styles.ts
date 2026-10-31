@@ -1,4 +1,5 @@
-import { addStyles, addressKey, emptyStyle, errorMessage, type PlayStyle } from '@lms/protocol';
+import { addStyles, addressKey, emptyStyle, type PlayStyle } from '@lms/protocol';
+import type { Queryable } from '../db/database.js';
 
 /**
  * Play styles by wallet, accumulated from every settled staked match.
@@ -31,42 +32,9 @@ export class MemoryStyleBook implements StyleBook {
   }
 }
 
-interface PgPool {
-  query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
-  on(event: 'error', listener: (error: Error) => void): unknown;
-}
-
-/** Postgres-backed style book; `pg` stays optional, as for the archive. */
+/** Postgres-backed style book, the repository over `play_styles_v2`, on the server's one pool. */
 export class PostgresStyleBook implements StyleBook {
-  private constructor(private readonly pool: PgPool) {}
-
-  static async connect(connectionString: string): Promise<PostgresStyleBook> {
-    const specifier = 'pg';
-    const pg = (await import(specifier)) as {
-      default?: { Pool: new (config: { connectionString: string }) => PgPool };
-      Pool?: new (config: { connectionString: string }) => PgPool;
-    };
-    const Pool = pg.Pool ?? pg.default?.Pool;
-    if (!Pool) throw new Error('pg is installed but does not export Pool');
-    const pool = new Pool({ connectionString });
-    // Idle connections dropped by the host would otherwise crash the process; see the archive.
-    pool.on('error', (error) => console.warn('[styles] idle database connection lost:', errorMessage(error)));
-    // The action set changed from Attack / Defend / Hide to Strike / Guard /
-    // Charge, so records from the old game are a different game's habits and
-    // stay in the old `play_styles` table.
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS play_styles_v2 (
-        address  TEXT PRIMARY KEY,
-        matches  INTEGER NOT NULL DEFAULT 0,
-        wins     INTEGER NOT NULL DEFAULT 0,
-        strikes  INTEGER NOT NULL DEFAULT 0,
-        guards   INTEGER NOT NULL DEFAULT 0,
-        charges  INTEGER NOT NULL DEFAULT 0,
-        no_shows INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-    return new PostgresStyleBook(pool);
-  }
+  constructor(private readonly pool: Queryable) {}
 
   async record(deltas: ReadonlyMap<string, PlayStyle>): Promise<void> {
     for (const [key, d] of deltas) {
@@ -102,10 +70,4 @@ export class PostgresStyleBook implements StyleBook {
       ]),
     );
   }
-}
-
-/** Like `createArchive`: a database that is named but unreachable is an error, not memory. */
-export async function createStyleBook(databaseUrl: string): Promise<StyleBook> {
-  if (!databaseUrl) return new MemoryStyleBook();
-  return PostgresStyleBook.connect(databaseUrl);
 }

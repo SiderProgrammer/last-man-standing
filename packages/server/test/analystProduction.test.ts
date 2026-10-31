@@ -161,7 +161,7 @@ describe('analysis cache', () => {
         return { rows: found ? [{ analysis: found }] : [] };
       },
     };
-    const archive = PostgresArchive.fromPool(pool);
+    const archive = new PostgresArchive(pool);
     const analysis: MatchAnalysis = {
       matchId: `0x${'AB'.repeat(32)}`,
       seat: null,

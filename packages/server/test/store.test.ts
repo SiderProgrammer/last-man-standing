@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
+import { DEFAULT_RULES, type MatchAnalysis, type MatchResult } from '@lms/protocol';
 import {
   Lobby,
   MemoryArchive,
-  createArchive,
-  createStyleBook,
+  MemoryStyleBook,
+  MIGRATIONS,
+  PostgresArchive,
+  PostgresStyleBook,
+  migrate,
+  openStorage,
+  type MatchArchive,
+  type StyleBook,
   nullRelayer,
   transcriptResponse,
   type ArchivedMatch,
 } from '@lms/server';
 import { bytes32, setupWithBots, transcriptOf } from './helpers.js';
+import { pglite } from './pglite.js';
 
 function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
   const result: MatchResult = {
@@ -28,9 +35,12 @@ function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = nu
   return { ...fields, ...transcriptOf(fields), settledTx, staked: false, finishedAt: 1_000 };
 }
 
-describe('memory archive', () => {
+describe.each([
+  ['memory', async (): Promise<MatchArchive> => new MemoryArchive()],
+  ['postgres', async (): Promise<MatchArchive> => new PostgresArchive(await pglite())],
+])('%s archive', (_name, open) => {
   it('round-trips a saved match', async () => {
-    const archive = new MemoryArchive();
+    const archive = await open();
     const saved = entry(bytes32('one'), 5, '0xdeadbeef');
     await archive.save(saved);
 
@@ -38,23 +48,52 @@ describe('memory archive', () => {
   });
 
   it('returns null for a match it never saw', async () => {
-    expect(await new MemoryArchive().load(bytes32('missing'))).toBeNull();
+    expect(await (await open()).load(bytes32('missing'))).toBeNull();
   });
 
   it('looks up a match id case-insensitively', async () => {
-    // Characterisation: `MemoryArchive` lower-cases the key on both save and
-    // load, while `PostgresArchive` stores and queries the id verbatim. One
-    // port, two behaviours — fixed in `docs/FIX_PLAN.md` step 7.2.
-    const archive = new MemoryArchive();
+    const archive = await open();
     const id = bytes32('case');
     await archive.save(entry(id));
 
     const upper = id.toUpperCase().replace('0X', '0x') as `0x${string}`;
     expect(await archive.load(upper)).not.toBeNull();
+    await archive.recordSettlement(upper, '0x5e771ed');
+    expect((await archive.load(id))?.settledTx).toBe('0x5e771ed');
+  });
+
+  it('stores a match saved under a mixed-case id under its lower-cased one', async () => {
+    const archive = await open();
+    const id = bytes32('mixed');
+    const upper = id.toUpperCase().replace('0X', '0x') as `0x${string}`;
+    const saved = entry(upper);
+    await archive.save(saved);
+    expect((await archive.load(id))?.result.matchId.toLowerCase()).toBe(id);
+    expect((await archive.loadByTranscript(saved.transcriptHash))?.transcript).toEqual(saved.transcript);
+  });
+
+  it('keeps an analysis per match, seat and version, whatever the case of the id', async () => {
+    const archive = await open();
+    const id = bytes32('analysed');
+    const upper = id.toUpperCase().replace('0X', '0x') as `0x${string}`;
+    const analysis: MatchAnalysis = {
+      matchId: upper,
+      seat: 2,
+      summary: 's',
+      decisiveRound: null,
+      keyMoments: [],
+      advice: [],
+      dropped: 0,
+      model: 'm',
+    };
+    await archive.saveAnalysis({ analysis, version: 'v1' });
+    expect(await archive.loadAnalysis(id, 2, 'v1')).toEqual(analysis);
+    expect(await archive.loadAnalysis(id, null, 'v1')).toBeNull();
+    expect(await archive.loadAnalysis(id, 2, 'v2')).toBeNull();
   });
 
   it('overwrites a match saved twice without listing it twice', async () => {
-    const archive = new MemoryArchive();
+    const archive = await open();
     const id = bytes32('resave');
     await archive.save(entry(id, 3));
     await archive.save(entry(id, 9));
@@ -64,7 +103,7 @@ describe('memory archive', () => {
   });
 
   it("finds a wallet's matches, newest first, before a cursor", async () => {
-    const archive = new MemoryArchive();
+    const archive = await open();
     // Upper-cased: looked up case-insensitively, like every other address.
     const you = '0x00000000000000000000000000000000000000A1' as const;
     const other = '0x00000000000000000000000000000000000000b2' as const;
@@ -85,8 +124,8 @@ describe('memory archive', () => {
   });
 
   it('lists the most recent matches first, capped at the limit', async () => {
-    const archive = new MemoryArchive();
-    for (const label of ['a', 'b', 'c']) await archive.save(entry(bytes32(label)));
+    const archive = await open();
+    for (const [i, label] of ['a', 'b', 'c'].entries()) await archive.save({ ...entry(bytes32(label)), finishedAt: i });
 
     const recent = await archive.recent(2);
     expect(recent.map((item) => item.result.matchId)).toEqual([bytes32('c'), bytes32('b')]);
@@ -138,11 +177,64 @@ describe('transcript route', () => {
 
 describe('choosing an archive', () => {
   it('keeps the archive in memory when no database is named', async () => {
-    expect(await createArchive('')).toBeInstanceOf(MemoryArchive);
+    expect((await openStorage('')).archive).toBeInstanceOf(MemoryArchive);
   });
 
   it('refuses to start on a database it cannot reach, rather than falling back to memory', async () => {
-    await expect(createArchive('postgres://127.0.0.1:1/unreachable')).rejects.toThrow();
-    await expect(createStyleBook('postgres://127.0.0.1:1/unreachable')).rejects.toThrow();
+    await expect(openStorage('postgres://127.0.0.1:1/unreachable')).rejects.toThrow();
+  });
+});
+
+describe.each([
+  ['memory', async (): Promise<StyleBook> => new MemoryStyleBook()],
+  ['postgres', async (): Promise<StyleBook> => new PostgresStyleBook(await pglite())],
+])('%s style book', (_name, open) => {
+  it("adds every settled match to a wallet's record, and knows nobody else", async () => {
+    const book = await open();
+    const you = '0x00000000000000000000000000000000000000a1';
+    const delta = { matches: 1, wins: 1, strikes: 3, guards: 1, charges: 0, noShows: 0 };
+    await book.record(new Map([[you, delta]]));
+    await book.record(new Map([[you, { ...delta, wins: 0 }]]));
+
+    const found = await book.lookup(['0x00000000000000000000000000000000000000A1', '0x00000000000000000000000000000000000000b2']);
+    expect([...found.keys()]).toEqual([you]);
+    expect(found.get(you)).toEqual({ matches: 2, wins: 1, strikes: 6, guards: 2, charges: 0, noShows: 0 });
+  });
+});
+
+describe('migrations', () => {
+  it('applies each migration once, in order, and records it', async () => {
+    const database = await pglite([]);
+    expect(await migrate(database)).toEqual(MIGRATIONS.map((migration) => migration.id));
+    expect(await migrate(database)).toEqual([]);
+    const { rows } = await database.query('SELECT id FROM schema_migrations ORDER BY id');
+    expect(rows.map((row) => row.id)).toEqual(MIGRATIONS.map((migration) => migration.id));
+  });
+
+  it('rolls a failing migration back whole, and applies nothing after it', async () => {
+    const database = await pglite([]);
+    const broken = [
+      { id: '0001_good', statements: ['CREATE TABLE good (id INTEGER)'] },
+      { id: '0002_bad', statements: ['CREATE TABLE half (id INTEGER)', 'SELECT * FROM missing'] },
+      { id: '0003_after', statements: ['CREATE TABLE after (id INTEGER)'] },
+    ];
+    await expect(migrate(database, broken)).rejects.toThrow(/missing/);
+    const { rows } = await database.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name IN ('good', 'half', 'after')",
+    );
+    expect(rows.map((row) => row.table_name)).toEqual(['good']);
+    expect((await database.query('SELECT id FROM schema_migrations')).rows.map((row) => row.id)).toEqual(['0001_good']);
+  });
+
+  it('lower-cases the ids of matches archived before every save did', async () => {
+    const database = await pglite(MIGRATIONS.slice(0, 2));
+    const id = bytes32('legacy');
+    const upper = id.toUpperCase().replace('0X', '0x') as `0x${string}`;
+    // Written as the archive used to write it: the id verbatim.
+    await new PostgresArchive(database).save(entry(id));
+    await database.query('UPDATE matches SET match_id = $1', [upper]);
+
+    await migrate(database);
+    expect((await new PostgresArchive(database).load(id))?.result.matchId).toBe(id);
   });
 });

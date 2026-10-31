@@ -13,9 +13,8 @@ import { Heartbeat } from './gateway/heartbeat.js';
 import { peerFrom } from './gateway/peer.js';
 import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
-import { createArchive } from './lobby/store.js';
+import { openStorage } from './db/storage.js';
 import { transcriptResponse } from './lobby/transcripts.js';
-import { createStyleBook } from './lobby/styles.js';
 import { generatePrivateKey } from 'viem/accounts';
 import { receiptSigner, relayerFromEnv } from './chain/attestor.js';
 import { ChainBridge } from './chain/bridge.js';
@@ -43,7 +42,8 @@ async function main(): Promise<void> {
     console.error('[server] unhandled rejection:', reason);
   });
 
-  const archive = await createArchive(config.databaseUrl);
+  const storage = await openStorage(config.databaseUrl);
+  const { archive, styles } = storage;
   console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
   const relayer = relayerFromEnv();
   // The attestor key where there is one. A practice-only server has none,
@@ -56,7 +56,6 @@ async function main(): Promise<void> {
     gateway: config.ipfsGateway,
   });
 
-  const styles = await createStyleBook(config.databaseUrl);
   const lobby = new Lobby({
     archive,
     relayer,
@@ -352,6 +351,7 @@ async function main(): Promise<void> {
     wss.close();
     http.close();
     void verifyPool.close();
+    void lobby.drain().finally(() => storage.close());
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
