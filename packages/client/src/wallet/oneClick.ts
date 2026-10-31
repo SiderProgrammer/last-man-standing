@@ -3,12 +3,13 @@ import {
   errorFirstLine,
   joinCall,
   withdrawForCall,
+  type ClientMessage,
   type ErrorCode,
   type ServerMessage,
   type SessionCallParams,
 } from '@lms/protocol';
 import { formatEther, type Hex } from 'viem';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 
 /**
@@ -74,32 +75,40 @@ async function relay(call: Pick<SessionCallParams, 'target' | 'value' | 'data'>)
   const { nonce } = await wallet.oneClickStatus(sessionDelegate, grantKey.address);
   const params: SessionCallParams = { ...call, account: wallet.address, chainId: app.chainId, nonce };
   const signature = await grantKey.signSessionCall(params);
-
-  const id = `relay-${(nextId += 1)}`;
-  const landed = new Promise<Hex>((resolve, reject) => pending.set(id, { resolve, reject }));
-  net.send({
+  return sendRelayed((id) => ({
     type: 'relay',
     id,
     call: { target: call.target, value: call.value.toString(), data: call.data, nonce: nonce.toString(), signature },
-  });
+  }));
+}
+
+/**
+ * Sends a frame the relayer answers by its `id`, with `relayed` or
+ * `relay.error`: a session call, or a signed withdrawal to a spoke. Resolves
+ * with the mined transaction, or rejects with a `RelayError`.
+ */
+export function sendRelayed(frame: (id: string) => ClientMessage): Promise<Hex> {
+  const id = `relay-${(nextId += 1)}`;
+  const landed = new Promise<Hex>((resolve, reject) => pending.set(id, { resolve, reject }));
+  net.send(frame(id));
   return landed;
 }
 
 /**
- * Reads whether the current key holds a live session, and redraws the panel.
- * Called on login, after either switch, and whenever the key changes.
+ * Reads whether the current key holds a live session. Runs whenever the
+ * wallet, its chain or the key changes, on login, and after either switch.
  */
 export async function refreshOneClick(): Promise<void> {
   const { wallet, grantKey, sessionDelegate } = app;
-  app.oneClick = false;
+  let active = false;
   if (wallet && grantKey && sessionDelegate && wallet.canDelegate && wallet.chainId === app.chainId) {
     try {
-      app.oneClick = (await wallet.oneClickStatus(sessionDelegate, grantKey.address)).active;
+      active = (await wallet.oneClickStatus(sessionDelegate, grantKey.address)).active;
     } catch (error) {
       console.error('[one-click]', error);
     }
   }
-  renderOneClickPanel();
+  store.set({ oneClick: active });
 }
 
 export function renderOneClickPanel(): void {
@@ -166,4 +175,8 @@ export async function disableOneClick(): Promise<void> {
 export function wireOneClickControls(): void {
   dom.enableOneClick.onclick = () => void enableOneClick();
   dom.disableOneClick.onclick = () => void disableOneClick();
+
+  const inputs = ['wallet', 'walletChainId', 'chainId', 'grantKey', 'sessionDelegate'] as const;
+  store.subscribe([...inputs, 'oneClick', 'relayQuota'], renderOneClickPanel);
+  store.subscribe(inputs, () => void refreshOneClick());
 }

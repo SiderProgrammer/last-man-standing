@@ -1,11 +1,20 @@
 import { chainInfo, errorFirstLine } from '@lms/protocol';
-import { app, dom } from '../context.js';
+import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingPosition } from '../ui/staking.js';
+import {
+  parseDelegatee,
+  parseLms,
+  stakingPanel,
+  type PlayRewards,
+  type StakingPosition,
+  type Vesting,
+} from '../ui/staking.js';
+import * as stakingCalls from '../wallet/staking.js';
 
 /**
  * The staking panel: stake, unstake, withdraw, claim the ETH that staking
- * earns, claim the LMS that playing earns, and delegate the votes.
+ * earns, claim the LMS that playing earns, release it once it has vested,
+ * and delegate the votes.
  *
  * Reads the chain through the player's own wallet. Every write simulates
  * first, so a revert reads as its reason.
@@ -13,6 +22,7 @@ import { parseDelegatee, parseLms, stakingPanel, type PlayRewards, type StakingP
 
 let position: StakingPosition | null = null;
 let playRewards: PlayRewards | null = null;
+let vesting: Vesting | null = null;
 let busy = false;
 
 export function wireStakingControls(): void {
@@ -24,8 +34,10 @@ export function wireStakingControls(): void {
   dom.withdrawUnstaked.onclick = () => void act('Withdrawn to your wallet.', withdraw());
   dom.claimRewards.onclick = () => void act('ETH sent to your wallet.', claimRewards());
   dom.claimPlayRewards.onclick = () => void act('LMS claimed. It vests over six months; stake it once released to vote.', claimPlayRewards());
+  dom.releaseVested.onclick = () => void act('Vested LMS released to your wallet. Stake it to vote.', releaseVested());
   dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
   dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
+  store.subscribe(['wallet', 'walletChainId', 'chainId', 'staking'], () => void renderStakingPanel());
 }
 
 export async function renderStakingPanel(): Promise<void> {
@@ -40,7 +52,7 @@ export async function renderStakingPanel(): Promise<void> {
     error = `Staking LMS happens on ${chainInfo(app.chainId).name}. Switch your wallet there to stake or vote.`;
   } else if (wallet && info) {
     try {
-      position = await wallet.stakingPosition(info.vault);
+      position = await stakingCalls.stakingPosition(wallet, info.vault);
     } catch (err) {
       position = null;
       // Almost always a wallet pointed at a chain the vault is not on.
@@ -51,13 +63,21 @@ export async function renderStakingPanel(): Promise<void> {
   }
 
   playRewards = null;
+  vesting = null;
   if (wallet && info?.rewards && !error) {
-    try {
-      playRewards = await wallet.playRewards(info.rewards);
-    } catch (err) {
-      // The stake read fine, so this is the distributor alone: show the rest.
-      console.warn('[staking] could not read play rewards', err);
-    }
+    const distributor = info.rewards;
+    // The stake read fine, so a failure here is the distributor's or the
+    // vesting contract's alone: show the rest.
+    [playRewards, vesting] = await Promise.all([
+      stakingCalls.playRewards(wallet, distributor).catch((err: unknown) => {
+        console.warn('[staking] could not read play rewards', err);
+        return null;
+      }),
+      stakingCalls.vesting(wallet, distributor).catch((err: unknown) => {
+        console.warn('[staking] could not read vesting', err);
+        return null;
+      }),
+    ]);
   }
 
   const view = stakingPanel({
@@ -65,6 +85,7 @@ export async function renderStakingPanel(): Promise<void> {
     connected: Boolean(wallet),
     position,
     playRewards,
+    vesting,
     nowSeconds: Math.floor(Date.now() / 1000),
     error,
   });
@@ -75,6 +96,9 @@ export async function renderStakingPanel(): Promise<void> {
   dom.playRewards.textContent = view.playRewards;
   dom.claimPlayRewards.classList.toggle('hidden', !view.claimPlayVisible);
   dom.claimPlayRewards.disabled = busy;
+  dom.vestingStatus.textContent = view.vesting;
+  dom.releaseVested.classList.toggle('hidden', !view.releaseVisible);
+  dom.releaseVested.disabled = busy;
   dom.stakingSummary.textContent = view.summary;
   dom.stakeLms.disabled = busy || view.stakeDisabled;
   dom.unstakeLms.disabled = busy || view.unstakeDisabled;
@@ -116,7 +140,7 @@ async function stake(): Promise<`0x${string}` | null> {
   if (!wallet || !vault) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to stake.');
-  return wallet.stake(vault, amount);
+  return stakingCalls.stake(wallet, vault, amount);
 }
 
 async function unstake(): Promise<`0x${string}` | null> {
@@ -126,21 +150,27 @@ async function unstake(): Promise<`0x${string}` | null> {
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
   // One sLMS is one LMS; more than the position unstakes all of it.
-  return wallet.requestUnstake(vault, amount < position.staked ? amount : position.staked);
+  return stakingCalls.requestUnstake(wallet, vault, amount < position.staked ? amount : position.staked);
 }
 
 async function claimRewards(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.claimRewards(vault);
+  return stakingCalls.claimRewards(wallet, vault);
 }
 
 async function claimPlayRewards(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const distributor = app.staking?.rewards;
   if (!wallet || !distributor || !playRewards || playRewards.epochs.length === 0) return null;
-  return wallet.claimPlayRewards(distributor, playRewards.epochs);
+  return stakingCalls.claimPlayRewards(wallet, distributor, playRewards.epochs);
+}
+
+async function releaseVested(): Promise<`0x${string}` | null> {
+  const wallet = app.wallet;
+  if (!wallet || !vesting || vesting.epochs.length === 0) return null;
+  return stakingCalls.releaseVested(wallet, vesting.address, vesting.epochs);
 }
 
 async function delegate(): Promise<`0x${string}` | null> {
@@ -149,7 +179,7 @@ async function delegate(): Promise<`0x${string}` | null> {
   if (!wallet || !vault) return null;
   const parsed = parseDelegatee(dom.delegateTo.value);
   if (!parsed.ok) throw new Error(parsed.error);
-  const hash = await wallet.delegateVotes(vault, parsed.address);
+  const hash = await stakingCalls.delegateVotes(wallet, vault, parsed.address);
   dom.delegateTo.value = '';
   return hash;
 }
@@ -158,14 +188,14 @@ async function undelegate(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.delegateVotes(vault, wallet.address);
+  return stakingCalls.delegateVotes(wallet, vault, wallet.address);
 }
 
 async function withdraw(): Promise<`0x${string}` | null> {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
   if (!wallet || !vault) return null;
-  return wallet.claimUnstaked(vault);
+  return stakingCalls.claimUnstaked(wallet, vault);
 }
 
 /**

@@ -43,32 +43,79 @@ export interface SessionRelayOptions {
   port: RelayPort;
   escrow: Address;
   delegate: Address;
-  /** Relayed calls per wallet per UTC day. */
+  /** Relayed calls per wallet per UTC day. Ignored when `quota` is given. */
   quotaPerDay: number;
+  /** A quota shared with the relayer's other work, withdrawals to a spoke. */
+  quota?: DailyQuota;
   now?: () => number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export class SessionRelay {
+/**
+ * Calls the relayer pays for, per wallet per UTC day: one count for every
+ * kind, since they all spend the same key's gas.
+ */
+export class DailyQuota {
   /** Calls relayed today, by lowercased wallet. Cleared when the day turns. */
   private used = new Map<string, number>();
   private day = -1;
 
-  constructor(private readonly options: SessionRelayOptions) {}
+  constructor(
+    readonly perDay: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  /** How many more calls `account` may relay today. */
+  left(account: Address): number {
+    this.turnDay();
+    return Math.max(0, this.perDay - (this.used.get(account.toLowerCase()) ?? 0));
+  }
+
+  /**
+   * Takes one of today's calls, or throws `RELAY_QUOTA`. Synchronous, so two
+   * calls racing cannot both take the last one; `giveBack` returns it if the
+   * call never reaches the chain.
+   */
+  take(account: Address): void {
+    if (this.left(account) === 0) {
+      throw new RequestError('RELAY_QUOTA', `you have used today's ${this.perDay} relayed calls`);
+    }
+    const key = account.toLowerCase();
+    this.used.set(key, (this.used.get(key) ?? 0) + 1);
+  }
+
+  giveBack(account: Address): void {
+    const key = account.toLowerCase();
+    this.used.set(key, Math.max(0, (this.used.get(key) ?? 0) - 1));
+  }
+
+  private turnDay(): void {
+    const day = Math.floor(this.now() / DAY_MS);
+    if (day === this.day) return;
+    this.day = day;
+    this.used = new Map();
+  }
+}
+
+export class SessionRelay {
+  private readonly quota: DailyQuota;
+
+  constructor(private readonly options: SessionRelayOptions) {
+    this.quota = options.quota ?? new DailyQuota(options.quotaPerDay, options.now);
+  }
 
   get delegate(): Address {
     return this.options.delegate;
   }
 
   get quotaPerDay(): number {
-    return this.options.quotaPerDay;
+    return this.quota.perDay;
   }
 
   /** How many more calls `account` may relay today. */
   left(account: Address): number {
-    this.turnDay();
-    return Math.max(0, this.options.quotaPerDay - (this.used.get(account.toLowerCase()) ?? 0));
+    return this.quota.left(account);
   }
 
   /**
@@ -83,14 +130,9 @@ export class SessionRelay {
       { escrow: this.options.escrow, account },
     );
     if (!kind) throw new RequestError('RELAY_REFUSED', 'a session key may only join a lobby or collect winnings');
-    if (this.left(account) === 0) {
-      throw new RequestError('RELAY_QUOTA', `you have used today's ${this.options.quotaPerDay} relayed calls`);
-    }
-
-    // Taken before the first await, so two calls racing cannot both take the
-    // last slot; handed back if the call never reaches the chain.
-    const key = account.toLowerCase();
-    this.used.set(key, (this.used.get(key) ?? 0) + 1);
+    // Taken before the first await, and handed back if the call never
+    // reaches the chain.
+    this.quota.take(account);
     try {
       const code = await this.options.port.codeOf(account);
       if (!isDelegatedTo(code, this.options.delegate)) {
@@ -101,20 +143,9 @@ export class SessionRelay {
       });
       return { kind, tx, left: this.left(account) };
     } catch (error) {
-      this.used.set(key, Math.max(0, (this.used.get(key) ?? 0) - 1));
+      this.quota.giveBack(account);
       throw error;
     }
-  }
-
-  private turnDay(): void {
-    const day = Math.floor(this.now() / DAY_MS);
-    if (day === this.day) return;
-    this.day = day;
-    this.used = new Map();
-  }
-
-  private now(): number {
-    return this.options.now?.() ?? Date.now();
   }
 }
 

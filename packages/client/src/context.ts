@@ -3,6 +3,8 @@ import type {
   PlayStyle,
   AvatarCollectionInfo,
   AvatarEntry,
+  LobbyInfo,
+  MatchmakingTier,
   PublicMatchState,
   ServerMessage,
   SpokeInfo,
@@ -10,15 +12,19 @@ import type {
   ZapInfo,
 } from '@lms/protocol';
 import type { Net } from './io/net.js';
+import { createStore } from './store.js';
 import type { Dom } from './ui/dom.js';
+import type { DiscountTerms, QueueSpot } from './ui/views.js';
 import type { GrantedKey } from './wallet/grant.js';
 import type { Wallet } from './wallet/wallet.js';
 
 /**
- * State every screen reads and writes.
+ * State every screen reads, held in one store.
  *
  * The client is one page with one socket and one set of elements, so these are
- * module singletons rather than objects threaded through every call. `dom` and
+ * module singletons rather than objects threaded through every call. `app` is
+ * the store's state, read-only: actions change it with `store.set`, and each
+ * screen subscribes its renderers to the keys they draw (see `store.ts`). `dom` and
  * `net` are ES-module live bindings: `initContext` assigns them once at boot,
  * and every module that imported them sees the assigned value from then on.
  * Nothing may read them before `start()` has run.
@@ -26,6 +32,12 @@ import type { Wallet } from './wallet/wallet.js';
 
 export interface AppState {
   wallet: Wallet | null;
+  /**
+   * The chain the wallet is on, mirrored from `wallet.chainId`: the wallet
+   * object stays the same across a network switch, so this is the key that
+   * tells subscribers it happened.
+   */
+  walletChainId: number;
   nonce: string;
   chainId: number;
   escrow: `0x${string}` | null;
@@ -48,19 +60,32 @@ export interface AppState {
   practiceReceiptSigner: `0x${string}` | null;
   /** Token payment through `ZapJoin`, or null when the server offers ETH only. */
   zap: ZapInfo | null;
+  /**
+   * The LMS fee discount and this wallet's LMS, read on the hub; null when
+   * governance has it off or the wallet is elsewhere.
+   */
+  discount: DiscountTerms | null;
   /** Spoke chains a wallet may stake from, each with its `SpokeRouter`. */
   spokes: SpokeInfo[];
+  /** True when the server submits signed withdrawals to a spoke. */
+  withdrawToChain: boolean;
+  /** The staked-lobby directory, as the server last sent it. */
+  lobbies: { open: readonly LobbyInfo[]; live: readonly LobbyInfo[] };
   /**
    * Lobbies this browser has staked into from a spoke whose stake has not yet
    * landed on the hub, by lowercased match id. Cleared by the server's
    * `crossChain` report, or by the seat showing up in the directory.
    */
-  inTransit: Set<string>;
+  inTransit: ReadonlySet<string>;
+  /** The tiers the server matchmakes; empty when it runs no matchmaker. */
+  matchmaking: readonly MatchmakingTier[];
+  /** This wallet's place in the matchmaking queue, or null when it is not in it. */
+  queue: QueueSpot | null;
   /**
    * Matchmade lobbies the server's queue put this wallet in, by lowercased
    * match id: the only matchmade lobbies it can take a seat in.
    */
-  matched: Set<string>;
+  matched: ReadonlySet<string>;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
   /** True when the server can write match analyses. */
@@ -71,15 +96,15 @@ export interface AppState {
    * arena: they can arrive before `Arena.mount` has resolved, and the arena is
    * rebuilt on every match switch.
    */
-  avatars: AvatarEntry[];
+  avatars: readonly AvatarEntry[];
   /** Earlier play styles of this table's wallets, by lowercased address. */
-  dossier: Map<string, PlayStyle>;
+  dossier: ReadonlyMap<string, PlayStyle>;
   you: number | null;
   deadline: number;
   /** Seats round 1 is still waiting to see connected. Empty once it has started. */
-  waitingFor: number[];
+  waitingFor: readonly number[];
   /** Action the player has selected but not yet sealed. */
-  draft: { action: ActionValue; target: number } | null;
+  draft: Readonly<{ action: ActionValue; target: number }> | null;
   /** Round whose commitment is already on the server. */
   committedRound: number | null;
   /** Round whose reveal is already on the server. */
@@ -98,8 +123,9 @@ export interface AppState {
   pendingFinish: Extract<ServerMessage, { type: 'finished' }> | null;
 }
 
-export const app: AppState = {
+export const store = createStore<AppState>({
   wallet: null,
+  walletChainId: 0,
   nonce: '',
   chainId: 0,
   escrow: null,
@@ -112,7 +138,12 @@ export const app: AppState = {
   practiceReceiptSigner: null,
   zap: null,
   spokes: [],
+  discount: null,
+  withdrawToChain: false,
+  lobbies: { open: [], live: [] },
   inTransit: new Set(),
+  matchmaking: [],
+  queue: null,
   matched: new Set(),
   staking: null,
   analyst: false,
@@ -127,7 +158,9 @@ export const app: AppState = {
   revealedRound: null,
   replaying: false,
   pendingFinish: null,
-};
+});
+
+export const app: Readonly<AppState> = store.state;
 
 export let dom: Dom;
 export let net: Net;

@@ -2,7 +2,14 @@ import { Assets, Circle, Container, Graphics, Sprite, Text, type Texture } from 
 import { chainInfo } from '@lms/protocol';
 import { gsap } from '../motion.js';
 import { AVATAR_RADIUS, AVATAR_SIZE, BADGE_Y, HP_ARC_RADIUS, SEAT_RADIUS, type Point } from './layout.js';
+import { TextureLeases } from './textures.js';
 import { BADGE, COLORS, FX, HP_LABEL, LABEL, SUBLABEL, hpColor } from './theme.js';
+
+/** Every seat's face, shared by URL and unloaded once no seat wears it. */
+const faces = new TextureLeases<Texture>(
+  (url) => Assets.load<Texture>(url),
+  (url) => Assets.unload(url),
+);
 
 /** Nameplate and status line, below the seat's HP arc. */
 const PLATE_Y = 56;
@@ -144,25 +151,36 @@ export class SeatToken {
    */
   async wear(url: string, owned: boolean): Promise<void> {
     if (this.avatarUrl === url || (this.avatarOwned && !owned)) return;
+    let texture: Texture;
     try {
-      const texture = await Assets.load<Texture>(url);
-      // An NFT may have arrived while the generated face was still loading.
-      if (this.root.destroyed || (this.avatarOwned && !owned)) return;
-      const sprite = new Sprite(texture);
-      sprite.anchor.set(0.5);
-      sprite.width = sprite.height = AVATAR_SIZE;
-      this.avatar.removeChildren();
-      this.avatar.addChild(sprite);
-      this.avatarUrl = url;
-      this.avatarOwned = owned;
+      texture = await faces.acquire(url);
     } catch {
       // Keep the current face; the seat is still fully playable.
+      faces.release(url);
+      return;
     }
+    // Destroyed while it loaded, or an NFT arrived while the generated face
+    // was still loading: the lease goes straight back.
+    if (this.root.destroyed || (this.avatarOwned && !owned) || this.avatarUrl === url) {
+      faces.release(url);
+      return;
+    }
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5);
+    sprite.width = sprite.height = AVATAR_SIZE;
+    for (const old of this.avatar.removeChildren()) old.destroy();
+    this.avatar.addChild(sprite);
+    if (this.avatarUrl) faces.release(this.avatarUrl);
+    this.avatarUrl = url;
+    this.avatarOwned = owned;
   }
 
+  /** Removes the seat and hands back its face, which is unloaded if no other seat wears it. */
   destroy(): void {
     gsap.killTweensOf([this, this.halo, this.flash, this.token.scale]);
     this.root.destroy({ children: true });
+    if (this.avatarUrl) faces.release(this.avatarUrl);
+    this.avatarUrl = null;
   }
 
   /** Flashes and punches the token the moment HP drops, and lets the ghost arc trail. */

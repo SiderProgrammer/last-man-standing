@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES } from '@lms/protocol';
-import { balanceFailures, simulate } from '@lms/engine';
+import { balanceFailures, simulate } from '@lms/engine/sim';
 
 /**
  * A cheap guard on the default rules. `npm run sim` is the real measurement

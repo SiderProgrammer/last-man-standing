@@ -3,10 +3,9 @@ import {
   errorFirstLine,
   type AvatarCollectionInfo,
 } from '@lms/protocol';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
-import { renderPayWith } from '../screens/lobby.js';
 import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
@@ -21,21 +20,21 @@ export function wireWalletControls(): void {
   dom.connect.onclick = () => void connectWallet();
   dom.mintAvatar.onclick = () => void mintAvatar();
   dom.forgetSession.onclick = forgetGrant;
+
+  store.subscribe(['chainId', 'wallet', 'walletChainId', 'escrow', 'spokes'], renderHubLabel);
+  store.subscribe(['wallet', 'grantKey'], renderSessionPanel);
+  store.subscribe(['wallet', 'walletChainId', 'avatarCollections'], () => void renderAvatarPanel());
 }
 
 async function connectWallet(): Promise<void> {
   try {
     const devKey = import.meta.env.DEV ? import.meta.env.VITE_DEV_KEY : undefined;
-    app.wallet =
+    const wallet =
       Wallet.available() || !devKey
-        ? await Wallet.connect()
+        ? await Wallet.connect((chainId) => store.set({ walletChainId: chainId }))
         : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
-    app.grantKey = null;
-    renderHubLabel();
-    // The lobby's buttons depend on which chain the wallet turned out to be on.
-    renderPayWith();
-    renderSessionPanel();
-    void renderAvatarPanel();
+    wallet.hubChainId = app.chainId;
+    store.set({ wallet, walletChainId: wallet.chainId, grantKey: null });
     await authenticate();
   } catch (error) {
     console.error('[wallet]', error);
@@ -66,15 +65,13 @@ export async function authenticate(): Promise<void> {
     // every reconnect and every move until it expires.
     const stored = await GrantedKey.load(wallet.address, app.chainId);
     const key = stored ?? (await GrantedKey.create(wallet.address, app.chainId, (grant) => wallet.signGrant(grant)));
-    app.grantKey = key;
+    store.set({ grantKey: key });
     storedGrantPending = stored !== null;
     const signature = await key.signLogin(app.nonce);
     net.send({ type: 'auth', address: wallet.address, signature, grant: key.signed });
   } catch (error) {
     console.error('[auth]', error);
     toast(`Login signature failed: ${errorFirstLine(error)}`);
-  } finally {
-    renderSessionPanel();
   }
 }
 
@@ -93,7 +90,7 @@ export function onLoginRejected(): boolean {
   if (!storedGrantPending) return false;
   storedGrantPending = false;
   const wallet = app.wallet;
-  app.grantKey = null;
+  store.set({ grantKey: null });
   toast('Session key rejected — asking your wallet for a new one.');
   // Forgotten first, or the login would load the same key straight back.
   void (wallet ? GrantedKey.forget(wallet.address, app.chainId) : Promise.resolve()).then(authenticate);
@@ -206,8 +203,6 @@ export function renderSessionPanel(): void {
 function forgetGrant(): void {
   const wallet = app.wallet;
   if (wallet) void GrantedKey.forget(wallet.address, app.chainId);
-  app.grantKey = null;
-  renderSessionPanel();
-  void refreshOneClick();
+  store.set({ grantKey: null });
   toast('Session key forgotten. Your next login asks your wallet for a new one.');
 }

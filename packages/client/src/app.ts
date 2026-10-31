@@ -1,16 +1,11 @@
 import { DEFAULT_SERVER_PORT, MatchPhase, type ServerMessage } from '@lms/protocol';
-import { loadAssets } from './assets/loader.js';
-import { app, dom, initContext, net } from './context.js';
+import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { onCrossChain, onMatched, renderLobbies, renderPayWith, wireLobbyControls } from './screens/lobby.js';
-import { renderStakingPanel, wireStakingControls } from './screens/staking.js';
-import {
-  governanceVisible,
-  renderGovernance,
-  renderGovernanceNav,
-  wireGovernanceControls,
-} from './screens/governance.js';
+import { onCrossChain, onLobbies, onMatched, wireLobbyControls } from './screens/lobby.js';
+import { onDequeued, onQueued, wireQueueControls } from './screens/queue.js';
+import { refreshStaking, wireStakingPanel } from './screens/stakingPanel.js';
+import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
   onAvatars,
   onDossier,
@@ -38,13 +33,10 @@ import {
   authenticate,
   onAuthed,
   onLoginRejected,
-  renderAvatarPanel,
-  renderHubLabel,
-  renderSessionPanel,
   wireWalletControls,
 } from './wallet/flows.js';
-import { renderWinnings, wirePayoutControls } from './wallet/payouts.js';
-import { onRelayError, onRelayed, renderOneClickPanel, wireOneClickControls } from './wallet/oneClick.js';
+import { onBalance, renderWinnings, wirePayoutControls } from './wallet/payouts.js';
+import { onRelayError, onRelayed, wireOneClickControls } from './wallet/oneClick.js';
 
 const SERVER_URL = import.meta.env.VITE_WS_URL ?? `ws://${location.hostname}:${DEFAULT_SERVER_PORT}`;
 
@@ -67,25 +59,31 @@ export function start(): void {
 
   // In parallel with everything below: the loading screen covers the page
   // until the arena's textures are cached, while the socket connects behind it.
-  void loadAssets(showLoadProgress).then(hideLoader);
+  // The loader is Pixi's, which the lobby never needs, so it is fetched as a
+  // chunk of its own; one that fails to arrive costs the textures, not the page.
+  void import('./assets/loader.js')
+    .then(({ loadAssets }) => loadAssets(showLoadProgress))
+    .catch((error: unknown) => console.warn('[assets] could not load the arena', error))
+    .then(hideLoader);
 
   net.on(onServerMessage);
   net.connect();
   wireWalletControls();
   wireOneClickControls();
   wireLobbyControls();
+  wireQueueControls();
   wireMatchControls();
   wirePayoutControls();
   wireResultControls(httpOrigin(SERVER_URL));
   wireHelpControls();
   wireHistoryControls();
-  wireStakingControls();
-  wireGovernanceControls(httpOrigin(SERVER_URL));
+  wireStakingPanel();
+  wireGovernanceNav(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
   // Keeps the unstake countdown and the share price current while the page is open.
   setInterval(() => {
-    if (app.wallet && app.staking) void renderStakingPanel();
-    if (governanceVisible()) void renderGovernance();
+    refreshStaking();
+    refreshGovernance();
   }, 30_000);
 }
 
@@ -93,25 +91,26 @@ export function start(): void {
 function onServerMessage(message: ServerMessage): void {
   switch (message.type) {
     case 'hello':
-      app.nonce = message.nonce;
-      app.chainId = message.chainId;
-      app.escrow = message.escrow;
-      app.avatarCollections = message.avatarCollections;
-      app.sessionDelegate = message.sessionDelegate;
-      app.relayQuota = message.relayQuota;
-      app.receiptSigner = message.receiptSigner;
-      app.practiceReceiptSigner = message.practiceReceiptSigner;
-      app.zap = message.zap;
-      app.spokes = message.spokes ?? [];
-      app.staking = message.staking;
-      app.analyst = message.analyst ?? false;
-      renderPayWith();
-      renderHubLabel();
-      renderSessionPanel();
-      renderOneClickPanel();
-      void renderAvatarPanel();
-      void renderStakingPanel();
-      renderGovernanceNav();
+      if (app.wallet) app.wallet.hubChainId = message.chainId;
+      // Every panel that shows any of this is subscribed to it.
+      store.set({
+        nonce: message.nonce,
+        chainId: message.chainId,
+        escrow: message.escrow,
+        avatarCollections: message.avatarCollections,
+        sessionDelegate: message.sessionDelegate,
+        relayQuota: message.relayQuota,
+        receiptSigner: message.receiptSigner,
+        practiceReceiptSigner: message.practiceReceiptSigner,
+        zap: message.zap,
+        spokes: message.spokes,
+        staking: message.staking,
+        analyst: message.analyst,
+        matchmaking: message.matchmaking,
+        withdrawToChain: message.withdrawToChain,
+        // A new connection: the server let the old one's place in the queue go.
+        queue: null,
+      });
       break;
 
     case 'authed':
@@ -122,8 +121,8 @@ function onServerMessage(message: ServerMessage): void {
       net.send({ type: 'lobbies' });
       requestHistory();
       void renderWinnings();
-      void renderStakingPanel();
-      if (governanceVisible()) void renderGovernance();
+      refreshStaking();
+      refreshGovernance();
       // A reconnect drops the socket, not the seat: ask to be re-attached to the
       // match that is still running on the server.
       if (app.match && app.match.phase !== MatchPhase.Finished) {
@@ -132,7 +131,7 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'lobbies':
-      renderLobbies(message.open, message.live);
+      onLobbies(message.open, message.live);
       break;
 
     case 'state':
@@ -191,13 +190,16 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'matched':
+      onDequeued();
       onMatched(message);
       break;
 
-    // The queue's own screen comes with the matchmaking UI; until then the
-    // only news worth showing is a table being ready.
     case 'queued':
+      onQueued(message);
+      break;
+
     case 'dequeued':
+      onDequeued();
       break;
 
     case 'analysis.step':
@@ -214,6 +216,10 @@ function onServerMessage(message: ServerMessage): void {
 
     case 'relayed':
       onRelayed(message);
+      break;
+
+    case 'balance':
+      onBalance(message);
       break;
 
     case 'relay.error':

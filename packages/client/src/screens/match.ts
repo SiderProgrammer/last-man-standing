@@ -13,15 +13,16 @@ import {
   type ActionValue,
   type MatchResult,
   type MovePlace,
+  type PlayStyle,
   type PublicMatchState,
   type SealedMove,
   type ServerMessage,
 } from '@lms/protocol';
 import { verifyTypedData } from 'viem';
 import { describeRound } from '@lms/engine';
-import { Arena } from '../arena/arena.js';
-import { app, dom, net } from '../context.js';
-import { phasePlan } from '../game/phase.js';
+import type { Arena } from '../arena/arena.js';
+import { app, dom, net, store, type AppState } from '../context.js';
+import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
@@ -39,9 +40,34 @@ import type { GrantedKey } from '../wallet/grant.js';
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
  * the replay hold between rounds, and the history feed.
+ *
+ * Server messages, clicks and the replay timer are actions: they change the
+ * store, and they alone send anything — a commit, a reveal. The renderers
+ * below subscribe to the store and only draw.
  */
 
 let arena: Arena | null = null;
+/**
+ * The arena while it mounts: its module (Pixi, most of the bundle) loads on
+ * demand, so the first renders of a match can arrive before it is ready, and
+ * they must share one canvas rather than each make their own.
+ */
+let mounting: Promise<Arena> | null = null;
+
+/**
+ * Destroys the arena: its canvas and WebGL context, its seats and the faces
+ * they wore, its effects. Each match gets a fresh one, so nothing of the last
+ * table — a seat, a texture, a tween — outlives it. One still mounting is
+ * destroyed as soon as it is ready.
+ */
+function disposeArena(): void {
+  const current = arena;
+  const pending = mounting;
+  arena = null;
+  mounting = null;
+  if (current) current.destroy();
+  else void pending?.then((mounted) => mounted.destroy());
+}
 /** Ends the current replay hold. Owned here, not by the renderer, so the
  *  controls still unlock if the canvas never managed to mount. */
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -57,7 +83,7 @@ let timerTotal = 1;
 
 export function onRound(message: Extract<ServerMessage, { type: 'round' }>): void {
   // The history grows here: deltas never carry it.
-  if (app.match) app.match = withRound(app.match, message.record);
+  if (app.match) store.set({ match: withRound(app.match, message.record) });
   appendRound(message.lines, message.record.round, message.record.eliminated);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
@@ -66,7 +92,7 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
 }
 
 export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
-  if (app.replaying) app.pendingFinish = message;
+  if (app.replaying) store.set({ pendingFinish: message });
   else showFinished(message);
 }
 
@@ -95,15 +121,13 @@ export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt
 
 export function onDossier(message: Extract<ServerMessage, { type: 'dossier' }>): void {
   if (message.matchId !== app.match?.matchId) return;
-  app.dossier = new Map(message.entries.map((entry) => [entry.address.toLowerCase(), entry.style]));
-  renderReads(app.match, app.you);
+  store.set({ dossier: new Map(message.entries.map((entry) => [entry.address.toLowerCase(), entry.style])) });
 }
 
 export function onAvatars(message: Extract<ServerMessage, { type: 'avatars' }>): void {
   // Late by design: the match is already running by the time these resolve.
   if (message.matchId !== app.match?.matchId) return;
-  app.avatars = message.entries;
-  arena?.setAvatars(message.entries);
+  store.set({ avatars: message.entries });
 }
 
 function startReplay(replayMs: number): void {
@@ -114,23 +138,20 @@ function startReplay(replayMs: number): void {
     endReplay();
     return;
   }
-  app.replaying = true;
-  if (app.match) syncPhase(app.match);
+  store.set({ replaying: true });
   replayTimer = setTimeout(endReplay, replayMs);
 }
 
 /**
- * Re-runs the phase plan when the hold ends. Nothing else would: the next
- * snapshot arrived back when the round resolved, so without this the controls
- * would stay closed until something unrelated pushed a state.
+ * Ends the hold: the controls reopen, and a reveal that came due while the
+ * last round played is sent now. Nothing else would do either: the next
+ * snapshot arrived back when the round resolved.
  */
 function endReplay(): void {
   replayTimer = null;
-  app.replaying = false;
-  if (app.match) syncPhase(app.match);
-
   const finished = app.pendingFinish;
-  app.pendingFinish = null;
+  store.set({ replaying: false, pendingFinish: null });
+  revealIfDue();
   if (finished) showFinished(finished);
 }
 
@@ -158,7 +179,7 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
  */
 export function showReview(review: Review, result: MatchResult): void {
   // Forgotten first, so reopening the match already on screen starts clean too.
-  app.match = null;
+  store.set({ match: null });
   onState(review.state, review.you, 0);
   for (const record of review.state.history) {
     appendRound(describeRound(record), record.round, record.eliminated);
@@ -193,61 +214,81 @@ export function onState(
   waitingFor: readonly number[] = [],
 ): void {
   const switched = app.match?.matchId !== state.matchId;
-  app.match = state;
-  app.you = you;
-  app.deadline = deadline;
-  app.waitingFor = [...waitingFor];
-
   if (switched) {
-    app.committedRound = null;
-    app.revealedRound = null;
-    app.draft = null;
-    app.avatars = [];
-    app.dossier = new Map();
     // A replay from the previous match must not close this one's controls.
     if (replayTimer) clearTimeout(replayTimer);
     replayTimer = null;
-    app.replaying = false;
-    app.pendingFinish = null;
+    disposeArena();
     dom.feed.replaceChildren();
     hideResult();
     resetAnalysis();
     showMatchScreen();
   }
+  const committedRound = switched ? null : app.committedRound;
+  store.set({
+    ...(switched
+      ? {
+          committedRound: null,
+          revealedRound: null,
+          avatars: [],
+          dossier: new Map<string, PlayStyle>(),
+          replaying: false,
+          pendingFinish: null,
+        }
+      : {}),
+    match: state,
+    you,
+    deadline,
+    waitingFor: [...waitingFor],
+    draft: keptDraft(state, you, switched ? null : app.draft, committedRound),
+  });
+  revealIfDue();
+}
 
-  void renderArena(state, you);
-  renderTargets(state, you);
-  renderReads(state, you);
-  syncPhase(state);
+/**
+ * The draft carried into a new snapshot. It is kept from round to round so a
+ * player can lock in the same move again, but one the cooldowns now rule out
+ * is dropped — it would be sealed, rejected at reveal, and cost the round —
+ * and a strike on a seat since eliminated moves to whoever the target picker
+ * now leads with, so the move on screen is always the move that would be
+ * sealed.
+ */
+function keptDraft(
+  state: PublicMatchState,
+  you: number | null,
+  draft: AppState['draft'],
+  committedRound: number | null,
+): AppState['draft'] {
+  if (!draft || committedRound === state.round) return draft;
+  const me = you === null ? undefined : state.players.find((player) => player.index === you);
+  if (me && !isLegalAction(draft.action, me)) return null;
+  if (draft.action !== Action.Strike) return draft;
+  const targets = targetOptions(state, you).map(([value]) => Number(value));
+  return targets.includes(draft.target) ? draft : { ...draft, target: targets[0] ?? 0 };
 }
 
 // ------------------------------------------------------------ commit & reveal
 
-/**
- * Drives the player's half of the commit-reveal handshake.
- *
- * The reveal is sent automatically the moment the server opens the window: the
- * player already chose in the commit phase, and making them click twice would
- * only produce accidental no-shows.
- */
-function syncPhase(state: PublicMatchState): void {
-  dropIllegalDraft(state);
-  const plan = phasePlan(state, {
+/** The phase plan for the match on screen, as the store has it now. */
+function currentPlan(state: PublicMatchState): PhasePlan {
+  return phasePlan(state, {
     you: app.you,
     committedRound: app.committedRound,
     revealedRound: app.revealedRound,
     draft: app.draft,
     replaying: app.replaying,
   });
+}
 
-  renderPhaseLabel(plan.label);
-  setActionsEnabled(plan.actionsEnabled);
-  dom.lockIn.disabled = plan.lockInDisabled;
-  if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
-  renderMove();
-  // The send stays exactly where it was in the sequence; it is simply no longer
-  // buried inside the predicate that decides it.
-  if (plan.shouldReveal) revealNow(state);
+/**
+ * Sends this round's reveal if it is due: the moment the server opens the
+ * window, because the player already chose in the commit phase, and making
+ * them click twice would only produce accidental no-shows. An action, run
+ * after each new snapshot and when a replay hold ends; no render sends it.
+ */
+function revealIfDue(): void {
+  const state = app.match;
+  if (state && currentPlan(state).shouldReveal) revealNow(state);
 }
 
 function lockIn(): void {
@@ -268,11 +309,8 @@ function lockIn(): void {
 
   const place = { matchId: state.matchId, round: state.round, seat: app.you };
   void sendCommit(key, place, sealed, dom.holdMoves.checked);
-  app.committedRound = state.round;
-  dom.lockIn.disabled = true;
-  setActionsEnabled(false);
+  store.set({ committedRound: state.round });
   dom.moveStatus.textContent = `Sealed: ${describeDraft(draft)}`;
-  renderMove();
   // A stamp: the button punches down and springs back as the move seals.
   gsap.fromTo(dom.lockIn, { scale: 0.94 }, { scale: 1, duration: 0.45, ease: 'elastic.out(1, 0.45)' });
   dom.movePanel.classList.remove('sealing');
@@ -318,7 +356,7 @@ function revealNow(state: PublicMatchState): void {
     dom.moveStatus.textContent = 'No session key to sign the reveal — log in again.';
     return;
   }
-  app.revealedRound = state.round;
+  store.set({ revealedRound: state.round });
   dom.moveStatus.textContent = 'Revealed. Resolving…';
   void sendReveal(key, { matchId: state.matchId, round: state.round, seat: app.you }, {
     action: stored.action,
@@ -346,25 +384,51 @@ async function sendReveal(key: GrantedKey, place: MovePlace, move: SealedMove): 
 }
 
 // ------------------------------------------------------------------ rendering
+//
+// Each of these redraws from the store and sends nothing. They are
+// subscribed in `wireMatchControls`, in the order they must run: the table
+// first, because the controls read the target picker it fills.
 
-async function renderArena(state: PublicMatchState, you: number | null): Promise<void> {
-  const mounting = arena === null;
-  arena ??= await Arena.mount(dom.arena);
-  arena.onPick ??= pickTarget;
-  arena.render(state, you);
-  renderMove();
-  // Avatars for this match may have landed while the canvas was still being
-  // created, in which case nothing has handed them to the arena yet.
-  if (mounting && app.avatars.length > 0) arena.setAvatars(app.avatars);
+/** The arena and the target picker: what the table looks like. */
+function renderTable(): void {
+  const state = app.match;
+  if (!state) return;
+  void renderArena(state, app.you);
+  fillSelect(dom.target, targetOptions(state, app.you));
+  if (app.draft?.action === Action.Strike) dom.target.value = String(app.draft.target);
 }
 
-function renderTargets(state: PublicMatchState, you: number | null): void {
-  fillSelect(dom.target, targetOptions(state, you));
-  // A target that has since been eliminated falls back to whoever the picker
-  // now shows, so the move on screen is always the move that would be sealed.
-  if (app.draft?.action === Action.Strike && dom.target.value !== String(app.draft.target)) {
-    app.draft.target = Number(dom.target.value || 0);
+async function renderArena(state: PublicMatchState, you: number | null): Promise<void> {
+  if (!arena) {
+    const pending = (mounting ??= mountArena());
+    const mounted = await pending;
+    // Disposed while it mounted: the match it was for is gone.
+    if (mounting !== pending) return;
+    arena = mounted;
+    arena.onPick = pickTarget;
+    // Avatars for this match may have landed while the canvas was still
+    // being created, in which case nothing has handed them to the arena yet.
+    if (app.avatars.length > 0) arena.setAvatars(app.avatars);
   }
+  arena.render(state, you);
+  renderMove();
+}
+
+async function mountArena(): Promise<Arena> {
+  const { Arena } = await import('../arena/arena.js');
+  return Arena.mount(dom.arena);
+}
+
+/** The phase heading, the move buttons, the lock-in button and the status line. */
+function renderControls(): void {
+  const state = app.match;
+  if (!state) return;
+  const plan = currentPlan(state);
+  renderPhaseLabel(plan.label);
+  setActionsEnabled(plan.actionsEnabled);
+  dom.lockIn.disabled = plan.lockInDisabled;
+  if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
+  renderMove();
 }
 
 /**
@@ -381,7 +445,9 @@ function renderMove(): void {
   dom.movePanel.classList.toggle('sealed', sealed && !finished);
   dom.targetRow.classList.toggle('hidden', !striking || finished);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    button.setAttribute('aria-pressed', String(actionOf(button) === draft?.action));
+    const chosen = actionOf(button) === draft?.action;
+    button.setAttribute('aria-pressed', String(chosen));
+    button.classList.toggle('selected', chosen);
   }
 
   dom.lockIn.textContent = lockInLabel(finished, sealed, draft);
@@ -410,7 +476,7 @@ function renderMove(): void {
   arena?.setAim(app.you !== null ? draft : null, sealed, controlsOpen ? options : []);
 }
 
-function lockInLabel(finished: boolean, sealed: boolean, draft: typeof app.draft): string {
+function lockInLabel(finished: boolean, sealed: boolean, draft: AppState['draft']): string {
   if (finished) return 'Match over';
   if (sealed) return '✓ Move sealed';
   if (!controlsOpen) return 'Lock in move';
@@ -421,9 +487,7 @@ function lockInLabel(finished: boolean, sealed: boolean, draft: typeof app.draft
 function pickTarget(seat: number): void {
   if (!controlsOpen) return;
   if (![...dom.target.options].some((option) => option.value === String(seat))) return;
-  dom.target.value = String(seat);
-  const strike = dom.actionBar.querySelector<HTMLButtonElement>(`[data-action="${Action.Strike}"]`);
-  if (strike) selectAction(Action.Strike, strike);
+  selectAction(Action.Strike, seat);
 }
 
 /** "Round 3 — commit" as the round, plus a coloured chip for the phase. */
@@ -441,7 +505,10 @@ function renderPhaseLabel(label: string): void {
   dom.phaseLabel.replaceChildren(round ?? '', chip);
 }
 
-function renderReads(state: PublicMatchState, you: number | null): void {
+function renderReads(): void {
+  const state = app.match;
+  const you = app.you;
+  if (!state) return;
   const reads = readOpponents(state, you, app.dossier);
   // A regular's record is worth showing before the first round, too.
   if (reads.length === 0 || (state.history.length === 0 && app.dossier.size === 0)) {
@@ -555,12 +622,19 @@ export function wireMatchControls(): void {
   dom.holdMoves.checked = readRaw(HOLD_KEY) === '1';
   dom.holdMoves.onchange = () => writeRaw(HOLD_KEY, dom.holdMoves.checked ? '1' : '0');
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
-    button.onclick = () => selectAction(actionOf(button), button);
+    button.onclick = () => selectAction(actionOf(button));
   }
 
   dom.target.onchange = () => {
-    if (app.draft) app.draft.target = Number(dom.target.value);
+    if (app.draft) store.set({ draft: { ...app.draft, target: Number(dom.target.value) } });
   };
+
+  store.subscribe(['match', 'you'], renderTable);
+  store.subscribe(['match', 'you', 'dossier'], renderReads);
+  store.subscribe(['match', 'you', 'draft', 'committedRound', 'revealedRound', 'replaying'], renderControls);
+  store.subscribe(['avatars'], () => arena?.setAvatars(app.avatars));
+  // Leaving the finished match for the lobby: nothing on its table is needed again.
+  dom.resultBack.addEventListener('click', disposeArena);
 
   dom.lockIn.onclick = lockIn;
 
@@ -580,17 +654,12 @@ export function wireMatchControls(): void {
   });
 }
 
-function selectAction(action: ActionValue, button: HTMLButtonElement): void {
-  for (const other of dom.actionBar.querySelectorAll('.action')) other.classList.remove('selected');
-  button.classList.add('selected');
-
-  const needsTarget = action === Action.Strike;
-  dom.targetRow.classList.toggle('hidden', !needsTarget);
-  const target = needsTarget ? Number(dom.target.value || 0) : 0;
-  app.draft = { action, target };
-  dom.lockIn.disabled = app.committedRound === app.match?.round;
-  dom.moveStatus.textContent = `Ready: ${describeDraft(app.draft)} — Enter to lock in`;
-  renderMove();
+/** Picks a move: a strike on `seat`, or on whoever the target picker shows. */
+function selectAction(action: ActionValue, seat?: number): void {
+  const target = action === Action.Strike ? (seat ?? Number(dom.target.value || 0)) : 0;
+  const draft = { action, target };
+  store.set({ draft });
+  dom.moveStatus.textContent = `Ready: ${describeDraft(draft)} — Enter to lock in`;
 }
 
 function clickAction(action: ActionValue): void {
@@ -648,19 +717,6 @@ function setActionsEnabled(enabled: boolean): void {
 function cooldownReason(action: ActionValue, charged: boolean): string {
   if (action === Action.Guard) return 'You guarded last round — Guard is on cooldown';
   return charged ? 'Your Charge is already loaded — Strike to spend it' : 'You charged last round — Charge is on cooldown';
-}
-
-/**
- * A draft is kept from round to round so a player can lock in the same move
- * again; one the cooldowns now rule out is dropped instead, or it would be
- * sealed, rejected at reveal, and cost the player the round.
- */
-function dropIllegalDraft(state: PublicMatchState): void {
-  const me = yourSeat(state);
-  if (!app.draft || !me || isLegalAction(app.draft.action, me)) return;
-  if (app.committedRound === state.round) return;
-  app.draft = null;
-  for (const button of dom.actionBar.querySelectorAll('.action')) button.classList.remove('selected');
 }
 
 function lockControls(reason: string): void {

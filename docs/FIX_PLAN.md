@@ -9,9 +9,9 @@ Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 
 `design-rework-phase-2-core-contracts`, Phase 3 on
 `design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
 Phase 5 on `design-rework-phase-5-sessions`, Phase 6 on
-`design-rework-phase-6-cross-chain`, and Phase 7 on `design-rework-phase-7-server`, each
-building on the last. Nothing after that is, except the Privy check in 5.1 and the live
-Across testnet deposit in 6.1.
+`design-rework-phase-6-cross-chain`, Phase 7 on `design-rework-phase-7-server`, and
+Phase 8 on `design-rework-phase-8-client`, each building on the last. Nothing after that
+is, except the Privy check in 5.1 and the live Across testnet deposit in 6.1.
 
 ---
 
@@ -462,6 +462,44 @@ died under. Where it differs from the table:
 ---
 
 ## Phase 8: Client
+
+**Done**, one commit per step, 8.5 in four (the queue, vesting, the fee discount,
+withdrawing to a spoke). Where it differs from the table:
+- 8.1: every write names its chain, and the wallet is put on it first: an injected
+  wallet is asked to switch, adding the chain if it has never seen it (the shared chain
+  table now carries a public RPC per chain); a burner, which signs for one node, is
+  refused with both chains named. That covers every hub write, not only `join` and
+  `createMatch`. A join from a spoke names the spoke, a mint the chain the wallet is on.
+  The client follows `chainChanged`. Tested with a fake EIP-1193 wallet; no extension
+  was driven.
+- 8.2: a typed store of our own (`store.ts`, `set` and per-key `subscribe`), not Preact
+  Signals. The reveal is sent by the actions that can make it due, a new snapshot and
+  the end of a replay hold. Fixing up the draft for a new snapshot and pruning landed
+  stakes moved out of rendering too, and the lobby directory is in the store.
+- 8.3: the main bundle went from 978 kB to 413 kB (283 to 134 kB gzipped), now mostly
+  viem. On demand: the arena with Pixi, the asset loader, the governance screen, the
+  staking panel and token payment, plus the fee discount and collecting to a spoke from
+  8.5. Each screen's contract calls left `Wallet` for a module of its own, and
+  `gen-abis` writes one module per contract behind `abis.ts`, because a bundler puts a
+  whole module in one chunk. `@lms/engine` is the kernel, matches, replay and audit;
+  bots and the simulator are `@lms/engine/bots` and `@lms/engine/sim`.
+- 8.4: an arena lives for one match, destroyed on a match switch and on "Back to
+  lobby"; seat faces are leased by URL (`arena/textures.ts`) and unloaded once no seat
+  wears them. Checked in a browser: two practice matches back to back, one canvas each,
+  none and no cached faces in the lobby between them.
+- 8.5: the verification result and the Dispute button are Phase 4's, and the bridge join
+  Phase 6's; neither changed. New: a matchmaking panel; a vesting line with Release in
+  the staking panel, reading one `trancheOf` per ended epoch; an option to pay part of a
+  fee in LMS, priced by `quoteLmsDiscount` and paid with a permit through
+  `joinWithLmsPermit`, always the player's own transaction. Withdrawing to a spoke
+  needed the server half 6.4 left for here: `balance` and `withdrawToChain` frames,
+  `ChainWithdrawals` submitting from the session relayer's key, one sender for that key
+  and one `DailyQuota` shared with one-click calls, and `hello.withdrawToChain`.
+  `npm run dev:fork` now gives the server a relayer key and fills deposits both ways.
+  Checked there in a browser: a hub refund collected from the spoke and filled, a join
+  with the fee discount, and the queue. **Not checked against a chain:** releasing
+  vested LMS, which needs an ended epoch with claims (view and reads unit-tested), and a
+  withdrawal over Across's real testnet.
 
 | Step | Work | Findings |
 |---|---|---|

@@ -166,7 +166,9 @@ plain local account standing in for the embedded wallet.
 The server relays only when `SESSION_RELAYER_PK` is set, and refuses a relayed
 call that is outside the session's scope, comes from an account delegated
 anywhere else, would revert, or is over the wallet's `RELAY_QUOTA_PER_DAY`. The
-client then falls back to the wallet's own transaction.
+client then falls back to the wallet's own transaction. The same key submits
+a player's signed withdrawal of their hub balance to a spoke, within the same
+quota, so a player who staked from a spoke never needs gas on the hub.
 
 ERC-4337 (`validateUserOp`), so that smart wallets get one-click play too, is a
 stretch goal and not built.
@@ -191,7 +193,7 @@ two coincide.
 | Matchmaker | The server's `MATCHMAKER_PK`, named in `ProtocolConfig` | Opens matchmade lobbies with the roster its queue put together: who plays whom in every lobby that earns play-mining. | Hold a stake, seat anyone off the roster, or sign a result. |
 | Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
 | Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
-| Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, or exceed a session's caps. |
+| Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, and players' signed withdrawals to a spoke, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, exceed a session's caps, or bridge a balance anywhere its owner did not sign for. |
 
 The server's four keys are four addresses: it refuses to start if two of them
 are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
@@ -326,7 +328,7 @@ npm test                    # TypeScript: protocol, engine, server, client — i
 npm run typecheck           # whole monorepo, strict — including every test file
 npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
-npm run abis                # regenerate packages/protocol/src/chain/abis.ts after a contract change
+npm run abis                # regenerate packages/protocol/src/chain/abis/ after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```

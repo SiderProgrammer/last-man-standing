@@ -1,14 +1,14 @@
 import {
+  BaseError,
   createPublicClient,
   createWalletClient,
   custom,
   encodeFunctionData,
-  erc20Abi,
   formatEther,
   http,
   parseEther,
-  parseSignature,
   type Address,
+  type Chain,
   type Hex,
   type LocalAccount,
   type PublicClient,
@@ -18,53 +18,31 @@ import {
 import type { ChainRecord } from '@lms/engine';
 import { privateKeyToAccount } from 'viem/accounts';
 import { DEV_RPC_URL } from '../csp.js';
-import type { PlayRewards, StakingPosition } from '../ui/staking.js';
-import type { ProposalLive } from '../ui/governance.js';
-import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
+import { WrongChainError, viemChain } from './chains.js';
 import {
   AUTH_PREFIX,
   ZERO_ADDRESS,
-  ProposalState,
-  claimableEpochRange,
-  descriptionHash,
   grantTypedData,
   isDelegatedTo,
-  rewardsDistributorAbi,
   gameEscrowAbi,
-  lmsGovernorAbi,
-  protocolConfigAbi,
-  lmsTokenAbi,
   playerAvatarsAbi,
-  stakedLmsAbi,
   sessionKeyDelegateAbi,
   spokeRouterAbi,
-  v4QuoterAbi,
-  zapJoinAbi,
-  type ProposalStateValue,
   type SessionGrant,
-  type ProtocolParams,
-  type ProposalSummary,
-  type VoteSupportValue,
-  type ZapPathKey,
   type BridgeQuote,
 } from '@lms/protocol';
 
-/**
- * `approve` with no return value.
- *
- * USDT and a handful of older tokens return nothing from `approve`, and a
- * simulation against the standard ABI then fails decoding a `bool` that was
- * never sent. Ignoring the return value is what `SafeERC20` does on-chain; a
- * token that actually refuses the approval still reverts.
- */
-
-/** How long a staking permit signature stays valid, in seconds. */
-const PERMIT_SECONDS = 10 * 60;
+/** How long an EIP-2612 permit signature stays valid, in seconds. */
+export const PERMIT_SECONDS = 10 * 60;
 
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   on?(event: string, handler: (...args: never[]) => void): void;
+  removeListener?(event: string, handler: (...args: never[]) => void): void;
 }
+
+/** Stops the last connected wallet hearing about chain switches. */
+let watching: (() => void) | null = null;
 
 declare global {
   interface Window {
@@ -89,24 +67,48 @@ export interface SpokeRoute {
  * else — it cannot authorise a transfer.
  */
 export class Wallet {
+  /**
+   * The chain the escrow and everything around it live on, as the server's
+   * `hello` names it. Every write goes there except a join from a spoke and
+   * minting an avatar, which happen on the chain the wallet is on.
+   */
+  hubChainId = 0;
+
   private constructor(
     readonly address: Address,
-    readonly chainId: number,
+    /** Where the wallet is now; an injected one reports every switch. */
+    private current: number,
     /**
      * The injected path passes a bare address, which viem routes back to the
      * provider. The burner passes a local account, which signs in-process — the
      * distinction matters because a burner has no RPC to sign through.
      */
-    private readonly account: Address | LocalAccount,
-    private readonly wallet: WalletClient,
-    private readonly rpc: PublicClient,
+    readonly signer: Address | LocalAccount,
+    /**
+     * Signs and sends. Public, with `rpc`, `signer` and `onHub`, for the
+     * wallet modules loaded with their screens (`staking.ts`,
+     * `governance.ts`, `zap.ts`), which keep their contracts' ABIs out of the
+     * main bundle; everything else goes through the methods here.
+     */
+    readonly client: WalletClient,
+    /** Reads, through the wallet's own node. */
+    readonly rpc: PublicClient,
   ) {}
+
+  /** The chain the wallet is on. */
+  get chainId(): number {
+    return this.current;
+  }
 
   static available(): boolean {
     return typeof window !== 'undefined' && Boolean(window.ethereum);
   }
 
-  static async connect(): Promise<Wallet> {
+  /**
+   * Connects the injected wallet. `onChainChanged` hears every network switch,
+   * made here or in the wallet itself, so what the page shows follows it.
+   */
+  static async connect(onChainChanged: (chainId: number) => void = () => {}): Promise<Wallet> {
     const provider = window.ethereum;
     if (!provider) throw new Error('No EIP-1193 wallet found. Install MetaMask or Rabby.');
 
@@ -116,9 +118,17 @@ export class Wallet {
 
     const [address] = await wallet.requestAddresses();
     if (!address) throw new Error('Wallet returned no accounts');
-    const chainId = await rpc.getChainId();
+    const connected = new Wallet(address, await rpc.getChainId(), address, wallet, rpc);
 
-    return new Wallet(address, chainId, address, wallet, rpc);
+    // One listener per provider: connecting again hands it to the new wallet.
+    watching?.();
+    const listener = (hex: string) => {
+      connected.current = Number(hex);
+      onChainChanged(connected.current);
+    };
+    provider.on?.('chainChanged', listener);
+    watching = () => provider.removeListener?.('chainChanged', listener);
+    return connected;
   }
 
   /**
@@ -162,15 +172,52 @@ export class Wallet {
    * logins and moves for this wallet until the grant expires.
    */
   signGrant(grant: SessionGrant): Promise<Hex> {
-    return this.wallet.signTypedData({ account: this.account, ...grantTypedData(grant) });
+    return this.client.signTypedData({ account: this.signer, ...grantTypedData(grant) });
   }
 
   /** Signs the server's login nonce. Plain personal_sign, no typed data needed. */
   signLogin(nonce: string): Promise<Hex> {
-    return this.wallet.signMessage({
-      account: this.account,
+    return this.client.signMessage({
+      account: this.signer,
       message: `${AUTH_PREFIX}${nonce}`,
     });
+  }
+
+  /**
+   * Puts the wallet on `chainId`, or throws `WrongChainError`.
+   *
+   * An injected wallet is asked to switch, and to add the chain first if it
+   * has never seen it. A wallet that signs in-process is bound to its node,
+   * so it can only be refused. Called before anything is simulated: against
+   * the wrong chain a simulation fails with something like "no code at
+   * address", which says nothing useful.
+   */
+  async ensureChain(chainId: number): Promise<void> {
+    if (this.current === chainId) return;
+    if (typeof this.signer !== 'string') {
+      throw new WrongChainError(this.current, chainId, 'This wallet signs on one network only.');
+    }
+    const chain = viemChain(chainId);
+    try {
+      try {
+        await this.client.switchChain({ id: chainId });
+      } catch (error) {
+        if (!unknownChain(error) || chain.rpcUrls.default.http.length === 0) throw error;
+        await this.client.addChain({ chain });
+        await this.client.switchChain({ id: chainId });
+      }
+    } catch {
+      throw new WrongChainError(this.current, chainId);
+    }
+    this.current = await this.rpc.getChainId();
+    if (this.current !== chainId) throw new WrongChainError(this.current, chainId);
+  }
+
+  /** `ensureChain` for the hub, returning the chain every hub write names. */
+  async onHub(): Promise<Chain> {
+    if (this.hubChainId === 0) throw new Error('Not connected to the game server yet.');
+    await this.ensureChain(this.hubChainId);
+    return viemChain(this.hubChainId);
   }
 
   /**
@@ -178,12 +225,16 @@ export class Wallet {
    * wrong stake, already seated) surfaces as a readable error instead of a
    * wallet prompt the player pays gas to watch fail.
    *
+   * Each also names the chain it is for, so viem refuses to sign if the
+   * wallet has been switched away from it since.
+   *
    * The `simulate -> write` shape repeats rather than being wrapped in a
    * helper: viem infers argument types from the literal `abi` and
    * `functionName` at each call site, and a wrapper erases that, trading four
    * compile-time-checked calls for four unchecked ones.
    */
   async createMatch(escrow: Address, stakeEth: string, seats: number): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -191,10 +242,11 @@ export class Wallet {
       functionName: 'createMatch',
       args: [parseEther(stakeEth), seats],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   async join(escrow: Address, matchId: Hex, stakeWei: bigint): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -203,7 +255,7 @@ export class Wallet {
       args: [matchId],
       value: stakeWei,
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   /**
@@ -234,7 +286,15 @@ export class Wallet {
    * Across's fee. The seat is taken on the hub once a relayer fills the
    * deposit, or the stake credited there if the seat is gone by then.
    */
-  async joinFromSpoke(router: Address, matchId: Hex, quote: BridgeQuote, value: bigint): Promise<Hex> {
+  async joinFromSpoke(
+    spokeChainId: number,
+    router: Address,
+    matchId: Hex,
+    quote: BridgeQuote,
+    value: bigint,
+  ): Promise<Hex> {
+    await this.ensureChain(spokeChainId);
+    const chain = viemChain(spokeChainId);
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: router,
@@ -245,93 +305,16 @@ export class Wallet {
       args: [matchId, ZERO_ADDRESS, quote],
       value,
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
-  /**
-   * What `path` charges for exactly `stakeWei` of ETH, in the token's units.
-   *
-   * The quoter executes the swap and reverts with the result, so this is a
-   * simulation rather than a read — and costs nothing and signs nothing.
-   */
-  async quoteZap(quoter: Address, path: readonly ZapPathKey[], stakeWei: bigint): Promise<bigint> {
-    const { result } = await this.rpc.simulateContract({
-      address: quoter,
-      abi: v4QuoterAbi,
-      functionName: 'quoteExactOutput',
-      args: [{ exactCurrency: ZERO_ADDRESS, path: [...path], exactAmount: stakeWei }],
-    });
-    return result[0];
-  }
 
-  tokenBalance(token: Address): Promise<bigint> {
-    return this.rpc.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [this.address],
-    });
-  }
 
-  tokenAllowance(token: Address, spender: Address): Promise<bigint> {
-    return this.rpc.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [this.address, spender],
-    });
-  }
 
-  /**
-   * Sets the allowance to exactly `amount`, and waits for it.
-   *
-   * USDT refuses to move an allowance from one non-zero value to another, and
-   * every token join leaves the unused slippage allowance behind, so the second
-   * USDT join would fail. When the direct approval does not simulate and an
-   * allowance is outstanding, it is zeroed first — one extra prompt, only for
-   * the tokens that need it.
-   */
-  async approveToken(token: Address, spender: Address, amount: bigint): Promise<void> {
-    const approve = (value: bigint) =>
-      this.rpc.simulateContract({
-        account: this.address,
-        address: token,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [spender, value],
-      });
 
-    let simulation;
-    try {
-      simulation = await approve(amount);
-    } catch (error) {
-      if ((await this.tokenAllowance(token, spender)) === 0n) throw error;
-      const reset = await approve(0n);
-      await this.waitFor(await this.wallet.writeContract({ ...reset.request, chain: null }));
-      simulation = await approve(amount);
-    }
-    await this.waitFor(await this.wallet.writeContract({ ...simulation.request, chain: null }));
-  }
-
-  /** Swaps the route's first token for the stake and takes the seat, in one transaction. */
-  async joinWithToken(
-    zap: Address,
-    matchId: Hex,
-    path: readonly ZapPathKey[],
-    maxAmountIn: bigint,
-    deadline: bigint,
-  ): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: zap,
-      abi: zapJoinAbi,
-      functionName: 'joinWithToken',
-      args: [matchId, [...path], maxAmountIn, deadline],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
   async withdraw(escrow: Address): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -339,7 +322,7 @@ export class Wallet {
       functionName: 'withdraw',
       args: [this.address],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   /** History root the escrow stored when the match settled; zero before that. */
@@ -379,6 +362,7 @@ export class Wallet {
    * the refund is credited, to withdraw like winnings.
    */
   async cancelMatch(escrow: Address, matchId: Hex): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -386,7 +370,7 @@ export class Wallet {
       functionName: 'cancelMatch',
       args: [matchId],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   /**
@@ -394,6 +378,7 @@ export class Wallet {
    * guardian looks at the evidence whose hash this records.
    */
   async dispute(escrow: Address, matchId: Hex, evidenceHash: Hex): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -401,7 +386,7 @@ export class Wallet {
       functionName: 'dispute',
       args: [matchId, evidenceHash],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   async withdrawableEth(escrow: Address): Promise<string> {
@@ -422,13 +407,14 @@ export class Wallet {
    * staked from.
    */
   async mintAvatar(collection: Address): Promise<Hex> {
+    const chain = viemChain(this.current);
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: collection,
       abi: playerAvatarsAbi,
       functionName: 'mint',
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.client.writeContract({ ...request, chain });
   }
 
   /** Everything the avatar panel needs, in one round trip per field. */
@@ -462,315 +448,18 @@ export class Wallet {
     return { equipped, minted, totalMinted, maxSupply };
   }
 
-  /** Everything the staking panel shows, read in one round trip. */
-  async stakingPosition(vault: Address): Promise<StakingPosition> {
-    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
-    const [lmsBalance, staked, votes, delegate, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
-      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'delegates', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'earned', args: [this.address] }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'cooldown' }),
-      this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [this.address] }),
-      this.rpc.getBlock(),
-    ]);
-    return {
-      lmsBalance,
-      staked,
-      votes,
-      self: this.address,
-      delegate,
-      earned,
-      cooldown: Number(cooldown),
-      pending: { assets: pendingAssets, unlockAt: Number(unlockAt) },
-      chainTime: Number(block.timestamp),
-    };
-  }
 
-  /**
-   * Stakes `amount` LMS in one transaction: an EIP-2612 signature grants the
-   * vault its allowance, and `depositWithPermit` uses it straight away. The
-   * signature is free, so a player sees one signing prompt and one
-   * transaction instead of an approval and a deposit.
-   */
-  async stake(vault: Address, amount: bigint): Promise<Hex> {
-    const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
-    const [name, nonce] = await Promise.all([
-      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
-      this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'nonces', args: [this.address] }),
-    ]);
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_SECONDS);
-    const signature = await this.wallet.signTypedData({
-      account: this.account,
-      domain: { name, version: '1', chainId: this.chainId, verifyingContract: lms },
-      types: {
-        Permit: [
-          { name: 'owner', type: 'address' },
-          { name: 'spender', type: 'address' },
-          { name: 'value', type: 'uint256' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' },
-        ],
-      },
-      primaryType: 'Permit',
-      message: { owner: this.address, spender: vault, value: amount, nonce, deadline },
-    });
-    const { r, s, v, yParity } = parseSignature(signature);
 
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: vault,
-      abi: stakedLmsAbi,
-      functionName: 'depositWithPermit',
-      args: [amount, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /**
-   * Hands this wallet's votes to `delegatee`, or takes them back with its own
-   * address. The sLMS stays here and keeps earning; only the votes move.
-   */
-  async delegateVotes(vault: Address, delegatee: Address): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: vault,
-      abi: stakedLmsAbi,
-      functionName: 'delegate',
-      args: [delegatee],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /** Burns `amount` sLMS now and starts the cooldown on the LMS behind it. */
-  async requestUnstake(vault: Address, amount: bigint): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: vault,
-      abi: stakedLmsAbi,
-      functionName: 'requestUnstake',
-      args: [amount],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /** Withdraws unstaked LMS once the cooldown has passed. */
-  async claimUnstaked(vault: Address): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: vault,
-      abi: stakedLmsAbi,
-      functionName: 'claim',
-      args: [this.address],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /**
-   * Play-mining LMS this wallet can claim now, and the epochs it comes from.
-   * One `eth_call` over every epoch that has ended: the distributor loops.
-   */
-  async playRewards(distributor: Address): Promise<PlayRewards> {
-    const [firstEpoch, epochLength, programEpochs, block] = await Promise.all([
-      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'firstEpoch' }),
-      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'epochLength' }),
-      this.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'PROGRAM_EPOCHS' }),
-      this.rpc.getBlock(),
-    ]);
-    const range = claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp);
-    if (!range) return { claimable: 0n, epochs: [] };
-    const [claimable, epochs] = await this.rpc.readContract({
-      address: distributor,
-      abi: rewardsDistributorAbi,
-      functionName: 'claimable',
-      args: [this.address, range.from, range.to],
-    });
-    return { claimable, epochs: [...epochs] };
-  }
 
-  /** Claims play-mining rewards for `epochs`, vesting to this wallet over six months. */
-  async claimPlayRewards(distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: distributor,
-      abi: rewardsDistributorAbi,
-      functionName: 'claim',
-      args: [this.address, [...epochs]],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /** Pays the ETH this wallet has earned from fees to itself. */
-  async claimRewards(vault: Address): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: vault,
-      abi: stakedLmsAbi,
-      functionName: 'claimRewards',
-      args: [this.address],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /**
-   * A proposal's state and this wallet's part in it.
-   *
-   * Voting power and quorum are fixed at the snapshot, which is the vote's
-   * start. While that is still ahead the governor refuses to look it up, so a
-   * pending proposal shows the wallet's power now, read from the vault.
-   */
-  async proposalLive(governor: Address, vault: Address, proposal: ProposalSummary): Promise<ProposalLive> {
-    const id = BigInt(proposal.id);
-    const [state, [against, forVotes, abstain], hasVoted, eta, block] = await Promise.all([
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'state', args: [id] }),
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalVotes', args: [id] }),
-      this.rpc.readContract({
-        address: governor,
-        abi: lmsGovernorAbi,
-        functionName: 'hasVoted',
-        args: [id, this.address],
-      }),
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalEta', args: [id] }),
-      this.rpc.getBlock(),
-    ]);
-    const pending = state === ProposalState.Pending;
-    const snapshot = BigInt(proposal.voteStart);
-    const [power, quorum] = pending
-      ? [
-          await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [this.address] }),
-          null,
-        ]
-      : await Promise.all([
-          this.rpc.readContract({
-            address: governor,
-            abi: lmsGovernorAbi,
-            functionName: 'getVotes',
-            args: [this.address, snapshot],
-          }),
-          this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'quorum', args: [snapshot] }),
-        ]);
-    return {
-      state: state as ProposalStateValue,
-      votes: { for: forVotes, against, abstain },
-      quorum,
-      power,
-      hasVoted,
-      eta: Number(eta),
-      chainTime: Number(block.timestamp),
-    };
-  }
 
-  /** Votes on a proposal, with a reason recorded on-chain when one is given. */
-  async castVote(governor: Address, proposalId: string, support: VoteSupportValue, reason: string): Promise<Hex> {
-    const id = BigInt(proposalId);
-    if (reason.trim()) {
-      const { request } = await this.rpc.simulateContract({
-        account: this.address,
-        address: governor,
-        abi: lmsGovernorAbi,
-        functionName: 'castVoteWithReason',
-        args: [id, support, reason.trim()],
-      });
-      return this.wallet.writeContract({ ...request, chain: null });
-    }
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: governor,
-      abi: lmsGovernorAbi,
-      functionName: 'castVote',
-      args: [id, support],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
-  /**
-   * Everything the proposal form needs: where each governed contract is, the
-   * config's current parameters, and whether this wallet may propose at all.
-   *
-   * The governor checks the proposer's votes one second in the past, so that
-   * is the number compared against the threshold here too.
-   */
-  async proposalContext(
-    governor: Address,
-    known: Pick<ProposalContext, 'vault' | 'feeRouter' | 'escrow'>,
-  ): Promise<{ context: ProposalContext; power: bigint; threshold: bigint }> {
-    const [timelock, threshold, clock, config] = await Promise.all([
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'timelock' }),
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalThreshold' }),
-      this.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'clock' }),
-      known.escrow
-        ? this.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'config' })
-        : Promise.resolve(null),
-    ]);
-    const [power, params] = await Promise.all([
-      clock > 0
-        ? this.rpc.readContract({
-            address: governor,
-            abi: lmsGovernorAbi,
-            functionName: 'getVotes',
-            args: [this.address, BigInt(clock - 1)],
-          })
-        : Promise.resolve(0n),
-      config
-        ? this.rpc.readContract({ address: config, abi: protocolConfigAbi, functionName: 'getParams' })
-        : Promise.resolve(null),
-    ]);
-    return {
-      context: { governor, timelock, config, params: params as ProtocolParams | null, ...known },
-      power,
-      threshold,
-    };
-  }
 
-  /** Submits a proposal. Simulated first, so a missing threshold reads as the governor's own error. */
-  async propose(governor: Address, actions: readonly ProposalAction[], description: string): Promise<Hex> {
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: governor,
-      abi: lmsGovernorAbi,
-      functionName: 'propose',
-      args: [
-        actions.map((action) => action.target),
-        actions.map((action) => action.value),
-        actions.map((action) => action.calldata),
-        description,
-      ],
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
-
-  /**
-   * Queues a passed proposal in the timelock, or executes a queued one once
-   * its delay is over. Both are open to anyone; the governor re-derives the
-   * proposal from exactly these arguments, so they must match what was proposed.
-   */
-  async advanceProposal(governor: Address, proposal: ProposalSummary, step: 'queue' | 'execute'): Promise<Hex> {
-    const args = [
-      proposal.targets,
-      proposal.values.map((value) => BigInt(value)),
-      proposal.calldatas,
-      descriptionHash(proposal.description),
-    ] as const;
-    if (step === 'queue') {
-      const { request } = await this.rpc.simulateContract({
-        account: this.address,
-        address: governor,
-        abi: lmsGovernorAbi,
-        functionName: 'queue',
-        args,
-      });
-      return this.wallet.writeContract({ ...request, chain: null });
-    }
-    const { request } = await this.rpc.simulateContract({
-      account: this.address,
-      address: governor,
-      abi: lmsGovernorAbi,
-      functionName: 'execute',
-      args,
-    });
-    return this.wallet.writeContract({ ...request, chain: null });
-  }
 
   /**
    * True when this wallet can sign an EIP-7702 authorization itself. Injected
@@ -778,7 +467,7 @@ export class Wallet {
    * keep the normal flow: every join is their own transaction.
    */
   get canDelegate(): boolean {
-    return typeof this.account !== 'string';
+    return typeof this.signer !== 'string';
   }
 
   /**
@@ -797,17 +486,18 @@ export class Wallet {
     validUntil: number,
     caps: { valueCap: bigint; spendCap: bigint },
   ): Promise<Hex> {
-    const authorization = await this.wallet.signAuthorization({
-      account: this.account,
+    const chain = await this.onHub();
+    const authorization = await this.client.signAuthorization({
+      account: this.signer,
       contractAddress: delegate,
       // The account sends this very transaction, so by the time the
       // authorization is checked its nonce has already advanced by one.
       executor: 'self',
     });
 
-    return this.wallet.sendTransaction({
-      account: this.account,
-      chain: null,
+    return this.client.sendTransaction({
+      account: this.signer,
+      chain,
       to: this.address,
       authorizationList: [authorization],
       data: encodeFunctionData({
@@ -840,9 +530,10 @@ export class Wallet {
 
   /** Ends a session on-chain, so a stolen key stops working immediately. */
   async revokeSession(sessionKey: Address): Promise<Hex> {
-    return this.wallet.sendTransaction({
-      account: this.account,
-      chain: null,
+    const chain = await this.onHub();
+    return this.client.sendTransaction({
+      account: this.signer,
+      chain,
       to: this.address,
       data: encodeFunctionData({
         abi: sessionKeyDelegateAbi,
@@ -855,4 +546,10 @@ export class Wallet {
   waitFor(hash: Hex): Promise<unknown> {
     return this.rpc.waitForTransactionReceipt({ hash });
   }
+}
+
+/** True when a wallet refused to switch because it does not know the chain (EIP-3326's 4902). */
+function unknownChain(error: unknown): boolean {
+  const is4902 = (cause: unknown) => (cause as { code?: unknown } | null)?.code === 4902;
+  return is4902(error) || (error instanceof BaseError && error.walk(is4902) !== null);
 }

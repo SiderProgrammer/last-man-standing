@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./bots": {
+      "types": "./dist/bots/strategy.d.ts",
+      "default": "./dist/bots/strategy.js"
+    },
+    "./sim": {
+      "types": "./dist/sim/simulate.d.ts",
+      "default": "./dist/sim/simulate.js"
     }
   },
   "scripts": {

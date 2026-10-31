@@ -208,10 +208,11 @@ instead of drifting silently.
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
   `properties.test.ts` replays 45 matches across three bot strategies to hold the two
   derivations to the same answer.
-- **`bots/strategy.ts`** holds the bots: a seeded keccak PRNG, `always`, `randomStrategy`,
-  `readerStrategy`, and the house bot `smartStrategy` with its three difficulties. All
-  of them pick only moves their cooldowns allow; `sim/simulate.ts` names them for
-  `npm run sim` and the analyst's reference matches.
+- **`bots/strategy.ts`** (`@lms/engine/bots`) holds the bots: a seeded keccak PRNG,
+  `always`, `randomStrategy`, `readerStrategy`, and the house bot `smartStrategy` with its
+  three difficulties. All of them pick only moves their cooldowns allow;
+  `sim/simulate.ts` (`@lms/engine/sim`) names them for `npm run sim` and the analyst's
+  reference matches. Neither is in the main entry, which the browser bundles.
 
 ### `packages/server` — authoritative, but not trusted
 
@@ -314,18 +315,28 @@ start, and a second server is refused.
 | --- | --- |
 | `main.ts` | Entry point, three lines: calls `start()` |
 | `app.ts` | `start()`, and the switch that routes each server message to the screen that owns it |
-| `context.ts` | `AppState`, plus the shared `dom` and `net`, assigned once at boot |
+| `context.ts` | `AppState` in the store, plus the shared `dom` and `net`, assigned once at boot |
+| `store.ts` | The typed store: `set` a patch, `subscribe` a renderer to the keys it draws |
 | `motion.ts` | GSAP, with its plugins registered and lag smoothing off. Import `gsap` from here |
 | **`assets/`** | **Everything loaded at boot** |
 | `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
-| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot |
+| `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot. A chunk of its own, with Pixi |
 | **`screens/`** | **What the player sees, and the controls on it** |
 | `screens/loading.ts` | The boot screen: a progress bar while assets load |
-| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join |
-| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer |
+| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join, from the hub or a spoke |
+| `screens/queue.ts` | The matchmaking queue: pick a tier, wait, leave |
+| `screens/discount.ts` | *On demand.* Paying part of a seat's fee in LMS: quote, permit, join |
+| `screens/zap.ts` | *On demand.* Paying a stake in a token through `ZapJoin` |
+| `screens/staking.ts` | *On demand* (`stakingPanel.ts`). Stake, unstake, claim, vesting and release, delegation |
+| `screens/governance.ts` | *On demand* (`governanceNav.ts`). Proposals, votes, the proposal form |
+| `screens/result.ts` | The result: ranking, the browser's and the chain's verification, Dispute |
+| `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer; mounts and disposes the arena |
 | **`wallet/`** | **The player's account** |
 | `wallet/flows.ts` | Connect, login with the session grant, avatar and hub-chain panels |
-| `wallet/wallet.ts` | Injected EIP-1193 session, login signature, escrow / avatar / session calls |
+| `wallet/chains.ts` | The viem chain every write names, and `WrongChainError` |
+| `wallet/payouts.ts` | Collecting winnings: on the hub, or to the spoke the wallet is on (`collectHome.ts`, on demand) |
+| `wallet/staking.ts`, `governance.ts`, `zap.ts`, `discount.ts` | *On demand.* Each screen's contract calls and ABIs, out of the main bundle |
+| `wallet/wallet.ts` | Injected EIP-1193 session, the chain guard, login signature, escrow / avatar / session calls |
 | `wallet/grant.ts` | The browser's session key and the wallet's grant to it: sign logins, moves and relayed calls |
 | `wallet/oneClick.ts` | One-click play: turn the on-chain session on and off, relay joins and collects |
 | `io/keystore.ts` | Secrets sealed in IndexedDB under a non-extractable WebCrypto key |
@@ -341,9 +352,10 @@ start, and a second server is refused.
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
 | `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
 | `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
+| `arena/textures.ts` | Seat faces leased by URL, unloaded once no seat wears them |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar panel |
+| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar, queue, discount and collect-home panels |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
 | **`io/`** | **Browser I/O** |
@@ -353,14 +365,33 @@ start, and a second server is refused.
 The folders split along two lines. By feature: each screen owns its controls, and
 `app.ts` does nothing but route server messages to them. By purity: anything that
 decides *what* to show — the *Pure* rows above — is tested in node, while anything that
-writes to the document lives in `screens/` or `wallet/flows.ts`. `phasePlan` returns a
-`shouldReveal` flag rather than sending the reveal itself, so the decision is testable
-while the send stays exactly where it was in the sequence.
+writes to the document lives in `screens/` or `wallet/flows.ts`.
 
-The screens share one page, one socket and one set of elements, so that state lives in
-`context.ts` as module singletons rather than being threaded through every call. `dom`
-and `net` are ES-module live bindings assigned once in `start()`; `context.ts` imports
-only types, which keeps the runtime graph acyclic.
+The screens share one page, one socket and one set of elements, so their state is one
+typed store in `context.ts` (`store.ts`), not threaded through every call. Actions —
+server messages, clicks, timers — change it with `store.set`, and they alone send
+anything. Each panel subscribes its renderer to the keys it draws, and a renderer only
+draws: the reveal, for one, is sent by the actions that can make it due (a new snapshot,
+the end of a replay hold), with `phasePlan`'s `shouldReveal` deciding. `dom` and `net`
+are ES-module live bindings assigned once in `start()`.
+
+The main bundle holds the lobby, the match screen and what verifying a match needs. The
+arena and Pixi, the asset loader, the staking panel, the governance screen, token
+payment, the fee discount and collecting to a spoke load on demand, each with its own
+contracts' ABIs (`chain/abis/` is one module per contract for that reason). The browser
+imports `@lms/engine`, which is the kernel, matches, replay and audit; bots and the
+balance simulator are `@lms/engine/bots` and `@lms/engine/sim`, for the server and the
+scripts.
+
+Every write names its chain. Before one, the wallet is put on that chain — the hub for
+everything but a join from a spoke or a mint — by asking an injected wallet to switch
+(adding the chain if it has never seen it), and a wallet that cannot switch, like the dev
+burner, is refused with the two chains named. viem then refuses to sign if the wallet was
+switched away in between, and the panels follow the wallet's `chainChanged`.
+
+The arena lives for one match. Changing match or going back to the lobby destroys it: the
+canvas and its WebGL context, its tweens, seats and effects, and the faces its seats
+wore, which `arena/textures.ts` unloads from Pixi's cache once no seat holds them.
 
 Three things are worth calling out:
 

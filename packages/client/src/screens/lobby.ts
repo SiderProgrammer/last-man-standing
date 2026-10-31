@@ -1,5 +1,4 @@
 import {
-  ZAP_DEADLINE_SECONDS,
   chainInfo,
   errorFirstLine,
   errorMessage,
@@ -15,17 +14,18 @@ import {
   type SpokeInfo,
   type ZapToken,
 } from '@lms/protocol';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { showMatchScreen, toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 import {
   crossChainNotice,
+  discountStatus,
   chainChips,
   lobbyAction,
   lobbySummary,
   payWithOptions,
-  planTokenJoin,
   spokeFor,
   spokeQuoteError,
   spokeQuoteLabel,
@@ -43,13 +43,10 @@ import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
  * whenever the join lands; this only stops the player agreeing to a figure
  * they looked at minutes ago.
  */
-const QUOTE_TTL_MS = 30_000;
+export const QUOTE_TTL_MS = 30_000;
 
 /** A little over the chain bridge's poll interval: how stale the directory can be. */
 const DIRECTORY_LAG_MS = 5_000;
-
-/** Last directory the server sent, so changing the payment token can redraw it. */
-let shown: { open: LobbyInfo[]; live: LobbyInfo[] } = { open: [], live: [] };
 
 export function wireLobbyControls(): void {
   dom.practice.onclick = () => {
@@ -62,7 +59,42 @@ export function wireLobbyControls(): void {
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
   dom.createLobby.onclick = () => void createLobby();
-  dom.payWith.onchange = () => renderLobbies(shown.open, shown.live);
+  dom.payWith.onchange = renderLobbies;
+  dom.useDiscount.checked = readRaw(DISCOUNT_KEY) === '1';
+  dom.useDiscount.onchange = () => {
+    writeRaw(DISCOUNT_KEY, dom.useDiscount.checked ? '1' : '0');
+    renderLobbies();
+  };
+
+  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
+  store.subscribe(['lobbies', 'inTransit', 'matched'], renderLobbies);
+  store.subscribe(['discount'], renderDiscount);
+  // The discount is read on the hub, where the escrow is; its module loads
+  // the first time a wallet is there.
+  store.subscribe(['wallet', 'walletChainId', 'escrow', 'chainId'], () => {
+    const onHub = app.wallet && app.escrow && app.wallet.chainId === app.chainId;
+    if (onHub) void import('./discount.js').then((discount) => discount.refreshDiscount());
+    else store.set({ discount: null });
+  });
+}
+
+const DISCOUNT_KEY = 'lms:pay-fee-in-lms';
+
+/** The "pay part of the fee in LMS" option: shown while governance has the discount on. */
+function renderDiscount(): void {
+  const terms = app.discount;
+  dom.discountRow.classList.toggle('hidden', !terms);
+  if (terms) {
+    const status = discountStatus(terms);
+    dom.discountStatus.textContent = status.text;
+    dom.useDiscount.disabled = !status.enabled;
+  }
+  renderLobbies();
+}
+
+/** True when the next ETH join should spend LMS on its fee. */
+function payingInLms(): boolean {
+  return Boolean(app.discount && app.discount.balance > 0n && dom.useDiscount.checked);
 }
 
 /**
@@ -79,7 +111,7 @@ export function renderPayWith(): void {
   dom.createLobby.title = spoke
     ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
     : '';
-  renderLobbies(shown.open, shown.live);
+  renderLobbies();
 }
 
 /** The token picked to pay with, or null for plain ETH. */
@@ -92,15 +124,24 @@ function currentSpoke(): SpokeInfo | null {
   return app.wallet && app.escrow ? spokeFor(app.spokes, app.wallet.chainId) : null;
 }
 
-export function renderLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
-  shown = { open, live };
+/** The server's directory arrived. */
+export function onLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
   // A seat in the directory is the surest sign a stake landed, even if the
   // server's report of it was missed while the socket was down.
-  for (const lobby of [...open, ...live]) {
-    if (lobby.players.some((player) => sameAddress(player.address, app.wallet?.address))) {
-      app.inTransit.delete(lobby.matchId.toLowerCase());
-    }
-  }
+  const landed = new Set(
+    [...open, ...live]
+      .filter((lobby) => lobby.players.some((player) => sameAddress(player.address, app.wallet?.address)))
+      .map((lobby) => lobby.matchId.toLowerCase()),
+  );
+  const inTransit = [...app.inTransit].filter((id) => !landed.has(id));
+  store.set({
+    lobbies: { open, live },
+    ...(inTransit.length !== app.inTransit.size ? { inTransit: new Set(inTransit) } : {}),
+  });
+}
+
+export function renderLobbies(): void {
+  const { open, live } = app.lobbies;
   if (open.length === 0 && live.length === 0) {
     dom.lobbyList.replaceChildren(
       element(
@@ -172,6 +213,8 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     const token = payToken();
     if (token) {
       idleTokenButton(button, lobby, token);
+    } else if (payingInLms()) {
+      idleDiscountButton(button, lobby);
     } else {
       button.textContent = stakeButtonLabel(lobby.stake, null);
       button.onclick = () => void joinLobby(lobby);
@@ -226,7 +269,7 @@ async function joinLobby(lobby: LobbyInfo): Promise<void> {
 
 /** The queue put this wallet at a table: its lobby is now one it can stake into. */
 export function onMatched(message: Extract<ServerMessage, { type: 'matched' }>): void {
-  app.matched.add(message.matchId.toLowerCase());
+  store.set({ matched: new Set([...app.matched, message.matchId.toLowerCase()]) });
   toast(`Matched: a ${message.seats}-seat table is ready. Stake into ${short(message.matchId)} to take your seat.`);
   net.send({ type: 'lobbies' });
 }
@@ -249,7 +292,7 @@ async function cancelLobby(button: HTMLButtonElement, lobby: LobbyInfo): Promise
   }
 }
 
-function seated(lobby: LobbyInfo): void {
+export function seated(lobby: LobbyInfo): void {
   net.send({ type: 'lobbies' });
   // The server opens the room once the lobby locks and the oracle seeds it.
   net.send({ type: 'watch', matchId: lobby.matchId });
@@ -266,76 +309,21 @@ function seated(lobby: LobbyInfo): void {
 // Always the player's own transactions, one-click play or not: a token
 // approval is exactly the kind of call a prompt-free key must never make.
 
-function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): void {
+export function idleTokenButton(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): void {
   button.textContent = stakeButtonLabel(lobby.stake, token);
   button.classList.remove('primary');
-  button.onclick = () => void quoteTokenJoin(button, lobby, token);
+  // The pricing and paying are a chunk of their own, fetched on the first quote.
+  button.onclick = () => void import('./zap.js').then((zap) => zap.quoteTokenJoin(button, lobby, token));
 }
 
-async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): Promise<void> {
-  const { wallet, zap } = app;
-  if (!wallet || !zap) return toast('Connect a wallet first.');
-
-  button.disabled = true;
-  button.textContent = 'Quoting…';
-  try {
-    const [quote, balance] = await Promise.all([
-      wallet.quoteZap(zap.quoter, token.path, BigInt(lobby.stake)),
-      wallet.tokenBalance(token.address),
-    ]);
-    const plan = planTokenJoin(token, quote, balance);
-    if (!plan.ok) {
-      toast(plan.reason);
-      idleTokenButton(button, lobby, token);
-      return;
-    }
-
-    button.textContent = plan.label;
-    button.classList.add('primary');
-    const expiry = setTimeout(() => idleTokenButton(button, lobby, token), QUOTE_TTL_MS);
-    button.onclick = () => {
-      clearTimeout(expiry);
-      void payTokenJoin(button, lobby, token, plan.maxAmountIn);
-    };
-  } catch (error) {
-    // Almost always a route with no pool behind it, or a wallet on another chain.
-    toast(`Could not price ${token.symbol}: ${errorFirstLine(error)}`);
-    idleTokenButton(button, lobby, token);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function payTokenJoin(
-  button: HTMLButtonElement,
-  lobby: LobbyInfo,
-  token: ZapToken,
-  maxAmountIn: bigint,
-): Promise<void> {
-  const { wallet, zap } = app;
-  if (!wallet || !zap) return;
-
-  button.disabled = true;
-  try {
-    if ((await wallet.tokenAllowance(token.address, zap.address)) < maxAmountIn) {
-      button.textContent = `Approve ${token.symbol}…`;
-      // Exactly this join's ceiling, not an unlimited allowance: the zap is
-      // ownerless, but an allowance outlives the join it was granted for.
-      await wallet.approveToken(token.address, zap.address, maxAmountIn);
-    }
-
-    button.textContent = 'Confirm the join…';
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + ZAP_DEADLINE_SECONDS);
-    const hash = await wallet.joinWithToken(zap.address, lobby.matchId, token.path, maxAmountIn, deadline);
-    button.textContent = 'Joining…';
-    await wallet.waitFor(hash);
-    seated(lobby);
-  } catch (error) {
-    toast(errorFirstLine(error));
-    idleTokenButton(button, lobby, token);
-  } finally {
-    button.disabled = false;
-  }
+/**
+ * An ETH join that spends LMS on its fee, before it is priced. The pricing
+ * and paying are in `discount.ts`, loaded with the option.
+ */
+export function idleDiscountButton(button: HTMLButtonElement, lobby: LobbyInfo): void {
+  button.textContent = `${stakeButtonLabel(lobby.stake, null)} · fee in LMS`;
+  button.classList.remove('primary');
+  button.onclick = () => void import('./discount.js').then((discount) => discount.quoteDiscountJoin(button, lobby));
 }
 
 // -------------------------------------------------------------- spoke joins
@@ -412,11 +400,10 @@ async function paySpokeJoin(
   button.disabled = true;
   try {
     button.textContent = 'Confirm the join…';
-    const hash = await wallet.joinFromSpoke(spoke.router, lobby.matchId, quote, total);
+    const hash = await wallet.joinFromSpoke(spoke.chainId, spoke.router, lobby.matchId, quote, total);
     button.textContent = 'Sending…';
     await wallet.waitFor(hash);
-    app.inTransit.add(lobby.matchId.toLowerCase());
-    renderLobbies(shown.open, shown.live);
+    store.set({ inTransit: new Set([...app.inTransit, lobby.matchId.toLowerCase()]) });
     toast(
       `Stake sent from ${chainInfo(spoke.chainId).name}. It reaches ${chainInfo(app.chainId).name} once a ` +
         'relayer fills it, usually within a minute; you will be told when it is seated.',
@@ -433,15 +420,15 @@ export function onCrossChain(event: CrossChainEvent): void {
   if (event.kind === 'seated') {
     // The row stays locked until the seat shows in the directory, which can
     // lag this report by one of the bridge's polls; otherwise it would offer
-    // to stake for a seat the player already holds. `renderLobbies` unlocks it.
+    // to stake for a seat the player already holds. `onLobbies` unlocks it.
     // No `watch` yet: the room only exists once the lobby locks and the
     // oracle seeds it, and asking sooner answers "unknown match" over this
     // notice. The row's Enter button attaches the player then.
     net.send({ type: 'lobbies' });
     setTimeout(() => net.send({ type: 'lobbies' }), DIRECTORY_LAG_MS);
   } else if (event.kind === 'refunded') {
-    app.inTransit.delete(event.matchId.toLowerCase());
+    const id = event.matchId.toLowerCase();
+    store.set({ inTransit: new Set([...app.inTransit].filter((entry) => entry !== id)) });
     void renderWinnings();
   }
-  renderLobbies(shown.open, shown.live);
 }

@@ -13,7 +13,7 @@
  * `TARGETS` fail, so it can gate a rules change in CI.
  */
 import { DEFAULT_RULES, assertValidRules } from '@lms/protocol';
-import { balanceFailures, simulate } from '@lms/engine';
+import { balanceFailures, simulate } from '@lms/engine/sim';
 
 // Mindless play must lose: less than its share of wins, and money under the payout schedule.
 const TARGETS = { maxWinRatio: 1, maxMeanRounds: 16, maxMindlessProfit: 0 };

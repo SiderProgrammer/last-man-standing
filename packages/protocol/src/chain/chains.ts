@@ -19,6 +19,11 @@ export interface ChainInfo {
    */
   color: number;
   testnet: boolean;
+  /**
+   * A public RPC, for asking a wallet that does not know the chain yet to add
+   * it. Absent for the practice pseudo-chain.
+   */
+  rpcUrl?: string;
 }
 
 const UNKNOWN_COLOR = 0x6b7689;
@@ -32,20 +37,20 @@ const UNKNOWN_COLOR = 0x6b7689;
 export const CHAINS: readonly ChainInfo[] = [
   { chainId: PRACTICE_CHAIN_ID, name: 'Practice', short: 'PRAC', color: 0x6b7689, testnet: false },
 
-  { chainId: 1, name: 'Ethereum', short: 'ETH', color: 0x8a92b2, testnet: false },
-  { chainId: 10, name: 'Optimism', short: 'OP', color: 0xff0420, testnet: false },
-  { chainId: 8453, name: 'Base', short: 'BASE', color: 0x0052ff, testnet: false },
-  { chainId: 42161, name: 'Arbitrum', short: 'ARB', color: 0x28a0f0, testnet: false },
+  { chainId: 1, name: 'Ethereum', short: 'ETH', color: 0x8a92b2, testnet: false, rpcUrl: 'https://ethereum-rpc.publicnode.com' },
+  { chainId: 10, name: 'Optimism', short: 'OP', color: 0xff0420, testnet: false, rpcUrl: 'https://mainnet.optimism.io' },
+  { chainId: 8453, name: 'Base', short: 'BASE', color: 0x0052ff, testnet: false, rpcUrl: 'https://mainnet.base.org' },
+  { chainId: 42161, name: 'Arbitrum', short: 'ARB', color: 0x28a0f0, testnet: false, rpcUrl: 'https://arb1.arbitrum.io/rpc' },
 
-  { chainId: 11155111, name: 'Sepolia', short: 'SEP', color: 0x8a92b2, testnet: true },
-  { chainId: 84532, name: 'Base Sepolia', short: 'BASE', color: 0x0052ff, testnet: true },
-  { chainId: 421614, name: 'Arbitrum Sepolia', short: 'ARB', color: 0x28a0f0, testnet: true },
-  { chainId: 11155420, name: 'OP Sepolia', short: 'OP', color: 0xff0420, testnet: true },
+  { chainId: 11155111, name: 'Sepolia', short: 'SEP', color: 0x8a92b2, testnet: true, rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com' },
+  { chainId: 84532, name: 'Base Sepolia', short: 'BASE', color: 0x0052ff, testnet: true, rpcUrl: 'https://sepolia.base.org' },
+  { chainId: 421614, name: 'Arbitrum Sepolia', short: 'ARB', color: 0x28a0f0, testnet: true, rpcUrl: 'https://sepolia-rollup.arbitrum.io/rpc' },
+  { chainId: 11155420, name: 'OP Sepolia', short: 'OP', color: 0xff0420, testnet: true, rpcUrl: 'https://sepolia.optimism.io' },
 
   // `npm run dev:fork`: a mainnet fork as the hub and a plain anvil as a
   // spoke, joined by mock Across SpokePools that the script fills.
-  { chainId: 31337, name: 'Local hub', short: 'HUB', color: 0x8a92b2, testnet: true },
-  { chainId: 31338, name: 'Local spoke', short: 'SPOKE', color: 0x2fbf71, testnet: true },
+  { chainId: 31337, name: 'Local hub', short: 'HUB', color: 0x8a92b2, testnet: true, rpcUrl: 'http://127.0.0.1:8545' },
+  { chainId: 31338, name: 'Local spoke', short: 'SPOKE', color: 0x2fbf71, testnet: true, rpcUrl: 'http://127.0.0.1:8546' },
 ];
 
 const byChainId = new Map<number, ChainInfo>(CHAINS.map((chain) => [chain.chainId, chain]));

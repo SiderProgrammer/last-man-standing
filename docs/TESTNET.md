@@ -81,5 +81,7 @@ prices each join and is added to the page's Content-Security-Policy.
 5. To see a refund, join a lobby that will fill before the deposit is filled;
    the client says why, and the stake is collectable on the hub.
 
-Bridging a balance back to the spoke (`withdrawToChainFor`) works on-chain but
-has no screen yet: that comes with the client work in FIX_PLAN step 8.5.
+6. To bring a balance back, stay on Arbitrum Sepolia: the Winnings panel offers
+   **Collect to Arbitrum Sepolia**. The first click shows what arrives after
+   Across's fee; the second signs the withdrawal, and the server submits it on
+   Base Sepolia from `SESSION_RELAYER_PK`, which needs a little Base Sepolia ETH.

@@ -9,6 +9,7 @@ import {
   type CrossChainEvent,
   type LobbyInfo,
   type LobbySeat,
+  type MatchmakingTier,
   type PublicMatchState,
   type SpokeInfo,
   type ZapInfo,
@@ -27,6 +28,66 @@ import {
 
 /** A `<select>` option, as value and label. */
 export type Option = [value: string, label: string];
+
+/** Where this wallet is in the matchmaking queue, as the server last said. */
+export interface QueueSpot {
+  stake: string;
+  seats: number;
+  /** Wallets in that tier now, this one included. */
+  waiting: number;
+}
+
+export interface QueuePanel {
+  visible: boolean;
+  /** The tiers, each `stake:seats`, labelled with the stake in ETH and the table size. */
+  tiers: Option[];
+  pill: string;
+  joinVisible: boolean;
+  joinDisabled: boolean;
+  leaveVisible: boolean;
+  status: string;
+}
+
+/** The tier a queue option stands for. */
+export function tierKey(tier: MatchmakingTier): string {
+  return `${tier.stake}:${tier.seats}`;
+}
+
+/**
+ * The matchmaking panel. Shown only when the server matchmakes: its tiers
+ * are the only tables that earn play-mining, and the queue is the only way
+ * into them.
+ */
+export function queuePanel(tiers: readonly MatchmakingTier[], connected: boolean, spot: QueueSpot | null): QueuePanel {
+  const options: Option[] = tiers.map((tier) => [
+    tierKey(tier),
+    `${formatEther(BigInt(tier.stake))} ETH · ${tier.seats} seats`,
+  ]);
+  const base = { visible: tiers.length > 0, tiers: options };
+  if (spot) {
+    const others = spot.waiting - 1;
+    return {
+      ...base,
+      pill: 'queued',
+      joinVisible: false,
+      joinDisabled: true,
+      leaveVisible: true,
+      status:
+        `Waiting for a ${spot.seats}-seat table at ${formatEther(BigInt(spot.stake))} ETH · ` +
+        (others <= 0 ? 'nobody else queued yet' : `${others} other${others === 1 ? '' : 's'} queued`),
+    };
+  }
+  return {
+    ...base,
+    pill: 'idle',
+    joinVisible: true,
+    joinDisabled: !connected,
+    leaveVisible: false,
+    status: connected
+      ? 'When a table fills, its lobby opens for exactly those players; stake into it to take your seat.'
+      : 'Connect a wallet to queue.',
+  };
+}
 
 export function targetOptions(state: PublicMatchState, you: number | null): Option[] {
   return state.players
@@ -193,6 +254,61 @@ export function lobbyAction(
 /** The "Pay with" picker: ETH first, then every token the server routes to ETH. */
 export function payWithOptions(zap: ZapInfo | null): Option[] {
   return [['ETH', 'ETH'], ...(zap?.tokens ?? []).map((token): Option => [token.address, token.symbol])];
+}
+
+/** The LMS fee discount, as governance has set it, and this wallet's LMS. */
+export interface DiscountTerms {
+  /** The LMS token, which the escrow takes the discount's LMS in. */
+  token: `0x${string}`;
+  /** LMS per ETH of fee taken off, 18 decimals. */
+  rate: bigint;
+  /** LMS this wallet holds. */
+  balance: bigint;
+}
+
+/**
+ * The line under the "pay part of the fee in LMS" option, and whether it can
+ * be ticked at all. Null terms hide the option: the discount is off.
+ */
+export function discountStatus(terms: DiscountTerms): { text: string; enabled: boolean } {
+  const rate = `${formatTokenAmount(terms.rate, 18, 0)} LMS buys 1 ETH off a fee, up to half of each fee`;
+  if (terms.balance === 0n) return { text: `${rate} · you hold no LMS`, enabled: false };
+  return { text: `${rate} · you hold ${formatTokenAmount(terms.balance, 18, 2)} LMS`, enabled: true };
+}
+
+/** A join priced with the discount: the ETH sent and the LMS spent, which the second click pays. */
+export function discountJoinLabel(stakeWei: string, quote: { discount: bigint; lmsUsed: bigint }): string {
+  const eth = formatEther(BigInt(stakeWei) - quote.discount);
+  return `Pay ${eth} ETH + ${formatTokenAmount(quote.lmsUsed, 18, 2)} LMS`;
+}
+
+export type CollectHomePlan = { ok: true; label: string; detail: string } | { ok: false; reason: string };
+
+/**
+ * A priced withdrawal of the whole hub balance to a spoke, or why there is
+ * none: nothing held, or less than the receiver bridges. `amount` is the
+ * balance and `output` what Across delivers for it.
+ */
+export function collectHomePlan(
+  amount: bigint,
+  minimum: bigint,
+  output: bigint,
+  spokeChainId: number,
+  hubChainId: number,
+): CollectHomePlan {
+  const hub = chainInfo(hubChainId).name;
+  if (amount === 0n) return { ok: false, reason: `Nothing waiting for you on ${hub}.` };
+  if (amount < minimum) {
+    return {
+      ok: false,
+      reason: `${formatEther(amount)} ETH is under the ${formatEther(minimum)} ETH that can be bridged; switch to ${hub} to collect it there.`,
+    };
+  }
+  return {
+    ok: true,
+    label: `Receive ${formatEther(output)} ETH on ${chainInfo(spokeChainId).name}`,
+    detail: `${formatEther(amount)} ETH on ${hub}, less ${formatEther(amount - output)} ETH to the bridge. Click again to sign.`,
+  };
 }
 
 /** An open lobby's join button before anything has been quoted. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { commitMove, DEFAULT_RULES, MatchPhase, type Move, type ReviewedMatch } from '@lms/protocol';
-import { Match, Prng, readerStrategy } from '@lms/engine';
+import { Match } from '@lms/engine';
+import { Prng, readerStrategy } from '@lms/engine/bots';
 import { reviewOf } from '../src/game/review.js';
 import { verifyMatch } from '../src/game/verify.js';
 import { ordinal, placeLabel } from '../src/ui/format.js';

@@ -9,7 +9,8 @@ import {
   type PublicMatchState,
   type Transcript,
 } from '@lms/protocol';
-import { Match, Prng, rankingHash, readerStrategy, type ChainRecord } from '@lms/engine';
+import { Match, rankingHash, type ChainRecord } from '@lms/engine';
+import { Prng, readerStrategy } from '@lms/engine/bots';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain } from '../src/game/verify.js';
 import { bytes32 } from './helpers.js';
 
