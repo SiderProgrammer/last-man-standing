@@ -7,6 +7,8 @@ import { app, dom, net } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
 import { renderPayWith } from '../screens/lobby.js';
+import { renderStakingPanel } from '../screens/staking.js';
+import { renderWinnings } from './payouts.js';
 import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
@@ -26,21 +28,34 @@ export function wireWalletControls(): void {
 async function connectWallet(): Promise<void> {
   try {
     const devKey = import.meta.env.DEV ? import.meta.env.VITE_DEV_KEY : undefined;
-    app.wallet =
+    const wallet =
       Wallet.available() || !devKey
-        ? await Wallet.connect()
+        ? await Wallet.connect(onWalletChain)
         : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
+    wallet.hubChainId = app.chainId;
+    app.wallet = wallet;
     app.grantKey = null;
-    renderHubLabel();
-    // The lobby's buttons depend on which chain the wallet turned out to be on.
-    renderPayWith();
-    renderSessionPanel();
-    void renderAvatarPanel();
+    onWalletChain();
     await authenticate();
   } catch (error) {
     console.error('[wallet]', error);
     toast(errorFirstLine(error));
   }
+}
+
+/**
+ * Redraws everything that depends on which chain the wallet is on: after
+ * connecting, and whenever the wallet switches, here or in its own UI.
+ */
+function onWalletChain(): void {
+  renderHubLabel();
+  // The lobby's buttons depend on whether the wallet is on the hub or a spoke.
+  renderPayWith();
+  renderSessionPanel();
+  void renderAvatarPanel();
+  void renderWinnings();
+  void renderStakingPanel();
+  void refreshOneClick();
 }
 
 /** True from sending a login under a stored grant until the server answers it. */

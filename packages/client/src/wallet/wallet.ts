@@ -1,4 +1,5 @@
 import {
+  BaseError,
   createPublicClient,
   createWalletClient,
   custom,
@@ -9,6 +10,7 @@ import {
   parseEther,
   parseSignature,
   type Address,
+  type Chain,
   type Hex,
   type LocalAccount,
   type PublicClient,
@@ -18,6 +20,7 @@ import {
 import type { ChainRecord } from '@lms/engine';
 import { privateKeyToAccount } from 'viem/accounts';
 import { DEV_RPC_URL } from '../csp.js';
+import { WrongChainError, viemChain } from './chains.js';
 import type { PlayRewards, StakingPosition } from '../ui/staking.js';
 import type { ProposalLive } from '../ui/governance.js';
 import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
@@ -64,7 +67,11 @@ const PERMIT_SECONDS = 10 * 60;
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   on?(event: string, handler: (...args: never[]) => void): void;
+  removeListener?(event: string, handler: (...args: never[]) => void): void;
 }
+
+/** Stops the last connected wallet hearing about chain switches. */
+let watching: (() => void) | null = null;
 
 declare global {
   interface Window {
@@ -89,9 +96,17 @@ export interface SpokeRoute {
  * else — it cannot authorise a transfer.
  */
 export class Wallet {
+  /**
+   * The chain the escrow and everything around it live on, as the server's
+   * `hello` names it. Every write goes there except a join from a spoke and
+   * minting an avatar, which happen on the chain the wallet is on.
+   */
+  hubChainId = 0;
+
   private constructor(
     readonly address: Address,
-    readonly chainId: number,
+    /** Where the wallet is now; an injected one reports every switch. */
+    private current: number,
     /**
      * The injected path passes a bare address, which viem routes back to the
      * provider. The burner passes a local account, which signs in-process — the
@@ -102,11 +117,20 @@ export class Wallet {
     private readonly rpc: PublicClient,
   ) {}
 
+  /** The chain the wallet is on. */
+  get chainId(): number {
+    return this.current;
+  }
+
   static available(): boolean {
     return typeof window !== 'undefined' && Boolean(window.ethereum);
   }
 
-  static async connect(): Promise<Wallet> {
+  /**
+   * Connects the injected wallet. `onChainChanged` hears every network switch,
+   * made here or in the wallet itself, so what the page shows follows it.
+   */
+  static async connect(onChainChanged: (chainId: number) => void = () => {}): Promise<Wallet> {
     const provider = window.ethereum;
     if (!provider) throw new Error('No EIP-1193 wallet found. Install MetaMask or Rabby.');
 
@@ -116,9 +140,17 @@ export class Wallet {
 
     const [address] = await wallet.requestAddresses();
     if (!address) throw new Error('Wallet returned no accounts');
-    const chainId = await rpc.getChainId();
+    const connected = new Wallet(address, await rpc.getChainId(), address, wallet, rpc);
 
-    return new Wallet(address, chainId, address, wallet, rpc);
+    // One listener per provider: connecting again hands it to the new wallet.
+    watching?.();
+    const listener = (hex: string) => {
+      connected.current = Number(hex);
+      onChainChanged(connected.current);
+    };
+    provider.on?.('chainChanged', listener);
+    watching = () => provider.removeListener?.('chainChanged', listener);
+    return connected;
   }
 
   /**
@@ -174,9 +206,49 @@ export class Wallet {
   }
 
   /**
+   * Puts the wallet on `chainId`, or throws `WrongChainError`.
+   *
+   * An injected wallet is asked to switch, and to add the chain first if it
+   * has never seen it. A wallet that signs in-process is bound to its node,
+   * so it can only be refused. Called before anything is simulated: against
+   * the wrong chain a simulation fails with something like "no code at
+   * address", which says nothing useful.
+   */
+  async ensureChain(chainId: number): Promise<void> {
+    if (this.current === chainId) return;
+    if (typeof this.account !== 'string') {
+      throw new WrongChainError(this.current, chainId, 'This wallet signs on one network only.');
+    }
+    const chain = viemChain(chainId);
+    try {
+      try {
+        await this.wallet.switchChain({ id: chainId });
+      } catch (error) {
+        if (!unknownChain(error) || chain.rpcUrls.default.http.length === 0) throw error;
+        await this.wallet.addChain({ chain });
+        await this.wallet.switchChain({ id: chainId });
+      }
+    } catch {
+      throw new WrongChainError(this.current, chainId);
+    }
+    this.current = await this.rpc.getChainId();
+    if (this.current !== chainId) throw new WrongChainError(this.current, chainId);
+  }
+
+  /** `ensureChain` for the hub, returning the chain every hub write names. */
+  private async onHub(): Promise<Chain> {
+    if (this.hubChainId === 0) throw new Error('Not connected to the game server yet.');
+    await this.ensureChain(this.hubChainId);
+    return viemChain(this.hubChainId);
+  }
+
+  /**
    * Each of these simulates before signing, so an on-chain revert (lobby full,
    * wrong stake, already seated) surfaces as a readable error instead of a
    * wallet prompt the player pays gas to watch fail.
+   *
+   * Each also names the chain it is for, so viem refuses to sign if the
+   * wallet has been switched away from it since.
    *
    * The `simulate -> write` shape repeats rather than being wrapped in a
    * helper: viem infers argument types from the literal `abi` and
@@ -184,6 +256,7 @@ export class Wallet {
    * compile-time-checked calls for four unchecked ones.
    */
   async createMatch(escrow: Address, stakeEth: string, seats: number): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -191,10 +264,11 @@ export class Wallet {
       functionName: 'createMatch',
       args: [parseEther(stakeEth), seats],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   async join(escrow: Address, matchId: Hex, stakeWei: bigint): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -203,7 +277,7 @@ export class Wallet {
       args: [matchId],
       value: stakeWei,
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -234,7 +308,15 @@ export class Wallet {
    * Across's fee. The seat is taken on the hub once a relayer fills the
    * deposit, or the stake credited there if the seat is gone by then.
    */
-  async joinFromSpoke(router: Address, matchId: Hex, quote: BridgeQuote, value: bigint): Promise<Hex> {
+  async joinFromSpoke(
+    spokeChainId: number,
+    router: Address,
+    matchId: Hex,
+    quote: BridgeQuote,
+    value: bigint,
+  ): Promise<Hex> {
+    await this.ensureChain(spokeChainId);
+    const chain = viemChain(spokeChainId);
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: router,
@@ -245,7 +327,7 @@ export class Wallet {
       args: [matchId, ZERO_ADDRESS, quote],
       value,
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -292,6 +374,7 @@ export class Wallet {
    * the tokens that need it.
    */
   async approveToken(token: Address, spender: Address, amount: bigint): Promise<void> {
+    const chain = await this.onHub();
     const approve = (value: bigint) =>
       this.rpc.simulateContract({
         account: this.address,
@@ -307,10 +390,10 @@ export class Wallet {
     } catch (error) {
       if ((await this.tokenAllowance(token, spender)) === 0n) throw error;
       const reset = await approve(0n);
-      await this.waitFor(await this.wallet.writeContract({ ...reset.request, chain: null }));
+      await this.waitFor(await this.wallet.writeContract({ ...reset.request, chain }));
       simulation = await approve(amount);
     }
-    await this.waitFor(await this.wallet.writeContract({ ...simulation.request, chain: null }));
+    await this.waitFor(await this.wallet.writeContract({ ...simulation.request, chain }));
   }
 
   /** Swaps the route's first token for the stake and takes the seat, in one transaction. */
@@ -321,6 +404,7 @@ export class Wallet {
     maxAmountIn: bigint,
     deadline: bigint,
   ): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: zap,
@@ -328,10 +412,11 @@ export class Wallet {
       functionName: 'joinWithToken',
       args: [matchId, [...path], maxAmountIn, deadline],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   async withdraw(escrow: Address): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -339,7 +424,7 @@ export class Wallet {
       functionName: 'withdraw',
       args: [this.address],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /** History root the escrow stored when the match settled; zero before that. */
@@ -379,6 +464,7 @@ export class Wallet {
    * the refund is credited, to withdraw like winnings.
    */
   async cancelMatch(escrow: Address, matchId: Hex): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -386,7 +472,7 @@ export class Wallet {
       functionName: 'cancelMatch',
       args: [matchId],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -394,6 +480,7 @@ export class Wallet {
    * guardian looks at the evidence whose hash this records.
    */
   async dispute(escrow: Address, matchId: Hex, evidenceHash: Hex): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: escrow,
@@ -401,7 +488,7 @@ export class Wallet {
       functionName: 'dispute',
       args: [matchId, evidenceHash],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   async withdrawableEth(escrow: Address): Promise<string> {
@@ -422,13 +509,14 @@ export class Wallet {
    * staked from.
    */
   async mintAvatar(collection: Address): Promise<Hex> {
+    const chain = viemChain(this.current);
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: collection,
       abi: playerAvatarsAbi,
       functionName: 'mint',
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /** Everything the avatar panel needs, in one round trip per field. */
@@ -495,6 +583,7 @@ export class Wallet {
    * transaction instead of an approval and a deposit.
    */
   async stake(vault: Address, amount: bigint): Promise<Hex> {
+    const chain = await this.onHub();
     const lms = await this.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
     const [name, nonce] = await Promise.all([
       this.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
@@ -525,7 +614,7 @@ export class Wallet {
       functionName: 'depositWithPermit',
       args: [amount, deadline, Number(v ?? BigInt(yParity + 27)), r, s],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -533,6 +622,7 @@ export class Wallet {
    * address. The sLMS stays here and keeps earning; only the votes move.
    */
   async delegateVotes(vault: Address, delegatee: Address): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: vault,
@@ -540,11 +630,12 @@ export class Wallet {
       functionName: 'delegate',
       args: [delegatee],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /** Burns `amount` sLMS now and starts the cooldown on the LMS behind it. */
   async requestUnstake(vault: Address, amount: bigint): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: vault,
@@ -552,11 +643,12 @@ export class Wallet {
       functionName: 'requestUnstake',
       args: [amount],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /** Withdraws unstaked LMS once the cooldown has passed. */
   async claimUnstaked(vault: Address): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: vault,
@@ -564,7 +656,7 @@ export class Wallet {
       functionName: 'claim',
       args: [this.address],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -591,6 +683,7 @@ export class Wallet {
 
   /** Claims play-mining rewards for `epochs`, vesting to this wallet over six months. */
   async claimPlayRewards(distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: distributor,
@@ -598,11 +691,12 @@ export class Wallet {
       functionName: 'claim',
       args: [this.address, [...epochs]],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /** Pays the ETH this wallet has earned from fees to itself. */
   async claimRewards(vault: Address): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: vault,
@@ -610,7 +704,7 @@ export class Wallet {
       functionName: 'claimRewards',
       args: [this.address],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -663,6 +757,7 @@ export class Wallet {
 
   /** Votes on a proposal, with a reason recorded on-chain when one is given. */
   async castVote(governor: Address, proposalId: string, support: VoteSupportValue, reason: string): Promise<Hex> {
+    const chain = await this.onHub();
     const id = BigInt(proposalId);
     if (reason.trim()) {
       const { request } = await this.rpc.simulateContract({
@@ -672,7 +767,7 @@ export class Wallet {
         functionName: 'castVoteWithReason',
         args: [id, support, reason.trim()],
       });
-      return this.wallet.writeContract({ ...request, chain: null });
+      return this.wallet.writeContract({ ...request, chain });
     }
     const { request } = await this.rpc.simulateContract({
       account: this.address,
@@ -681,7 +776,7 @@ export class Wallet {
       functionName: 'castVote',
       args: [id, support],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -725,6 +820,7 @@ export class Wallet {
 
   /** Submits a proposal. Simulated first, so a missing threshold reads as the governor's own error. */
   async propose(governor: Address, actions: readonly ProposalAction[], description: string): Promise<Hex> {
+    const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
       account: this.address,
       address: governor,
@@ -737,7 +833,7 @@ export class Wallet {
         description,
       ],
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -746,6 +842,7 @@ export class Wallet {
    * proposal from exactly these arguments, so they must match what was proposed.
    */
   async advanceProposal(governor: Address, proposal: ProposalSummary, step: 'queue' | 'execute'): Promise<Hex> {
+    const chain = await this.onHub();
     const args = [
       proposal.targets,
       proposal.values.map((value) => BigInt(value)),
@@ -760,7 +857,7 @@ export class Wallet {
         functionName: 'queue',
         args,
       });
-      return this.wallet.writeContract({ ...request, chain: null });
+      return this.wallet.writeContract({ ...request, chain });
     }
     const { request } = await this.rpc.simulateContract({
       account: this.address,
@@ -769,7 +866,7 @@ export class Wallet {
       functionName: 'execute',
       args,
     });
-    return this.wallet.writeContract({ ...request, chain: null });
+    return this.wallet.writeContract({ ...request, chain });
   }
 
   /**
@@ -797,6 +894,7 @@ export class Wallet {
     validUntil: number,
     caps: { valueCap: bigint; spendCap: bigint },
   ): Promise<Hex> {
+    const chain = await this.onHub();
     const authorization = await this.wallet.signAuthorization({
       account: this.account,
       contractAddress: delegate,
@@ -807,7 +905,7 @@ export class Wallet {
 
     return this.wallet.sendTransaction({
       account: this.account,
-      chain: null,
+      chain,
       to: this.address,
       authorizationList: [authorization],
       data: encodeFunctionData({
@@ -840,9 +938,10 @@ export class Wallet {
 
   /** Ends a session on-chain, so a stolen key stops working immediately. */
   async revokeSession(sessionKey: Address): Promise<Hex> {
+    const chain = await this.onHub();
     return this.wallet.sendTransaction({
       account: this.account,
-      chain: null,
+      chain,
       to: this.address,
       data: encodeFunctionData({
         abi: sessionKeyDelegateAbi,
@@ -855,4 +954,10 @@ export class Wallet {
   waitFor(hash: Hex): Promise<unknown> {
     return this.rpc.waitForTransactionReceipt({ hash });
   }
+}
+
+/** True when a wallet refused to switch because it does not know the chain (EIP-3326's 4902). */
+function unknownChain(error: unknown): boolean {
+  const is4902 = (cause: unknown) => (cause as { code?: unknown } | null)?.code === 4902;
+  return is4902(error) || (error instanceof BaseError && error.walk(is4902) !== null);
 }

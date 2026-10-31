@@ -95,6 +95,7 @@ function onServerMessage(message: ServerMessage): void {
     case 'hello':
       app.nonce = message.nonce;
       app.chainId = message.chainId;
+      if (app.wallet) app.wallet.hubChainId = message.chainId;
       app.escrow = message.escrow;
       app.avatarCollections = message.avatarCollections;
       app.sessionDelegate = message.sessionDelegate;

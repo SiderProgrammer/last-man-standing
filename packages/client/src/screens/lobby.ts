@@ -412,7 +412,7 @@ async function paySpokeJoin(
   button.disabled = true;
   try {
     button.textContent = 'Confirm the join…';
-    const hash = await wallet.joinFromSpoke(spoke.router, lobby.matchId, quote, total);
+    const hash = await wallet.joinFromSpoke(spoke.chainId, spoke.router, lobby.matchId, quote, total);
     button.textContent = 'Sending…';
     await wallet.waitFor(hash);
     app.inTransit.add(lobby.matchId.toLowerCase());
