@@ -180,11 +180,13 @@ export function onState(
   state: PublicMatchState,
   you: number | null,
   deadline: number,
+  waitingFor: readonly number[] = [],
 ): void {
   const switched = app.match?.matchId !== state.matchId;
   app.match = state;
   app.you = you;
   app.deadline = deadline;
+  app.waitingFor = [...waitingFor];
 
   if (switched) {
     app.committedRound = null;
@@ -505,7 +507,7 @@ export function updateTimer(): void {
   const now = Date.now();
   const state = app.match;
   const phase = state?.phase ?? null;
-  dom.timer.textContent = formatCountdown(phase, app.deadline, now);
+  dom.timer.textContent = formatCountdown(phase, app.deadline, now, app.waitingFor.length);
 
   const key = `${app.deadline}|${app.replaying}`;
   if (key !== timerKey) {

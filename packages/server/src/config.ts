@@ -103,6 +103,7 @@ const ENV = z.object({
   COMMIT_MS: whole(20_000, 1),
   REVEAL_MS: whole(12_000, 1),
   REPLAY_MS: whole(2_500),
+  READY_MS: whole(30_000),
   RPC_URL: url(/^(https?|wss?)$/, 'an http(s) or ws(s)'),
   ESCROW_ADDRESS: address,
   ATTESTOR_PK: privateKey,
@@ -222,6 +223,8 @@ export function loadConfig(
     revealMs: e.REVEAL_MS,
     /** Hold after each round so clients can replay it before the next clock starts. */
     replayMs: e.REPLAY_MS,
+    /** How long a staked room waits for every player to connect before round 1's clock starts anyway. */
+    readyMs: e.READY_MS,
     rpcUrl: e.RPC_URL ?? '',
     escrow: e.ESCROW_ADDRESS ?? deployed('escrow'),
     /**

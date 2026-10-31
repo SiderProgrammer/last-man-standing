@@ -61,6 +61,12 @@ export interface RoomOptions {
   receiptSigner?: `0x${string}` | null;
   /** Whether the room holds escrowed stakes. Defaults to false: a practice room. */
   staked?: boolean;
+  /**
+   * The ready phase: round 1's clock starts once every player's seat has a
+   * client attached, or this long after the room opens, whichever is first.
+   * Zero (the default) starts it at once.
+   */
+  readyMs?: number;
   onFinished?: MatchFinished;
 }
 
@@ -92,6 +98,10 @@ export class Room {
    */
   private replayUntil = 0;
   private settled = false;
+  /** Round 1's clock is running: everyone arrived, or the ready phase ran out. */
+  private started: boolean;
+  /** When the ready phase runs out. */
+  private readonly readyUntil: number;
   /** Moves players asked the server to reveal for them this round, by seat. */
   private readonly held = new Map<number, SealedMove>();
   /** The reveal signature that came with each held move, by seat. */
@@ -115,8 +125,28 @@ export class Room {
       this.seatByAddress.set(addressKey(seat.address), seat.index);
     }
 
-    this.deadlineAt = now + options.commitMs;
+    this.readyUntil = now + (options.readyMs ?? 0);
+    this.started = this.readyUntil <= now || this.absent().length === 0;
+    this.deadlineAt = (this.started ? now : this.readyUntil) + options.commitMs;
     this.bots.commit(this.match);
+  }
+
+  /** Seats whose player has no client attached yet: the ready phase waits on these. Empty once round 1 has started. */
+  absent(): number[] {
+    if (this.started) return [];
+    const here = new Set<number>();
+    for (const client of this.clients) {
+      const seat = client.address ? this.seatOf(client.address) : null;
+      if (seat !== null) here.add(seat);
+    }
+    return this.match.seats.map((seat) => seat.index).filter((index) => !this.bots.has(index) && !here.has(index));
+  }
+
+  /** Starts round 1's clock now, everyone being here. */
+  private start(now: number): void {
+    this.started = true;
+    this.deadlineAt = Math.min(this.deadlineAt, now + this.options.commitMs);
+    this.broadcastState();
   }
 
   /** Tells everyone watching how the match settled on-chain. */
@@ -156,9 +186,12 @@ export class Room {
     return this.seatByAddress.get(addressKey(address)) ?? null;
   }
 
-  attach(client: Client): void {
+  attach(client: Client, now: number = Date.now()): void {
     this.clients.add(client);
-    this.pushState(client);
+    // While the table fills, everyone sees who is still to come.
+    if (!this.started && this.absent().length === 0) this.start(now);
+    else if (!this.started) this.broadcastState();
+    else this.pushState(client);
     if (this.avatars.length > 0) this.pushAvatars(client);
     if (this.dossier.length > 0) this.pushDossier(client);
   }
@@ -254,6 +287,11 @@ export class Room {
   /** Advances the phase clock. Safe to call at any frequency. */
   tick(now: number = Date.now()): void {
     if (this.match.finished) return;
+    if (!this.started && now >= this.readyUntil) {
+      // Not everyone came: play starts without them, on the clock it was always going to.
+      this.started = true;
+      this.broadcastState();
+    }
     // A table that finished committing during the replay hold was waiting only
     // on the hold, not on the clock.
     if (
@@ -406,6 +444,7 @@ export class Room {
       state,
       you: client.address ? this.seatOf(client.address) : null,
       deadline: this.deadlineAt,
+      waitingFor: this.absent(),
     });
   }
 }

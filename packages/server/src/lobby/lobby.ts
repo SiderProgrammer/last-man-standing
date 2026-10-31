@@ -61,6 +61,16 @@ export interface LobbyOptions {
   receiptSigner?: `0x${string}` | null;
   /** The key that signs practice rooms' commit receipts: never the attestor. */
   practiceReceiptSigner?: `0x${string}` | null;
+  /** A staked room's ready phase; see `RoomOptions.readyMs`. Practice rooms have none. */
+  readyMs?: number;
+  /**
+   * Whether a staked match with no room yet will get one: a lobby still
+   * open or waiting on its seed. A `watch` for one is held until it opens.
+   * Omitted, such a watch is refused as unknown.
+   */
+  expects?: (matchId: `0x${string}`) => boolean;
+  /** Called with each staked room as it opens, so its players can be told. */
+  onLive?: (room: Room) => void;
 }
 
 const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
@@ -93,6 +103,8 @@ export class Lobby {
    * retry queue. A match is in it once, however often its room reports it.
    */
   private readonly settling = new Map<string, Promise<void>>();
+  /** Clients holding a `watch` for a staked match whose room has not opened, by lower-cased id. */
+  private readonly waiting = new Map<string, Set<Client>>();
   /**
    * Starts at a random 64-bit offset rather than zero. From zero, every
    * process handed out the same practice match ids, so after a restart a
@@ -192,7 +204,12 @@ export class Lobby {
   adopt(setup: MatchSetup, botSeats: readonly number[] = [], now: number = Date.now()): Room {
     const existing = this.get(setup.matchId);
     if (existing) return existing;
-    return this.open(setup, botSeats, now, true);
+    const room = this.open(setup, botSeats, now, true);
+    const key = room.matchId.toLowerCase();
+    for (const client of this.waiting.get(key) ?? []) room.attach(client, now);
+    this.waiting.delete(key);
+    this.options.onLive?.(room);
+    return room;
   }
 
   /** Records a staked match this server will not play: see `abandoned`. */
@@ -220,15 +237,36 @@ export class Lobby {
     }
   }
 
-  attach(matchId: `0x${string}`, client: Client): Room {
+  /**
+   * Attaches `client` to a match's room; or, for a staked match whose room
+   * has not opened yet, holds the watch until it does and returns null.
+   */
+  attach(matchId: `0x${string}`, client: Client, now: number = Date.now()): Room | null {
+    const key = matchId.toLowerCase();
     const room = this.get(matchId);
-    const abandoned = room ? undefined : this.abandoned.get(matchId.toLowerCase());
+    const abandoned = room ? undefined : this.abandoned.get(key);
     if (abandoned) {
       throw new RequestError('MATCH_ABANDONED', `this match will not be played: ${abandoned}; every stake is being refunded`);
     }
-    if (!room) throw new RequestError('NOT_FOUND', 'unknown match');
-    room.attach(client);
+    if (!room) {
+      if (!this.options.expects?.(matchId)) throw new RequestError('NOT_FOUND', 'unknown match');
+      let held = this.waiting.get(key);
+      if (!held) this.waiting.set(key, (held = new Set()));
+      held.add(client);
+      client.send({ type: 'waiting', matchId });
+      return null;
+    }
+    room.attach(client, now);
     return room;
+  }
+
+  /** Drops every watch `client` holds, on rooms and on matches still to open. */
+  detach(client: Client): void {
+    for (const room of this.rooms.values()) room.detach(client);
+    for (const [key, held] of this.waiting) {
+      held.delete(client);
+      if (held.size === 0) this.waiting.delete(key);
+    }
   }
 
   /**
@@ -284,6 +322,7 @@ export class Lobby {
       ...(this.options.chainId !== undefined ? { chainId: this.options.chainId } : {}),
       receiptSigner: (staked ? this.options.receiptSigner : this.options.practiceReceiptSigner) ?? null,
       staked,
+      readyMs: staked ? (this.options.readyMs ?? 0) : 0,
       onFinished: (transcript) => this.enqueue(transcript, staked),
     };
   }

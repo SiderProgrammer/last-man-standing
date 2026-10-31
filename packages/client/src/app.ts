@@ -135,7 +135,16 @@ function onServerMessage(message: ServerMessage): void {
       break;
 
     case 'state':
-      onState(message.state, message.you, message.deadline);
+      onState(message.state, message.you, message.deadline, message.waitingFor);
+      break;
+
+    // A match this wallet sits in has its room now: go to the table.
+    case 'live':
+      if (app.match?.matchId !== message.matchId) net.send({ type: 'watch', matchId: message.matchId });
+      break;
+
+    // The watch is held until the room opens; `state` follows then.
+    case 'waiting':
       break;
 
     case 'avatars':

@@ -159,6 +159,16 @@ export class ChainBridge {
     this.timer = null;
   }
 
+  /**
+   * Whether `matchId` is a lobby of these rules that will get a room once
+   * it is seeded: still open, or waiting on the oracle.
+   */
+  expects(matchId: `0x${string}`): boolean {
+    const entry = this.tracked.get(matchId.toLowerCase());
+    if (!entry || entry.foreign || entry.abandoned || entry.adopted || entry.proposed) return false;
+    return entry.info.status === 'open' || entry.info.status === 'pending';
+  }
+
   /** Lobby directory served to clients. */
   directory(): { open: LobbyInfo[]; live: LobbyInfo[] } {
     const open: LobbyInfo[] = [];

@@ -218,6 +218,11 @@ export type ServerMessage =
       state: PublicMatchState;
       you: number | null;
       deadline: number;
+      /**
+       * Seats the room is still waiting to see connected before round 1's
+       * clock starts. Empty once it has: everyone came, or the wait ran out.
+       */
+      waitingFor: number[];
     }
   | {
       type: 'round';
@@ -269,6 +274,18 @@ export type ServerMessage =
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
   | { type: 'review'; match: ReviewedMatch }
+  /**
+   * A staked match this wallet sits in has gone live and its room is open.
+   * Sent to every socket of every seat, so a player who staked and walked
+   * away from the lobby screen is brought to the table.
+   */
+  | { type: 'live'; matchId: `0x${string}` }
+  /**
+   * A `watch` for a lobby that has no room yet: it is still filling, or
+   * waiting on its seed. The server holds the watch, and `state` follows
+   * the moment the room opens.
+   */
+  | { type: 'waiting'; matchId: `0x${string}` }
   /** In the queue for this tier, with `waiting` wallets in it now, this one included. */
   | { type: 'queued'; stake: string; seats: number; waiting: number }
   | { type: 'dequeued' }

@@ -17,8 +17,11 @@ export function formatCountdown(
   phase: MatchPhaseValue | null,
   deadline: number,
   now: number,
+  /** Seats round 1 is still waiting on: see the `state` message's `waitingFor`. */
+  waitingFor = 0,
 ): string {
   if (phase === null || phase === MatchPhase.Finished) return '--';
+  if (waitingFor > 0) return `Waiting for ${waitingFor} ${waitingFor === 1 ? 'player' : 'players'}…`;
   return `${(Math.max(0, deadline - now) / 1000).toFixed(1)}s`;
 }
 

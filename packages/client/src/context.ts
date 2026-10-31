@@ -76,6 +76,8 @@ export interface AppState {
   dossier: Map<string, PlayStyle>;
   you: number | null;
   deadline: number;
+  /** Seats round 1 is still waiting to see connected. Empty once it has started. */
+  waitingFor: number[];
   /** Action the player has selected but not yet sealed. */
   draft: { action: ActionValue; target: number } | null;
   /** Round whose commitment is already on the server. */
@@ -119,6 +121,7 @@ export const app: AppState = {
   dossier: new Map(),
   you: null,
   deadline: 0,
+  waitingFor: [],
   draft: null,
   committedRound: null,
   revealedRound: null,

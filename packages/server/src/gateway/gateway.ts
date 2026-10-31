@@ -368,7 +368,7 @@ export class Gateway {
         return;
       }
       case 'watch': {
-        this.options.lobby.attach(message.matchId, session);
+        this.options.lobby.attach(message.matchId, session, now);
         return;
       }
       case 'analyze': {
@@ -640,7 +640,7 @@ export class Gateway {
     session.closed = true;
     // Nobody is left to read it; stop paying for it.
     session.analysis?.abort();
-    for (const room of this.options.lobby.list()) room.detach(session);
+    this.options.lobby.detach(session);
     this.sessions.delete(session.socket);
     // Nobody left to tell when its table is ready: out of the queue.
     if (session.queued && session.address && !this.connected(session.address)) {

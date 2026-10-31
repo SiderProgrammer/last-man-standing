@@ -79,9 +79,18 @@ async function main(): Promise<void> {
     gateway: config.ipfsGateway,
   });
 
+  // Late-bound: the gateway that tells players things is built after the
+  // lobby and the matchmaker that need to.
+  let notify: (player: `0x${string}`, message: Parameters<Gateway['notify']>[1]) => void = () => undefined;
+  let bridge: ChainBridge | null = null;
   const lobby = new Lobby({
     archive,
     relayer,
+    readyMs: config.readyMs,
+    expects: (matchId) => bridge?.expects(matchId) ?? false,
+    onLive: (room) => {
+      for (const seat of room.match.seats) notify(seat.address, { type: 'live', matchId: room.matchId });
+    },
     commitMs: config.commitMs,
     revealMs: config.revealMs,
     replayMs: config.replayMs,
@@ -94,7 +103,7 @@ async function main(): Promise<void> {
   });
 
 
-  const bridge = config.onChain
+  bridge = config.onChain
     ? ChainBridge.start({
         rpcUrl: config.rpcUrl,
         chainId: config.chainId,
@@ -191,7 +200,6 @@ async function main(): Promise<void> {
   // Opens matchmade lobbies, the only ones that earn play-mining, with its
   // own key. Told who to notify once the gateway exists.
   const matchmakerSender = config.onChain ? senderFor(config.matchmakerPk, 'matchmaker') : null;
-  let notify: (player: `0x${string}`, message: Parameters<Gateway['notify']>[1]) => void = () => undefined;
   const matchmaker = matchmakerSender
     ? new Matchmaker({
         port: viemMatchmakerPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: matchmakerSender }),
