@@ -13,7 +13,7 @@ library SettlementLib {
     /// @notice EIP-712 struct hash of a `MatchResult`. An `address[]` member is
     ///         encoded as the hash of its elements, each padded to a word.
     /// @param transcriptHash keccak256 of the archived transcript's canonical
-    ///        JSON (`hashTranscript` in `@lms/consensus`).
+    ///        JSON (`hashTranscript` in `packages/consensus`).
     function hashMatchResult(
         bytes32 matchId,
         uint32 rounds,

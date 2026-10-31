@@ -9,8 +9,9 @@ Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 
 `design-rework-phase-2-core-contracts`, Phase 3 on
 `design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
 Phase 5 on `design-rework-phase-5-sessions`, Phase 6 on
-`design-rework-phase-6-cross-chain`, Phase 7 on `design-rework-phase-7-server`, and
-Phase 8 on `design-rework-phase-8-client`, each building on the last. Nothing after that
+`design-rework-phase-6-cross-chain`, Phase 7 on `design-rework-phase-7-server`,
+Phase 8 on `design-rework-phase-8-client`, and Phase 9 on
+`design-rework-phase-9-packages-and-docs`, each building on the last. Nothing after that
 is, except the Privy check in 5.1 and the live Across testnet deposit in 6.1.
 
 ---
@@ -512,6 +513,33 @@ withdrawing to a spoke). Where it differs from the table:
 ---
 
 ## Phase 9: Packages and docs
+
+**Done**, one commit per step. Where it differs from the table:
+- 9.1: `@lms/protocol` is gone. `@lms/consensus` also has the session-call and
+  withdrawal EIP-712 (each pinned to Solidity like the rest), the address helpers, and
+  `MatchErrorCode`, since the engine raises it; the engine depends on nothing else.
+  `@lms/contracts` also has the chain table and the helpers that encode or read calls
+  (one-click calls, Across quotes, the zap, governance, proposal decoding); the
+  registry reader moved there from the server's config as the Node-only
+  `@lms/contracts/registry`, so the browser bundle never sees `node:fs`. `@lms/api` also
+  has the snapshot deltas, the port and `errorMessage`. UI analytics: the reads panel
+  (`readOpponents`, the tells) and `describeStyle` are the client's; the style tallies
+  are the server's style book; `PlayStyle` is a DTO in `api`. The analyst's per-seat
+  lines, which used the reads panel, are now its own plain counts without the tells.
+- 9.2: the analyst already ran in its own worker (7.4) and made one call by default.
+  What went is the tool loop: the tool definitions, tool results, echoed turns and
+  thought signatures, and `ANALYST_MAX_TURNS`. What the tools rendered is `briefMatch`.
+- 9.3: eleven ADRs in `docs/adr/`, one per row of §0, with the defaults folded into the
+  rows they belong to. `FEATURES.md` went from 1,278 lines to under 500: its file tables,
+  commands and configuration reference copied ARCHITECTURE, the README and
+  `.env.example`, and several entries had gone stale (`settle` proposing, the VRF
+  adapter's deploy, `MultisigPhase`, the guardian's pause). Test counts were dropped
+  rather than updated. The `relayer.ts` reference had already gone. TODO §3.3 lost two
+  items done in earlier phases.
+- 9.4: the trust model, the wallet matrix and most of the roles table were already in
+  the README from Phases 3–5 and 8. New: the threat model (practice bots stated there,
+  as the coverage table says), wash-trading economics, rows for the multisig phase and
+  the VRF subscription, and what mainnet would need.
 
 | Step | Work | Findings |
 |---|---|---|

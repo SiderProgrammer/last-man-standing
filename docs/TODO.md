@@ -139,30 +139,22 @@ mainnet. Still open:
 
 ### 3.3 Contract review items
 
-- `GameEscrow.settle` stores the full ranking (`matchRanking`) on every settlement — one
-  SSTORE per seat, and nothing on-chain reads it any more. Consider dropping it for the event.
-- Token governance is in place (`LmsGovernor` over staked LMS, with a 1M-vote
-  minimum quorum), with the fee keeper, streamed ETH rewards for stakers,
-  on-chain play-mining for half the supply, a staking panel with both claims, and
-  a governance screen. The deploy script splits the supply (play-mining, timelock,
-  team vesting, Safe liquidity). Still open:
-  - **The veto's removal is a rule, not code.** The plan — revoke it once players
-    hold more sLMS than the team's 15%, or after twelve months — has to be carried
-    out by a proposal. See FEATURES.md "The Safe's veto: when it goes".
+- Token governance is in place: `LmsGovernor` over staked LMS with a 1M-vote quorum
+  floor, the fee keeper, streamed ETH rewards for stakers, on-chain play-mining for
+  half the supply, and `MultisigPhase` ending the Safe's powers on a fixed date
+  ([ADR 0004](adr/0004-multisig-phase-with-a-fixed-end.md)). Still open:
   - **Governance is idle at launch** until players hold the quorum floor in sLMS:
-    with the cap binding, 10 ETH of fees paid in settled matches (200 ETH of
-    stakes), and never less than three weeks. At launch volumes that could be
-    months. Decide whether that is acceptable, or whether a bootstrap stake or a
-    lower floor is wanted.
-  - **Play-mining parameters are guesses.** The 100k LMS per ETH cap and the
-    yearly decay should be revisited against real volume before mainnet.
-  - **Legal review** of the stakers' fee share (0% on mainnet by default) and of
-    play-mining itself.
+    with the 10,000 LMS per ETH cap binding, 100 ETH of fees paid in settled
+    matches (2,000 ETH of stakes at the 5% fee), and rewards vest for six months
+    first. Until then the Safe proposes through `MultisigPhase`. Decide whether a
+    bootstrap stake or a lower floor is wanted.
+  - **Play-mining parameters are guesses.** The per-ETH cap and the yearly decay
+    should be revisited against real volume before mainnet.
+  - **Legal review** of the stakers' fee share (0% on Base mainnet by default) and
+    of play-mining itself.
   - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide
     env, so it always sets one; the case where the Safe is the deployer (the
     `dev:fork` setup) is covered only by an `assert` in `_distribute`.
-- `ChainlinkVrfAdapter` is plain `Ownable`; it must be constructed with a timelock (fed
-  by a Safe on that chain) as owner. Consider `Ownable2Step` for it too.
 
 ---
 
