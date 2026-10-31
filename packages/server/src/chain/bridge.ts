@@ -11,9 +11,11 @@ import {
   type LobbySeat,
   type Seat,
 } from '@lms/protocol';
-import type { MatchSetup } from '@lms/engine';
+import { rankingHash, type MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
-import { viemEscrowReader, type EscrowMatch, type EscrowReader } from './escrowReader.js';
+import type { MatchArchive } from '../lobby/store.js';
+import { viemEscrowReader, type EscrowMatch, type EscrowMatchRead, type EscrowReader } from './escrowReader.js';
+import { chunkedLogs, confirmedHead } from './logs.js';
 import type { TxSender } from './txSender.js';
 
 export interface ChainBridgeOptions {
@@ -26,6 +28,12 @@ export interface ChainBridgeOptions {
   pollMs?: number;
   /** Aborts a live match this server cannot finish. See `ChainBridgeDeps.abort`. */
   abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
+  /** The escrow's deploy block, from the registry. See `ChainBridgeDeps.fromBlock`. */
+  fromBlock?: bigint;
+  /** See `ChainBridgeDeps.confirmations`. */
+  confirmations?: number;
+  /** See `ChainBridgeDeps.archive`. */
+  archive?: Pick<MatchArchive, 'load'>;
 }
 
 /** What the bridge needs once the transport has been chosen. */
@@ -43,7 +51,31 @@ export interface ChainBridgeDeps {
    * permissionless `cancelMatch` once its settlement deadline passes instead.
    */
   abort?: (matchId: `0x${string}`) => Promise<Hex | null>;
+  /**
+   * No log scan starts before this block: the escrow's deploy block. The
+   * first scan starts `BACKFILL_BLOCKS` behind the head, or here if that is
+   * later. Defaults to zero.
+   */
+  fromBlock?: bigint;
+  /**
+   * Blocks behind the head a log scan stops at, so that a log the chain may
+   * still reorg away is never read and then skipped past. Defaults to zero.
+   */
+  confirmations?: number;
+  /**
+   * Finished matches. A proposed result's ranking is read from here, where
+   * this server archived it, and only scanned for in the logs if missing.
+   */
+  archive?: Pick<MatchArchive, 'load'>;
 }
+
+/**
+ * How far back the first scan after a start reaches: a little over two days
+ * of Base blocks, longer than any match lasts — join window, lock grace, the
+ * oracle's timeout, the settle window, the challenge window and a dispute's
+ * 48 hours.
+ */
+const BACKFILL_BLOCKS = 100_000n;
 
 interface TrackedMatch {
   info: LobbyInfo;
@@ -52,6 +84,8 @@ interface TrackedMatch {
   proposed: boolean;
   /** Was live before this server started: being cancelled, never played. */
   abandoned: boolean;
+  /** Created under rules this server does not play: never listed, never locked. */
+  foreign: boolean;
   /**
    * Chain each seat staked from, keyed by lowercased address and already
    * normalised to an EVM chain id. Filled from `PlayerJoined` as it is seen and
@@ -105,10 +139,14 @@ export class ChainBridge {
         chainId: options.chainId,
         escrow: options.escrow,
         ...(options.keeper ? { keeper: options.keeper } : {}),
+        ...(options.fromBlock !== undefined ? { fromBlock: options.fromBlock } : {}),
       }),
       lobby: options.lobby,
       chainId: options.chainId,
       ...(options.abort ? { abort: options.abort } : {}),
+      ...(options.fromBlock !== undefined ? { fromBlock: options.fromBlock } : {}),
+      ...(options.confirmations !== undefined ? { confirmations: options.confirmations } : {}),
+      ...(options.archive ? { archive: options.archive } : {}),
     });
     void bridge.poll();
     bridge.timer = setInterval(() => void bridge.poll(), options.pollMs ?? 4_000);
@@ -126,7 +164,7 @@ export class ChainBridge {
     const open: LobbyInfo[] = [];
     const live: LobbyInfo[] = [];
     for (const entry of this.tracked.values()) {
-      if (entry.proposed || entry.abandoned) continue;
+      if (entry.proposed || entry.abandoned || entry.foreign) continue;
       if (entry.info.status === 'open') open.push(entry.info);
       else live.push(entry.info);
     }
@@ -149,20 +187,30 @@ export class ChainBridge {
   }
 
   private async discover(): Promise<void> {
-    const latest = await this.reader.blockNumber();
-    // First pass starts a little way back so a restart still sees a fresh lobby.
-    const from = this.cursor ?? (latest > 5_000n ? latest - 5_000n : 0n);
+    const latest = confirmedHead(await this.reader.blockNumber(), this.deps.confirmations ?? 0);
+    if (latest === null) return;
+    // The first scan after a start reaches back far enough to find every
+    // match that can still be in play, but never before the deploy.
+    const floor = this.deps.fromBlock ?? 0n;
+    const from = this.cursor ?? (latest > floor + BACKFILL_BLOCKS ? latest - BACKFILL_BLOCKS : floor);
     if (from > latest) return;
 
-    for (const { matchId } of await this.reader.matchCreatedLogs(from, latest)) {
+    for (const { matchId } of await chunkedLogs(from, latest, (a, b) => this.reader.matchCreatedLogs(a, b))) {
       const key = matchId.toLowerCase();
       if (this.tracked.has(key)) continue;
-      this.tracked.set(key, { adopted: false, proposed: false, abandoned: false, info: placeholder(matchId), origins: new Map() });
+      this.tracked.set(key, {
+        adopted: false,
+        proposed: false,
+        abandoned: false,
+        foreign: false,
+        info: placeholder(matchId),
+        origins: new Map(),
+      });
     }
 
     // Joins are read from the log rather than by polling `seatOrigin` per seat:
     // the event already carries the origin, and an origin never changes.
-    for (const join of await this.reader.playerJoinedLogs(from, latest)) {
+    for (const join of await chunkedLogs(from, latest, (a, b) => this.reader.playerJoinedLogs(a, b))) {
       const entry = this.tracked.get(join.matchId.toLowerCase());
       if (!entry) continue;
       entry.origins.set(
@@ -174,22 +222,31 @@ export class ChainBridge {
     this.cursor = latest + 1n;
   }
 
+  /** Every tracked match, read in one batch, keyed as `tracked` is. */
+  private async readAll(): Promise<Array<[string, EscrowMatchRead]>> {
+    const entries = [...this.tracked];
+    const reads = await this.reader.getMatches(entries.map(([, entry]) => entry.info.matchId));
+    return entries.map(([key], i) => [key, reads[i] as EscrowMatchRead]);
+  }
+
   /** Which tracked matches are live now. Reads only, and all or nothing. */
   private async snapshot(): Promise<Set<string>> {
     const live = new Set<string>();
-    for (const [key, entry] of this.tracked) {
-      if ((await this.reader.getMatch(entry.info.matchId)).status === MatchStatus.Live) live.add(key);
+    for (const [key, { match }] of await this.readAll()) {
+      if (match.status === MatchStatus.Live) live.add(key);
     }
     if (live.size > 0) console.warn(`[chain] ${live.size} matches were live before this server started`);
     return live;
   }
 
   private async refresh(liveAtBoot: ReadonlySet<string>): Promise<void> {
-    for (const [key, entry] of this.tracked) {
+    for (const [key, { match: raw, seats: players }] of await this.readAll()) {
+      const entry = this.tracked.get(key);
+      if (!entry) continue;
       const matchId = entry.info.matchId;
-      const raw = await this.reader.getMatch(matchId);
 
-      if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled) {
+      // `None` is a creation the chain reorged away.
+      if (raw.status === MatchStatus.Settled || raw.status === MatchStatus.Cancelled || raw.status === MatchStatus.None) {
         this.tracked.delete(key);
         continue;
       }
@@ -197,7 +254,7 @@ export class ChainBridge {
       const cancellableAt = cancellableFrom(raw);
       if (raw.status === MatchStatus.Proposed) {
         entry.proposed = true;
-        await this.maybeFinalize(matchId, raw.deadline);
+        await this.maybeFinalize(matchId, raw);
         continue;
       }
       if (entry.abandoned) {
@@ -209,9 +266,10 @@ export class ChainBridge {
       // root a result is signed over is seeded with it. A match created under
       // other rules — before a rules change, or by a config this server does
       // not run — cannot be played honestly here: players staked on rules this
-      // server would not apply. It is called off and refunded, never re-ruled.
-      const foreign = raw.rulesHash.toLowerCase() !== RULES_HASH;
-      if (raw.status === MatchStatus.Live && !entry.adopted && foreign) {
+      // server would not apply. It is not listed and never locked, and is
+      // called off and refunded if it goes live anyway: never re-ruled.
+      entry.foreign = raw.rulesHash.toLowerCase() !== RULES_HASH;
+      if (raw.status === MatchStatus.Live && !entry.adopted && entry.foreign) {
         await this.abandon(entry, matchId, 'it was created under rules this server does not play');
         continue;
       }
@@ -219,8 +277,6 @@ export class ChainBridge {
         await this.abandon(entry, matchId, 'it was cancelled after a server restart');
         continue;
       }
-
-      const players = await this.reader.getSeats(matchId);
 
       const seats: LobbySeat[] = [];
       for (const address of players) {
@@ -257,7 +313,7 @@ export class ChainBridge {
 
       // Not locked: locking spends an oracle request on a match that would be
       // abandoned the moment its seed arrived.
-      if (raw.status === MatchStatus.Open && !foreign) {
+      if (raw.status === MatchStatus.Open && !entry.foreign) {
         await this.maybeLock(entry.info);
       } else if (raw.status === MatchStatus.Live && !entry.adopted) {
         entry.adopted = true;
@@ -299,11 +355,23 @@ export class ChainBridge {
    * Driven from the chain's state rather than a timer, so a restart during
    * the window loses nothing.
    */
-  private async maybeFinalize(matchId: `0x${string}`, deadline: bigint): Promise<void> {
-    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
-    const ranking = await this.reader.proposedRanking(matchId);
+  private async maybeFinalize(matchId: `0x${string}`, match: EscrowMatch): Promise<void> {
+    if (BigInt(Math.floor(this.now() / 1000)) < match.deadline) return;
+    const ranking = await this.rankingOf(matchId, match.rankingHash);
     if (!ranking) return;
     if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalising ${matchId}`);
+  }
+
+  /**
+   * The ranking a proposed result pays, which `finalize` must be handed
+   * back: from the archive, where this server kept the result it settled,
+   * when it hashes to the one the escrow stored; from the logs otherwise.
+   */
+  private async rankingOf(matchId: `0x${string}`, stored: `0x${string}`): Promise<readonly Address[] | null> {
+    const archived = await this.deps.archive?.load(matchId).catch(() => null);
+    const ranking = archived?.result.ranking;
+    if (ranking && rankingHash(ranking).toLowerCase() === stored.toLowerCase()) return ranking;
+    return this.reader.proposedRanking(matchId);
   }
 
   /**
@@ -366,7 +434,9 @@ const PRUNE_AFTER_SECONDS = 60 * 60;
  * decides it, or null once a result is proposed, which only `finalize` or
  * `veto` can end.
  */
-export function cancellableFrom(match: Pick<EscrowMatch, 'status' | 'seatCount' | 'minSeats' | 'joinDeadline' | 'deadline'>): number | null {
+export function cancellableFrom(
+  match: Pick<EscrowMatch, 'status' | 'seatCount' | 'minSeats' | 'joinDeadline' | 'deadline'>,
+): number | null {
   switch (match.status) {
     case MatchStatus.Open:
       return Number(match.joinDeadline) + (match.seatCount >= match.minSeats ? LOCK_GRACE_SECONDS : 0);
@@ -394,4 +464,3 @@ function placeholder(matchId: `0x${string}`): LobbyInfo {
     cancellableAt: 0,
   };
 }
-

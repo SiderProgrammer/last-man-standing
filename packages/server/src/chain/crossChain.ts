@@ -7,6 +7,7 @@ import {
   type CrossChainEvent,
   type SpokeInfo,
 } from '@lms/protocol';
+import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -72,8 +73,10 @@ export interface CrossChainWatcherOptions {
   hubChainId: number;
   /** Tells one player about one of their joins. Dropped if they are not connected. */
   notify: (player: Address, event: CrossChainEvent) => void;
-  /** First block to read. Defaults to a short way behind the head, like the bridge. */
+  /** First block to read. Defaults to a short way behind the head. */
   fromBlock?: bigint;
+  /** Blocks behind the head a scan stops at, as the chain bridge does. */
+  confirmations?: number;
 }
 
 /**
@@ -117,12 +120,18 @@ export class CrossChainWatcher {
 
   private async read(): Promise<void> {
     const { port } = this.options;
-    const latest = await port.blockNumber();
+    const latest = confirmedHead(await port.blockNumber(), this.options.confirmations ?? 0);
+    if (latest === null) return;
     const from = this.cursor ?? (latest > 5_000n ? latest - 5_000n : 0n);
     if (from > latest) return;
 
-    for (const log of await port.logs(from, latest)) this.apply(log);
-    this.cursor = latest + 1n;
+    // Each chunk is told as it is read, and the cursor moves past it, so a
+    // failure part way neither repeats nor skips a notice.
+    await chunkedLogs(from, latest, async (start, end) => {
+      for (const log of await port.logs(start, end)) this.apply(log);
+      this.cursor = end + 1n;
+      return [];
+    });
   }
 
   private apply(log: CrossChainLog): void {

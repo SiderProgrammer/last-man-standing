@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
 import { errorMessage, lmsGovernorAbi, type ProposalSummary } from '@lms/protocol';
+import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
 
 /** Everything the index needs from the chain, so the polling can be tested with a fake. */
@@ -7,9 +8,6 @@ export interface ProposalReader {
   blockNumber(): Promise<bigint>;
   proposalCreatedLogs(from: bigint, to: bigint): Promise<ProposalSummary[]>;
 }
-
-/** Many public RPCs cap `eth_getLogs` at 10k blocks. */
-const LOG_CHUNK = 10_000n;
 
 /**
  * Every proposal made to the governor, discovered from `ProposalCreated`.
@@ -31,12 +29,21 @@ export class ProposalIndex {
   constructor(
     private readonly reader: ProposalReader,
     fromBlock: bigint,
+    /** Blocks behind the head a scan stops at, as the chain bridge does. */
+    private readonly confirmations = 0,
   ) {
     this.cursor = fromBlock;
   }
 
-  static start(options: { rpcUrl: string; chainId: number; governor: Address; fromBlock: bigint; pollMs?: number }) {
-    const index = new ProposalIndex(viemProposalReader(options), options.fromBlock);
+  static start(options: {
+    rpcUrl: string;
+    chainId: number;
+    governor: Address;
+    fromBlock: bigint;
+    confirmations?: number;
+    pollMs?: number;
+  }) {
+    const index = new ProposalIndex(viemProposalReader(options), options.fromBlock, options.confirmations);
     void index.poll();
     index.timer = setInterval(() => void index.poll(), options.pollMs ?? 15_000);
     index.timer.unref?.();
@@ -57,14 +64,15 @@ export class ProposalIndex {
     if (this.polling) return;
     this.polling = true;
     try {
-      const head = await this.reader.blockNumber();
-      while (this.cursor <= head) {
-        const to = this.cursor + LOG_CHUNK - 1n < head ? this.cursor + LOG_CHUNK - 1n : head;
-        for (const proposal of await this.reader.proposalCreatedLogs(this.cursor, to)) {
-          this.proposals.set(proposal.id, proposal);
-        }
+      const head = confirmedHead(await this.reader.blockNumber(), this.confirmations);
+      if (head === null || this.cursor > head) return;
+      // Chunk by chunk, advancing the cursor as each lands, so a failure
+      // part way resumes from the chunk that failed.
+      await chunkedLogs(this.cursor, head, async (from, to) => {
+        for (const proposal of await this.reader.proposalCreatedLogs(from, to)) this.proposals.set(proposal.id, proposal);
         this.cursor = to + 1n;
-      }
+        return [];
+      });
     } catch (error) {
       console.error('[governance] poll failed:', errorMessage(error));
     } finally {

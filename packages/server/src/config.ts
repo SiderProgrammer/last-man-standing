@@ -125,6 +125,7 @@ const ENV = z.object({
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
   CROSS_CHAIN_FROM_BLOCK: bigint,
+  CONFIRMATIONS: whole(3),
   ZAP_JOIN: address,
   V4_QUOTER: address,
   ZAP_TOKENS: text(),
@@ -294,6 +295,13 @@ export function loadConfig(
      * See `chain/crossChain.ts`.
      */
     spokes: e.SPOKES,
+    /** The escrow's deploy block, from the registry: no scan of its events starts before it. */
+    escrowFromBlock: fromBlock,
+    /**
+     * Blocks behind the head every log scan stops at. Base's sequencer can
+     * still reorg its newest blocks; three is six seconds of them.
+     */
+    confirmations: e.CONFIRMATIONS,
     /** First block to look for cross-chain events in. Blank starts a short way behind the head. */
     crossChainFromBlock: e.CROSS_CHAIN_FROM_BLOCK ?? fromBlock,
     /** `ZapJoin` on the hub chain. Blank disables paying in tokens; ETH still works. */

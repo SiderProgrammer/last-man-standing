@@ -77,10 +77,13 @@ export {
 export { BotDriver } from './bots/bots.js';
 export { RequestError } from './errors.js';
 export { FrameError, errorFrame, parseClientMessage } from './gateway/frames.js';
-export { ChainBridge, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
+export { ChainBridge, cancellableFrom, type ChainBridgeDeps, type ChainBridgeOptions } from './chain/bridge.js';
+export { LOG_CHUNK, chunkedLogs, confirmedHead } from './chain/logs.js';
 export {
+  MULTICALL3,
   viemEscrowReader,
   type EscrowMatch,
+  type EscrowMatchRead,
   type EscrowReader,
   type MatchCreatedLog,
   type PlayerJoinedLog,

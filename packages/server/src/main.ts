@@ -97,6 +97,9 @@ async function main(): Promise<void> {
         escrow: config.escrow,
         lobby,
         ...(keeper ? { keeper } : {}),
+        ...(config.escrowFromBlock !== undefined ? { fromBlock: config.escrowFromBlock } : {}),
+        confirmations: config.confirmations,
+        archive,
         // A restart loses every room in progress. Matches that were live are
         // aborted and refunded rather than restarted from round one.
         abort: (matchId) => relayer.abort(matchId),
@@ -128,6 +131,7 @@ async function main(): Promise<void> {
           chainId: config.chainId,
           governor: config.governor,
           fromBlock: config.governorFromBlock,
+          confirmations: config.confirmations,
         })
       : null;
 
@@ -332,6 +336,7 @@ async function main(): Promise<void> {
       hubChainId: config.chainId,
       notify: (player, event) => gateway.notify(player, { type: 'crossChain', event }),
       ...(config.crossChainFromBlock !== undefined ? { fromBlock: config.crossChainFromBlock } : {}),
+      confirmations: config.confirmations,
     });
     crossChain.start(4_000);
     console.log(`[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ')}`);
