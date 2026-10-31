@@ -302,7 +302,7 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (timelock)    [100
 | Voting delay / period | 1 day / 5 days | `VOTING_DELAY`, `VOTING_PERIOD` |
 | Proposal threshold | 100,000 sLMS | `PROPOSAL_THRESHOLD` |
 | Quorum | 4% of staked supply, never under 1,000,000 sLMS | `QUORUM_PERCENT`, `QUORUM_FLOOR` |
-| Stakers' share of fees | 0% on Ethereum mainnet, 50% elsewhere | `STAKER_FEE_BPS` |
+| Stakers' share of fees | 0% on Base mainnet, 50% elsewhere | `STAKER_FEE_BPS` |
 | Play-mining caps | 10,000 LMS per ETH of fees; 20,000 LMS per wallet per week | `MAX_REWARD_PER_ETH`, `MAX_REWARD_PER_WALLET` |
 | Multisig phase | ends a year after the deploy | `MULTISIG_PHASE_END` |
 
