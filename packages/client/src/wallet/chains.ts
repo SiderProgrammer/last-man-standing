@@ -1,5 +1,5 @@
 import { defineChain, type Chain } from 'viem';
-import { chainInfo } from '@lms/protocol';
+import { chainInfo } from '@lms/contracts';
 
 /**
  * The viem chain for `chainId`, named as the rest of the client names it.

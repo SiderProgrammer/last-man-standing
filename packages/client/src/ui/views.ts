@@ -1,20 +1,22 @@
 import { formatEther, formatUnits } from 'viem';
+import { type PublicMatchState } from '@lms/consensus';
 import {
   DEFAULT_ZAP_SLIPPAGE_BPS,
   chainCss,
   chainInfo,
   joinFailureText,
   maxAmountInFor,
+} from '@lms/contracts';
+import {
   type AvatarCollectionInfo,
   type CrossChainEvent,
   type LobbyInfo,
   type LobbySeat,
   type MatchmakingTier,
-  type PublicMatchState,
   type SpokeInfo,
   type ZapInfo,
   type ZapToken,
-} from '@lms/protocol';
+} from '@lms/api';
 
 /**
  * Pure builders for everything the panels display.

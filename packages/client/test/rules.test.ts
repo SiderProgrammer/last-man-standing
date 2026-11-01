@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES } from '@lms/protocol';
+import { DEFAULT_RULES } from '@lms/consensus';
 import { rulesSheet } from '../src/ui/rules.js';
 
 function text(rules = DEFAULT_RULES): string {

@@ -4,9 +4,9 @@ import {
   isDelegatedTo,
   sessionCallKind,
   sessionKeyDelegateAbi,
-  type RelayedCall,
   type SessionCallKind,
-} from '@lms/protocol';
+} from '@lms/contracts';
+import { type RelayedCall } from '@lms/api';
 import { RequestError } from '../errors.js';
 import { RevertedError, type TxSender } from './txSender.js';
 import { readClient } from './viem.js';

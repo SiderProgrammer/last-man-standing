@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getAddress, type Address } from 'viem';
-import { JoinFailure, type CrossChainEvent } from '@lms/protocol';
+import { JoinFailure } from '@lms/contracts';
+import { type CrossChainEvent } from '@lms/api';
 import { CrossChainWatcher, parseSpokes, type CrossChainLog, type CrossChainPort } from '@lms/server';
 
 const HUB = 31337;

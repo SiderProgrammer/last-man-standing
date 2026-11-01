@@ -1,5 +1,5 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
-import { Action, BOT_DIFFICULTIES, commitMove, type BotDifficulty, type Move, type Rules, type Seat } from '@lms/protocol';
+import { Action, BOT_DIFFICULTIES, commitMove, type BotDifficulty, type Move, type Rules, type Seat } from '@lms/consensus';
 import { Match } from '../match/match.js';
 import { always, Prng, randomStrategy, readerStrategy, smartStrategy, type Strategy } from '../bots/strategy.js';
 

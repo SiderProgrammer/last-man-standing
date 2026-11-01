@@ -7,12 +7,12 @@ import { RemoteError, Rpc } from '../util/rpc.js';
 import { AnalystError, type AnalystOptions, type AnalyzeRequest, type AnalyzeResult, type MatchAnalyst } from './analyst.js';
 import type { GeminiModelOptions } from './gemini.js';
 import type { AnalystLimitOptions } from './limits.js';
-import type { AnalysisErrorCode } from '@lms/protocol';
+import type { AnalysisErrorCode } from '@lms/api';
 
 /** What the worker builds its analyst from. Plain data, to cross the thread boundary. */
 export interface AnalystWorkerConfig {
   model: GeminiModelOptions;
-  analyst: Pick<AnalystOptions, 'modelId' | 'effort' | 'maxTokens' | 'deadlineMs' | 'maxTurns'>;
+  analyst: Pick<AnalystOptions, 'modelId' | 'effort' | 'maxTokens' | 'deadlineMs'>;
   limits: AnalystLimitOptions;
 }
 

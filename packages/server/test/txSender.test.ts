@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
-import { gameEscrowAbi } from '@lms/protocol';
+import { gameEscrowAbi } from '@lms/contracts';
 import { RevertedError, TxSender, type ContractCall, type Fees, type TxPort } from '@lms/server';
 
 const ESCROW = '0x00000000000000000000000000000000000000e5' as const;

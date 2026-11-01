@@ -1,6 +1,6 @@
 import { keccak256, stringToHex } from 'viem';
 import { auditTranscript, moveLogFromHistory, replayMatch, type Audit, type AuditOptions, type ChainRecord, type OwnMove } from '@lms/engine';
-import { canonicalJson, type MatchResult, type PublicMatchState, type Transcript } from '@lms/protocol';
+import { canonicalJson, type MatchResult, type PublicMatchState, type Transcript } from '@lms/consensus';
 
 /** What the browser concluded after replaying a finished match itself. */
 export interface Verification {

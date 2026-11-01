@@ -1,14 +1,14 @@
 /**
  * The analyst's own thread, started by `AnalystWorker`.
  *
- * Everything an analysis does — rendering the prompt, the model calls, the
- * tool loop, parsing and checking the answer — runs here, off the event loop
+ * Everything an analysis does — rendering the prompt, the model call,
+ * parsing and checking the answer — runs here, off the event loop
  * that runs the rooms' clocks. Its limits live here too. The matches it reads
  * and the analyses it caches stay in the server: each read is a call back
  * over the port.
  */
 import { parentPort, workerData } from 'node:worker_threads';
-import type { MatchAnalysis, PlayStyle } from '@lms/protocol';
+import type { MatchAnalysis, PlayStyle } from '@lms/api';
 import type { ArchivedAnalysis, ArchivedMatch, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import { Rpc } from '../util/rpc.js';

@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_CLIENT_FRAME_BYTES,
-  hashTranscript,
-  type AttestedResult,
-  type ClientMessage,
-  type ServerMessage,
-} from '@lms/protocol';
+import { hashTranscript, type AttestedResult } from '@lms/consensus';
+import { MAX_CLIENT_FRAME_BYTES, type ClientMessage, type ServerMessage } from '@lms/api';
 import {
   Gateway,
   Lobby,

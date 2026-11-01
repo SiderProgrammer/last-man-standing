@@ -1,24 +1,26 @@
 import { keccak256, toHex, type Hex, type TypedDataDefinition } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
-  AUTH_PREFIX,
   Action,
-  applyDelta,
   legalActions,
   MatchPhase,
   commitMove,
   commitTypedData,
   grantTypedData,
   revealTypedData,
-  withRound,
   type ActionValue,
-  type ClientMessage,
   type PublicMatchState,
   type SealedMove,
-  type ServerMessage,
   type SessionGrant,
   type SignedGrant,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import {
+  AUTH_PREFIX,
+  applyDelta,
+  withRound,
+  type ClientMessage,
+  type ServerMessage,
+} from '@lms/api';
 import type { Link } from './link.js';
 
 /**

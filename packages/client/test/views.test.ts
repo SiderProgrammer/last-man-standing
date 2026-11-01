@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MatchPhase,
-  ZERO_ADDRESS,
-  type LobbySeat,
-  type ZapInfo,
-  type ZapToken,
-} from '@lms/protocol';
+import { MatchPhase, ZERO_ADDRESS } from '@lms/consensus';
+import { type LobbySeat, type ZapInfo, type ZapToken } from '@lms/api';
 import {
   avatarPanel,
   chainChipCounts,

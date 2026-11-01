@@ -1,17 +1,17 @@
 import type { Address, Hex } from 'viem';
+import { ZERO_ADDRESS, sameAddress, type ChainWithdrawal } from '@lms/consensus';
 import {
-  ZERO_ADDRESS,
   bridgeJoinReceiverAbi,
   gameEscrowAbi,
   protocolConfigAbi,
-  quoteFromWire,
-  sameAddress,
-  withdrawalFromWire,
   type BridgeQuote,
-  type ChainWithdrawal,
+} from '@lms/contracts';
+import {
+  quoteFromWire,
+  withdrawalFromWire,
   type ClientMessage,
   type SpokeInfo,
-} from '@lms/protocol';
+} from '@lms/api';
 import { RequestError } from '../errors.js';
 import { revertReason, type DailyQuota } from './sessionRelay.js';
 import type { TxSender } from './txSender.js';

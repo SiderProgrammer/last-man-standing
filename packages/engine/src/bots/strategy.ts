@@ -12,7 +12,7 @@ import {
   type Move,
   type PlayerState,
   type Rules,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import type { Match } from '../match/match.js';
 
 /** Counter-based keccak PRNG, so bot play is reproducible given a seed. */

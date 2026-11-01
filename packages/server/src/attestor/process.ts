@@ -8,7 +8,7 @@
  * `CHAIN_ID`, `ESCROW_ADDRESS`, and `RPC_URL` to check transcripts against
  * the escrow.
  */
-import { errorMessage } from '@lms/protocol';
+import { errorMessage } from '@lms/api';
 import { keySigner } from '../chain/signer.js';
 import { Rpc } from '../util/rpc.js';
 import { AttestorService, escrowMatchReader } from './service.js';

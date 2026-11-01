@@ -102,8 +102,7 @@ export class VerifyPool {
  * An EOA's login recovers to its address and is settled by the pool with no
  * network at all. Only a signature that does not recover — a contract wallet's,
  * such as a Coinbase Smart Wallet — goes on to `fallback`, the ERC-1271 call
- * over RPC. Previously every login made that call, which put one RPC request on
- * the critical path of every connection.
+ * over RPC, so an EOA's connection never waits on an RPC request.
  */
 export function layeredVerifier<Args>(
   local: (args: Args) => Promise<boolean>,

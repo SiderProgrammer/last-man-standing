@@ -1,13 +1,7 @@
 import * as z from 'zod/v4';
 import { MatchError } from '@lms/engine';
-import {
-  BOT_DIFFICULTIES,
-  errorMessage,
-  isActionValue,
-  type ActionValue,
-  type ClientMessage,
-  type ServerMessage,
-} from '@lms/protocol';
+import { BOT_DIFFICULTIES, isActionValue, type ActionValue } from '@lms/consensus';
+import { errorMessage, type ClientMessage, type ServerMessage } from '@lms/api';
 import { RequestError } from '../errors.js';
 
 /**

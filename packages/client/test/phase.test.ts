@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MatchPhase, type MatchPhaseValue, type PublicMatchState } from '@lms/protocol';
+import { MatchPhase, type MatchPhaseValue, type PublicMatchState } from '@lms/consensus';
 import { phasePlan, type PhaseContext } from '../src/game/phase.js';
 import { stateWith } from './helpers.js';
 

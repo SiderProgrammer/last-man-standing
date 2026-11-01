@@ -11,7 +11,7 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import { errorMessage } from '@lms/protocol';
+import { errorMessage } from '@lms/api';
 import { signerAccount, type Signer } from './signer.js';
 import { rpcChain } from './viem.js';
 

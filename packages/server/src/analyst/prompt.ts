@@ -1,12 +1,12 @@
 import {
   Action,
   DEFAULT_RULES,
-  KEY_MOMENT_KINDS,
   addressKey,
   type RoundRecord,
   type Rules,
   type Seat,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { KEY_MOMENT_KINDS } from '@lms/api';
 import type { ArchivedMatch } from '../lobby/store.js';
 
 /**
@@ -31,9 +31,8 @@ How the game works:
 - Every move is published after each round, so the real skill is reading the table: who always strikes, who guards whenever it can, who is charged and who it is hunting.
 These are the default rules; the match data states the rules the match was actually played under, and those win if they differ.
 
-How to work:
-- The first message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, strikes and their outcomes, stall penalty, eliminations, HP), each seat's tendencies over the match, and, when the server keeps them, each seat's record in earlier matches.
-- That is everything there is. Answer straight away from it. Tools, when they are offered, only repeat parts of it; do not call them unless a detail has dropped out of view.
+The match:
+- The message holds the whole match: the table, the final ranking, one line per round, then every round in full (moves, strikes and their outcomes, stall penalty, eliminations, HP), what each seat did over the match, and, when the server keeps them, each seat's record in earlier matches. That is everything there is; answer from it.
 
 What to write:
 - summary: two or three short paragraphs telling the story of the match: how the field thinned out, who was hunted, and why the winner won.
@@ -45,8 +44,8 @@ What to write:
 Every key moment is checked against the published round records before anyone sees it, and moments that do not match the records are thrown away. Only state what the records show; if you are unsure whether something happened, leave it out.`;
 
 /**
- * The opening user message: whose perspective, the overview, then the
- * briefing — the full detail, so the model can answer without a lookup.
+ * The user message: whose perspective, the overview, then the briefing —
+ * the full detail, so the model answers in one call.
  */
 export function renderRequest(match: ArchivedMatch, seat: number | null, briefing = ''): string {
   const perspective =

@@ -13,7 +13,7 @@ import {SettlementLib} from "../../src/libraries/SettlementLib.sol";
 /// @dev The files are written once by `scripts/gen-golden.mjs`. Each round
 ///      is read as seat-indexed arrays (`.chain.rounds[i]`), hashed with
 ///      `HashLib.hashRound`, and folded into the root the way `chainHistory`
-///      in the protocol package folds it. The digest the attestors would sign for
+///      in `packages/consensus` folds it. The digest the attestors would sign for
 ///      the four-seat match is pinned against `parity.test.ts`.
 contract GoldenTranscriptTest is Test {
     /// @dev Same domain as `parity.test.ts`'s vector: Base Sepolia, a fixed escrow.
@@ -73,7 +73,7 @@ contract GoldenTranscriptTest is Test {
             string memory at = string.concat(".chain.rounds[", vm.toString(i), "]");
             bytes32 roundHash = _roundHash(json, at);
             assertEq(roundHash, vm.parseJsonBytes32(json, string.concat(at, ".hash")));
-            // `chainHistory` in the protocol package.
+            // `chainHistory` in `@lms/consensus`.
             root = keccak256(abi.encode(root, roundHash));
         }
         assertEq(root, vm.parseJsonBytes32(json, ".transcript.result.historyRoot"));

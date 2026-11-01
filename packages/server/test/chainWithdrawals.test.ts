@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Address, Hex } from 'viem';
-import {
-  joinCall,
-  quoteToWire,
-  withdrawalToWire,
-  type BridgeQuote,
-  type ChainWithdrawal,
-  type ClientMessage,
-} from '@lms/protocol';
+import { type ChainWithdrawal } from '@lms/consensus';
+import { joinCall, type BridgeQuote } from '@lms/contracts';
+import { quoteToWire, withdrawalToWire, type ClientMessage } from '@lms/api';
 import {
   ChainWithdrawals,
   DailyQuota,

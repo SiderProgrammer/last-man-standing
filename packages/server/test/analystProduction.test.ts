@@ -8,12 +8,12 @@ import {
   MemoryArchive,
   PostgresArchive,
   playReferenceMatch,
-  turnCost,
+  callCost,
   type ArchivedMatch,
   type ModelReply,
 } from '@lms/server';
-import type { MatchAnalysis } from '@lms/protocol';
-import { FakeModel, answer, toolTurn, usage, type Turn } from './analystFakes.js';
+import type { MatchAnalysis } from '@lms/api';
+import { FakeModel, answer, usage, type Turn } from './analystFakes.js';
 
 const practice = playReferenceMatch({ label: 'prod', strategies: ['reader', 'striker', 'guarder', 'charger'] });
 const staked: ArchivedMatch = { ...playReferenceMatch({ label: 'prod-staked', strategies: ['random', 'guarder', 'striker', 'reader'] }), staked: true };
@@ -32,7 +32,7 @@ function output() {
 /** No provider rate limits, for tests about the other ceilings. */
 const UNLIMITED = { requestsPerMinute: Infinity, requestsPerDay: Infinity };
 
-/** A priced final turn: 1,000 input, 500 output, 4,000 read from cache. */
+/** A priced answer: 1,000 input, 500 output, 4,000 read from cache. */
 function pricedAnswer(): Turn {
   const turn = answer(output());
   if ('reply' in turn) {
@@ -210,7 +210,7 @@ describe('analysis limits', () => {
 
   it('does not refund a refusal', async () => {
     const limits = new AnalystLimits({ ...UNLIMITED, perWalletPerHour: 1, maxConcurrent: 4, dailyBudgetUsd: Infinity });
-    const refusal: Turn = { reply: { stop_reason: 'refusal', content: [] } };
+    const refusal: Turn = { reply: { stop_reason: 'refusal', text: '' } };
     const { analyst } = await harness([refusal], { limits });
     const request = { matchId: practice.result.matchId, requester: player(practice) };
     expect((await failure(analyst.analyze(request))).code).toBe('refused');
@@ -277,26 +277,25 @@ describe('analysis deadline', () => {
 
 describe('analysis cost', () => {
   it('prices a turn at list rates, cache reads included', () => {
-    const cost = turnCost('gemini-3.8-flash', usage({ input_tokens: 1_000_000, output_tokens: 0 }));
+    const cost = callCost('gemini-3.8-flash', usage({ input_tokens: 1_000_000, output_tokens: 0 }));
     expect(cost).toBeCloseTo(0.75);
-    expect(turnCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 1_000_000 }))).toBeCloseTo(3.75);
-    expect(turnCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }))).toBeCloseTo(0.075);
-    expect(turnCost('some-future-model', usage())).toBeNull();
+    expect(callCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 1_000_000 }))).toBeCloseTo(3.75);
+    expect(callCost('gemini-3.8-flash', usage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }))).toBeCloseTo(0.075);
+    expect(callCost('some-future-model', usage())).toBeNull();
   });
 
   it('accounts tokens, cost and verifier drops', async () => {
     const turn = pricedAnswer();
     if ('reply' in turn) {
-      const text = JSON.stringify({
+      turn.reply.text = JSON.stringify({
         ...output(),
         keyMoments: [...output().keyMoments, { round: 99, seat: 0, kind: 'guard', target: null, claim: 'never happened' }],
       });
-      turn.reply.content = [{ type: 'text', text }];
     }
     const { analyst } = await harness([turn]);
     const { usage: spent, analysis } = await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
 
-    expect(spent).toMatchObject({ turns: 1, inputTokens: 1_000, cacheReadTokens: 4_000, outputTokens: 500 });
+    expect(spent).toMatchObject({ inputTokens: 1_000, cacheReadTokens: 4_000, outputTokens: 500 });
     expect(spent?.costUsd).toBeCloseTo((1_000 * 0.75 + 500 * 3.75 + 4_000 * 0.075) / 1_000_000);
     expect(analysis.keyMoments).toHaveLength(1);
     expect(analysis.dropped).toBe(1);
@@ -330,23 +329,25 @@ describe('provider rate limits', () => {
     expect(quota.reserve(PACIFIC_NOON + 12 * 3_600_000 + 60_000)).toEqual({ waitMs: 0 });
   });
 
-  it('only starts an analysis the day still has room for', () => {
-    const quota = limits(Infinity, 5);
+  it('only starts an analysis the day still has a request for', () => {
+    const quota = limits(Infinity, 3);
     for (let i = 0; i < 2; i++) quota.reserve(PACIFIC_NOON);
-    expect('release' in quota.admit(player(practice), PACIFIC_NOON, 3)).toBe(true);
-    expect(quota.admit(stranger, PACIFIC_NOON, 4)).toMatchObject({ code: 'quota' });
+    expect('release' in quota.admit(player(practice), PACIFIC_NOON)).toBe(true);
+    quota.reserve(PACIFIC_NOON);
+    expect(quota.admit(stranger, PACIFIC_NOON)).toMatchObject({ code: 'quota' });
   });
 
-  it('waits for a slot between turns instead of tripping the provider', async () => {
+  it('waits for a slot instead of tripping the provider', async () => {
     const quota = limits(1, 100);
+    quota.reserve(Date.UTC(2026, 9, 18, 12));
     const waits: number[] = [];
     const steps: string[] = [];
-    const { analyst, model } = await harness([toolTurn([{ name: 'get_round', input: { round: 1 } }]), answer(output())], {
+    const { analyst, model } = await harness([answer(output())], {
       limits: quota,
       sleep: async (ms) => void waits.push(ms),
     });
     await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice), onStep: (step) => steps.push(step) });
-    expect(model.requests).toHaveLength(2);
+    expect(model.requests).toHaveLength(1);
     expect(waits).toEqual([60_000]);
     // The wait is said out loud, with how long it will be.
     expect(steps).toContain('Waiting for a free Gemini slot, about 60s (free-tier rate limit)');
@@ -354,7 +355,7 @@ describe('provider rate limits', () => {
 
   it('refuses a new analysis once the daily requests are used up', async () => {
     const quota = limits(Infinity, 1);
-    const { analyst } = await harness([answer(output())], { limits: quota, maxTurns: 1 });
+    const { analyst } = await harness([answer(output())], { limits: quota });
     await analyst.analyze({ matchId: practice.result.matchId, requester: player(practice) });
     const error = await failure(analyst.analyze({ matchId: staked.result.matchId, requester: player(staked) }));
     expect(error.code).toBe('quota');

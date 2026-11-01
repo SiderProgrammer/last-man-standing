@@ -1,5 +1,7 @@
 import type { Address, PublicClient } from 'viem';
-import { addressKey, errorMessage, playerAvatarsAbi, type AvatarEntry } from '@lms/protocol';
+import { addressKey } from '@lms/consensus';
+import { playerAvatarsAbi } from '@lms/contracts';
+import { errorMessage, type AvatarEntry } from '@lms/api';
 import { readClient } from './viem.js';
 
 /** One `PlayerAvatars` deployment, and the RPC that can be used to read it. */

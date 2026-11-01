@@ -1,4 +1,5 @@
-import { ZAP_DEADLINE_SECONDS, errorFirstLine, type LobbyInfo, type ZapToken } from '@lms/protocol';
+import { ZAP_DEADLINE_SECONDS } from '@lms/contracts';
+import { errorFirstLine, type LobbyInfo, type ZapToken } from '@lms/api';
 import { app } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { planTokenJoin } from '../ui/views.js';

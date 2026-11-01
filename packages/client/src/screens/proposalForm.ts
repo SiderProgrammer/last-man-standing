@@ -1,4 +1,5 @@
-import { describeCall, errorFirstLine } from '@lms/protocol';
+import { describeCall } from '@lms/contracts';
+import { errorFirstLine } from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { fillSelect } from '../ui/dom.js';

@@ -1,4 +1,5 @@
-import { DEFAULT_SERVER_PORT, MatchPhase, type ServerMessage } from '@lms/protocol';
+import { MatchPhase } from '@lms/consensus';
+import { DEFAULT_SERVER_PORT, type ServerMessage } from '@lms/api';
 import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';

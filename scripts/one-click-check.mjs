@@ -36,15 +36,15 @@ import {
   hashMessage,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { sessionCallTypedData } from '@lms/consensus';
 import {
   ONE_CLICK_CAPS,
   gameEscrowAbi,
   isDelegatedTo,
   joinCall,
-  sessionCallTypedData,
   sessionKeyDelegateAbi,
   withdrawForCall,
-} from '@lms/protocol';
+} from '@lms/contracts';
 import { SessionRelay, viemRelayPort, viemTxSender } from '@lms/server';
 
 const PORT = Number(process.env.CHECK_ANVIL_PORT ?? 8599);

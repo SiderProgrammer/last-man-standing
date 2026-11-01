@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { BotClient, keyFor, type BotEvent } from '@lms/harness';
-import { DEFAULT_RULES, type MatchResult } from '@lms/protocol';
+import { DEFAULT_RULES, type MatchResult } from '@lms/consensus';
 import { moveLogFromHistory, verifyResult, type MatchSetup } from '@lms/engine';
 import { MemoryArchive, type Relayer } from '@lms/server';
 import { simSigner, world, type Faults } from './sim.js';

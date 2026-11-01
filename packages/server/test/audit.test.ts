@@ -10,7 +10,7 @@ import {
   revealTypedData,
   type SealedMove,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { auditTranscript, rankingHash, type ChainRecord, type OwnMove } from '@lms/engine';
 import { Room } from '@lms/server';
 import { bytes32 } from './helpers.js';

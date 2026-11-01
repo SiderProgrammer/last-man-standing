@@ -1,51 +1,8 @@
 /**
- * The analyst's own conversation format: provider-neutral, and exactly as
- * much of one as the tool loop needs. A model implementation translates it
- * to its provider's wire format and back (`gemini.ts`, `demo.ts`).
+ * The analyst's own request and reply: provider-neutral, and exactly as much
+ * of one as a single structured-output call needs. A model implementation
+ * translates it to its provider's wire format and back (`gemini.ts`).
  */
-
-export interface TextBlock {
-  type: 'text';
-  text: string;
-}
-
-/**
- * An opaque token the provider needs back on the part that follows it —
- * Gemini's thought signatures. Never shown, never interpreted, echoed whole.
- */
-export interface SignatureBlock {
-  type: 'signature';
-  signature: string;
-}
-
-export interface ToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: unknown;
-}
-
-export interface ToolResultBlock {
-  type: 'tool_result';
-  tool_use_id: string;
-  content: string;
-  is_error?: boolean;
-}
-
-/** What a model turn can contain. */
-export type ContentBlock = TextBlock | SignatureBlock | ToolUseBlock;
-
-export interface Message {
-  role: 'user' | 'assistant';
-  content: string | Array<ContentBlock | ToolResultBlock>;
-}
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  /** JSON Schema of the input object. */
-  input_schema: Record<string, unknown>;
-}
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -53,13 +10,12 @@ export interface ModelRequest {
   model: string;
   max_tokens: number;
   effort: Effort;
+  /** The frozen system prompt: the same bytes on every request, so it caches. */
   system: string;
-  tools: ToolDefinition[];
-  /** `none` forbids tool calls this turn, so the model has to answer. */
-  tool_choice?: 'auto' | 'none';
-  /** JSON Schema the answer is constrained to; absent for prose. */
-  output_schema?: Record<string, unknown>;
-  messages: Message[];
+  /** JSON Schema the answer is constrained to. */
+  output_schema: Record<string, unknown>;
+  /** The one user message: the whole match. */
+  prompt: string;
 }
 
 export interface Usage {
@@ -71,28 +27,29 @@ export interface Usage {
 }
 
 /**
- * Why a turn ended. Anything outside the four the analyst knows ends the
+ * Why the call ended. Anything outside the three the analyst knows ends the
  * analysis, with the provider's own reason in the message.
  */
-export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'refusal' | (string & {});
+export type StopReason = 'end_turn' | 'max_tokens' | 'refusal' | (string & {});
 
-/** One finished model turn. */
+/** The finished answer. */
 export interface ModelReply {
   id: string;
   model: string;
-  content: ContentBlock[];
+  /** The answer's text, every part joined: the JSON the schema constrains. */
+  text: string;
   stop_reason: StopReason;
   usage: Usage;
 }
 
 /**
- * One model turn: send a request, get the whole reply back.
+ * One model call: send a request, get the whole reply back.
  *
  * Injected rather than constructed by the analyst, for the same reason the
- * gateway takes a `SignatureVerifier`: the interesting logic — the tool loop,
- * the prompt layout, the schema check, the claim verifier — has nothing to do
- * with the network, and tests run it against a scripted fake that never opens
- * a socket or spends a cent.
+ * gateway takes a `SignatureVerifier`: the interesting logic — the prompt
+ * layout, the schema check, the claim verifier — has nothing to do with the
+ * network, and tests run it against a scripted fake that never opens a socket
+ * or spends a cent.
  */
 export interface AnalystModel {
   generate(request: ModelRequest, signal: AbortSignal): Promise<ModelReply>;

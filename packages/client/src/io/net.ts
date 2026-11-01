@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from '@lms/protocol';
+import type { ClientMessage, ServerMessage } from '@lms/api';
 
 export type Handler = (message: ServerMessage) => void;
 

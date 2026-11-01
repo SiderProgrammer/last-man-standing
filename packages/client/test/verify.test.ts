@@ -8,7 +8,7 @@ import {
   type Move,
   type PublicMatchState,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Match, rankingHash, type ChainRecord } from '@lms/engine';
 import { Prng, readerStrategy } from '@lms/engine/bots';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain } from '../src/game/verify.js';

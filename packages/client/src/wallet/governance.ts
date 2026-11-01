@@ -10,7 +10,7 @@ import {
   type ProposalSummary,
   type ProtocolParams,
   type VoteSupportValue,
-} from '@lms/protocol';
+} from '@lms/contracts';
 import type { ProposalLive } from '../ui/governance.js';
 import type { ProposalAction, ProposalContext } from '../ui/proposalBuilder.js';
 import type { Wallet } from './wallet.js';

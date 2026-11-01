@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Action, DEFAULT_RULES, MatchPhase } from '@lms/protocol';
+import { Action, DEFAULT_RULES, MatchPhase } from '@lms/consensus';
 import { moveLogFromHistory, replayMatch, verifyResult } from '@lms/engine';
 import {
   always,

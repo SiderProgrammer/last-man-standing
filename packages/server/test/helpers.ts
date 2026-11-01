@@ -2,17 +2,15 @@ import { keccak256, toHex } from 'viem';
 import {
   DEFAULT_RULES,
   TRANSCRIPT_VERSION,
-  applyDelta,
   hashTranscript,
-  withRound,
   type PublicMatchState,
   type MatchResult,
   type RoundRecord,
   type Rules,
   type Seat,
-  type ServerMessage,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { applyDelta, withRound, type ServerMessage } from '@lms/api';
 import type { MatchSetup } from '@lms/engine';
 import type { Client } from '@lms/server';
 

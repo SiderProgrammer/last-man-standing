@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
-import { errorMessage, gameEscrowAbi } from '@lms/protocol';
+import { gameEscrowAbi } from '@lms/contracts';
+import { errorMessage } from '@lms/api';
 import { chunkedLogs } from './logs.js';
 import type { ContractCall, TxSender } from './txSender.js';
 import { readClient } from './viem.js';
@@ -48,11 +49,9 @@ export interface PlayerJoinedLog {
 /**
  * Everything `ChainBridge` needs from the hub, as an interface.
  *
- * The bridge used to build its own viem clients in its constructor, which made
- * it the one module in the package with no seam and — not coincidentally — the
- * one with no tests. The polling logic it contains is exactly the kind worth
- * testing: block-cursor arithmetic, deciding when a lobby may be locked, and
- * opening a room at most once. All of that is now reachable with a fake.
+ * The seam that lets the bridge's polling be tested with a fake: block-cursor
+ * arithmetic, deciding when a lobby may be locked, and opening a room at most
+ * once.
  */
 export interface EscrowReader {
   blockNumber(): Promise<bigint>;

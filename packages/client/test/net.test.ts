@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ServerMessage } from '@lms/protocol';
+import type { ServerMessage } from '@lms/api';
 import { Net } from '../src/io/net.js';
 
 /** Just enough of a browser `WebSocket` for `Net`: every instance is recorded. */

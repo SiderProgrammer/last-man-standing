@@ -1,8 +1,5 @@
-import {
-  chainInfo,
-  errorFirstLine,
-  type AvatarCollectionInfo,
-} from '@lms/protocol';
+import { chainInfo } from '@lms/contracts';
+import { errorFirstLine, type AvatarCollectionInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';

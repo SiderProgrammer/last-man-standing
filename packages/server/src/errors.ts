@@ -1,4 +1,4 @@
-import type { ErrorCode } from '@lms/protocol';
+import type { ErrorCode } from '@lms/api';
 
 /**
  * A request the server refuses, with the code the client switches on. The

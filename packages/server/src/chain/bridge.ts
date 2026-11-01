@@ -1,16 +1,12 @@
 import type { Address, Hex } from 'viem';
 import {
   DEFAULT_RULES,
-  LOCK_GRACE_SECONDS,
-  MatchStatus,
   hashRules,
   addressKey,
-  errorMessage,
-  originChainId,
-  type LobbyInfo,
-  type LobbySeat,
   type Seat,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { LOCK_GRACE_SECONDS, MatchStatus, originChainId } from '@lms/contracts';
+import { errorMessage, type LobbyInfo, type LobbySeat } from '@lms/api';
 import { rankingHash, type MatchSetup } from '@lms/engine';
 import type { Lobby } from '../lobby/lobby.js';
 import type { MatchArchive } from '../lobby/store.js';

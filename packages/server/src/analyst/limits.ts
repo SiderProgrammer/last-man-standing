@@ -1,4 +1,4 @@
-import { addressKey } from '@lms/protocol';
+import { addressKey } from '@lms/consensus';
 import { KeyedLimiter } from '../gateway/limits.js';
 
 export interface AnalystLimitOptions {
@@ -43,8 +43,7 @@ const pacificDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Ang
  * Per model request: the provider's own rate limits — requests per minute
  * and per day — are enforced here rather than discovered as 429s. A request
  * over the minute's allowance waits for a slot; one over the day's is
- * refused, and an analysis is only started if the day has room for all of
- * its turns, so it is not abandoned halfway.
+ * refused, and so is an analysis the day has no request left for.
  *
  * In-memory, so a restart forgives every wallet and forgets the day's spend.
  * Several server instances would each enforce their own limits.
@@ -65,16 +64,15 @@ export class AnalystLimits {
   }
 
   /**
-   * Claims a slot for a fresh analysis that may take up to `requests` model
-   * calls, or says why not. On success the caller must call `release` exactly
-   * once, however the analysis ends.
+   * Claims a slot for a fresh analysis, or says why not. On success the
+   * caller must call `release` exactly once, however the analysis ends.
    */
-  admit(wallet: `0x${string}`, now: number, requests = 1): Refusal | { release: (refund: boolean, now: number) => void } {
+  admit(wallet: `0x${string}`, now: number): Refusal | { release: (refund: boolean, now: number) => void } {
     this.rollDay(now);
     if (this.spentToday >= this.options.dailyBudgetUsd) {
       return { code: 'quota', message: "the server's analysis budget for today is spent; try again tomorrow" };
     }
-    if (this.requestsToday + requests > this.options.requestsPerDay) {
+    if (this.requestsToday >= this.options.requestsPerDay) {
       return { code: 'quota', message: "the analyst has used today's model requests; try again tomorrow" };
     }
     if (this.running >= this.options.maxConcurrent) {

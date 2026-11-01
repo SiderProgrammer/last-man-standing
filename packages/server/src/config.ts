@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import * as z from 'zod/v4';
-import { DEFAULT_SERVER_PORT, ZERO_ADDRESS } from '@lms/protocol';
+import { readDeployment, type Deployment } from '@lms/contracts/registry';
+import { ZERO_ADDRESS } from '@lms/consensus';
+import { DEFAULT_SERVER_PORT } from '@lms/api';
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
 
@@ -156,7 +157,6 @@ const ENV = z.object({
   ANALYST_TIMEOUT_MS: whole(240_000, 1),
   ANALYST_MAX_RETRIES: whole(2),
   ANALYST_DEADLINE_MS: whole(300_000, 1),
-  ANALYST_MAX_TURNS: limit(1),
   ANALYST_QUOTA_PER_HOUR: whole(3),
   ANALYST_MAX_CONCURRENT: whole(1, 1),
   ANALYST_RPM: limit(5),
@@ -364,14 +364,14 @@ export function loadConfig(
      */
     analyst: {
       enabled: e.ANALYST_ENABLED && Boolean(e.GEMINI_API_KEY),
-      /** A Gemini 3 model or later: the first to combine structured output with function calling. */
+      /** A Gemini model with structured output and a thinking level: Gemini 3 or later. */
       model: e.ANALYST_MODEL,
       geminiApiKey: e.GEMINI_API_KEY,
       /** Blank uses the public Gemini API. */
       geminiBaseUrl: e.GEMINI_BASE_URL,
       /** `low` | `medium` | `high` | `xhigh` | `max`, as Gemini's thinking level; the top three all mean `high`. */
       effort: e.ANALYST_EFFORT,
-      /** Output ceiling per model turn, thinking included. Caps the cost of one runaway answer. */
+      /** Output ceiling, thinking included. Caps the cost of one runaway answer. */
       maxTokens: e.ANALYST_MAX_TOKENS,
       /**
        * Per model call. Long, because the Gemini free tier can take a minute
@@ -380,14 +380,8 @@ export function loadConfig(
        */
       timeoutMs: e.ANALYST_TIMEOUT_MS,
       maxRetries: e.ANALYST_MAX_RETRIES,
-      /** Ceiling on one whole analysis, every turn and retry included. */
+      /** Ceiling on one whole analysis, retries included. */
       deadlineMs: e.ANALYST_DEADLINE_MS,
-      /**
-       * Model calls per analysis. 1: the whole match goes in the first
-       * message and the answer comes back in the same call. More lets the
-       * model look details up again, at one quota request per turn.
-       */
-      maxTurns: e.ANALYST_MAX_TURNS,
       /** Fresh analyses per wallet per hour. Cached answers do not count. */
       quotaPerHour: e.ANALYST_QUOTA_PER_HOUR,
       /** Analyses being written at once, server-wide. One, so a single analysis has the whole per-minute quota. */
@@ -422,37 +416,8 @@ function parseLimits(raw: string): Record<string, number> {
   );
 }
 
-/** `contracts/deployments/<chainId>.json`, as `Deploy.s.sol` writes it. */
-export interface Deployment {
-  chainId: number;
-  /** No contract in `contracts` is older: where log scans start. */
-  deployBlock: number;
-  contracts: Record<string, `0x${string}`>;
-}
-
-const DEPLOYMENT = z.object({
-  chainId: z.number().int(),
-  deployBlock: z.number().int().min(0),
-  contracts: z.record(z.string(), hexAddress),
-});
-
-const DEPLOYMENTS_DIR = new URL('../../../contracts/deployments/', import.meta.url);
-
-/**
- * The registry the deploy script wrote for `chainId`, or null if there is
- * none. Throws on a file that is there but malformed, or names another chain.
- */
-export function readDeployment(chainId: number, dir: URL = DEPLOYMENTS_DIR): Deployment | null {
-  const file = new URL(`${chainId}.json`, dir);
-  if (!existsSync(file)) return null;
-  const result = DEPLOYMENT.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-  if (!result.success) throw new ConfigError(`invalid deployment registry ${file.pathname}: ${result.error.message}`);
-  if (result.data.chainId !== chainId) {
-    throw new ConfigError(`deployment registry ${file.pathname} is for chain ${result.data.chainId}, not ${chainId}`);
-  }
-  return result.data;
-}
-
 export const config = loadConfig(process.env, readDeployment);
+
+export { readDeployment, type Deployment };
 
 export { ZERO_ADDRESS };

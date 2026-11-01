@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProposalSummary } from '@lms/protocol';
+import type { ProposalSummary } from '@lms/contracts';
 import { ProposalIndex, proposalsResponse, type ProposalReader } from '@lms/server';
 
 function proposal(id: number, block: number): ProposalSummary {

@@ -19,18 +19,16 @@ import type { ChainRecord } from '@lms/engine';
 import { privateKeyToAccount } from 'viem/accounts';
 import { DEV_RPC_URL } from '../csp.js';
 import { WrongChainError, viemChain } from './chains.js';
+import { ZERO_ADDRESS, grantTypedData, type SessionGrant } from '@lms/consensus';
 import {
-  AUTH_PREFIX,
-  ZERO_ADDRESS,
-  grantTypedData,
   isDelegatedTo,
   gameEscrowAbi,
   playerAvatarsAbi,
   sessionKeyDelegateAbi,
   spokeRouterAbi,
-  type SessionGrant,
   type BridgeQuote,
-} from '@lms/protocol';
+} from '@lms/contracts';
+import { AUTH_PREFIX } from '@lms/api';
 
 /** How long an EIP-2612 permit signature stays valid, in seconds. */
 export const PERMIT_SECONDS = 10 * 60;

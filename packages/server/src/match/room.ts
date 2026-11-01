@@ -1,24 +1,26 @@
 import {
   MatchPhase,
   addressKey,
-  matchDelta,
   commitMove,
-  errorMessage,
-  type AvatarEntry,
   type BotDifficulty,
   type CommitReceipt,
   type MatchResult,
-  type PlayStyle,
-  type MoveAim,
   type PublicMatchState,
   type RoundRecord,
   type SealedMove,
   type SeatProof,
-  type ServerMessage,
   type SignedGrant,
   type Transcript,
   TRANSCRIPT_VERSION,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import {
+  matchDelta,
+  errorMessage,
+  type AvatarEntry,
+  type PlayStyle,
+  type MoveAim,
+  type ServerMessage,
+} from '@lms/api';
 import { Match, describeRound, type MatchSetup } from '@lms/engine';
 import { BotDriver } from '../bots/bots.js';
 import { RequestError } from '../errors.js';

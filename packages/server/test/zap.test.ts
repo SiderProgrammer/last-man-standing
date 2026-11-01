@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ZERO_ADDRESS } from '@lms/protocol';
+import { ZERO_ADDRESS } from '@lms/consensus';
 import { loadConfig, parseZapTokens, zapInfo } from '@lms/server';
 
 const USDC = `0x${'0c'.repeat(20)}` as const;

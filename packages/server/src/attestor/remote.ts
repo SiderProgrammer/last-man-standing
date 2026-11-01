@@ -2,7 +2,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Address, Hex } from 'viem';
-import type { CommitReceipt, Transcript } from '@lms/protocol';
+import type { CommitReceipt, Transcript } from '@lms/consensus';
 import { RemoteError, Rpc } from '../util/rpc.js';
 import { AttestationRefused, type Attestor } from './service.js';
 

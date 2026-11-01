@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { commitMove, DEFAULT_RULES, MatchPhase, type Move, type ReviewedMatch } from '@lms/protocol';
+import { commitMove, DEFAULT_RULES, MatchPhase, type Move } from '@lms/consensus';
+import { type ReviewedMatch } from '@lms/api';
 import { Match } from '@lms/engine';
 import { Prng, readerStrategy } from '@lms/engine/bots';
 import { reviewOf } from '../src/game/review.js';

@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { verifyTypedData } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
-  AUTH_PREFIX,
   Action,
   DEFAULT_RULES,
-  delegationCode,
   grantTypedData,
-  joinCall,
   receiptTypedData,
+} from '@lms/consensus';
+import { delegationCode, joinCall } from '@lms/contracts';
+import {
+  AUTH_PREFIX,
   type ClientMessage,
   type RelayedCall,
   type LobbyInfo,
@@ -16,7 +17,7 @@ import {
   type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
-} from '@lms/protocol';
+} from '@lms/api';
 import {
   AnalystError,
   Gateway,

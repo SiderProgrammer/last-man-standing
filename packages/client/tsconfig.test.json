@@ -12,7 +12,9 @@
     // Node for tests that read the source tree, such as the CSP guard.
     "types": ["vite/client", "node"],
     "paths": {
-      "@lms/protocol": ["../protocol/src/index.ts"],
+      "@lms/consensus": ["../consensus/src/index.ts"],
+      "@lms/contracts": ["../contracts/src/index.ts"],
+      "@lms/api": ["../api/src/index.ts"],
       "@lms/engine": ["../engine/src/index.ts"],
       "@lms/engine/bots": ["../engine/src/bots/strategy.ts"],
       "@lms/engine/sim": ["../engine/src/sim/simulate.ts"]

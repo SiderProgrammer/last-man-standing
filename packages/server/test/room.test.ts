@@ -5,7 +5,7 @@ import {
   commitMove,
   type MatchPhaseValue,
   type SealedMove,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Room, type RoomOptions } from '@lms/server';
 import { FakeClient, HUMAN, botSeats, bytes32, setupWithBots } from './helpers.js';
 

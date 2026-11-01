@@ -18,7 +18,7 @@ import {
   type RoundRecord,
   type Rules,
   type StrikeRecord,
-} from '@lms/protocol';
+} from '@lms/consensus';
 
 /** A move as it enters resolution, after the reveal window has closed. */
 export interface DeclaredMove {

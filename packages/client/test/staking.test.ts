@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getAddress } from 'viem';
-import { claimableEpochRange, type StakingInfo } from '@lms/protocol';
+import { claimableEpochRange } from '@lms/contracts';
+import { type StakingInfo } from '@lms/api';
 import {
   formatDuration,
   formatLms,

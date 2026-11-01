@@ -1,0 +1,21 @@
+{
+  "name": "@lms/consensus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "What every party must compute identically: rules, hashing, EIP-712 and their frozen vectors",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "viem": "^2.21.55"
+  }
+}

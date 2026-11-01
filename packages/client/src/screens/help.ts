@@ -1,4 +1,4 @@
-import { DEFAULT_RULES } from '@lms/protocol';
+import { DEFAULT_RULES } from '@lms/consensus';
 import { app, dom } from '../context.js';
 import { rulesSheet } from '../ui/rules.js';
 

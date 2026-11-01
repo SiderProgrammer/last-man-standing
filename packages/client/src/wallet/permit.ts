@@ -1,5 +1,5 @@
 import { parseSignature, type Address, type Hex } from 'viem';
-import { lmsTokenAbi } from '@lms/protocol';
+import { lmsTokenAbi } from '@lms/contracts';
 import { PERMIT_SECONDS, type Wallet } from './wallet.js';
 
 /** An EIP-2612 permit, split the way `depositWithPermit` and `joinWithLmsPermit` take it. */

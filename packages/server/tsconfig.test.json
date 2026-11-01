@@ -8,7 +8,10 @@
     "noEmit": true,
     "lib": ["ES2023"],
     "paths": {
-      "@lms/protocol": ["../protocol/src/index.ts"],
+      "@lms/consensus": ["../consensus/src/index.ts"],
+      "@lms/contracts": ["../contracts/src/index.ts"],
+      "@lms/contracts/registry": ["../contracts/src/registry.ts"],
+      "@lms/api": ["../api/src/index.ts"],
       "@lms/engine": ["../engine/src/index.ts"],
       "@lms/engine/bots": ["../engine/src/bots/strategy.ts"],
       "@lms/engine/sim": ["../engine/src/sim/simulate.ts"],

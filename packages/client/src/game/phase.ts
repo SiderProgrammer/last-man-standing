@@ -1,4 +1,4 @@
-import { MatchPhase, type PublicMatchState } from '@lms/protocol';
+import { MatchPhase, type PublicMatchState } from '@lms/consensus';
 
 /** What the controls should look like, and whether a reveal is now due. */
 export interface PhasePlan {
@@ -16,9 +16,8 @@ export interface PhasePlan {
   /**
    * True when the reveal for this round has not been sent yet.
    *
-   * The caller acts on it. Keeping the decision here and the sending there is
-   * the whole reason this function is pure — it used to send the reveal itself,
-   * from inside what was otherwise a render pass.
+   * The caller acts on it: the decision is made here and the sending in an
+   * action, so nothing that renders ever sends.
    */
   shouldReveal: boolean;
 }

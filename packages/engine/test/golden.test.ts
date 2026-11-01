@@ -7,7 +7,7 @@ import {
   hashTranscript,
   type RoundRecord,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { Match, auditTranscript, moveLogFromHistory, rankingHash, replayMatch } from '@lms/engine';
 
 /**

@@ -1,6 +1,6 @@
 import 'pixi.js/math-extras';
 import { Container, Graphics, Point, Sprite, Text, type Application, type Texture } from 'pixi.js';
-import { Action, StrikeOutcome } from '@lms/protocol';
+import { Action, StrikeOutcome } from '@lms/consensus';
 import type { FxTextures } from '../assets/loader.js';
 import { FX_TEXTURES, type FxTexture } from '../assets/manifest.js';
 import { gsap } from '../motion.js';

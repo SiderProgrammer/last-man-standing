@@ -12,7 +12,7 @@ import {
   type ActionValue,
   type SessionGrant,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
 import { moveLogFromHistory, replayMatch } from './replay.js';
 
 /**

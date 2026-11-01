@@ -1,4 +1,4 @@
-import { ACTION_NAMES, Action, MatchPhase, type ActionValue, type MatchPhaseValue } from '@lms/protocol';
+import { ACTION_NAMES, Action, MatchPhase, type ActionValue, type MatchPhaseValue } from '@lms/consensus';
 
 /** Presentation helpers. Pure, so they can be tested without a DOM. */
 

@@ -7,10 +7,6 @@ export interface Migration {
 
 /**
  * The schema, as every change made to it. Append only.
- *
- * The first two are the tables the archive and the style book used to create
- * for themselves, with `IF NOT EXISTS`, so a database made before migrations
- * existed takes them over without being rebuilt.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {

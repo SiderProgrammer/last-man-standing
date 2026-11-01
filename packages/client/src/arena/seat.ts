@@ -1,5 +1,5 @@
 import { Assets, Circle, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
-import { chainInfo } from '@lms/protocol';
+import { chainInfo } from '@lms/contracts';
 import { gsap } from '../motion.js';
 import { AVATAR_RADIUS, AVATAR_SIZE, BADGE_Y, HP_ARC_RADIUS, SEAT_RADIUS, type Point } from './layout.js';
 import { TextureLeases } from './textures.js';

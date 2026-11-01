@@ -1,14 +1,13 @@
 import { keccak256, toHex } from 'viem';
-import { commitMove, type BotDifficulty, type SealedMove } from '@lms/protocol';
+import { commitMove, type BotDifficulty, type SealedMove } from '@lms/consensus';
 import type { Match } from '@lms/engine';
 import { Prng, smartStrategy } from '@lms/engine/bots';
 
 /**
  * Plays the seats the server fills with house bots.
  *
- * Split out of `Room` because it is the only reason the room knew about the
- * engine's strategy layer at all. The room now owns the clock and the clients;
- * this owns what a bot does when the window opens.
+ * The room owns the clock and the clients; this owns what a bot does when the
+ * window opens, so the room never touches the engine's strategy layer.
  *
  * Every secret here is derived from the match seed rather than stored, so a
  * third party replaying the published match reproduces the bots' salts exactly

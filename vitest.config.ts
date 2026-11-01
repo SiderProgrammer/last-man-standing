@@ -7,7 +7,11 @@ const pkg = (name: string, entry = 'index.ts') =>
 export default defineConfig({
   resolve: {
     alias: {
-      '@lms/protocol': pkg('protocol'),
+      '@lms/consensus': pkg('consensus'),
+      // Before `@lms/contracts`, which would otherwise claim it as a subpath.
+      '@lms/contracts/registry': pkg('contracts', 'registry.ts'),
+      '@lms/contracts': pkg('contracts'),
+      '@lms/api': pkg('api'),
       // Before `@lms/engine`, which would otherwise claim these as its subpaths.
       '@lms/engine/bots': pkg('engine', 'bots/strategy.ts'),
       '@lms/engine/sim': pkg('engine', 'sim/simulate.ts'),

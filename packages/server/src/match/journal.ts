@@ -1,4 +1,5 @@
-import type { MoveAim, SealedMove } from '@lms/protocol';
+import type { SealedMove } from '@lms/consensus';
+import type { MoveAim } from '@lms/api';
 import type { Queryable } from '../db/database.js';
 import type { MoveProof } from './room.js';
 

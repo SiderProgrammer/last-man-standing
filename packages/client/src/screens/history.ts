@@ -1,4 +1,4 @@
-import type { MatchSummary, ServerMessage } from '@lms/protocol';
+import type { MatchSummary, ServerMessage } from '@lms/api';
 import { app, dom, net } from '../context.js';
 import { reviewOf } from '../game/review.js';
 import { element } from '../ui/dom.js';

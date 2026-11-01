@@ -2,14 +2,14 @@ import type { Address, Hex } from 'viem';
 import {
   MATCH_ABORT_TYPES,
   MATCH_RESULT_TYPES,
-  gameEscrowAbi,
   hashTranscript,
   matchResultDomain,
   matchResultMessage,
   receiptTypedData,
   type CommitReceipt,
   type Transcript,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { gameEscrowAbi } from '@lms/contracts';
 import { auditTranscript, rankingHash } from '@lms/engine';
 import type { Signer } from '../chain/signer.js';
 import { readClient } from '../chain/viem.js';

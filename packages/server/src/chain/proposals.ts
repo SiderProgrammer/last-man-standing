@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
-import { errorMessage, lmsGovernorAbi, type ProposalSummary } from '@lms/protocol';
+import { lmsGovernorAbi, type ProposalSummary } from '@lms/contracts';
+import { errorMessage } from '@lms/api';
 import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
 

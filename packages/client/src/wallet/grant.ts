@@ -1,7 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { toHex, type Address, type Hex } from 'viem';
 import {
-  AUTH_PREFIX,
   addressKey,
   commitTypedData,
   revealTypedData,
@@ -12,7 +11,8 @@ import {
   type SessionCallParams,
   type SessionGrant,
   type SignedGrant,
-} from '@lms/protocol';
+} from '@lms/consensus';
+import { AUTH_PREFIX } from '@lms/api';
 import { KeyStore } from '../io/keystore.js';
 import { removeRaw } from '../io/storage.js';
 

@@ -2,11 +2,11 @@
 pragma solidity 0.8.28;
 
 /// @title HashLib
-/// @notice Byte-identical Solidity mirror of `@lms/protocol` hashing.
+/// @notice Byte-identical Solidity mirror of `@lms/consensus` hashing.
 /// @dev Every function uses `abi.encode` so a verifier
 ///      can recompute a history root independently of the TypeScript engine.
 ///      Changing the encodings here is a consensus break and must be mirrored
-///      in `packages/protocol/src/game/hash.ts`.
+///      in `packages/consensus/src/game/hash.ts`.
 library HashLib {
     uint8 internal constant ACTION_STRIKE = 1;
 
@@ -75,7 +75,7 @@ library HashLib {
         return keccak256(abi.encode(rules));
     }
 
-    /// @notice The rule set `DEFAULT_RULES` in `@lms/protocol` describes.
+    /// @notice The rule set `DEFAULT_RULES` in `@lms/consensus` describes.
     /// @dev Pinned to the TypeScript copy twice over: `HashLib.t.sol` asserts its
     ///      hash against the frozen vector `parity.test.ts` also asserts, and
     ///      `contracts/config/rules.json`, which `Deploy` reads, is checked

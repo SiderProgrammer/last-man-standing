@@ -5,6 +5,8 @@ server so rounds resolve in milliseconds; the money — stakes, prize pool, payo
 never leaves the chain. The two halves are joined by a hash chain and a signed
 attestation, so the server can be fast without being trusted.
 
+The decisions behind the design are recorded one at a time in [`adr/`](adr/README.md).
+
 ---
 
 ## Part 1 — How the game works
@@ -154,43 +156,66 @@ can replay every roll in the match.
 ### Layers
 
 ```
-packages/protocol   shared types, rules, hashing, EIP-712, wire format   (no I/O)
+packages/consensus  rules, hashing, EIP-712 and their frozen vectors      (no I/O)
+packages/contracts  generated ABIs, chain table, deployment registry, call helpers
+packages/api        wire messages and DTOs between browser and server
 packages/engine     pure resolution kernel + match state machine + replay
 packages/server     WebSocket gateway, rooms, chain bridge, attestor, archive
 packages/client     PixiJS arena, wallet session, history and reads panels
 contracts/          escrow, config, libraries, adapters
 ```
 
-The dependency direction is strictly one-way: `contracts` and `protocol` know nothing
-about the server; the engine knows nothing about the network; the server knows nothing
-about rendering. Everything that decides who gets paid lives in `protocol` + `engine` +
-`contracts`, all of which are deterministic and independently testable.
+The dependency direction is strictly one-way: `consensus` depends on nothing of ours,
+`contracts` on `consensus`, and `api` on both; the engine knows only `consensus` and
+nothing about the network; the server knows nothing about rendering. Everything that
+decides who gets paid lives in `consensus` + `engine` + the Solidity, all of which are
+deterministic and independently testable.
 
-### `packages/protocol` — the shared contract
+### `packages/consensus` — what every party computes identically
 
 | File | Responsibility |
 | --- | --- |
-| `index.ts` | The package's exports, grouped by the folders below |
-| `wire.ts` | `ClientMessage` / `ServerMessage` union, `LobbyInfo`, login prefix |
-| **`game/`** | **The rules everybody agrees on** |
-| `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState` |
+| `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState`, `MatchErrorCode` |
 | `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, the cooldowns (`isLegalAction`), strike, charge and stall arithmetic |
 | `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
-| **`chain/`** | **Everything tied to a chain or a contract** |
-| `chain/chains.ts` | Chain table, badge colours, and the endpoint-id → chain-id normalisation |
-| `chain/eip712.ts` | `MatchResult` typed-data schema and domain |
-| `chain/escrow.ts` | The `GameEscrow` ABI and status enum, shared by the server and the client |
-| `chain/avatars.ts` | The `PlayerAvatars` ABI and the `AvatarEntry` a seat is drawn with |
-| `chain/session.ts` | The `SessionKeyDelegate` ABI, `sessionCallDigest` pinned to Solidity, and the session scope check |
-| **`util/`** | **Small shared helpers** |
-| `util/address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
-| `util/errors.ts` | `errorMessage` / `errorFirstLine`, so `catch (unknown)` reads the same everywhere |
+| `game/transcript.ts` | The archived `Transcript` and `hashTranscript`, which the attestors sign the hash of |
+| `eip712/result.ts` | `MatchResult` and `MatchAbort` typed data and domain |
+| `eip712/moves.ts` | The session grant, signed commits and reveals, and the server's commit receipt |
+| `eip712/session.ts` | `sessionCallDigest`, pinned to `SessionKeyDelegate` |
+| `eip712/withdrawal.ts` | The withdraw-to-chain instruction `BridgeJoinReceiver` checks |
+| `address.ts` | `addressKey`, `sameAddress`, `ZERO_ADDRESS` — one place that decides address casing |
 
 Everything in `game/hash.ts` is built with `abi.encode` so Solidity can recompute it
 byte-for-byte. `contracts/src/libraries/HashLib.sol` is the mirror, and both sides pin
-the same frozen vectors (`packages/protocol/test/parity.test.ts` and
+the same frozen vectors (`packages/consensus/test/parity.test.ts` and
 `contracts/test/unit/HashLib.t.sol`), so an encoding change fails exactly one suite
-instead of drifting silently.
+instead of drifting silently. The session-call and withdrawal digests are pinned the
+same way.
+
+### `packages/contracts` — the deployed contracts, from TypeScript
+
+| File | Responsibility |
+| --- | --- |
+| `abis/`, `abis.ts` | One module per contract, generated from `contracts/out` by `npm run abis`; CI fails if they are stale |
+| `chains.ts` | Chain table, badge colours, and `originChainId` for a seat's stake origin |
+| `escrow.ts` | `MatchStatus` and `LOCK_GRACE_SECONDS`, mirrored from Solidity |
+| `session.ts` | Encoding a one-click `join`/`withdrawFor`, the delegate's call check, 7702 delegation code |
+| `spokes.ts` | `JoinFailure`, Across quotes, the join message a spoke sends |
+| `zap.ts`, `governance.ts`, `proposals.ts` | Token payment, staking and rewards, and decoding governance proposals |
+| `registry.ts` | `readDeployment`: `contracts/deployments/<chainId>.json`. Node-only, imported as `@lms/contracts/registry` |
+
+### `packages/api` — between the browser and the server
+
+| File | Responsibility |
+| --- | --- |
+| `wire.ts` | `ClientMessage` / `ServerMessage` unions, `LobbyInfo`, error codes, login prefix |
+| `delta.ts` | `MatchDelta` and `applyDelta`, the snapshot diffs a room sends |
+| `chain.ts` | What `hello` advertises (spokes, staking, token payment) and the cross-chain, avatar and relayed-call DTOs |
+| `style.ts`, `analysis.ts` | The dossier's `PlayStyle` and the match analyst's output |
+| `ports.ts`, `errors.ts` | The default port, and `errorMessage` / `errorFirstLine` for `catch (unknown)` |
+
+The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's own, in
+`packages/client/src/game/`; the server only tallies the styles it stores.
 
 ### `packages/engine` — deterministic game logic
 
@@ -344,6 +369,7 @@ start, and a second server is refused.
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
+| `game/style.ts` | *Pure.* `describeStyle`: a wallet's record from earlier matches as one line |
 | `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | **`arena/`** | **The Pixi canvas** |
 | `arena/arena.ts` | Pixi scene: seats on a circle with address sigils or avatars, HP arcs with a lagging damage ghost, chain badges, the arena wall that closes in as the table stalls, a ⚡ on every charged seat, your aim, a round HUD |
@@ -378,7 +404,7 @@ are ES-module live bindings assigned once in `start()`.
 The main bundle holds the lobby, the match screen and what verifying a match needs. The
 arena and Pixi, the asset loader, the staking panel, the governance screen, token
 payment, the fee discount and collecting to a spoke load on demand, each with its own
-contracts' ABIs (`chain/abis/` is one module per contract for that reason). The browser
+contracts' ABIs (`@lms/contracts`' `abis/` is one module per contract for that reason). The browser
 imports `@lms/engine`, which is the kernel, matches, replay and audit; bots and the
 balance simulator are `@lms/engine/bots` and `@lms/engine/sim`, for the server and the
 scripts.
@@ -592,7 +618,7 @@ the wallet has relayed fewer than `RELAY_QUOTA_PER_DAY` calls today. A refusal n
 revert (`ValueCapExceeded`, `SessionExpired`, the escrow's own error), and the client falls
 back to a wallet transaction.
 
-`sessionCallDigest` in `protocol` mirrors the delegate's EIP-712 hashing and is pinned to
+`sessionCallDigest` in `consensus` mirrors the delegate's EIP-712 hashing and is pinned to
 it by frozen vectors on both sides, exactly as the commit hashes are. A drift there would
 not corrupt a match, but every relayed call would silently stop recovering the session key.
 `npm run check:one-click` runs the whole path on a Prague anvil with the real deploy.
@@ -702,20 +728,17 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 
 ### Testing
 
-- **TypeScript (vitest, 18 files / 190 tests):** engine unit tests, property tests over
-  random strategies (termination, unique ranking, HP bounds, determinism, replay
-  equivalence, tamper detection), protocol parity vectors, room lifecycle,
-  gateway auth and lobby directory, attestation.
-- **Solidity (Foundry, 15 suites / 95 tests):** unit tests per contract and library,
+- **TypeScript (vitest):** engine unit tests, property tests over random strategies
+  (termination, unique ranking, HP bounds, determinism, replay equivalence, tamper
+  detection), consensus parity vectors, rooms, the gateway, the chain bridge, the
+  attestor process, the analyst, the client's pure modules, and a seeded chaos suite.
+- **Solidity (Foundry):** unit tests per contract and library,
   differential fuzzing of the Yul hashers and the signature recovery loop, and a stateful
   invariant campaign driving `GameEscrow` through random call sequences while asserting
   solvency. A deeper campaign is available with `FOUNDRY_PROFILE=deep`.
 - **Typecheck covers the tests too.** Each package has a `tsconfig.test.json` resolving
   `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
   test fails `npm run typecheck` rather than sitting there unchecked.
-- **Some tests pin behaviour that is wrong.** `config.test.ts` asserts that a
-  non-numeric `COMMIT_MS` yields `NaN`. Such tests exist so that fixing the behaviour
-  is a deliberate, visible change. Every one maps to a step in `docs/FIX_PLAN.md`.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
   on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
   than the ABI-encoder reference, warming the harness first so the measurement is not
@@ -726,7 +749,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `WS_PORT` | `8787` | WebSocket / HTTP port |
-| `CHAIN_ID` | `11155111` | Hub chain id |
+| `CHAIN_ID` | `84532` | Hub chain id (Base Sepolia) |
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
 | `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |

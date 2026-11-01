@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
-import type { ServerMessage } from '@lms/protocol';
+import type { ServerMessage } from '@lms/api';
 import { Matchmaker, parseTiers, type MatchmakerPort } from '@lms/server';
 
 const STAKE = '1000000000000000';

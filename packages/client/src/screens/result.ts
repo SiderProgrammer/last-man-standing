@@ -1,11 +1,6 @@
-import {
-  PRACTICE_CHAIN_ID,
-  canonicalJson,
-  errorFirstLine,
-  type MatchResult,
-  type PublicMatchState,
-  type ServerMessage,
-} from '@lms/protocol';
+import { canonicalJson, type MatchResult, type PublicMatchState } from '@lms/consensus';
+import { PRACTICE_CHAIN_ID } from '@lms/contracts';
+import { errorFirstLine, type ServerMessage } from '@lms/api';
 import { app, dom } from '../context.js';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain, type EvidenceBundle, type Verification } from '../game/verify.js';
 import { forgetMatch, recallMatch } from '../game/salts.js';

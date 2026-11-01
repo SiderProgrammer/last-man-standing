@@ -1,23 +1,25 @@
 import {
   Action,
   MatchPhase,
-  PRACTICE_CHAIN_ID,
-  applyDelta,
-  withRound,
   commitMove,
   isActionValue,
-  errorFirstLine,
   isLegalAction,
   receiptTypedData,
   strikeDamageFor,
   type ActionValue,
   type MatchResult,
   type MovePlace,
-  type PlayStyle,
   type PublicMatchState,
   type SealedMove,
+} from '@lms/consensus';
+import { PRACTICE_CHAIN_ID } from '@lms/contracts';
+import {
+  applyDelta,
+  withRound,
+  errorFirstLine,
+  type PlayStyle,
   type ServerMessage,
-} from '@lms/protocol';
+} from '@lms/api';
 import { verifyTypedData } from 'viem';
 import { describeRound } from '@lms/engine';
 import type { Arena } from '../arena/arena.js';

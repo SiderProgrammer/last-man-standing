@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { keccak256, toHex } from 'viem';
-import { Action, MatchPhase, commitMove, type SealedMove } from '@lms/protocol';
+import { Action, MatchPhase, commitMove, type SealedMove } from '@lms/consensus';
 import type { MatchSetup } from '@lms/engine';
 import {
   Lobby,

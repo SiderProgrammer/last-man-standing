@@ -36,6 +36,62 @@ finalize    once the window closes unvetoed, payouts are credited
 withdraw    winners pull their balance
 ```
 
+## Threat model
+
+What there is to take or bend: the stakes and balances `GameEscrow` holds, the
+fairness of a match (hidden moves, unbiased rolls), the LMS paid out for play,
+control of governance, and the gas money in the server's keys. Who might try,
+and what stands in the way:
+
+- **A player** wants to see moves before committing, re-roll a round, or stall
+  a table. Moves are committed as hashes that bind match, round and seat; the
+  rolls come from the commitment set, fixed before anyone reveals; a missing
+  reveal is a timeout that every strike lands on; a table that stops fighting
+  takes a growing stall penalty; a lobby that never fills is refunded.
+- **Several wallets with one owner** want to gang up inside a match or farm
+  play-mining. Ganging up is not prevented — it costs the honest players at the
+  table, and since every move is published, the table can see who never
+  strikes whom. Farming is bounded
+  by fees, not by wallets: see [Wash-trading economics](#wash-trading-economics).
+- **The operator** wants to change a result. Every move is signed by its
+  player's key, the transcript is archived and its hash signed, every player's
+  browser replays it, and a dispute holds the payout for the guardian. What
+  the operator *can* do is listed under [Trust model](#trust-model): censor
+  moves, refund any live match, and know held moves early. It can never pay an
+  address that did not stake: the ranking must be a permutation of the seats.
+- **Whoever steals a server key** gets that key's role and nothing more
+  ([Roles](#roles)): the attestor key signs results and aborts that disputes
+  and refunds answer; the keeper key can do only what a stranger can; the
+  matchmaker key decides rosters, so it could seat colluders together, but
+  holds no stake; the relayer key holds gas money and cannot alter a call.
+- **A compromised guardian** pauses play a week at a time, with a week of play
+  between, and vetoes honest results into refunds, until governance replaces
+  it. It cannot move a stake anywhere but back to its owner.
+- **A compromised Safe**, before its phase ends, proposes anything — but every
+  proposal waits out the 3-day timelock in public, longer than any match, so
+  players can leave first. On testnet one person holds all three keys.
+- **Someone buying governance** needs vested LMS, staked, at the proposal's
+  snapshot, enough to clear a 1M-sLMS quorum floor, and the same timelock
+  delay. The fee is capped at 10% in the contract, whatever passes.
+- **Script in the player's page** could use the session key: sign moves for a
+  day, and with one-click play on, stake up to 0.05 ETH a join and 0.25 ETH in
+  all into lobbies — never withdraw to anyone else. The key is sealed in
+  IndexedDB and the page ships a strict Content-Security-Policy.
+- **The chain and the bridge.** Log scans stop a few blocks behind the head;
+  the escrow checks the L2 sequencer feed where one exists; a VRF request that
+  never comes back, or a lobby that never locks, ends in a refund. An Across
+  deposit nobody fills waits for its deadline and is refunded on the spoke —
+  except on Across's testnet, which may never refund it. A token payment is
+  bounded by the `maxAmountIn` the player accepted, however the swap is
+  sandwiched.
+
+Practice bots are predictable on purpose: their moves derive from the match
+seed, which the client receives, so a player who reads the code can call them.
+Practice has no stakes, and staked matches never seat house bots.
+
+Out of scope: a compromised wallet, denial of service beyond per-socket rate
+limits on one instance, and the legal side of running a game for money.
+
 ## Trust model
 
 **Verifiable, not enforced.** One operator runs the server and, today, holds
@@ -138,8 +194,9 @@ Around that core:
 For the full design — game rules, trust model, hashing,
 cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
-see [docs/FEATURES.md](docs/FEATURES.md). Outstanding work is tracked in
-[docs/TODO.md](docs/TODO.md).
+see [docs/FEATURES.md](docs/FEATURES.md). Why the big decisions went the way
+they did is in [docs/adr/](docs/adr/README.md), one short record each.
+Outstanding work is tracked in [docs/TODO.md](docs/TODO.md).
 
 ## Wallets
 
@@ -185,6 +242,8 @@ two coincide.
 | Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
 | Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
 | Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
+| Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which renounces both roles. | Be extended, or stopped from retiring, by anyone — the Safe included. |
+| VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be spent by anyone but a registered consumer. |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
 | Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
 | Operator | Runs the game server, and the keys below | Plays each match; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal, or by restarting the server; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
@@ -200,13 +259,48 @@ are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
 the guardian and the timelock. Each signs through a `Signer` interface, which
 is where a KMS would plug in; today every key is in the server's memory.
 
-This is a testnet project. Real-money play would also need a gambling licence,
-which is out of scope.
+**Testnet only.** Mainnet would need independent signers for the Safe, an
+audit, and a gambling licence, which is out of scope.
+
+## Wash-trading economics
+
+Play-mining pays LMS for fees paid, so the question is what a farmer — one
+person running every wallet at a table — gets for their money. With the
+defaults (a 5% fee, 10,000 LMS per ETH of fees, a 20,000 LMS per-wallet weekly
+cap, and about 351,600 LMS a week in the first year):
+
+- **The cost is the fee.** A farmer filling a 4-seat 0.001 ETH table wins its
+  own pool back and is out the fees: 4 × 0.00005 = 0.0002 ETH. That buys at
+  most 2 LMS, vesting over six months. Every LMS costs at least 1e-4 ETH of
+  real fees, however many wallets earn it, so farming pays only if LMS is worth
+  more than that six months later.
+- **The budget dilutes.** A week's budget is split by fees paid, so in a busy
+  week a farmer earns less than the cap and every fee they add lowers what each
+  fee earns, theirs included. The per-ETH cap binds in a quiet week, where the
+  split alone would hand the whole budget to whoever paid the little there was.
+- **Fees come back only in part.** Half the fee goes to stakers (none on Base
+  mainnet by default), so a farmer holding a share *s* of staked LMS recovers
+  *s*/2 of what they pay; a farmer holding most of the stake already owns the
+  protocol's fee stream anyway.
+- **The per-wallet cap does not stop sybils.** It takes 2 ETH of fees in a week
+  for one wallet to reach it; its job is stopping one wallet taking a quiet
+  week, not stopping someone with many.
+- **Only matchmade lobbies earn**, and the queue cannot tell two wallets with
+  one owner apart: queueing together in a quiet tier can still seat them
+  together. A lobby a player opens is private and earns nothing, since its
+  creator could fill it alone.
+- **Recycling LMS earns nothing extra.** Paying part of a fee in LMS earns
+  play-mining only on the ETH part, and that LMS is burned.
+
+Governance can raise the cap if honest play earns too little, or set it to zero
+to stop play-mining outright.
 
 ## Layout
 
 ```
-packages/protocol   types, rules, hashing, EIP-712 schema, wire format, contract ABIs
+packages/consensus  rules, hashing, EIP-712, and the frozen vectors pinning them to Solidity
+packages/contracts  generated ABIs, chain table, deployment registry, contract call helpers
+packages/api        wire messages and DTOs between browser and server
 packages/engine     deterministic resolution kernel, match state machine, replay, bots, balance sim
 packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge, fee keeper
 packages/client     PixiJS arena, wallet login, history and reads, staking and governance screens
@@ -215,9 +309,10 @@ contracts/          Foundry: escrow, config, governance, oracles, bridge router 
 scripts/            mainnet-fork dev environment, balance sim, load generator
 ```
 
-Dependencies only ever point one way: the engine uses the protocol; the server
-and the client use both (the client replays every finished match with the
-engine); the harness uses only the protocol. Nothing depends on the server,
+Dependencies only ever point one way: `contracts` uses `consensus`, `api` uses
+both, and the engine uses only `consensus`; the server and the client use all of
+them (the client replays every finished match with the engine); the harness uses
+`consensus` and `api`. Nothing depends on the server,
 which is what makes a match replayable by a third party.
 
 ## Running it locally
@@ -324,11 +419,11 @@ testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.
 ## Tests
 
 ```bash
-npm test                    # TypeScript: protocol, engine, server, client — includes chaos seeds
+npm test                    # TypeScript: every package — includes chaos seeds
 npm run typecheck           # whole monorepo, strict — including every test file
 npm run sol:test            # Foundry: unit, fuzz, invariant
 npm run sol:snapshot:check  # fail on gas drift against contracts/.gas-snapshot
-npm run abis                # regenerate packages/protocol/src/chain/abis/ after a contract change
+npm run abis                # regenerate packages/contracts/src/abis/ after a contract change
 npm run sim                 # bot matches under the current rules; fails if balance targets slip
 npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```
@@ -341,7 +436,7 @@ triage note. To add one, run Slither with `--json contracts/slither.json`, then
 and write the note.
 
 The TypeScript and Solidity hashing implementations are pinned against each
-other by frozen vectors in `packages/protocol/test/parity.test.ts` and
+other by frozen vectors in `packages/consensus/test/parity.test.ts` and
 `contracts/test/unit/HashLib.t.sol`, so commitments, the rules hash and the
 history root mean the same thing in both languages. Any on-chain verifier
 depends on that, so those tests are the ones to watch.
@@ -356,8 +451,8 @@ a thousand or more real WebSocket players against a running server
 
 After a match ends, **Analyse match** asks the server for a written analysis:
 a short narrative, three to six key moments, and advice for the player's seat.
-Gemini reads the match through tools bound to that one archived match
-(`get_match`, `get_round`, `get_reads`, `get_player_history`), and every key
+Gemini gets the whole archived match in one prompt and answers in one
+structured-output call, from a worker thread of its own, and every key
 moment's round, seat, kind and target is checked against the round records
 before anyone sees it — moments the history does not support are dropped and
 counted. Clicking a moment rewinds the arena and plays that round again.

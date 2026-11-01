@@ -1,4 +1,4 @@
-import { errorFirstLine, type LobbyInfo } from '@lms/protocol';
+import { errorFirstLine, type LobbyInfo } from '@lms/api';
 import { app, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { discountJoinLabel } from '../ui/views.js';

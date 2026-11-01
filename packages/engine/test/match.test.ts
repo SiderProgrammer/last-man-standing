@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Action, commitMove, MatchPhase, type SealedMove } from '@lms/protocol';
+import { Action, commitMove, MatchPhase, type SealedMove } from '@lms/consensus';
 import { Match, MatchError } from '@lms/engine';
 import { always, bytes32, playMatch, setupFor } from './helpers.js';
 

@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { KEY_MOMENT_KINDS } from '@lms/protocol';
+import { KEY_MOMENT_KINDS } from '@lms/api';
 
 /**
  * The shape the model must answer in.
