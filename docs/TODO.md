@@ -170,7 +170,8 @@ invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
 
 - **CI:** `.github/workflows/ci.yml` runs typecheck, vitest and a 500-match `sim` on
   the TypeScript side, and `forge fmt --check`, `forge build` and `forge test` on the
-  Solidity side, plus a coverage report and Slither. It also runs
+  Solidity side, plus a coverage report that fails under 90% branch coverage on any
+  contract that moves value, and Slither. It also runs
   `sol:snapshot:check`, which is deterministic now that the fuzz seed is fixed. Still
   open: no linter for the TypeScript, and the deep fuzz profile on a schedule.
 - **Static analysis:** Slither runs in CI against `contracts/slither-baseline.json`.

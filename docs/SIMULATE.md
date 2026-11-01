@@ -14,12 +14,13 @@ fresh `npm run dev:fork`.
 | Feature | Suite |
 | --- | --- |
 | Escrow lifecycle, pause, cancellation, cross-chain joins, `joinFor` | `GameEscrowTest` |
-| Solvency under random call sequences, through settlement | `EscrowInvariantTest` |
+| Solvency, fees, disputes and pause expiry under random call sequences, many matches at once | `EscrowInvariantTest` |
 | Attestor quorum and signature ordering | `SignatureLibTest`, `SignatureLibFuzzTest` |
 | Payout maths, Yul against the reference | `SettlementLibTest`, `SettlementLibFuzzTest` |
 | Cross-chain joins through Across: the spoke router, the hub receiver, signed withdrawals | `SpokeRouterTest`, `BridgeJoinReceiverTest` |
 | Across's real SpokePools, on forks | `AcrossHubForkTest`, `AcrossSpokeForkTest` |
 | Chainlink VRF adapter | `ChainlinkVrfAdapterTest` |
+| The L2 sequencer feed (mock / Chainlink's on Base) | `SequencerUptimeTest` / `SequencerFeedForkTest` (needs `BASE_RPC_URL`) |
 | Governance parameters, guardian | `ProtocolConfigTest` |
 | The real deploy: Safe → timelock → config, guardian | `DeployTest` |
 | EIP-7702 session keys | `SessionKeyDelegateTest` |

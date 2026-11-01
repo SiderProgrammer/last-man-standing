@@ -406,9 +406,11 @@ and a second server against the same database refuses to start. Scaling out
 would mean moving rooms, queue and limits into shared storage first.
 
 The VRF adapter has a fork test against the Base Sepolia coordinator
-(`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`), and the Across
+(`BASE_SEPOLIA_RPC_URL=… forge test --match-path test/fork/*`), the Across
 router and receiver against the real SpokePools on Base, Arbitrum, Optimism and
-Ethereum (`BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `MAINNET_RPC_URL`).
+Ethereum (`BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `MAINNET_RPC_URL`),
+and `finalize` against Chainlink's sequencer uptime feed on Base, including the
+grace period after its last outage (`BASE_RPC_URL`).
 No real Across testnet deposit has been made yet; [docs/ACROSS.md](docs/ACROSS.md)
 says how. `npm run dev:fork` runs a hub and a spoke together, with mock Across pools
 and a local relayer between them; open the client with `?chain=spoke` to stake from
@@ -429,7 +431,9 @@ npm run check:one-click     # one-click play end to end on a local Prague anvil 
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of the above, plus
-`forge fmt --check`, a coverage report and Slither. Slither fails only on findings
+`forge fmt --check`, a coverage report and Slither. The coverage job fails if any
+contract that moves value has under 90% of its branches covered
+(`scripts/coverage-gate.mjs` lists them). Slither fails only on findings
 missing from `contracts/slither-baseline.json`, where every accepted finding has a
 triage note. To add one, run Slither with `--json contracts/slither.json`, then
 `node scripts/slither-baseline.mjs contracts/slither.json contracts/slither-baseline.json --update`,
