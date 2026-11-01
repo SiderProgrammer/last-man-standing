@@ -70,6 +70,11 @@ jobs:
           forge coverage --no-match-coverage '(test|script|mocks)/' --report summary --report lcov > coverage.txt
           cat coverage.txt
           { echo '```'; awk '/^\| File/{p=1} p' coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # At least 90% of branches on every contract that moves value.
+      - run: node ../scripts/coverage-gate.mjs lcov.info
       - uses: actions/upload-artifact@v4
         with:
           name: lcov

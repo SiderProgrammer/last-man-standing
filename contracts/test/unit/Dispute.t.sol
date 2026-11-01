@@ -158,6 +158,38 @@ contract DisputeTest is Fixtures {
         escrow.dismissDispute(matchId);
     }
 
+    function test_onlyAProposedResultCanBeDismissed() public {
+        (bytes32 matchId,,) = _proposed();
+        vm.prank(players[0]);
+        escrow.dispute(matchId, EVIDENCE);
+        vm.prank(guardian);
+        escrow.veto(matchId);
+
+        vm.prank(guardian);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GameEscrow.WrongStatus.selector,
+                matchId,
+                GameEscrow.MatchStatus.Proposed,
+                GameEscrow.MatchStatus.Cancelled
+            )
+        );
+        escrow.dismissDispute(matchId);
+    }
+
+    /// @dev Once the extension has run out the result is final, dismissed or not.
+    function test_aDismissalComesBeforeTheExtensionRunsOut() public {
+        (bytes32 matchId,, uint40 deadline) = _proposed();
+        vm.prank(players[0]);
+        escrow.dispute(matchId, EVIDENCE);
+        uint256 extended = uint256(deadline) + DISPUTE_EXTENSION;
+        vm.warp(extended);
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.ChallengeWindowClosed.selector, extended));
+        escrow.dismissDispute(matchId);
+    }
+
     function test_thereIsNothingToDismissWithoutADispute() public {
         (bytes32 matchId,,) = _proposed();
         vm.prank(guardian);

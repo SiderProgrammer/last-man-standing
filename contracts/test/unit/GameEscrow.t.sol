@@ -7,7 +7,7 @@ import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 import {PullPayable} from "../../src/PullPayable.sol";
 import {IRandomnessOracle, IRandomnessConsumer} from "../../src/interfaces/IRandomnessOracle.sol";
-import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../../src/Errors.sol";
 
 contract GameEscrowTest is Fixtures {
     function test_createMatch_snapshotsTerms() public {
@@ -55,6 +55,37 @@ contract GameEscrowTest is Fixtures {
         vm.prank(players[0]);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.StakeOutOfRange.selector, uint128(1)));
         escrow.createMatch(1, 4);
+    }
+
+    function test_createMatch_rejectsSeatsOutOfRange() public {
+        vm.startPrank(players[0]);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.SeatsOutOfRange.selector, uint16(3)));
+        escrow.createMatch(STAKE, 3);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.SeatsOutOfRange.selector, uint16(9)));
+        escrow.createMatch(STAKE, 9);
+        vm.stopPrank();
+    }
+
+    function test_join_rejectsAClosedWindowOrALockedLobby() public {
+        vm.prank(players[0]);
+        bytes32 late = escrow.createMatch(STAKE, 4);
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(players[0]);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.JoinWindowClosed.selector, late));
+        escrow.join{value: STAKE}(late);
+
+        bytes32 locked = _createAndFill(4);
+        escrow.lockMatch(locked);
+        vm.prank(players[4]);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GameEscrow.WrongStatus.selector,
+                locked,
+                GameEscrow.MatchStatus.Open,
+                GameEscrow.MatchStatus.Pending
+            )
+        );
+        escrow.join{value: STAKE}(locked);
     }
 
     function test_join_andLockFullLobby() public {
@@ -206,6 +237,80 @@ contract GameEscrowTest is Fixtures {
         assertEq(escrow.withdrawable(players[0]), STAKE);
     }
 
+    function test_lockMatch_rejectsAnExpiredLobbyShortOfSeats() public {
+        vm.prank(players[0]);
+        bytes32 matchId = escrow.createMatch(STAKE, 6);
+        for (uint256 i = 0; i < 3; ++i) {
+            vm.prank(players[i]);
+            escrow.join{value: STAKE}(matchId);
+        }
+        vm.warp(block.timestamp + 1 hours);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotEnoughPlayers.selector, uint16(3), uint16(4)));
+        escrow.lockMatch(matchId);
+    }
+
+    function test_settle_rejectsAMatchNotLive_andAnOutOfRangeRoundCount() public {
+        bytes32 matchId = _createAndFill(4);
+        address[] memory ranking = _rankingOf(matchId);
+        bytes memory early = _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, ranking);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GameEscrow.WrongStatus.selector,
+                matchId,
+                GameEscrow.MatchStatus.Live,
+                GameEscrow.MatchStatus.Open
+            )
+        );
+        escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, early);
+
+        _lockAndSeed(matchId, bytes32(uint256(6)));
+        uint32 tooMany = uint32(type(uint16).max) + 1;
+        bytes memory none = _signResult(_twoAttestors(), matchId, 0, HISTORY_ROOT, ranking);
+        bytes memory over = _signResult(_twoAttestors(), matchId, tooMany, HISTORY_ROOT, ranking);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.RoundsOutOfRange.selector, uint32(0)));
+        escrow.settle(matchId, 0, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, none);
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.RoundsOutOfRange.selector, tooMany));
+        escrow.settle(matchId, tooMany, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, over);
+    }
+
+    /// @dev A ranking missing a seat, or naming one twice, is not the seat set.
+    function test_settle_rejectsAShortRankingOrARepeatedSeat() public {
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(7)));
+        address[] memory seats = _rankingOf(matchId);
+
+        address[] memory short = new address[](3);
+        (short[0], short[1], short[2]) = (seats[0], seats[1], seats[2]);
+        bytes memory shortSigs = _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, short);
+        vm.expectRevert(GameEscrow.NotAPermutation.selector);
+        escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, short, shortSigs);
+
+        address[] memory repeated = new address[](4);
+        (repeated[0], repeated[1], repeated[2], repeated[3]) = (seats[0], seats[1], seats[2], seats[0]);
+        bytes memory repeatedSigs = _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, repeated);
+        vm.expectRevert(GameEscrow.NotAPermutation.selector);
+        escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, repeated, repeatedSigs);
+    }
+
+    /// @dev A position the schedule pays nothing is skipped, not credited zero,
+    ///      and the pool is still fully assigned.
+    function test_finalize_skipsAPositionWithNoShare() public {
+        uint16[] memory schedule = new uint16[](2);
+        (schedule[0], schedule[1]) = (10_000, 0);
+        vm.prank(owner);
+        config.setPayoutSchedule(schedule);
+
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(8)));
+        address[] memory ranking = _settleAndFinalize(matchId);
+
+        uint256 pool = 4 * STAKE;
+        uint256 fee = (pool * 500) / 10_000;
+        assertEq(escrow.withdrawable(ranking[0]), pool - fee);
+        assertEq(escrow.withdrawable(ranking[1]), 0);
+        assertEq(escrow.withdrawable(treasury), fee);
+    }
+
     function test_settle_creditsWinnerAndTreasury() public {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x51)));
@@ -318,6 +423,19 @@ contract GameEscrowTest is Fixtures {
         assertEq(ranking[0].balance, before + owed);
         assertEq(escrow.withdrawable(ranking[0]), 0);
         assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    /// @dev The balance stays credited when the recipient refuses the ETH.
+    function test_withdraw_revertsWhenTheRecipientRefuses() public {
+        bytes32 matchId = _createAndFill(4);
+        vm.warp(block.timestamp + 1 hours + 10 minutes);
+        escrow.cancelMatch(matchId);
+
+        // The config has no way to take ETH.
+        vm.prank(players[0]);
+        vm.expectRevert(abi.encodeWithSelector(TransferFailed.selector, address(config), STAKE));
+        escrow.withdraw(address(config));
+        assertEq(escrow.withdrawable(players[0]), STAKE);
     }
 
     function test_withdrawFor_paysTheAccountNotTheCaller() public {

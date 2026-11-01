@@ -6,7 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
-import {NothingToWithdraw} from "../../src/Errors.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../../src/Errors.sol";
 import {BridgeJoinReceiver} from "../../src/periphery/BridgeJoinReceiver.sol";
 import {SpokeRouter} from "../../src/periphery/SpokeRouter.sol";
 import {MockAcrossSpokePool} from "../../src/mocks/MockAcrossSpokePool.sol";
@@ -175,6 +175,14 @@ contract BridgeJoinReceiverTest is Fixtures {
         assertEq(address(receiver).balance, STAKE);
     }
 
+    /// @dev WETH that will not unwrap is held as WETH, not a revert of the fill.
+    function test_wethThatWillNotUnwrapIsHeld() public {
+        vm.mockCallRevert(address(weth), abi.encodeWithSelector(IWETH9.withdraw.selector, STAKE), "");
+        _fill(STAKE, _message(matchId, player));
+        assertFalse(escrow.hasSeat(matchId, player));
+        assertEq(weth.balanceOf(address(receiver)), STAKE);
+    }
+
     function test_onlyTheSpokePoolCallsTheHandler() public {
         vm.expectRevert(abi.encodeWithSelector(BridgeJoinReceiver.NotSpokePool.selector, address(this)));
         receiver.handleV3AcrossMessage(address(weth), STAKE, relayer, _message(matchId, player));
@@ -189,6 +197,25 @@ contract BridgeJoinReceiverTest is Fixtures {
     function test_onlyTheOwnerRecovers() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         receiver.recover(address(0), address(this), 1);
+    }
+
+    function test_recover_refusesTheZeroAddress_andKeepsWhatARecipientRefuses() public {
+        _fill(STAKE, hex"deadbeef");
+        vm.startPrank(owner);
+        vm.expectRevert(ZeroAddress.selector);
+        receiver.recover(address(0), address(0), STAKE);
+        // The config has no way to take ETH.
+        vm.expectRevert(abi.encodeWithSelector(TransferFailed.selector, address(config), STAKE));
+        receiver.recover(address(0), address(config), STAKE);
+        vm.stopPrank();
+        assertEq(address(receiver).balance, STAKE);
+    }
+
+    function test_constructor_refusesZeroAddresses() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new BridgeJoinReceiver(owner, GameEscrow(address(0)), IAcrossSpokePool(address(pool)));
+        vm.expectRevert(ZeroAddress.selector);
+        new BridgeJoinReceiver(owner, escrow, IAcrossSpokePool(address(0)));
     }
 
     /// @dev The whole way: a router deposit on the spoke, read and filled on
