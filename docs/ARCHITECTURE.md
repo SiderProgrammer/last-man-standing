@@ -733,9 +733,13 @@ otherwise every stake reverts with an error the wallet renders unreadably.
   detection), consensus parity vectors, rooms, the gateway, the chain bridge, the
   attestor process, the analyst, the client's pure modules, and a seeded chaos suite.
 - **Solidity (Foundry):** unit tests per contract and library,
-  differential fuzzing of the Yul hashers and the signature recovery loop, and a stateful
-  invariant campaign driving `GameEscrow` through random call sequences while asserting
-  solvency. A deeper campaign is available with `FOUNDRY_PROFILE=deep`.
+  differential fuzzing of the Yul hashers and the signature recovery loop, and stateful
+  invariant campaigns. The escrow's drives many matches at once through every state,
+  pauses and disputes included, and asserts solvency, fee and LMS accounting, the
+  dispute deadlines and the pause's expiry; its handler only makes calls that should
+  succeed, so it runs with `fail_on_revert`. Others cover `StakedLms` and the
+  rewards, vesting included. A deeper campaign is available with `FOUNDRY_PROFILE=deep`.
+  CI fails if a contract that moves value drops under 90% branch coverage.
 - **Typecheck covers the tests too.** Each package has a `tsconfig.test.json` resolving
   `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
   test fails `npm run typecheck` rather than sitting there unchecked.

@@ -67,7 +67,20 @@ contract RewardsHandler is Test {
         return actors[seed % actors.length];
     }
 
-    function payFee(uint256 who, uint256 amount) public {
+    /// @dev What each tranche had vested before the call now running: the
+    ///      invariants check it never goes down, whatever the call did.
+    mapping(address player => mapping(uint256 epoch => uint256)) public vestedBefore;
+
+    modifier observed() {
+        for (uint256 a = 0; a < actors.length; ++a) {
+            for (uint256 e = 0; e < epochs.length; ++e) {
+                vestedBefore[actors[a]][epochs[e]] = vesting.vested(actors[a], epochs[e]);
+            }
+        }
+        _;
+    }
+
+    function payFee(uint256 who, uint256 amount) public observed {
         ledger.pay(_actor(who), bound(amount, 1, 5 ether));
         uint256 epoch = block.timestamp / ledger.FEE_EPOCH();
         if (!seen[epoch]) {
@@ -76,11 +89,11 @@ contract RewardsHandler is Test {
         }
     }
 
-    function warp(uint256 secs) public {
+    function warp(uint256 secs) public observed {
         vm.warp(block.timestamp + bound(secs, 1 hours, 30 days));
     }
 
-    function claim(uint256 who, uint256 pick) public {
+    function claim(uint256 who, uint256 pick) public observed {
         if (epochs.length == 0) return;
         uint256 epoch = epochs[pick % epochs.length];
         uint256[] memory one = new uint256[](1);
@@ -88,7 +101,7 @@ contract RewardsHandler is Test {
         grantedIn[epoch] += rewards.claim(_actor(who), one);
     }
 
-    function release(uint256 who, uint256 pick) public {
+    function release(uint256 who, uint256 pick) public observed {
         if (epochs.length == 0) return;
         uint256[] memory one = new uint256[](1);
         one[0] = epochs[pick % epochs.length];
@@ -96,7 +109,7 @@ contract RewardsHandler is Test {
     }
 
     /// @dev Stakes whatever liquid LMS the actor has: released rewards only.
-    function stake(uint256 who) public {
+    function stake(uint256 who) public observed {
         address actor = _actor(who);
         uint256 amount = lms.balanceOf(actor);
         if (amount == 0) return;
@@ -106,7 +119,7 @@ contract RewardsHandler is Test {
         vm.stopPrank();
     }
 
-    function setCaps(uint256 perEth, uint256 perWallet) public {
+    function setCaps(uint256 perEth, uint256 perWallet) public observed {
         vm.startPrank(owner);
         rewards.setMaxRewardPerEth(bound(perEth, 0, 1_000_000e18));
         rewards.setMaxRewardPerWalletPerEpoch(bound(perWallet, 0, 1_000_000e18));
@@ -153,6 +166,27 @@ contract RewardsInvariantTest is Test {
         assertLe(vesting.totalReleased(), vested);
         assertLe(vested, vesting.totalGranted());
         assertLe(vesting.totalGranted(), rewards.totalBudget());
+    }
+
+    /// @dev Every tranche follows the schedule: nothing until its epoch ends,
+    ///      then linearly to all of it `VESTING_DURATION` later. What has
+    ///      vested never goes down, and nothing is released before it vests.
+    function invariant_trancheVestsLinearlyFromItsEpochsEnd() public view {
+        uint256 duration = vesting.VESTING_DURATION();
+        for (uint256 a = 0; a < actors.length; ++a) {
+            for (uint256 e = 0; e < handler.epochCount(); ++e) {
+                uint256 epoch = handler.epochs(e);
+                (uint128 amount, uint128 released) = vesting.trancheOf(actors[a], epoch);
+                uint256 start = (epoch + 1) * 7 days;
+                uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
+                uint256 expected = elapsed >= duration ? amount : (uint256(amount) * elapsed) / duration;
+
+                uint256 vested = vesting.vested(actors[a], epoch);
+                assertEq(vested, expected);
+                assertGe(vested, handler.vestedBefore(actors[a], epoch));
+                assertLe(released, vested);
+            }
+        }
     }
 
     /// @dev No epoch's claims add up to more than its budget.

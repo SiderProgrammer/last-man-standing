@@ -5,7 +5,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
-import {NothingToWithdraw, TransferFailed} from "../../src/Errors.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../../src/Errors.sol";
+import {PullPayable} from "../../src/PullPayable.sol";
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {StakedLms} from "../../src/governance/StakedLms.sol";
 import {FeeRouter} from "../../src/governance/FeeRouter.sol";
@@ -128,6 +129,17 @@ contract FeeRouterTest is Fixtures {
         vm.expectRevert(abi.encodeWithSelector(FeeRouter.InvalidBps.selector, uint16(10_001)));
         vm.prank(owner);
         router.setStakerBps(10_001);
+
+        vm.expectRevert(ZeroAddress.selector);
+        vm.prank(owner);
+        router.setTreasury(address(0));
+    }
+
+    function test_constructor_refusesZeroAddresses() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new FeeRouter(PullPayable(address(0)), vault, owner, safe, 5_000);
+        vm.expectRevert(ZeroAddress.selector);
+        new FeeRouter(escrow, StakedLms(address(0)), owner, safe, 5_000);
     }
 
     /// @dev Settlement now proposes and pays only after the challenge window,

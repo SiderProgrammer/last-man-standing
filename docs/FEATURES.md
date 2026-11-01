@@ -69,8 +69,11 @@ so ids from two deployments or two chains never collide.
   only they earn play-mining; private lobbies keep join-by-id.
 
 **The solvency invariant:** `address(this).balance == totalOwed + totalEscrowed`,
-asserted by a Foundry invariant campaign over random call sequences — joins,
-cancels, settlements, vetoes and withdrawals in any order.
+asserted by a Foundry invariant campaign over random call sequences on many
+matches at once — joins, cancels, settlements, disputes, vetoes, pauses and
+withdrawals in any order. The same campaign checks that a dispute holds a payout
+back 48 hours and that a guardian pause ends within a week unless governance
+keeps it.
 
 ---
 
@@ -480,7 +483,9 @@ is committed and CI fails on drift.
 
 If an encoding drifts, exactly one suite fails instead of the two sides
 diverging silently. Beyond those: differential fuzzing of every Yul routine,
-the escrow's solvency invariant campaign, engine property tests (termination,
-unique ranking, HP bounds, determinism, replay equivalence, tamper detection),
-fork tests against Across, VRF and Uniswap v4, and a seeded chaos suite
+invariant campaigns for the escrow, staking and the rewards, engine property
+tests (termination, unique ranking, HP bounds, determinism, replay equivalence,
+tamper detection), fork tests against Across, VRF, Uniswap v4 and the sequencer
+feed, at least 90% branch coverage on every contract that moves value, and a
+seeded chaos suite
 against the server. Commands are in the README.

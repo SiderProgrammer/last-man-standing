@@ -10,9 +10,10 @@ Phase 1 is implemented on the `design-rework-phase-1-foundations` branch, Phase 
 `design-rework-phase-3-governance-and-token`, Phase 4 on `design-rework-phase-4-verifiability`,
 Phase 5 on `design-rework-phase-5-sessions`, Phase 6 on
 `design-rework-phase-6-cross-chain`, Phase 7 on `design-rework-phase-7-server`,
-Phase 8 on `design-rework-phase-8-client`, and Phase 9 on
-`design-rework-phase-9-packages-and-docs`, each building on the last. Nothing after that
-is, except the Privy check in 5.1 and the live Across testnet deposit in 6.1.
+Phase 8 on `design-rework-phase-8-client`, Phase 9 on
+`design-rework-phase-9-packages-and-docs`, and Phase 10 on
+`design-rework-phase-10-test-bar`, each building on the last. Nothing is left except
+the Privy check in 5.1 and the live Across testnet deposit in 6.1.
 
 ---
 
@@ -551,6 +552,44 @@ withdrawing to a spoke). Where it differs from the table:
 ---
 
 ## Phase 10: Test bar before calling it done
+
+**Done.** Where it differs from the list:
+- Coverage: every gated contract now has 100% of its branches covered. Before, ten
+  were under 90%: the escrow (85%), the config, `PullPayable`, the reward vesting
+  and the distributor (60–67%), `FeeRouter`, the VRF adapter, `StakedLms`, the
+  Across receiver and the zap (71–83%). Nearly every missed branch was a guard
+  revert nothing had tried: a zero address, a wrong status, an out-of-range input,
+  a recipient that refuses ETH. "Moves value" is the sixteen contracts that hold,
+  move or decide where ETH or LMS goes, listed in `scripts/coverage-gate.mjs`, which
+  the CI coverage job now runs: under 90% on any of them fails the build. `LmsToken`
+  and `PlayerAvatars` are not gated.
+- Escrow handler: it drives many matches at once (about seventeen a run), and every
+  action picks a match, a player and a moment where its call is allowed, so the
+  suite runs with `fail_on_revert`: zero reverts, against about a third before (lock,
+  veto and the withdrawals near 85%). Runs are 64 × 256 calls rather than 256 × 64,
+  the same total, because a match takes a dozen calls from lobby to payout. Measured
+  over 30 seeds, a campaign reaches about 250 locks, 110 proposals, 50 payouts, 50
+  disputes and 55 vetoes. To get there, play waits out a pause rather than skipping,
+  lobbies have day-long windows, and aborts and governance pauses act on a quarter of
+  their calls. The campaign seed was already fixed in 1.4.
+- Invariants: new are the dispute deadlines (a result open to challenge has exactly
+  the deadline the rules give it, none pays before its window, and none with an open
+  dispute before the 48 hours more), pause expiry (`pausedUntil` is never later than
+  the last end the guardian or governance set, and the guardian could pause exactly
+  when its cooldown allowed), the escrowed total as the stakes of matches not ended,
+  and vesting (every tranche follows the linear schedule, never goes down, and
+  releases no more than has vested). The fee-discount and `StakedLms` invariants
+  were already there from 3.8.
+- Fork tests: VRF and Across were already there (2.3, 6.5). New is the sequencer
+  feed against Chainlink's on Base: a result finalises while it is up, and one whose
+  window closes just after the feed's last restart waits out the grace period. All
+  eleven fork tests pass on public RPCs.
+- Golden transcripts and the `MatchResult` vector were already there from 4.8, with
+  the session and withdrawal vectors from 5 and 6.
+- Slither: the baseline gate has been in CI since 1.2. **Not run locally**: the pinned
+  0.11.3 does not install on Python 3.12.0. Nothing under `src/` changed in this
+  phase, and Slither skips `test/` and `script/`, so its findings cannot have changed;
+  CI runs it.
 
 - Branch coverage ≥ 90% on every contract that moves value. Today it's 44% on config, 43% on LayerZero (now deleted), 33% on VRF and 61% on RewardsDistributor.
 - Escrow invariant handler:

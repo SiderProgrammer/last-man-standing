@@ -51,6 +51,15 @@ contract LmsDiscountTest is Fixtures {
         assertEq(used, MAX_LMS, "and only what buys that is used");
     }
 
+    function test_quote_isNothingWhileTheDiscountIsOff() public {
+        bytes32 matchId = _create();
+        vm.prank(owner);
+        config.setLmsPerEthDiscount(0);
+        (uint256 off, uint256 used) = escrow.quoteLmsDiscount(matchId, MAX_LMS);
+        assertEq(off, 0);
+        assertEq(used, 0);
+    }
+
     function test_join_stakesLessEth_andHoldsTheLms() public {
         bytes32 matchId = _create();
         vm.prank(players[0]);

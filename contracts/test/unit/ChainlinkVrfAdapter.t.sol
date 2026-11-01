@@ -7,7 +7,7 @@ import {ChainlinkVrfAdapter} from "../../src/oracles/ChainlinkVrfAdapter.sol";
 import {MockVrfCoordinator} from "../../src/mocks/MockVrfCoordinator.sol";
 import {IVRFCoordinatorV2Plus} from "../../src/vendor/chainlink/IVRFCoordinatorV2Plus.sol";
 import {VRFV2PlusClient} from "../../src/vendor/chainlink/VRFV2PlusClient.sol";
-import {UnknownRequest} from "../../src/Errors.sol";
+import {UnknownRequest, ZeroAddress} from "../../src/Errors.sol";
 
 contract ChainlinkVrfAdapterTest is Fixtures {
     bytes32 internal constant KEY_HASH = keccak256("key hash");
@@ -137,6 +137,18 @@ contract ChainlinkVrfAdapterTest is Fixtures {
         uint256 vrfId = uint256(escrow.lockMatch(matchId));
         vm.expectRevert(abi.encodeWithSelector(ChainlinkVrfAdapter.NotAnswered.selector, vrfId));
         adapter.deliver(vrfId);
+    }
+
+    function test_neitherTheCoordinatorNorAConsumerCanBeZero() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new ChainlinkVrfAdapter(owner, IVRFCoordinatorV2Plus(address(0)), KEY_HASH, SUB_ID, 3, 200_000);
+
+        vm.startPrank(owner);
+        vm.expectRevert(ZeroAddress.selector);
+        adapter.setCoordinator(IVRFCoordinatorV2Plus(address(0)), KEY_HASH, SUB_ID, 3, 200_000);
+        vm.expectRevert(ZeroAddress.selector);
+        adapter.setConsumer(address(0), true);
+        vm.stopPrank();
     }
 }
 

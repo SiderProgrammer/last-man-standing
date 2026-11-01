@@ -7,7 +7,8 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 
 import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {StakedLms} from "../../src/governance/StakedLms.sol";
-import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../../src/Errors.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract StakedLmsTest is Test {
     uint64 private constant COOLDOWN = 7 days;
@@ -272,6 +273,36 @@ contract StakedLmsTest is Test {
         uint64 tooLong = vault.MAX_REWARD_DURATION() + 1;
         vm.expectRevert(abi.encodeWithSelector(StakedLms.RewardDurationOutOfRange.selector, tooLong));
         new StakedLms(lms, owner, COOLDOWN, tooLong);
+    }
+
+    function test_constructor_refusesAZeroToken() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new StakedLms(IERC20(address(0)), owner, COOLDOWN, DURATION);
+    }
+
+    /// @dev What was earned stays owed when the recipient refuses the ETH.
+    function test_claimRewards_revertsWhenTheRecipientRefuses() public {
+        vm.prank(alice);
+        vault.deposit(100e18);
+        vault.depositRewards{value: 1 ether}();
+        vm.warp(block.timestamp + DURATION);
+        uint256 earned = vault.earned(alice);
+
+        // The token has no way to take ETH.
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(TransferFailed.selector, address(lms), earned));
+        vault.claimRewards(address(lms));
+        assertEq(vault.earned(alice), earned);
+    }
+
+    function test_claimAndSweepStray_refuseAZeroRecipient() public {
+        vm.prank(alice);
+        vm.expectRevert(ZeroAddress.selector);
+        vault.claim(address(0));
+
+        vm.prank(owner);
+        vm.expectRevert(ZeroAddress.selector);
+        vault.sweepStray(address(0));
     }
 
     function test_claimRewards_paysOnce() public {

@@ -9,6 +9,9 @@ import {LmsToken} from "../../src/governance/LmsToken.sol";
 import {StakedLms} from "../../src/governance/StakedLms.sol";
 import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
 import {RewardVesting} from "../../src/governance/RewardVesting.sol";
+import {IFeeLedger} from "../../src/interfaces/IFeeLedger.sol";
+import {NothingToWithdraw, ZeroAddress} from "../../src/Errors.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract RewardsDistributorTest is Fixtures {
     uint256 private constant EPOCH = 7 days;
@@ -54,6 +57,23 @@ contract RewardsDistributorTest is Fixtures {
             new RewardsDistributor(escrow, lms, owner, 10, TOTAL_BUDGET, NO_CAP, NO_WALLET_CAP);
         assertEq(later.epochBudget(9), 0);
         assertEq(later.epochBudget(10), FIRST_YEAR_BUDGET);
+    }
+
+    function test_constructor_refusesZeroAddresses() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new RewardsDistributor(IFeeLedger(address(0)), lms, owner, 0, TOTAL_BUDGET, NO_CAP, NO_WALLET_CAP);
+        vm.expectRevert(ZeroAddress.selector);
+        new RewardsDistributor(escrow, IERC20(address(0)), owner, 0, TOTAL_BUDGET, NO_CAP, NO_WALLET_CAP);
+        vm.expectRevert(ZeroAddress.selector);
+        new RewardVesting(IERC20(address(0)), EPOCH);
+    }
+
+    /// @dev An epoch nobody paid fees in has no rate until someone does.
+    function test_rate_isZeroForAnEpochWithNoFees() public view {
+        (uint256 rate, uint256 walletCap, bool fixed_) = rewards.rateOf(3);
+        assertEq(rate, 0);
+        assertEq(walletCap, NO_WALLET_CAP);
+        assertFalse(fixed_);
     }
 
     // --- Claims ------------------------------------------------------------
@@ -216,6 +236,42 @@ contract RewardsDistributorTest is Fixtures {
         assertEq(epochs.length, 0);
     }
 
+    /// @dev An epoch in the list with no fees for the player is skipped, and
+    ///      stays unclaimed; the range views treat an empty range, and every
+    ///      range once claims close, as nothing.
+    function test_claim_skipsAnEpochThePlayerPaidNothingIn() public {
+        _playTwoMatches();
+        vm.warp(rewards.claimableFrom(3));
+        uint256[] memory epochs = new uint256[](2);
+        epochs[1] = 3;
+        assertEq(rewards.claim(players[0], epochs), 250e18);
+        assertFalse(rewards.isClaimed(players[0], 3));
+        (uint128 amount,) = vesting.trancheOf(players[0], 3);
+        assertEq(amount, 0);
+
+        (uint256 total, uint256[] memory found) = rewards.claimable(players[7], 0, 3);
+        assertEq(total, 0, "player 7 never played");
+        assertEq(found.length, 0);
+        (total, found) = rewards.claimable(players[1], 3, 0);
+        assertEq(found.length, 0);
+        (total, found) = vesting.releasableIn(players[0], 3, 0);
+        assertEq(found.length, 0);
+
+        vm.warp(rewards.claimsCloseAt());
+        (total, found) = rewards.claimable(players[1], 0, 3);
+        assertEq(total, 0, "closed");
+        assertEq(found.length, 0);
+    }
+
+    /// @dev The distributor never grants an epoch twice; vesting refuses it anyway.
+    function test_vesting_refusesASecondTrancheForAnEpoch() public {
+        vm.startPrank(address(rewards));
+        vesting.grant(players[0], _epochs(0), _epochs(1));
+        vm.expectRevert(abi.encodeWithSelector(RewardVesting.AlreadyGranted.selector, players[0], 0));
+        vesting.grant(players[0], _epochs(0), _epochs(1));
+        vm.stopPrank();
+    }
+
     /// @dev Player 0 paid 0.1 ETH of week 0's fees: a quarter of its budget,
     ///      250 LMS, unless one wallet may earn less.
     function test_claim_theWalletCapLimitsOneWallet_andTheRestStays() public {
@@ -343,6 +399,13 @@ contract RewardsDistributorTest is Fixtures {
         assertEq(_claim(players[1]), 125e18);
     }
 
+    function test_setMaxRewardPerEth_isBounded() public {
+        uint256 tooHigh = uint256(type(uint120).max) + 1;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(RewardsDistributor.MaxRewardPerEthTooHigh.selector, tooHigh));
+        rewards.setMaxRewardPerEth(tooHigh);
+    }
+
     function test_setMaxRewardPerWalletPerEpoch_ownerOnly_andBounded() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, players[0]));
         vm.prank(players[0]);
@@ -373,9 +436,14 @@ contract RewardsDistributorTest is Fixtures {
         vm.prank(to);
         rewards.sweep(to);
 
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vm.expectRevert(ZeroAddress.selector);
+        rewards.sweep(address(0));
         assertEq(rewards.sweep(to), TOTAL_BUDGET);
         assertEq(lms.balanceOf(to), TOTAL_BUDGET);
+        vm.expectRevert(NothingToWithdraw.selector);
+        rewards.sweep(to);
+        vm.stopPrank();
     }
 
     // --- Properties --------------------------------------------------------

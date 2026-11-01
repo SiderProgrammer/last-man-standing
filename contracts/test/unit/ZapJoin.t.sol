@@ -6,7 +6,8 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {GameEscrow} from "../../src/GameEscrow.sol";
 import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {ZapJoin} from "../../src/periphery/ZapJoin.sol";
-import {PoolKey} from "../../src/interfaces/IPoolManager.sol";
+import {IPoolManager, PoolKey} from "../../src/interfaces/IPoolManager.sol";
+import {ZeroAddress} from "../../src/Errors.sol";
 import {MockPoolManager} from "../../src/mocks/MockPoolManager.sol";
 import {MockERC20} from "../../src/mocks/MockERC20.sol";
 
@@ -148,6 +149,24 @@ contract ZapJoinTest is Fixtures {
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(ZapJoin.PartialFill.selector, STAKE, STAKE / 2));
         zap.joinWithToken(matchId, _usdcPath(), type(uint256).max, block.timestamp);
+    }
+
+    /// @dev A pool, or a hook on it, that charges nothing for the output is
+    ///      not taken on trust either.
+    function test_revertsWhenTheSwapChargesNothing() public {
+        vm.mockCall(
+            address(manager), abi.encodeWithSelector(MockPoolManager.swap.selector), abi.encode(int256(0))
+        );
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(ZapJoin.UnexpectedDelta.selector, int128(0)));
+        zap.joinWithToken(matchId, _usdcPath(), type(uint256).max, block.timestamp);
+    }
+
+    function test_constructor_refusesZeroAddresses() public {
+        vm.expectRevert(ZeroAddress.selector);
+        new ZapJoin(IPoolManager(address(0)), escrow);
+        vm.expectRevert(ZeroAddress.selector);
+        new ZapJoin(manager, GameEscrow(address(0)));
     }
 
     function test_revertsOnUnknownPool() public {

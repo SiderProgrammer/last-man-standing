@@ -40,6 +40,78 @@ contract ProtocolConfigTest is Fixtures {
         config.setPayoutSchedule(tooLong);
     }
 
+    function test_seatAndStakeRangesMustBeOrdered() public {
+        ProtocolConfig.Params memory params = config.getParams();
+        vm.startPrank(owner);
+
+        params.minSeats = 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidSeatRange.selector, uint16(1), uint16(8))
+        );
+        config.setParams(params);
+        (params.minSeats, params.maxSeats) = (4, 3);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidSeatRange.selector, uint16(4), uint16(3))
+        );
+        config.setParams(params);
+        params.maxSeats = 257;
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidSeatRange.selector, uint16(4), uint16(257))
+        );
+        config.setParams(params);
+        params.maxSeats = 8;
+
+        params.minStake = 0;
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.InvalidStakeRange.selector, uint128(0), params.maxStake)
+        );
+        config.setParams(params);
+        (params.minStake, params.maxStake) = (2 ether, 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProtocolConfig.InvalidStakeRange.selector, uint128(2 ether), uint128(1 ether)
+            )
+        );
+        config.setParams(params);
+        (params.minStake, params.maxStake) = (0.01 ether, 50 ether);
+
+        params.treasury = address(0);
+        vm.expectRevert(ZeroAddress.selector);
+        config.setParams(params);
+        vm.stopPrank();
+    }
+
+    /// @dev A schedule paying four places cannot outlive a cut to three-seat lobbies.
+    function test_minSeatsCannotDropBelowThePaidPlaces() public {
+        uint16[] memory four = new uint16[](4);
+        (four[0], four[1], four[2], four[3]) = (4000, 3000, 2000, 1000);
+        ProtocolConfig.Params memory params = config.getParams();
+        params.minSeats = 3;
+
+        vm.startPrank(owner);
+        config.setPayoutSchedule(four);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProtocolConfig.PayoutScheduleTooLong.selector, uint256(4), uint16(3))
+        );
+        config.setParams(params);
+        vm.stopPrank();
+    }
+
+    function test_payoutScheduleCannotBeEmpty() public {
+        vm.prank(owner);
+        vm.expectRevert(ProtocolConfig.PayoutScheduleEmpty.selector);
+        config.setPayoutSchedule(new uint16[](0));
+    }
+
+    function test_oracleAndLmsTokenCannotBeZero() public {
+        vm.startPrank(owner);
+        vm.expectRevert(ZeroAddress.selector);
+        config.setRandomnessOracle(address(0));
+        vm.expectRevert(ZeroAddress.selector);
+        config.setLmsToken(address(0));
+        vm.stopPrank();
+    }
+
     function test_everyAttestorChangeIsANewVersion_andOldVersionsStay() public {
         uint32 first = config.attestorSetVersion();
         address d = makeAddr("d");
