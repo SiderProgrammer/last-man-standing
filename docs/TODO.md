@@ -1,240 +1,150 @@
 # What's left to do
 
-Status as of the current tree. The protocol, engine, server, client and contracts are in
-place, the full TypeScript and Solidity suites are green, and the practice loop plays
-end-to-end in the browser. What remains is mostly integrations that are still mocks, the
-trust-minimisation story, and operational work.
-
-Items are ordered roughly by what blocks the next demo.
-
-> **Closed on `fix/protocol-review`**:
-> withdrawals and the result screen (§1.2), the VRF adapter's leaked `pending`
-> entries (§2.2), the Redis decision — dropped (§2.3),
-> unlimited practice rooms, a restart mid-match (now resumed from a journal, FIX_PLAN
-> 7.11) and gateway rate limiting (§3.2),
-> the stored ranking (§3.3), and the hardwired deploy mocks. Cross-chain joins
-> moved from LayerZero to Across (§2.1, FIX_PLAN Phase 6); no two-testnet run has
-> happened yet.
+Open work only. What is done is in the code and its history; the decisions the
+design rests on are in [adr/](adr/).
 
 ---
 
-## 1. Blocking — nothing works end-to-end without these
+## 1. Checks that need a testnet
 
-### 1.1 Staked lobby flow against a live chain
+Nothing is deployed on a public chain yet: `contracts/deployments/` holds only local
+nodes. Everything below waits on a hub on Base Sepolia, which needs the deploy roles
+(Safe, guardian, team beneficiary, matchmaker, three attestors), a Chainlink VRF v2.5
+subscription owned by the Safe and funded in ETH, and testnet ETH.
+[TESTNET.md](TESTNET.md) has the steps.
 
-The pieces exist and typecheck, but they have only run against mocks:
+### 1.1 The Privy check
 
-- `ChainBridge` (`packages/server/src/chain/bridge.ts`) polls `MatchCreated`, publishes a lobby
-  directory, locks a full or expired lobby with the keeper key, and opens a room when the
-  match goes `Live`. It has **never been run against a real RPC** — no integration test
-  covers the poll loop.
-- The client can `createMatch`, `join` and watch, but the flow has only been exercised in
-  practice mode. Needs a run against a local Anvil fork with the deploy script.
-- ~~**Reconnect on the staked path:** a player who joins on-chain before the room exists
-  gets no feedback beyond a toast.~~ The server holds a `watch` for a lobby still filling
-  or waiting on its seed, and tells every seat `live` when the room opens (FIX_PLAN 7.10).
-- Reconcile the two id spaces: practice matches use `deriveMatchId(0, 0x0, nonce)`, staked
-  matches use the escrow's nonce. They cannot currently collide, but nothing enforces it.
-  Practice nonces now start at a random 64-bit offset per process, after the chaos tests
-  showed ids repeating across restarts.
+One-click play for embedded wallets assumes Privy's wallet can sign an EIP-7702
+authorization for *our* `SessionKeyDelegate`, not only for its own account. On Base
+Sepolia:
 
-### 1.2 Client gaps
+- Privy signs the authorization for the delegate;
+- the relayer submits a `join` the session key signed;
+- the caps hold;
+- a revoked session fails.
 
-The client plays a full match, but these are missing:
+Privy is not in the client and not configured for any chain. It would plug in at
+`Wallet.fromAccount`, which takes Privy's wallet once viem's `toAccount` wraps it.
+`npm run check:one-click` runs the same checklist on a local Prague anvil, with a
+local account standing in for the embedded wallet. If Privy cannot sign it, try
+Turnkey; if neither can, embedded wallets use the normal flow, like injected ones.
+The contracts are the same either way. The README's wallet matrix marks the Privy row
+as waiting on this.
 
-- ~~**Withdrawals.**~~ Done: the Winnings panel and the result screen collect, through the
-  server's `withdrawFor` push or the player's own `withdraw`.
-- ~~**Result screen.**~~ Done: `screens/result.ts` shows the ranking, the browser's replay
-  check, the settlement and the payout.
+### 1.2 A real Across testnet deposit
+
+A join from a spoke and a withdrawal back to one, over Across's real testnet
+relayers. The contracts already run against Across's mainnet pools in
+`test/fork/AcrossFork.t.sol`, so this is a demo more than a check. Across's testnet is
+unreliable and does not refund an unfilled deposit, so use small amounts.
+[ACROSS.md](ACROSS.md) and [TESTNET.md](TESTNET.md) have the steps.
+
+### 1.3 The staked flow on a public chain
+
+`ChainBridge`, the keeper, the session relayer, the withdrawals and the client's
+staked screens have run against anvil in `npm run dev:fork` and against a fake RPC in
+the unit tests, never against a public RPC.
+
+Features that have only run against mocks, or once by hand:
+
+- **Avatars.** `AvatarRegistry` is unit-tested including every failure path, and the
+  arena rendering was checked against stubbed entries. No `PlayerAvatars` has been
+  deployed, so the read → IPFS → texture path has never run against a real token.
+- **Play-mining end to end** ran once by hand on `dev:fork`: a four-seat match played to
+  settlement, the clock moved past the week's end, and **Claim LMS** granted the
+  reward. There is no script for it. Releasing vested LMS has not run against a chain:
+  it needs an ended epoch with claims. The view and the reads are unit-tested.
+- **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
+  `ChainBridge`, but only the in-arena badges have been seen rendered.
+- **One-click buttons** in the client have not run against a node (see 1.1).
+
+---
+
+## 2. Client gaps
+
 - **Spectator discovery.** `watch` works, but live matches are only listed if they came
   from the chain directory; practice rooms are invisible to everyone but their player.
-- ~~**A relayed join can be double-submitted.**~~ Gone with relayed joins: the session
-  key only signs logins, and every join is the player's own transaction.
-- **Token joins cost two transactions the first time.** `approve`, then `joinWithToken`.
-  Permit2, or EIP-2612 `permit` for USDC, would fold the approval into one signature.
-  The slippage allowance is fixed at 0.5%; there is no control for it.
+- **Token joins cost two transactions the first time:** `approve`, then
+  `joinWithToken`. Permit2, or EIP-2612 `permit` for USDC, would fold the approval into
+  one signature. The slippage allowance is fixed at 0.5%, with no control for it.
 
 ---
 
-## 2. Integrations that are still mocks
+## 3. Trust and security
 
-### 2.1 Across
-
-Spoke joins bridge the stake with Across: `SpokeRouter` on the spoke, `BridgeJoinReceiver`
-on the hub. Hub and spoke run end to end in `npm run dev:fork` over mock SpokePools, and
-the contracts run against Across's real pools in `test/fork/AcrossFork.t.sol`. What was
-checked is in `docs/ACROSS.md`.
-
-Still open:
-
-- **A real testnet deposit.** Follow `docs/TESTNET.md` with a little testnet ETH. Across's
-  testnet is unreliable and does not refund an unfilled deposit, so use small amounts.
-- ~~**Withdraw to a spoke has no screen.**~~ The Winnings panel collects to the spoke the
-  wallet is on, and the server submits the signed withdrawal (FIX_PLAN 8.5). Checked on
-  the local stack, not yet over Across's testnet.
-- **Matchmaking tickets.** The join message is `(matchId, player, origin)`; a queue ticket
-  joins it with FIX_PLAN 7.9.
-
-### 2.2 Chainlink VRF
-
-`ChainlinkVrfAdapter` targets a minimal local coordinator interface.
-
-- Confirm against the real VRF v2.5 coordinator ABI and subscription flow.
-- Fund and register the subscription in the deploy script; add the adapter as a consumer.
-- Handle the "request never fulfilled" path — the escrow already refunds after
-  `joinWindow + settleWindow`, but the adapter leaks a `pending` entry per dead request.
-
-### 2.3 Postgres and Redis
-
-- `PostgresArchive` is written but never exercised: `pg` is not installed and there is no
-  migration, integration test, or docker-compose service.
-- Redis is in the stack list but is not used at all. Decide whether it is needed
-  (presence, rate limiting, multi-instance room ownership) or drop it from the stack.
-
----
-
-## 3. Protocol and security gaps
-
-### 3.1 Disputes are guardian-decided, not on-chain
+### 3.1 Disputes are decided by the guardian, not on-chain
 
 A proposed result waits out `challengeWindow` before it pays. A seated player whose
-browser finds the transcript does not hold up can `dispute` it, which holds the payout 48
-hours more, and the guardian can `veto` it in that time, refunding every stake, or
+browser finds the transcript does not hold up can `dispute` it, which holds the payout
+48 hours more, and the guardian can `veto` it in that time, refunding every stake, or
 dismiss the dispute. That is the intended trust level for testnet and a low-stake early
 mainnet. Still open:
 
 - **The server still serves the transcripts.** `GET /transcripts/<hash>` is public and
   checked against the hash the escrow stores, so the server cannot alter one, but it can
-  withhold one (players then dispute). Pinning each transcript (IPFS or similar) takes the
-  server out of the path.
+  withhold one (players then dispute). Pinning each transcript (IPFS or similar) takes
+  the server out of the path.
 - **Evidence goes to the guardian by hand.** A dispute records the evidence bundle's
-  hash; the player saves the bundle and sends it. An endpoint that accepts bundles by hash
-  would save that step.
+  hash; the player saves the bundle and sends it. An endpoint that accepts bundles by
+  hash would save that step.
 - **Nobody watches yet.** A veto needs someone to notice. A small watcher that audits
-  every `ResultProposed` transcript and alerts the guardian, and watches `ResultDisputed`,
-  would close that.
+  every `ResultProposed` transcript and alerts the guardian, and watches
+  `ResultDisputed`, would close that.
+- **The attestors are not independent.** The attestor signs in a child process of the
+  server, which reads `ATTESTOR_PK` from its own environment to hand it over. Moving the
+  attestor to another host is the same IPC over a socket, not done.
 - **On-chain fraud proof, later.** A Solidity kernel, `MatchVerifier`, bonded and
-  slashable attestors and cross-language vectors were built and then removed (they are in
-  `fadf583`). Bring them back once the rules are frozen and stakes justify maintaining
-  two engines.
+  slashable attestors and cross-language vectors were built and then removed (they are
+  in `fadf583`). Bring them back once the rules are frozen and stakes justify
+  maintaining two engines.
 
-### 3.2 Server-side hardening
+### 3.2 Governance and the token
 
-- ~~No rate limiting, message size cap, or connection cap on the gateway.~~ Done: see
-  `gateway/limits.ts`. Connection caps (global, per IP, connect rate), an origin
-  allowlist, `ws` `maxPayload`, per-socket buckets with a separate one for moves, a
-  per-IP login budget ahead of the ERC-1271 verifier, a per-connection payout-push cooldown, a strike
-  bucket that disconnects persistent offenders, slow-consumer eviction, and a ping/pong
-  heartbeat. Limits are per process: a second instance would need shared state.
-- ~~Commitments and reveals are held only in memory.~~ A staked room journals every
-  commit and reveal (FIX_PLAN 7.11), and a match live when the server restarts resumes
-  where it was. Only one with no journal — `ARCHIVE=memory` — is aborted, refunding every
-  seat at once, or cancelled at its settlement deadline when the abort cannot be sent.
-- ~~The practice-room path lets any authenticated wallet create unlimited rooms.~~ One
-  per wallet and a global ceiling (`MAX_PRACTICE_ROOMS`).
-- ~~The login nonce is single-use per connection but never expires within it.~~ A socket
-  that has not logged in within `LOGIN_TIMEOUT_MS` is closed, which expires its nonce.
-- ~~The keeper key doubles as the attestor key by default.~~ Every job has its own key,
-  and the attestor signs in a process of its own (FIX_PLAN 7.4).
-
-### 3.3 Contract review items
-
-- Token governance is in place: `LmsGovernor` over staked LMS with a 1M-vote quorum
-  floor, the fee keeper, streamed ETH rewards for stakers, on-chain play-mining for
-  half the supply, and `MultisigPhase` ending the Safe's powers on a fixed date
-  ([ADR 0004](adr/0004-multisig-phase-with-a-fixed-end.md)). Still open:
-  - **Governance is idle at launch** until players hold the quorum floor in sLMS:
-    with the 10,000 LMS per ETH cap binding, 100 ETH of fees paid in settled
-    matches (2,000 ETH of stakes at the 5% fee), and rewards vest for six months
-    first. Until then the Safe proposes through `MultisigPhase`. Decide whether a
-    bootstrap stake or a lower floor is wanted.
-  - **Play-mining parameters are guesses.** The per-ETH cap and the yearly decay
-    should be revisited against real volume before mainnet.
-  - **Legal review** of the stakers' fee share (0% on Base mainnet by default) and
-    of play-mining itself.
-  - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide
-    env, so it always sets one; the case where the Safe is the deployer (the
-    `dev:fork` setup) is covered only by an `assert` in `_distribute`.
-
----
-
-### 3.4 Known-wrong behaviour
-
-The list that lived here moved to [FIX_PLAN.md](FIX_PLAN.md), where every item maps
-to a step. Phase 1 fixed the mechanical ones (errors, constants, bare reverts, the
-invariant fixtures and seed, the reads panel, `data-action`, `Net`, the port).
+- **Governance is idle at launch** until players hold the quorum floor in sLMS: with the
+  10,000 LMS per ETH cap binding, 100 ETH of fees paid in settled matches (2,000 ETH of
+  stakes at the 5% fee), and rewards vest for six months first. Until then the Safe
+  proposes through `MultisigPhase`. Decide whether a bootstrap stake or a lower floor is
+  wanted.
+- **Play-mining parameters are guesses.** The per-ETH cap and the yearly decay should be
+  revisited against real volume before mainnet.
+- **Legal review** of the stakers' fee share (0% on Base mainnet by default) and of
+  play-mining itself.
+- **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide env, so
+  it always sets one; the case where the Safe is the deployer (the `dev:fork` setup) is
+  covered only by an `assert` in `_distribute`.
 
 ---
 
 ## 4. Tooling and process
 
-- **CI:** `.github/workflows/ci.yml` runs typecheck, vitest and a 500-match `sim` on
-  the TypeScript side, and `forge fmt --check`, `forge build` and `forge test` on the
-  Solidity side, plus a coverage report that fails under 90% branch coverage on any
-  contract that moves value, and Slither. It also runs
-  `sol:snapshot:check`, which is deterministic now that the fuzz seed is fixed. Still
-  open: no linter for the TypeScript, and the deep fuzz profile on a schedule.
-- **Static analysis:** Slither runs in CI against `contracts/slither-baseline.json`.
-  Every accepted finding carries a triage note, and
-  `scripts/slither-baseline.mjs` fails on a new finding or one without a note.
-  Aderyn is not wired in.
-- **Client tests:** done. The pure modules — `game/phase.ts`, `game/reads.ts`,
-  `ui/views.ts`, `ui/format.ts`, `arena/layout.ts`, `arena/choreography.ts` — are covered
-  by `packages/client/test`. What is still untested is the DOM applier layer in
-  `screens/` and `wallet/flows.ts`, and `arena/`'s rendering, all of which would need a
-  browser rather than node.
-- **Chaos testing:** `packages/server/test/chaos.test.ts` (see `docs/CHAOS_TESTING.md`):
-  seeded, reproducible runs with drops, stalls, latency, refused connects, server restarts
-  and a failing relayer. Open: chain-side chaos (RPC faults, reorgs) and Across fills that
-  come late or never.
-- **Load testing:** `npm run load` (see `docs/LOAD_TESTING.md`). One process tops out
-  around 440 rounds/s (~1,000–1,500 practice players); past that it collapses into a
-  reconnect storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`,
-  and a run from separate generator hosts at 10k.
-- **Deployment record:** done. Both deploy scripts write `contracts/deployments/<chainId>.json`
-  on a broadcast, the server reads it for defaults, and `--verify` verifies on the explorer.
-- ~~**Bundle size.**~~ Split (FIX_PLAN 8.3): a 413 kB main chunk, 134 kB gzipped, mostly
-  viem; Pixi, governance, staking and token payment load on demand.
-
-### Not yet exercised against a chain
-
-Three features landed with unit coverage but have only run against mocks, for the same
-reason as §1.1: no deployment has been driven end to end.
-
-- **Avatars.** `AvatarRegistry` is unit-tested including every failure path, and the arena
-  rendering was verified against stubbed entries. No `PlayerAvatars` has been deployed, so
-  the read → IPFS → texture path has never run against a real token.
-- **One-click play.** `SessionKeyDelegate` is covered by 33 Foundry tests over real
-  `vm.signAndAttachDelegation` delegations, and `npm run check:one-click` runs viem's
-  `signAuthorization`, the grant and a relayed join through the server's relay port on a
-  Prague anvil. What has *not* run is Privy's embedded wallet signing the authorization,
-  on Base Sepolia (FIX_PLAN 5.1), and the client's one-click buttons against a node.
-- **Play-mining end to end** has run once by hand on `dev:fork`: a four-seat match
-  played to settlement from anvil's dev accounts, the clock moved past the week's
-  end, and the browser's **Claim LMS** paid the burner 50 sLMS (0.0005 ETH of fees
-  at the cap). There is no script for it, and nothing has run on a testnet.
-- **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
-  `ChainBridge`, but only the in-arena badges have been seen rendered — the lobby list
-  needs a staked lobby to appear at all.
-
-### Done since the last revision
-
-- **Origin chains are visible.** Seats carry the chain they staked from all the way to a
-  coloured badge in the arena and chips in the lobby list.
-- **NFT avatars**, per chain, cosmetic, resolved off the match's critical path.
-- **EIP-7702 one-click play** for burner and embedded wallets: relayed joins and
-  withdrawals under caps, with the server paying the gas.
-- `.env.example` and a top-level `README.md` now exist.
-- `contracts/.gas-snapshot` is committed; `npm run sol:snapshot:check` fails on drift.
-- Both previously failing Foundry tests are fixed. The gas test now warms the harness
-  before measuring (the first external call was paying 2 600 gas of cold-account access,
-  which swamped the difference) and asserts the Yul path is never worse — currently 451
-  gas cheaper on eight seats, growing with lobby size. The cross-chain revert test funds
-  the caller so the call reaches the escrow instead of failing in the caller's frame.
+- **CI:** no linter for the TypeScript, and the deep fuzz profile
+  (`FOUNDRY_PROFILE=deep`) does not run on a schedule. Aderyn is not wired in.
+- **Slither locally:** CI's pinned 0.11.3 does not install on Python 3.12.0, so the
+  code since the server phase has only been analysed in CI.
+- **Client tests:** the DOM applier layer in `screens/`, `wallet/flows.ts` and `arena/`'s
+  rendering are untested; all of them need a browser rather than node.
+- **Chaos testing** ([CHAOS_TESTING.md](CHAOS_TESTING.md)): no chain-side chaos (RPC
+  faults, reorgs), and no Across fills that come late or never.
+- **Load testing** ([LOAD_TESTING.md](LOAD_TESTING.md)): one process tops out around
+  440 rounds/s (~1,000–1,500 practice players); past that it collapses into a reconnect
+  storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`, and a run
+  from separate generator hosts at 10k.
 
 ---
 
-## 5. Game design work
+## 5. Out of scope for now
+
+- **One-click play on spokes:** a `chainId = 0` authorization, the delegate at the same
+  address on every chain, and a relayer per spoke.
+- **Stretch goals for sessions:** ERC-4337 `validateUserOp`, ERC-7739 nested typed data
+  in `isValidSignature`, and P-256 session keys through RIP-7212.
+- **Mainnet:** independent signers for the Safe and a gambling licence. The README says
+  so.
+
+---
+
+## 6. Game design
 
 These are open questions, not bugs:
 
@@ -252,7 +162,7 @@ These are open questions, not bugs:
 - **Anti-collusion.** Nothing prevents two players from splitting a lobby, and with the
   current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
   in validation (1.09× under the old storm rules). See "Known risk: collusion" in
-  `ARCHITECTURE.md`. Matchmaking (FIX_PLAN 7.9) now assigns the lobbies that earn
-  play-mining, though wallets with one owner queueing together in a quiet tier can still
-  be matched with each other. Candidates still open: flagging seat pairs that never
-  strike each other from the public history, and a payout schedule that pays a pact less.
+  `ARCHITECTURE.md`. Matchmaking now assigns the lobbies that earn play-mining, though
+  wallets with one owner queueing together in a quiet tier can still be matched with
+  each other. Candidates still open: flagging seat pairs that never strike each other
+  from the public history, and a payout schedule that pays a pact less.

@@ -42,7 +42,9 @@ import {IWETH9} from "../vendor/across/IWETH9.sol";
 ///      Out: `withdrawToChainFor` bridges a player's whole escrow balance to
 ///      a chain and address they signed for, with Across's fee taken from it.
 ///      A relayer submits it and pays the hub gas, so a player who has never
-///      held gas on the hub still gets their winnings and refunds home.
+///      held gas on the hub still gets their winnings and refunds home. The
+///      player signs the Across quote too, so whoever submits it chooses
+///      nothing: not the output, not the exclusive relayer, not the deadline.
 ///
 ///      Holds nothing between transactions except what it could not route.
 contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGuardTransient {
@@ -65,6 +67,7 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
     }
 
     /// @notice The fee terms the Across API quoted, as `SpokeRouter.Quote`.
+    ///         Signed with the `Withdrawal`, as its `quote`.
     struct Quote {
         uint256 outputAmount;
         uint32 quoteTimestamp;
@@ -73,9 +76,17 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
         uint32 exclusivityParameter;
     }
 
+    /// @dev EIP-712 nests the quote: the referenced `Quote` type follows the
+    ///      primary one, and its hash stands in for it in the struct hash.
     bytes32 public constant WITHDRAWAL_TYPEHASH = keccak256(
         "Withdrawal(address player,uint256 hubChainId,uint256 destinationChainId,address recipient,"
-        "address outputToken,uint256 maxFee,uint256 nonce,uint256 deadline)"
+        "address outputToken,uint256 maxFee,uint256 nonce,uint256 deadline,Quote quote)"
+        "Quote(uint256 outputAmount,uint32 quoteTimestamp,uint32 fillDeadline,address exclusiveRelayer,"
+        "uint32 exclusivityParameter)"
+    );
+    bytes32 public constant QUOTE_TYPEHASH = keccak256(
+        "Quote(uint256 outputAmount,uint32 quoteTimestamp,uint32 fillDeadline,address exclusiveRelayer,"
+        "uint32 exclusivityParameter)"
     );
     /// @dev No chain id, on purpose: wallets refuse to sign typed data for a
     ///      chain they are not on, and the player signing this is usually on
@@ -177,10 +188,13 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
     // --- Out -----------------------------------------------------------------
 
     /// @notice Bridges `w.player`'s whole escrow balance to `w.recipient` on
-    ///         `w.destinationChainId`, as they signed. Anyone may submit it.
-    /// @dev The submitter brings Across's quote for the balance. If the fill
-    ///      never comes, Across refunds the deposit after `q.fillDeadline` to
-    ///      the player on this chain, in WETH.
+    ///         `w.destinationChainId`, on the quote `q`, as they signed both.
+    ///         Anyone may submit it.
+    /// @dev The quote is the player's, not the submitter's: one free to pick
+    ///      it could ask for an output no relayer fills, and turn a withdrawal
+    ///      home into a WETH refund on the hub after `q.fillDeadline`, or name
+    ///      itself the exclusive relayer. `maxFee` still caps what Across takes,
+    ///      since the balance may have grown since the quote was priced.
     function withdrawToChainFor(Withdrawal calldata w, Quote calldata q, bytes calldata signature)
         external
         nonReentrant
@@ -190,7 +204,7 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
         if (w.hubChainId != block.chainid) revert WrongHub(w.hubChainId);
         uint256 nonce = nonces[w.player];
         if (w.nonce != nonce) revert WrongNonce(nonce, w.nonce);
-        if (!SignatureChecker.isValidSignatureNow(w.player, withdrawalDigest(w), signature)) {
+        if (!SignatureChecker.isValidSignatureNow(w.player, withdrawalDigest(w, q), signature)) {
             revert BadSignature();
         }
         nonces[w.player] = nonce + 1;
@@ -223,10 +237,14 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
         );
     }
 
-    /// @notice The EIP-712 digest a player signs for `w`.
-    function withdrawalDigest(Withdrawal calldata w) public view returns (bytes32) {
-        return
-            MessageHashUtils.toTypedDataHash(domainSeparator(), keccak256(abi.encode(WITHDRAWAL_TYPEHASH, w)));
+    /// @notice The EIP-712 digest a player signs for `w` on the quote `q`.
+    /// @dev Both structs hold only static fields, so `abi.encode` lays each
+    ///      out as EIP-712 encodes it: one word per field, in order.
+    function withdrawalDigest(Withdrawal calldata w, Quote calldata q) public view returns (bytes32) {
+        bytes32 quoteHash = keccak256(abi.encode(QUOTE_TYPEHASH, q));
+        return MessageHashUtils.toTypedDataHash(
+            domainSeparator(), keccak256(abi.encode(WITHDRAWAL_TYPEHASH, w, quoteHash))
+        );
     }
 
     function domainSeparator() public view returns (bytes32) {

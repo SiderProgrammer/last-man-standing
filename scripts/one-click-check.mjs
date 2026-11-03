@@ -5,7 +5,7 @@
  *
  *   npm run check:one-click
  *
- * It checks, in order, what FIX_PLAN 5.1 asks of the Privy check, with a
+ * It checks, in order, what the Privy check in docs/TODO.md asks, with a
  * local account standing in for the embedded wallet:
  *   1. the account signs a 7702 authorization for `SessionKeyDelegate` and
  *      grants its session key a capped session, in one transaction;

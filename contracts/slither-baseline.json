@@ -27,7 +27,7 @@
     "key": "assembly|function:RewardsDistributor.claimable|node:RewardsDistributor.claimable.",
     "impact": "Informational",
     "summary": "RewardsDistributor.claimable(address,uint256,uint256) (src/governance/RewardsDistributor.sol#220-242) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
+    "triage": "Intended: shrinks a memory array to the entries filled, as RewardVesting.releasableIn does."
   },
   {
     "key": "assembly|function:RewardVesting.releasableIn|node:RewardVesting.releasableIn.",
@@ -39,7 +39,7 @@
     "key": "assembly|function:SessionKeyDelegate._layout|node:SessionKeyDelegate._layout.",
     "impact": "Informational",
     "summary": "SessionKeyDelegate._layout() (src/SessionKeyDelegate.sol#287-291) uses assembly",
-    "triage": "Reviewed hand-written Yul. Removed in FIX_PLAN 2.10."
+    "triage": "Intended: points the storage layout at its ERC-7201 namespace slot, the one way Solidity allows."
   },
   {
     "key": "calls-loop|function:GameEscrow._checkQuorum|node:GameEscrow._checkQuorum.! config.isAttestorAt(version,signers[i])",
@@ -159,7 +159,7 @@
     "key": "missing-zero-check|node:ProtocolConfig.setGuardian.guardian = newGuardian|variable:ProtocolConfig.setGuardian.newGuardian",
     "impact": "Low",
     "summary": "ProtocolConfig.setGuardian(address).newGuardian (src/ProtocolConfig.sol#236) lacks a zero-check on :",
-    "triage": "Owner-only (timelock). Guardian roles are reworked in FIX_PLAN 2.8 and 3.2."
+    "triage": "Intended: zero removes the guardian, as setGuardian documents; veto and pause stay open to governance. Owner-only, and the owner is the timelock."
   },
   {
     "key": "missing-zero-check|node:ProtocolConfig.setSequencerUptimeFeed.sequencerUptimeFeed = feed|variable:ProtocolConfig.setSequencerUptimeFeed.feed",
@@ -225,7 +225,7 @@
     "key": "reentrancy-events|function:GameEscrow.lockMatch|node:GameEscrow.lockMatch.MatchLocked(matchId,requestId,info.seatCount)|node:GameEscrow.lockMatch.requestId = IRandomnessOracle(oracle).requestRandomness(matchId)",
     "impact": "Low",
     "summary": "Reentrancy in GameEscrow.lockMatch(bytes32) (src/GameEscrow.sol#474-493):",
-    "triage": "Accepted: every state write precedes the oracle call (FIX_PLAN 2.7); only the event follows it, since it carries the request id the oracle returns."
+    "triage": "Accepted: every state write precedes the oracle call; only the event follows it, since it carries the request id the oracle returns."
   },
   {
     "key": "reentrancy-events|function:MultisigPhase.retire|node:MultisigPhase.retire.Retired(block.timestamp)|node:MultisigPhase.retire.timelock.renounceRole(timelock.CANCELLER_ROLE(),address(this))|node:MultisigPhase.retire.timelock.renounceRole(timelock.PROPOSER_ROLE(),address(this))",
@@ -249,7 +249,7 @@
     "key": "reentrancy-no-eth|function:ChainlinkVrfAdapter._deliver|node:ChainlinkVrfAdapter._deliver.IRandomnessConsumer(request.consumer).fulfillRandomness(request.context,request.word)|node:ChainlinkVrfAdapter._deliver.delete requests[vrfId]",
     "impact": "Medium",
     "summary": "Reentrancy in ChainlinkVrfAdapter._deliver(uint256,ChainlinkVrfAdapter.Request) (src/oracles/ChainlinkVrfAdapter.sol#127-134):",
-    "triage": "Accepted: the consumer is the escrow, registered by governance; the request is deleted after the callback only on success, by design, so a failed delivery can be retried with deliver. The callback never reverts (FIX_PLAN 2.3)."
+    "triage": "Accepted: the consumer is the escrow, registered by governance; the request is deleted after the callback only on success, by design, so a failed delivery can be retried with deliver. The callback never reverts."
   },
   {
     "key": "timestamp|function:BridgeJoinReceiver.withdrawToChainFor|node:BridgeJoinReceiver.withdrawToChainFor.block.timestamp > w.deadline",

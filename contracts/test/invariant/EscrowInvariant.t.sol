@@ -471,13 +471,14 @@ contract EscrowHandler is Test {
         }
     }
 
-    /// @dev Anyone pushes a balance worth a relayer's gas to its owner.
-    function withdrawFor(uint256 caller, uint256 who) public {
+    /// @dev An account pays a balance worth a relayer's gas to itself, as a
+    ///      relayed session call does.
+    function withdrawFor(uint256 who) public {
         for (uint256 i = 0; i < actors.length; ++i) {
             address account = actors[(who % actors.length + i) % actors.length];
             if (escrow.withdrawable(account) < escrow.MIN_WITHDRAW_FOR()) continue;
             _countExit();
-            vm.prank(actors[caller % actors.length]);
+            vm.prank(account);
             escrow.withdrawFor(account);
             return;
         }
@@ -518,8 +519,10 @@ contract EscrowHandler is Test {
         governancePauseEnd = until;
     }
 
+    /// @dev The guardian ends only its own pause, never one governance kept.
     function unpause(bool byGovernance) public {
         if (!escrow.paused()) return;
+        if (!byGovernance && escrow.pausedByGovernance()) return;
         vm.prank(byGovernance ? governance : GUARDIAN);
         escrow.unpause();
         modelPausedUntil = block.timestamp;

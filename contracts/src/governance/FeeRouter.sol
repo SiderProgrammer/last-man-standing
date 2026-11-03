@@ -6,7 +6,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 
 import {PullPayable} from "../PullPayable.sol";
 import {BPS_DENOMINATOR} from "../Constants.sol";
-import {TransferFailed, ZeroAddress} from "../Errors.sol";
+import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 import {StakedLms} from "./StakedLms.sol";
 
 /// @title FeeRouter
@@ -22,7 +22,8 @@ import {StakedLms} from "./StakedLms.sol";
 ///      moment, and the only effect is that fees reach their recipients sooner.
 ///
 ///      Holds no ETH between transactions. It arrives only from the escrow, and
-///      leaves in the same call.
+///      leaves in the same call; `harvest` splits whatever balance it finds,
+///      so nothing that arrived another way can stay.
 contract FeeRouter is Ownable2Step, ReentrancyGuardTransient {
     PullPayable public immutable escrow;
     StakedLms public immutable vault;
@@ -50,9 +51,14 @@ contract FeeRouter is Ownable2Step, ReentrancyGuardTransient {
     }
 
     /// @notice Pulls every fee credited by the escrow and splits it.
-    /// @dev Reverts with the escrow's `NothingToWithdraw` when there is nothing to pull.
+    /// @dev Splits the whole balance, not just what this call pulled: should
+    ///      fees ever reach here outside a harvest, the next one passes them on
+    ///      rather than leaving them stuck. Reverts with `NothingToWithdraw`
+    ///      when there is nothing to split.
     function harvest() external nonReentrant returns (uint256 amount) {
-        amount = escrow.withdraw(address(this));
+        if (escrow.withdrawable(address(this)) != 0) escrow.withdraw(address(this));
+        amount = address(this).balance;
+        if (amount == 0) revert NothingToWithdraw();
 
         uint256 toStakers = (amount * stakerBps) / BPS_DENOMINATOR;
         uint256 toTreasury = amount - toStakers;

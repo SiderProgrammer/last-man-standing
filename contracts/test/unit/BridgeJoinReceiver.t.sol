@@ -285,8 +285,12 @@ contract BridgeJoinReceiverTest is Fixtures {
         });
     }
 
-    function _sign(uint256 pk, BridgeJoinReceiver.Withdrawal memory w) private view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, receiver.withdrawalDigest(w));
+    function _sign(uint256 pk, BridgeJoinReceiver.Withdrawal memory w, BridgeJoinReceiver.Quote memory q)
+        private
+        view
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, receiver.withdrawalDigest(w, q));
         return abi.encodePacked(r, s, v);
     }
 
@@ -304,7 +308,7 @@ contract BridgeJoinReceiverTest is Fixtures {
         vm.expectEmit(true, true, false, true, address(receiver));
         emit BridgeJoinReceiver.WithdrawnToChain(player, SPOKE, player, STAKE, output);
         vm.prank(relayer);
-        uint256 amount = receiver.withdrawToChainFor(w, _quote(output), _sign(PLAYER_PK, w));
+        uint256 amount = receiver.withdrawToChainFor(w, _quote(output), _sign(PLAYER_PK, w, _quote(output)));
 
         assertEq(amount, STAKE);
         assertEq(escrow.withdrawable(player), 0);
@@ -325,7 +329,7 @@ contract BridgeJoinReceiverTest is Fixtures {
     function test_withdrawToChain_aSignatureWorksOnce() public {
         _credit(player, STAKE);
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
-        bytes memory signature = _sign(PLAYER_PK, w);
+        bytes memory signature = _sign(PLAYER_PK, w, _quote(STAKE));
         receiver.withdrawToChainFor(w, _quote(STAKE), signature);
 
         _credit(player, STAKE);
@@ -336,27 +340,54 @@ contract BridgeJoinReceiverTest is Fixtures {
     function test_withdrawToChain_refusesAnotherSignerOrAlteredTerms() public {
         _credit(player, STAKE);
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
-        bytes memory signed = _sign(0xBAD, w);
+        bytes memory signed = _sign(0xBAD, w, _quote(STAKE));
         vm.expectRevert(BridgeJoinReceiver.BadSignature.selector);
         receiver.withdrawToChainFor(w, _quote(STAKE), signed);
 
-        bytes memory signature = _sign(PLAYER_PK, w);
+        bytes memory signature = _sign(PLAYER_PK, w, _quote(STAKE));
         w.recipient = relayer;
         vm.expectRevert(BridgeJoinReceiver.BadSignature.selector);
         receiver.withdrawToChainFor(w, _quote(STAKE), signature);
+    }
+
+    /// @dev The submitter brings the quote the player signed, and no other:
+    ///      not an output no relayer fills, nor itself as the exclusive relayer.
+    function test_withdrawToChain_refusesAQuoteThePlayerDidNotSign() public {
+        _credit(player, STAKE);
+        BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
+        BridgeJoinReceiver.Quote memory q = _quote(STAKE - 0.002 ether);
+        bytes memory signature = _sign(PLAYER_PK, w, q);
+
+        BridgeJoinReceiver.Quote memory unfillable = _quote(STAKE);
+        vm.expectRevert(BridgeJoinReceiver.BadSignature.selector);
+        receiver.withdrawToChainFor(w, unfillable, signature);
+
+        BridgeJoinReceiver.Quote memory exclusive = _quote(STAKE - 0.002 ether);
+        exclusive.exclusiveRelayer = relayer;
+        exclusive.exclusivityParameter = 1 hours;
+        vm.expectRevert(BridgeJoinReceiver.BadSignature.selector);
+        receiver.withdrawToChainFor(w, exclusive, signature);
+
+        BridgeJoinReceiver.Quote memory late = _quote(STAKE - 0.002 ether);
+        late.fillDeadline = uint32(block.timestamp + 1);
+        vm.expectRevert(BridgeJoinReceiver.BadSignature.selector);
+        receiver.withdrawToChainFor(w, late, signature);
+
+        receiver.withdrawToChainFor(w, q, signature);
+        assertEq(escrow.withdrawable(player), 0);
     }
 
     function test_withdrawToChain_refusesAnExpiredOrForeignInstruction() public {
         _credit(player, STAKE);
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
         w.hubChainId = 8453;
-        bytes memory signed = _sign(PLAYER_PK, w);
+        bytes memory signed = _sign(PLAYER_PK, w, _quote(STAKE));
         vm.expectRevert(abi.encodeWithSelector(BridgeJoinReceiver.WrongHub.selector, 8453));
         receiver.withdrawToChainFor(w, _quote(STAKE), signed);
 
         w = _withdrawal(player, 0);
         vm.warp(w.deadline + 1);
-        signed = _sign(PLAYER_PK, w);
+        signed = _sign(PLAYER_PK, w, _quote(STAKE));
         vm.expectRevert(abi.encodeWithSelector(BridgeJoinReceiver.WithdrawalExpired.selector, w.deadline));
         receiver.withdrawToChainFor(w, _quote(STAKE), signed);
     }
@@ -364,14 +395,15 @@ contract BridgeJoinReceiverTest is Fixtures {
     function test_withdrawToChain_theFeeIsCappedBySignature() public {
         _credit(player, STAKE);
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
-        bytes memory signature = _sign(PLAYER_PK, w);
 
         uint256 output = STAKE - w.maxFee - 1;
+        bytes memory signature = _sign(PLAYER_PK, w, _quote(output));
         vm.expectRevert(
             abi.encodeWithSelector(BridgeJoinReceiver.FeeTooHigh.selector, w.maxFee + 1, w.maxFee)
         );
         receiver.withdrawToChainFor(w, _quote(output), signature);
 
+        signature = _sign(PLAYER_PK, w, _quote(STAKE + 1));
         vm.expectRevert(
             abi.encodeWithSelector(BridgeJoinReceiver.OutputExceedsInput.selector, STAKE + 1, STAKE)
         );
@@ -381,13 +413,13 @@ contract BridgeJoinReceiverTest is Fixtures {
     /// @dev A relayer pays the gas, so dust is refused, as with `withdrawFor`.
     function test_withdrawToChain_refusesDustAndNothing() public {
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
-        bytes memory signed = _sign(PLAYER_PK, w);
+        bytes memory signed = _sign(PLAYER_PK, w, _quote(1));
         vm.expectRevert(NothingToWithdraw.selector);
         receiver.withdrawToChainFor(w, _quote(1), signed);
 
         uint256 dust = escrow.MIN_WITHDRAW_FOR() - 1;
         _credit(player, dust);
-        signed = _sign(PLAYER_PK, w);
+        signed = _sign(PLAYER_PK, w, _quote(dust));
         vm.expectRevert(abi.encodeWithSelector(BridgeJoinReceiver.BelowMinimum.selector, dust, dust + 1));
         receiver.withdrawToChainFor(w, _quote(dust), signed);
     }
@@ -397,7 +429,7 @@ contract BridgeJoinReceiverTest is Fixtures {
         Erc1271Wallet wallet = new Erc1271Wallet(player);
         _credit(address(wallet), STAKE);
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(address(wallet), 0);
-        receiver.withdrawToChainFor(w, _quote(STAKE), _sign(PLAYER_PK, w));
+        receiver.withdrawToChainFor(w, _quote(STAKE), _sign(PLAYER_PK, w, _quote(STAKE)));
         assertEq(escrow.withdrawable(address(wallet)), 0);
     }
 
@@ -412,8 +444,23 @@ contract BridgeJoinReceiverTest is Fixtures {
     ///      `packages/consensus` hashes the same instruction to the same digest.
     function test_withdrawalDigest_matchesTheTypedDataByHand() public view {
         BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 7);
+        BridgeJoinReceiver.Quote memory q = _quote(STAKE - 0.002 ether);
+        q.exclusiveRelayer = relayer;
+        q.exclusivityParameter = 60;
         bytes32 typeHash = keccak256(
-            "Withdrawal(address player,uint256 hubChainId,uint256 destinationChainId,address recipient,address outputToken,uint256 maxFee,uint256 nonce,uint256 deadline)"
+            "Withdrawal(address player,uint256 hubChainId,uint256 destinationChainId,address recipient,address outputToken,uint256 maxFee,uint256 nonce,uint256 deadline,Quote quote)Quote(uint256 outputAmount,uint32 quoteTimestamp,uint32 fillDeadline,address exclusiveRelayer,uint32 exclusivityParameter)"
+        );
+        bytes32 quoteHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "Quote(uint256 outputAmount,uint32 quoteTimestamp,uint32 fillDeadline,address exclusiveRelayer,uint32 exclusivityParameter)"
+                ),
+                q.outputAmount,
+                q.quoteTimestamp,
+                q.fillDeadline,
+                q.exclusiveRelayer,
+                q.exclusivityParameter
+            )
         );
         bytes32 domain = keccak256(
             abi.encode(
@@ -433,10 +480,11 @@ contract BridgeJoinReceiverTest is Fixtures {
                 w.outputToken,
                 w.maxFee,
                 w.nonce,
-                w.deadline
+                w.deadline,
+                quoteHash
             )
         );
-        assertEq(receiver.withdrawalDigest(w), keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+        assertEq(receiver.withdrawalDigest(w, q), keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
     }
 
     /// @dev Frozen, and the same vector as `packages/consensus/test/withdrawal.test.ts`:
@@ -455,9 +503,16 @@ contract BridgeJoinReceiverTest is Fixtures {
             nonce: 3,
             deadline: 1_800_000_000
         });
+        BridgeJoinReceiver.Quote memory q = BridgeJoinReceiver.Quote({
+            outputAmount: 99e16,
+            quoteTimestamp: 1_799_999_000,
+            fillDeadline: 1_800_003_600,
+            exclusiveRelayer: 0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC,
+            exclusivityParameter: 60
+        });
         assertEq(
-            BridgeJoinReceiver(payable(at)).withdrawalDigest(w),
-            0x5c24035ab95701f0bcca63331fc1c2ba82b5cb6496e7c6b90d93b33359b63b13
+            BridgeJoinReceiver(payable(at)).withdrawalDigest(w, q),
+            0xee5a5e4a31079f75d90196725385c87e2a832a683ff584f9f7ab8f5b3694729f
         );
     }
 }

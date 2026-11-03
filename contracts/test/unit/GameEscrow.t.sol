@@ -412,26 +412,37 @@ contract GameEscrowTest is Fixtures {
         assertEq(escrow.withdrawable(players[0]), STAKE);
     }
 
-    function test_withdrawFor_paysTheAccountNotTheCaller() public {
+    function test_withdrawFor_paysTheAccount() public {
+        bytes32 matchId = _createAndFill(4);
+        _lockAndSeed(matchId, bytes32(uint256(4)));
+        address[] memory ranking = _settleAndFinalize(matchId);
+
+        uint256 before = ranking[0].balance;
+        uint256 owed = escrow.withdrawable(ranking[0]);
+        vm.prank(ranking[0]);
+        uint256 paid = escrow.withdrawFor(ranking[0]);
+
+        assertEq(paid, owed);
+        assertEq(ranking[0].balance, before + owed);
+        assertEq(escrow.withdrawable(ranking[0]), 0);
+        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+    }
+
+    /// @dev Nobody else may pay a player out: that would leave nothing for a
+    ///      signed withdrawal to a spoke, and the player stuck on the hub.
+    function test_withdrawFor_refusesAnyoneButTheAccount() public {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(4)));
         address[] memory ranking = _settleAndFinalize(matchId);
 
         address relayer = makeAddr("relayer");
-        uint256 before = ranking[0].balance;
-        uint256 owed = escrow.withdrawable(ranking[0]);
         vm.prank(relayer);
-        uint256 paid = escrow.withdrawFor(ranking[0]);
-
-        assertEq(paid, owed);
-        assertEq(ranking[0].balance, before + owed);
-        assertEq(relayer.balance, 0);
-        assertEq(escrow.withdrawable(ranking[0]), 0);
-        assertEq(address(escrow).balance, escrow.totalOwed() + escrow.totalEscrowed());
+        vm.expectRevert(abi.encodeWithSelector(PullPayable.NotAccount.selector, relayer, ranking[0]));
+        escrow.withdrawFor(ranking[0]);
     }
 
-    /// @dev Dust is the player's own to withdraw: whoever calls `withdrawFor`
-    ///      pays its gas, so it refuses a balance below the minimum.
+    /// @dev Dust is the player's own to withdraw: a session's `withdrawFor` is
+    ///      relayed, so it refuses a balance below the minimum.
     function test_withdrawFor_refusesDust_butWithdrawPaysIt() public {
         address dusty = makeAddr("dusty");
         vm.prank(players[0]);
@@ -441,6 +452,7 @@ contract GameEscrowTest is Fixtures {
         _bridgeJoin(matchId, dusty, dust);
         assertEq(escrow.withdrawable(dusty), dust);
 
+        vm.prank(dusty);
         vm.expectRevert(abi.encodeWithSelector(PullPayable.BelowMinimumWithdrawal.selector, dust, dust + 1));
         escrow.withdrawFor(dusty);
 
@@ -449,6 +461,7 @@ contract GameEscrowTest is Fixtures {
     }
 
     function test_withdrawFor_revertsOnEmptyBalance() public {
+        vm.prank(players[0]);
         vm.expectRevert(NothingToWithdraw.selector);
         escrow.withdrawFor(players[0]);
     }
@@ -536,6 +549,7 @@ contract GameEscrowTest is Fixtures {
 
         // The refund is an ordinary balance: withdrawable even while paused.
         address remote = makeAddr("remote");
+        vm.prank(remote);
         escrow.withdrawFor(remote);
         assertEq(remote.balance, STAKE);
     }

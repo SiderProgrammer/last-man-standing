@@ -24,8 +24,15 @@ describe('withdrawal typed data', () => {
         maxFee: 10n ** 15n,
         nonce: 3n,
         deadline: 1_800_000_000n,
+        quote: {
+          outputAmount: 99n * 10n ** 16n,
+          quoteTimestamp: 1_799_999_000,
+          fillDeadline: 1_800_003_600,
+          exclusiveRelayer: `0x${'cc'.repeat(20)}`,
+          exclusivityParameter: 60,
+        },
       },
     });
-    expect(digest).toBe('0x5c24035ab95701f0bcca63331fc1c2ba82b5cb6496e7c6b90d93b33359b63b13');
+    expect(digest).toBe('0xee5a5e4a31079f75d90196725385c87e2a832a683ff584f9f7ab8f5b3694729f');
   });
 });

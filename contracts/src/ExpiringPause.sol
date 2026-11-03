@@ -7,7 +7,8 @@ pragma solidity 0.8.28;
 /// @dev Two parties can stop play, on different terms:
 ///
 ///      - The guardian pauses at once, with no timelock delay, but only for
-///        `GUARDIAN_PAUSE`. It can end its own pause early. Once a pause ends,
+///        `GUARDIAN_PAUSE`. It can end its own pause early, but not one
+///        governance extended or started. Once a pause ends,
 ///        it cannot pause again for `GUARDIAN_COOLDOWN`, so it can never hold
 ///        play stopped by renewing a pause forever.
 ///      - Governance extends a pause, or starts one, with `extendPause`, and
@@ -28,6 +29,9 @@ abstract contract ExpiringPause {
     /// @notice Play is paused while `block.timestamp < pausedUntil`. Also the
     ///         moment the last pause ended, once it has.
     uint64 public pausedUntil;
+    /// @notice Whether the pause on now, if any, is governance's: extended or
+    ///         started by `extendPause`. Only governance may end such a pause.
+    bool public pausedByGovernance;
 
     event Paused(address account, uint64 until);
     event Unpaused(address account);
@@ -37,6 +41,7 @@ abstract contract ExpiringPause {
     error NotGuardian();
     error NotGovernance();
     error GuardianCooldown(uint64 availableAt);
+    error GovernancePause();
     error PauseNotExtended(uint64 until, uint64 current);
 
     modifier whenNotPaused() {
@@ -58,6 +63,7 @@ abstract contract ExpiringPause {
 
         uint64 until = uint64(block.timestamp) + GUARDIAN_PAUSE;
         pausedUntil = until;
+        pausedByGovernance = false;
         emit Paused(msg.sender, until);
     }
 
@@ -67,14 +73,19 @@ abstract contract ExpiringPause {
         if (!_isGovernance(msg.sender)) revert NotGovernance();
         if (until <= block.timestamp || until <= pausedUntil) revert PauseNotExtended(until, pausedUntil);
         pausedUntil = until;
+        pausedByGovernance = true;
         emit Paused(msg.sender, until);
     }
 
-    /// @notice Ends a pause now. Governance, or the guardian.
-    /// @dev Starts the guardian's cooldown, as a pause that expires does.
+    /// @notice Ends a pause now. Governance, or the guardian for its own pause.
+    /// @dev Starts the guardian's cooldown, as a pause that expires does. A
+    ///      pause governance extended is governance's to end: a compromised
+    ///      guardian must not undo it.
     function unpause() external {
-        if (!_isGuardian(msg.sender) && !_isGovernance(msg.sender)) revert NotGovernance();
+        bool governance = _isGovernance(msg.sender);
+        if (!governance && !_isGuardian(msg.sender)) revert NotGovernance();
         if (!paused()) revert ExpectedPause();
+        if (!governance && pausedByGovernance) revert GovernancePause();
         pausedUntil = uint64(block.timestamp);
         emit Unpaused(msg.sender);
     }

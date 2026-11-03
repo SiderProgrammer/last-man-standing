@@ -4,6 +4,7 @@
 export const feeRouterAbi = [
   {"type":"constructor","inputs":[{"name":"escrow_","type":"address","internalType":"contract PullPayable"},{"name":"vault_","type":"address","internalType":"contract StakedLms"},{"name":"owner_","type":"address","internalType":"address"},{"name":"treasury_","type":"address","internalType":"address"},{"name":"stakerBps_","type":"uint16","internalType":"uint16"}],"stateMutability":"nonpayable"},
   {"type":"error","name":"InvalidBps","inputs":[{"name":"bps","type":"uint16","internalType":"uint16"}]},
+  {"type":"error","name":"NothingToWithdraw","inputs":[]},
   {"type":"error","name":"OwnableInvalidOwner","inputs":[{"name":"owner","type":"address","internalType":"address"}]},
   {"type":"error","name":"OwnableUnauthorizedAccount","inputs":[{"name":"account","type":"address","internalType":"address"}]},
   {"type":"error","name":"ReentrancyGuardReentrantCall","inputs":[]},

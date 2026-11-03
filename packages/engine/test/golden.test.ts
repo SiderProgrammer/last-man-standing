@@ -18,7 +18,7 @@ import { Match, auditTranscript, moveLogFromHistory, rankingHash, replayMatch } 
  * and both must reproduce every round record and the result exactly. The
  * Solidity side (`GoldenTranscript.t.sol`) rebuilds every round hash and the
  * root from the same file. `Match` and `replay` stay two implementations on
- * purpose (TODO §3.4); these transcripts are what holds them to one answer.
+ * purpose (docs/adr/0011); these transcripts are what holds them to one answer.
  *
  * The hashes below are pinned as well as the files, so regenerating the
  * fixtures shows up in review as a change to this test, not just to data.

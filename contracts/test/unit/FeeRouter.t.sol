@@ -96,6 +96,20 @@ contract FeeRouterTest is Fixtures {
         assertEq(router.harvest(), MATCH_FEE);
     }
 
+    /// @dev ETH that reached the router outside a harvest is split by the
+    ///      next one, credited or not, rather than stuck.
+    function test_harvest_splitsEthAlreadyHeld() public {
+        vm.deal(address(router), MATCH_FEE);
+        assertEq(router.harvest(), MATCH_FEE);
+        assertEq(address(vault).balance, MATCH_FEE / 2);
+        assertEq(safe.balance, MATCH_FEE / 2);
+
+        vm.deal(address(router), MATCH_FEE);
+        _playOneMatch();
+        assertEq(router.harvest(), 2 * MATCH_FEE);
+        assertEq(address(router).balance, 0);
+    }
+
     function test_harvest_revertsWhenNothingCredited() public {
         vm.expectRevert(NothingToWithdraw.selector);
         router.harvest();

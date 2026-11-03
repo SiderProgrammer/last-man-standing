@@ -20,6 +20,18 @@ export interface ChainWithdrawal {
   deadline: bigint;
 }
 
+/**
+ * The Across quote a withdrawal is bridged on, as `BridgeJoinReceiver.Quote`.
+ * Signed with it, so whoever submits the withdrawal cannot swap in another.
+ */
+export interface WithdrawalQuote {
+  outputAmount: bigint;
+  quoteTimestamp: number;
+  fillDeadline: number;
+  exclusiveRelayer: Address;
+  exclusivityParameter: number;
+}
+
 export const WITHDRAWAL_TYPES = {
   Withdrawal: [
     { name: 'player', type: 'address' },
@@ -30,6 +42,14 @@ export const WITHDRAWAL_TYPES = {
     { name: 'maxFee', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
+    { name: 'quote', type: 'Quote' },
+  ],
+  Quote: [
+    { name: 'outputAmount', type: 'uint256' },
+    { name: 'quoteTimestamp', type: 'uint32' },
+    { name: 'fillDeadline', type: 'uint32' },
+    { name: 'exclusiveRelayer', type: 'address' },
+    { name: 'exclusivityParameter', type: 'uint32' },
   ],
 } as const;
 
@@ -41,12 +61,12 @@ export function withdrawalDomain(receiver: Address): TypedDataDomain {
   return { name: EIP712_DOMAIN_NAME, version: EIP712_DOMAIN_VERSION, verifyingContract: receiver };
 }
 
-/** The typed data a player signs for `withdrawal`, to `receiver` on the hub. */
-export function withdrawalTypedData(receiver: Address, withdrawal: ChainWithdrawal) {
+/** The typed data a player signs for `withdrawal` on `quote`, to `receiver` on the hub. */
+export function withdrawalTypedData(receiver: Address, withdrawal: ChainWithdrawal, quote: WithdrawalQuote) {
   return {
     domain: withdrawalDomain(receiver),
     types: WITHDRAWAL_TYPES,
     primaryType: 'Withdrawal',
-    message: withdrawal,
+    message: { ...withdrawal, quote },
   } as const;
 }

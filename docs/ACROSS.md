@@ -2,8 +2,7 @@
 
 A player on a spoke chain (Arbitrum, Optimism, Ethereum L1, or their testnets) joins a
 hub lobby on Base by bridging the stake through [Across](https://across.to). This file
-records what was checked about Across before building on it (FIX_PLAN step 6.1), and
-what was not.
+records what was checked about Across before building on it, and what was not.
 
 ## Pinned version
 

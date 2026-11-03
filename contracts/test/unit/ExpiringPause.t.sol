@@ -90,16 +90,41 @@ contract ExpiringPauseTest is Fixtures {
         vm.prank(guardian);
         vm.expectRevert(abi.encodeWithSelector(ExpiringPause.GuardianCooldown.selector, until + 7 days));
         escrow.pause();
+        vm.prank(guardian);
+        vm.expectRevert(ExpiringPause.GovernancePause.selector);
+        escrow.unpause();
 
         vm.prank(owner);
         escrow.unpause();
         assertFalse(escrow.paused());
     }
 
-    function test_governanceMayPauseWithNoGuardianPauseFirst() public {
+    function test_governanceMayPauseWithNoGuardianPauseFirst_andOnlyGovernanceEndsIt() public {
         vm.prank(owner);
         escrow.extendPause(uint64(block.timestamp + 1 hours));
         assertTrue(escrow.paused());
+        assertTrue(escrow.pausedByGovernance());
+
+        vm.prank(guardian);
+        vm.expectRevert(ExpiringPause.GovernancePause.selector);
+        escrow.unpause();
+    }
+
+    /// @dev Once governance's pause has run out, the guardian's next pause is
+    ///      its own again, and so is ending it.
+    function test_theGuardianMayEndItsNextPause_afterAGovernancePauseRanOut() public {
+        uint64 until = uint64(block.timestamp + 1 hours);
+        vm.prank(owner);
+        escrow.extendPause(until);
+
+        vm.warp(until + 7 days);
+        vm.prank(guardian);
+        escrow.pause();
+        assertFalse(escrow.pausedByGovernance());
+
+        vm.prank(guardian);
+        escrow.unpause();
+        assertFalse(escrow.paused());
     }
 
     function test_anExtensionMustLengthenThePause() public {

@@ -5,6 +5,10 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ZeroAddress} from "../Errors.sol";
+import {BridgeJoinReceiver} from "../periphery/BridgeJoinReceiver.sol";
+import {LiquidityReserve} from "./LiquidityReserve.sol";
+import {RewardsDistributor} from "./RewardsDistributor.sol";
+import {StakedLms} from "./StakedLms.sol";
 
 /// @title MultisigPhase
 /// @notice The Safe's powers over the timelock, held on its behalf until a
@@ -25,15 +29,30 @@ import {ZeroAddress} from "../Errors.sol";
 ///        - no call to the timelock itself, so it cannot grant itself a role,
 ///          make a new proposer or shorten the delay;
 ///        - no `transferOwnership` or `renounceOwnership`, on any target, so
-///          everything the timelock owns stays the timelock's.
+///          everything the timelock owns stays the timelock's;
+///        - nothing that moves LMS: no call to the token at all, so no
+///          `transfer`, `approve` or stake of the treasury's LMS, and none of
+///          the owner's ways to release LMS held elsewhere — `sweep`,
+///          `sweepStray`, approving a `LiquidityReserve` recipient, or
+///          `recover` of LMS. LMS is votes: the Safe holding or staking some
+///          would keep it in governance after the phase.
 ///
-///      Everything else it schedules can be undone by governance afterwards.
+///      ETH it may spend. That is the treasury's job in the phase, and ETH
+///      buys no votes. So the Safe is trusted with the treasury's ETH until
+///      `phaseEnd`; everything else it schedules can be undone by governance
+///      afterwards.
+///
+///      The LMS checks match by selector, not target, as the ownership ones
+///      do: a contract deployed later with the same functions is covered too,
+///      and any other contract's `sweep(address)` is refused with them.
 contract MultisigPhase {
     /// @notice Longest phase the constructor accepts.
     uint256 public constant MAX_PHASE = 2 * 365 days;
 
     TimelockController public immutable timelock;
     address public immutable safe;
+    /// @notice The governance token, which the Safe may never move.
+    address public immutable lms;
     /// @notice When the Safe's powers end.
     uint256 public immutable phaseEnd;
 
@@ -45,13 +64,16 @@ contract MultisigPhase {
     error InvalidPhaseEnd(uint256 phaseEnd);
     error ForbiddenCall(address target, bytes4 selector);
 
-    constructor(TimelockController timelock_, address safe_, uint256 phaseEnd_) {
-        if (address(timelock_) == address(0) || safe_ == address(0)) revert ZeroAddress();
+    constructor(TimelockController timelock_, address safe_, address lms_, uint256 phaseEnd_) {
+        if (address(timelock_) == address(0) || safe_ == address(0) || lms_ == address(0)) {
+            revert ZeroAddress();
+        }
         if (phaseEnd_ <= block.timestamp || phaseEnd_ > block.timestamp + MAX_PHASE) {
             revert InvalidPhaseEnd(phaseEnd_);
         }
         timelock = timelock_;
         safe = safe_;
+        lms = lms_;
         phaseEnd = phaseEnd_;
     }
 
@@ -109,13 +131,24 @@ contract MultisigPhase {
         emit Retired(block.timestamp);
     }
 
-    /// @dev The two ways a call scheduled now could keep the Safe in charge
-    ///      after `phaseEnd`; see the contract notes.
+    /// @dev The ways a call scheduled now could keep the Safe in charge after
+    ///      `phaseEnd`; see the contract notes.
     function _checkCall(address target, bytes calldata data) private view {
         bytes4 selector = data.length >= 4 ? bytes4(data[:4]) : bytes4(0);
         if (
             target == address(timelock) || selector == Ownable.transferOwnership.selector
-                || selector == Ownable.renounceOwnership.selector
+                || selector == Ownable.renounceOwnership.selector || _movesLms(target, selector, data)
         ) revert ForbiddenCall(target, selector);
+    }
+
+    function _movesLms(address target, bytes4 selector, bytes calldata data) private view returns (bool) {
+        if (
+            target == lms || selector == RewardsDistributor.sweep.selector
+                || selector == StakedLms.sweepStray.selector
+                || selector == LiquidityReserve.setRecipient.selector
+        ) return true;
+        // `recover(token, to, amount)` returns stray ETH and tokens; only LMS is refused.
+        return selector == BridgeJoinReceiver.recover.selector && data.length >= 36
+            && abi.decode(data[4:36], (address)) == lms;
     }
 }

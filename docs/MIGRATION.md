@@ -5,8 +5,8 @@ exploited: which levers exist, who pulls them, how fast they act, and how to
 move to fixed contracts.
 
 Nothing in the protocol is upgradeable. There are no proxies, and every link
-between contracts is `immutable` ([ADR 0010](adr/0010-break-freely-one-instance.md),
-FIX_PLAN Q21). So you can't fix a contract in place. A fix is either a
+between contracts is `immutable` ([ADR 0010](adr/0010-break-freely-one-instance.md)).
+So you can't fix a contract in place. A fix is either a
 parameter change through `ProtocolConfig`, or a new deployment that players
 move to once the old one has wound down. This document is the runbook for both.
 
@@ -16,12 +16,12 @@ move to once the old one has wound down. This document is the runbook for both.
 |---|---|---|---|
 | `GameEscrow.pause()` | Guardian | Immediate | Stops `createMatch`, `createMatchmade`, every `join*`, `lockMatch` and `settle` for `GUARDIAN_PAUSE` (7 days). Not again for `GUARDIAN_COOLDOWN` (7 days) after it ends. |
 | `GameEscrow.extendPause(until)` | Governance (timelock) | Timelock delay | Pauses, or keeps the pause on, until `until`. No cooldown. |
-| `GameEscrow.unpause()` | Guardian or governance | Immediate for the guardian | Ends any pause, a governance one included (see §7). |
+| `GameEscrow.unpause()` | Guardian or governance | Immediate for the guardian | Ends a pause. The guardian ends only its own, never one governance extended or started. |
 | `GameEscrow.veto(matchId)` | Guardian or governance | Immediate for the guardian | Throws out a `Proposed` result inside its challenge window and refunds every seat. Works while paused. |
 | `GameEscrow.dismissDispute(matchId)` | Guardian or governance | Immediate for the guardian | Puts a disputed result back on its own deadline. |
 | `GameEscrow.abortMatch(matchId, sigs)` | Attestor quorum | Immediate | Refunds a `Live` match at once. Works while paused. |
 | `GameEscrow.cancelMatch(matchId)` | Anyone | Once the match's deadline passes | Refunds an `Open`, `Pending` or `Live` match that can no longer finish. Works while paused. |
-| `withdraw`, `withdrawFor`, `withdrawToBridge` | Players, relayers, `BridgeJoinReceiver` | Immediate | Never paused. |
+| `withdraw`, `withdrawFor`, `withdrawToBridge` | Players (a session's `withdrawFor` relayed), `BridgeJoinReceiver` | Immediate | Never paused. |
 | `finalize(matchId, ranking)` | Anyone | After the challenge window | **Never paused.** A `Proposed` result pays out at its deadline unless it is vetoed first. |
 | `ProtocolConfig` setters | Governance (timelock) | Timelock delay | Replace the oracle, the attestor set, the guardian, the bridge receiver, the matchmaker, the fee, the windows, the rules hash or the payout schedule. |
 | `FeeRouter`, `BridgeJoinReceiver`, `ChainlinkVrfAdapter`, `RewardsDistributor`, `StakedLms`, `PlayerAvatars` owner calls | Governance (timelock) | Timelock delay | Their own settings; `BridgeJoinReceiver.recover` frees value it could not route. |
@@ -36,8 +36,10 @@ With `Deploy.s.sol`'s defaults:
 | `LmsGovernor` proposal → timelock | `VOTING_DELAY` 1 day + `VOTING_PERIOD` 5 days + `TIMELOCK_DELAY` 3 days ≈ **9 days** |
 
 `MultisigPhase` refuses calls to the timelock itself and any
-`transferOwnership`/`renounceOwnership`. Everything this runbook needs is
-outside that list.
+`transferOwnership`/`renounceOwnership`, and anything that moves LMS: any
+call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient` and
+`recover` of LMS. Everything else this runbook needs is outside that list;
+LMS funding goes through a governor proposal.
 
 The timelock delay is always longer than `ProtocolConfig.matchLifetime()`
 (10 min join + 10 min lock grace + 1 h seed + 1 h settle + 1 h challenge + 48 h
@@ -88,12 +90,13 @@ an outsider.
 
 ### 3.2 Guardian key leaked
 
-A rogue guardian can pause, unpause, veto (refund) and dismiss disputes. It
-can't take funds.
+A rogue guardian can pause, end its own pause, veto (refund) and dismiss
+disputes. It can't take funds, or lift a pause governance put in place.
 
 1. Safe queues `setGuardian(newGuardian)` at once.
-2. Until it executes, watch for `ResultVetoed` and `Unpaused`. The old
-   guardian can lift a pause the governance put in place (§7).
+2. Until it executes, watch for `ResultVetoed` and `Unpaused`. To keep play
+   stopped past the rogue key's reach, governance `extendPause`s: the old
+   guardian cannot lift that.
 3. If the rogue key dismisses honest disputes, the result still waits out its
    own challenge deadline. Players re-dispute if the window is still open.
 
@@ -233,8 +236,9 @@ Do this in parallel with §4.2:
    deployer still owns the new config until the timelock accepts it.
 4. `newConfig.transferOwnership(timelock)` and the same for the VRF adapter.
    They're `Ownable2Step`, so the Safe queues `acceptOwnership()` on each.
-   `MultisigPhase` allows it. Queue the LMS funding of the new
-   `RewardsDistributor` in the same batch.
+   `MultisigPhase` allows it. The LMS funding of the new `RewardsDistributor`
+   is not the Safe's to queue — `MultisigPhase` refuses any LMS move — so it
+   goes through a governor proposal (about 9 days), started early.
 5. Safe adds the new VRF adapter to the subscription.
 6. Redeploy each spoke with `DeploySpoke.s.sol` against the new receiver.
 7. After the delay, execute the batch. Check `newConfig.owner() == timelock`,
@@ -253,9 +257,9 @@ still works the whole time.
 - **Old balances.** After the restart, the server and client only know the new
   escrow. Players with a balance left in the old one need either a "withdraw
   from the old escrow" link (`withdraw(to)` on the old address, from the
-  explorer or a small page), or a relayer calling `withdrawFor` for each address
-  with a balance (≥ `MIN_WITHDRAW_FOR`). Pushing it to them is the friendlier
-  option. Get the list from `PayoutCredited`, `MatchCancelled` and
+  explorer or a small page), or, for an account with one-click play, its
+  relayed session `withdrawFor`. Nobody can push it to them: `withdrawFor` is
+  the account's own. Get the list from `PayoutCredited`, `MatchCancelled` and
   `JoinRefunded` minus `Withdrawn`, or just read `withdrawable(addr)`.
 - **Stray bridge joins.** Old spoke routers stay live and can't be stopped. A
   join sent through one lands in the old escrow and is credited to the player
@@ -307,11 +311,6 @@ decision before it's built:
 
 Found while writing this. None are fixed yet:
 
-- **The guardian can lift a governance pause.** `ExpiringPause.unpause()` lets
-  the guardian end *any* pause, including one governance extended.
-  `ProtocolConfig.guardian`'s notes and FEATURES.md say it can't ("never lift a
-  pause put in place to stop an exploit"; "`unpause()` is owner-only"). A leaked
-  guardian key can therefore undo `extendPause` until `setGuardian` lands.
 - **After the multisig phase there's a gap in pause coverage.** The guardian's
   pause lasts 7 days and then can't be renewed for 7 more. A governor proposal
   takes about 9 days. So from day 7 to about day 9, play resumes unless the

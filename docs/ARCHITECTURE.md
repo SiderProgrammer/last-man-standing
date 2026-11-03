@@ -535,7 +535,8 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
   and cancellation is permissionless once the relevant deadline passes.
 - *A guardian pause expires.* The guardian can `pause()` without the timelock, but only
   for 7 days, and not again until 7 days after a pause ends. Only governance can
-  `extendPause(until)`, through the timelock. Either can `unpause()`.
+  `extendPause(until)`, through the timelock. Governance can `unpause()` any pause; the
+  guardian only its own, never one governance extended or started.
 - *A veto can only refund.* `veto` voids a proposed result and credits every seat its
   stake back; it cannot redirect a payout. It is not paused, so it is always available
   inside the window.

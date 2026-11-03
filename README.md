@@ -218,7 +218,7 @@ delegate. An injected wallet will not be asked for one, and a smart wallet
 already has code of its own. Privy is not wired into the client yet: the plan
 is to adopt it only if its embedded wallet signs that authorization on Base
 Sepolia, and fall back to Turnkey, or to the normal flow, if it does not
-(FIX_PLAN 5.1). The contracts are the same either way. `npm run
+([docs/TODO.md](docs/TODO.md)). The contracts are the same either way. `npm run
 check:one-click` runs the whole one-click path on a local Prague anvil, with a
 plain local account standing in for the embedded wallet.
 
@@ -243,7 +243,7 @@ two coincide.
 | Timelock | `TimelockController`, 3-day delay | Owns `ProtocolConfig`, `StakedLms`, `FeeRouter`, `RewardsDistributor`, `PlayerAvatars` and the VRF adapter. Every change waits out the delay, which is longer than a whole match. | Act without a queued proposal. |
 | Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
 | Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
-| Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
+| Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
 | Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which renounces both roles. | Be extended, or stopped from retiring, by anyone — the Safe included. |
 | VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be spent by anyone but a registered consumer. |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
@@ -370,7 +370,8 @@ sessions, since a pruned node eventually stops serving the fork block's state.
 
 The hub runs on Base (Base Sepolia for testnet). Set `DEPLOYER_PK` in `.env`.
 On anything but a local node the script also requires `SAFE` (the governance
-multisig) and `VRF_SUBSCRIPTION_ID`, a Chainlink VRF v2.5 subscription the Safe
+multisig), `GUARDIAN`, `ATTESTOR` (the address of the server's `ATTESTOR_PK`)
+and `VRF_SUBSCRIPTION_ID`, a Chainlink VRF v2.5 subscription the Safe
 owns and funds with ETH. The script deploys the VRF adapter, makes the escrow
 its consumer and hands it to the timelock; the Safe then adds the adapter to
 the subscription. The mocks it falls back to are for chain 31337 only. It also
@@ -396,8 +397,8 @@ documents every one.
 
 The server signs with its single `ATTESTOR_PK`; it does not yet gather
 signatures from other attestors. The escrow enforces whatever quorum is
-configured, so leave `ATTESTORS` at its default (the deployer alone, 1 of 1)
-until that collection exists.
+configured, so set `ATTESTOR` to that key's address alone (1 of 1) and leave
+`ATTESTORS` unset until that collection exists.
 
 **One server instance.** Rooms, the matchmaking queue, and every rate limit and
 quota live in the server's memory, and its keys send transactions in nonce

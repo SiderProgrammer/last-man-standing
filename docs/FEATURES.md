@@ -61,8 +61,9 @@ so ids from two deployments or two chains never collide.
 - **The seed is requested only after the seat list is final**, so nobody can
   decide whether to join based on it.
 - **Payments are pull-based.** Settlement credits a balance; nothing moves
-  until the recipient calls `withdraw` (or a relayer calls `withdrawFor`, which
-  pays only the account). One reverting recipient cannot block a payout loop.
+  until the recipient calls `withdraw` (or `withdrawFor`, which pays only the
+  account and only the account may call, as a relayed session call does). One
+  reverting recipient cannot block a payout loop.
 - **Pausing leaves `cancelMatch` and `withdraw` open**, so a pause never traps
   funds, and a guardian pause expires after 7 days unless governance extends it.
 - **Matchmade lobbies** take a seat only with a server-signed `JoinTicket`, and
@@ -263,6 +264,8 @@ Safe --> MultisigPhase --proposes, cancels---------+  the delay has passed)    B
 - **The Safe's powers end on a date written into `MultisigPhase`** (a year by
   default, two at most). After `phaseEnd` anyone calls `retire()`; the Safe
   cannot cancel its own removal or schedule anything that outlasts the phase.
+  It may spend the treasury's ETH, but never move LMS: no call on the token,
+  and none of the owner calls that release LMS held elsewhere.
 - **A guardian that can only stop money moving.** It pauses for 7 days
   without the delay and vetoes a proposed result, refunding it. It cannot pay
   anyone, shorten a pause governance extended, or pause again until 7 days

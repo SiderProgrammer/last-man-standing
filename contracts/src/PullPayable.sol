@@ -35,28 +35,35 @@ abstract contract PullPayable is ReentrancyGuardTransient {
     uint256 public totalOwed;
 
     /// @notice Smallest balance `withdrawFor` pays out.
-    /// @dev Whoever calls `withdrawFor` for someone else pays the gas, so
-    ///      dust would let anyone drain a relayer that pays it. About 300 times
-    ///      the gas of the call on Base, and below any refund or prize at the
-    ///      minimum stake. `withdraw` has no minimum, so no balance is stuck.
+    /// @dev A session's `withdrawFor` is relayed, so the relayer pays the gas,
+    ///      and dust would let anyone drain it. About 300 times the gas of the
+    ///      call on Base, and below any refund or prize at the minimum stake.
+    ///      `withdraw` has no minimum, so no balance is stuck.
     uint256 public constant MIN_WITHDRAW_FOR = 0.0001 ether;
 
     event Withdrawn(address indexed account, address indexed to, uint256 amount);
 
     error BelowMinimumWithdrawal(uint256 amount, uint256 minimum);
+    error NotAccount(address caller, address account);
 
     /// @notice Withdraws the caller's balance to `to`.
     function withdraw(address to) external nonReentrant returns (uint256 amount) {
         amount = _payOut(msg.sender, to);
     }
 
-    /// @notice Pays `account`'s balance to `account` itself.
-    /// @dev Permissionless, because the recipient is never the caller's choice:
-    ///      the worst anyone can do is pay a player early. That is what a
-    ///      session's gasless withdrawal calls, and it means a session key never
+    /// @notice Pays `account`'s balance to `account` itself. The account only.
+    /// @dev That is what a session's gasless withdrawal calls: under EIP-7702
+    ///      the session call comes from the account, so a session key never
     ///      needs `withdraw`, whose free `to` would let a leaked key send the
     ///      whole balance anywhere.
+    ///
+    ///      Not open to anyone, though the recipient is never the caller's
+    ///      choice. Paying a player early is not harmless: a player who staked
+    ///      from a spoke and signed a `BridgeJoinReceiver` withdrawal home would
+    ///      see it fail with nothing left to bridge, and be paid on the hub,
+    ///      where they may hold no gas to move it.
     function withdrawFor(address account) external nonReentrant returns (uint256 amount) {
+        if (msg.sender != account) revert NotAccount(msg.sender, account);
         uint256 owed = withdrawable[account];
         if (owed != 0 && owed < MIN_WITHDRAW_FOR) revert BelowMinimumWithdrawal(owed, MIN_WITHDRAW_FOR);
         amount = _payOut(account, account);

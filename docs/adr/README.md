@@ -1,10 +1,10 @@
 # Architecture decision records
 
 One short record per decision that shaped the design: the situation, what was
-decided, and what it costs. They are the decisions listed in
-[FIX_PLAN.md §0](../FIX_PLAN.md#0-decisions-this-plan-is-built-on), made on
-2026-10-28 and 2026-10-29, with the defaults accepted the same day. A record is
-not edited when a decision changes; a new one supersedes it.
+decided, and what it costs. The decisions were made on 2026-10-28 and 2026-10-29,
+with the defaults accepted the same day; the Q numbers are the design questions
+they answered. A record is not edited when a decision changes; a new one
+supersedes it.
 
 | # | Decision | Answers |
 | --- | --- | --- |

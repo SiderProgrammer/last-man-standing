@@ -32,6 +32,10 @@ contract DeployHarness is Deploy {
     function guardian() external view returns (address) {
         return _guardian();
     }
+
+    function attestors(address deployer) external view returns (address[] memory) {
+        return _attestors(deployer);
+    }
 }
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
@@ -339,6 +343,23 @@ contract DeployTest is Test {
         harness.guardian();
     }
 
+    /// @dev On a local node the deployer attests; anywhere else an unset
+    ///      `ATTESTOR` must stop the deploy rather than make it the deployer.
+    function test_offALocalChain_theAttestorIsRequired() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.attestors(deployer)[0], deployer);
+        vm.chainId(84_532);
+        vm.expectRevert(Deploy.AttestorRequired.selector);
+        harness.attestors(deployer);
+    }
+
+    /// @dev Nor may the guardian be the deployer, whose key outlives nothing.
+    function test_refusesAGuardianThatIsTheDeployer() public {
+        Deploy script = new DeployWithGuardian(deployer);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RolesOverlap.selector, deployer));
+        script.run();
+    }
+
     /// @dev One key may not hold two roles: here the guardian is the Safe.
     function test_refusesAGuardianThatIsTheSafe() public {
         Deploy script = new DeployWithGuardian(safe);
@@ -498,6 +519,11 @@ contract DeployOnBaseSepolia is Deploy {
 
     function _guardian() internal pure override returns (address) {
         return address(0x6A4D);
+    }
+
+    function _attestors(address) internal pure override returns (address[] memory attestors) {
+        attestors = new address[](1);
+        attestors[0] = address(0xA77E);
     }
 }
 

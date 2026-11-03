@@ -162,6 +162,7 @@ contract Deploy is Registry, AcrossBook {
     error RewardsUnderfunded(uint256 budget, uint256 funded);
     error TeamBeneficiaryRequired();
     error GuardianRequired();
+    error AttestorRequired();
     error RolesOverlap(address account);
 
     function run() external returns (Deployment memory deployment) {
@@ -209,7 +210,7 @@ contract Deploy is Registry, AcrossBook {
 
         deployment.config.transferOwnership(address(deployment.timelock));
         _handOver(deployment, deployer);
-        _assertSeparateRoles(deployment);
+        _assertSeparateRoles(deployment, deployer);
 
         vm.stopBroadcast();
         _record(registry(deployment));
@@ -282,18 +283,22 @@ contract Deploy is Registry, AcrossBook {
     ///      no one key can both stop the protocol and change it, and the Safe
     ///      that proposes cannot also spend. The deployer is checked too: it
     ///      holds nothing by now, but a role meant to outlive the deploy must
-    ///      not be its.
-    function _assertSeparateRoles(Deployment memory deployment) private pure {
+    ///      not be its. The Safe is the exception, which `_safe` allows to be
+    ///      the deployer when `SAFE` names it deliberately.
+    function _assertSeparateRoles(Deployment memory deployment, address deployer) private pure {
         address safe = deployment.safe;
         address guardian = deployment.guardian;
         address timelock = address(deployment.timelock);
-        if (guardian == safe || guardian == timelock) revert RolesOverlap(guardian);
+        if (guardian == safe || guardian == timelock || guardian == deployer) revert RolesOverlap(guardian);
         if (safe == timelock) revert RolesOverlap(safe);
         // A hot key on the game server: never one that governs or stops it.
         address matchmaker = deployment.matchmaker;
         if (
             matchmaker != address(0)
-                && (matchmaker == safe || matchmaker == guardian || matchmaker == timelock)
+                && (matchmaker == safe
+                    || matchmaker == guardian
+                    || matchmaker == timelock
+                    || matchmaker == deployer)
         ) {
             revert RolesOverlap(matchmaker);
         }
@@ -410,12 +415,19 @@ contract Deploy is Registry, AcrossBook {
 
     /// @dev The quorum is a multisig over results: independent attestor keys,
     ///      most of which must agree. `ATTESTOR` is the single-key fallback.
-    function _attestors(address deployer) private view returns (address[] memory attestors) {
+    ///      Required everywhere but a local node, where it defaults to the
+    ///      deployer: like `SAFE`, the deployer's key signing every result has
+    ///      to be a deliberate choice rather than something a missing variable
+    ///      does silently. Virtual so a test can set it without `vm.setEnv`.
+    function _attestors(address deployer) internal view virtual returns (address[] memory attestors) {
         address[] memory fallbackAttestors = new address[](1);
-        fallbackAttestors[0] = vm.envOr("ATTESTOR", deployer);
+        fallbackAttestors[0] = vm.envOr("ATTESTOR", _local() ? deployer : address(0));
         attestors = vm.envOr("ATTESTORS", ",", fallbackAttestors);
         // A blank `ATTESTORS=` parses as an empty list rather than as unset.
         if (attestors.length == 0) attestors = fallbackAttestors;
+        for (uint256 i = 0; i < attestors.length; ++i) {
+            if (attestors[i] == address(0)) revert AttestorRequired();
+        }
     }
 
     /// @dev Read from `config/rules.json` rather than typed in here, so the
@@ -656,7 +668,7 @@ contract Deploy is Registry, AcrossBook {
         // The Safe proposes and vetoes through `MultisigPhase` until its end
         // date, and never holds a role itself, so the veto ends when the
         // contract says rather than when governance manages to remove it.
-        MultisigPhase phase = new MultisigPhase(timelock, safe, _multisigPhaseEnd());
+        MultisigPhase phase = new MultisigPhase(timelock, safe, address(deployment.lms), _multisigPhaseEnd());
         deployment.multisigPhase = phase;
         _grantProposer(timelock, address(phase));
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);

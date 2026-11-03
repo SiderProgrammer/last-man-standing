@@ -136,21 +136,18 @@ contract AcrossHubForkTest is Fixtures, AcrossMainnet {
             nonce: 0,
             deadline: block.timestamp + 1 hours
         });
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(playerPk, receiver.withdrawalDigest(w));
+        BridgeJoinReceiver.Quote memory q = BridgeJoinReceiver.Quote({
+            outputAmount: STAKE - 0.003 ether,
+            quoteTimestamp: uint32(block.timestamp),
+            fillDeadline: uint32(block.timestamp + 1 hours),
+            exclusiveRelayer: address(0),
+            exclusivityParameter: 0
+        });
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(playerPk, receiver.withdrawalDigest(w, q));
         uint32 depositsBefore = IAcrossFiller(BASE_POOL).numberOfDeposits();
         uint256 poolWethBefore = IERC20(BASE_WETH).balanceOf(BASE_POOL);
 
-        receiver.withdrawToChainFor(
-            w,
-            BridgeJoinReceiver.Quote({
-                outputAmount: STAKE - 0.003 ether,
-                quoteTimestamp: uint32(block.timestamp),
-                fillDeadline: uint32(block.timestamp + 1 hours),
-                exclusiveRelayer: address(0),
-                exclusivityParameter: 0
-            }),
-            abi.encodePacked(r, s, v)
-        );
+        receiver.withdrawToChainFor(w, q, abi.encodePacked(r, s, v));
 
         assertEq(IAcrossFiller(BASE_POOL).numberOfDeposits(), depositsBefore + 1);
         assertEq(IERC20(BASE_WETH).balanceOf(BASE_POOL), poolWethBefore + STAKE);

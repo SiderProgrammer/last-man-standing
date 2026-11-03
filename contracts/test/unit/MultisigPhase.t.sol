@@ -6,7 +6,14 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import {MultisigPhase} from "../../src/governance/MultisigPhase.sol";
+import {LmsToken} from "../../src/governance/LmsToken.sol";
+import {StakedLms} from "../../src/governance/StakedLms.sol";
+import {LiquidityReserve} from "../../src/governance/LiquidityReserve.sol";
+import {RewardsDistributor} from "../../src/governance/RewardsDistributor.sol";
+import {BridgeJoinReceiver} from "../../src/periphery/BridgeJoinReceiver.sol";
 import {ZeroAddress} from "../../src/Errors.sol";
 
 /// @dev Something the timelock owns, with a setting to change.
@@ -29,12 +36,14 @@ contract MultisigPhaseTest is Test {
     TimelockController private timelock;
     MultisigPhase private phase;
     Owned private target;
+    LmsToken private lms;
 
     function setUp() public {
         address[] memory none = new address[](0);
         address[] memory anyone = new address[](1);
         timelock = new TimelockController(DELAY, none, anyone, address(this));
-        phase = new MultisigPhase(timelock, safe, block.timestamp + PHASE);
+        lms = new LmsToken(address(timelock), 1_000_000e18);
+        phase = new MultisigPhase(timelock, safe, address(lms), block.timestamp + PHASE);
 
         timelock.grantRole(timelock.PROPOSER_ROLE(), address(phase));
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(phase));
@@ -47,14 +56,17 @@ contract MultisigPhaseTest is Test {
 
     function test_constructor_boundsThePhaseEnd() public {
         vm.expectRevert(abi.encodeWithSelector(MultisigPhase.InvalidPhaseEnd.selector, block.timestamp));
-        new MultisigPhase(timelock, safe, block.timestamp);
+        new MultisigPhase(timelock, safe, address(lms), block.timestamp);
 
         uint256 tooLate = block.timestamp + 2 * 365 days + 1;
         vm.expectRevert(abi.encodeWithSelector(MultisigPhase.InvalidPhaseEnd.selector, tooLate));
-        new MultisigPhase(timelock, safe, tooLate);
+        new MultisigPhase(timelock, safe, address(lms), tooLate);
 
         vm.expectRevert(ZeroAddress.selector);
-        new MultisigPhase(timelock, address(0), block.timestamp + PHASE);
+        new MultisigPhase(timelock, address(0), address(lms), block.timestamp + PHASE);
+
+        vm.expectRevert(ZeroAddress.selector);
+        new MultisigPhase(timelock, safe, address(0), block.timestamp + PHASE);
     }
 
     function test_safeSchedules_throughTheDelay_andAnyoneExecutes() public {
@@ -191,7 +203,79 @@ contract MultisigPhaseTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev A bare ETH transfer has no selector, and is allowed.
+    /// @dev Any call on the token: a transfer of the treasury's LMS, or the
+    ///      approval a stake of it would start with, even inside a batch.
+    function test_cannotMoveTheTreasurysLms_evenInABatch() public {
+        bytes memory transfer = abi.encodeCall(IERC20.transfer, (safe, 1e18));
+        vm.startPrank(safe);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MultisigPhase.ForbiddenCall.selector, address(lms), IERC20.transfer.selector
+            )
+        );
+        phase.schedule(address(lms), 0, transfer, bytes32(0), bytes32(0), DELAY);
+
+        address[] memory targets = new address[](2);
+        targets[0] = address(target);
+        targets[1] = address(lms);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodeCall(Owned.set, (1));
+        payloads[1] = abi.encodeCall(IERC20.approve, (makeAddr("vault"), 1e18));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MultisigPhase.ForbiddenCall.selector, address(lms), IERC20.approve.selector
+            )
+        );
+        phase.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), DELAY);
+        vm.stopPrank();
+    }
+
+    /// @dev The owner's ways to release LMS held elsewhere, on any target.
+    function test_cannotReleaseLmsHeldElsewhere() public {
+        address elsewhere = makeAddr("elsewhere");
+        bytes[] memory calls = new bytes[](4);
+        calls[0] = abi.encodeCall(RewardsDistributor.sweep, (safe));
+        calls[1] = abi.encodeCall(StakedLms.sweepStray, (safe));
+        calls[2] = abi.encodeCall(LiquidityReserve.setRecipient, (safe, true));
+        calls[3] = abi.encodeCall(BridgeJoinReceiver.recover, (address(lms), safe, 1e18));
+
+        vm.startPrank(safe);
+        for (uint256 i = 0; i < calls.length; ++i) {
+            vm.expectRevert(
+                abi.encodeWithSelector(MultisigPhase.ForbiddenCall.selector, elsewhere, bytes4(calls[i]))
+            );
+            phase.schedule(elsewhere, 0, calls[i], bytes32(0), bytes32(0), DELAY);
+        }
+        vm.stopPrank();
+    }
+
+    /// @dev `recover` of anything but LMS stays the Safe's: the receiver's
+    ///      stray ETH and other tokens.
+    function test_recoverOfAnotherTokenOrEthIsAllowed() public {
+        address elsewhere = makeAddr("elsewhere");
+        vm.startPrank(safe);
+        phase.schedule(
+            elsewhere,
+            0,
+            abi.encodeCall(BridgeJoinReceiver.recover, (address(0), safe, 1 ether)),
+            bytes32(0),
+            bytes32(0),
+            DELAY
+        );
+        phase.schedule(
+            elsewhere,
+            0,
+            abi.encodeCall(BridgeJoinReceiver.recover, (makeAddr("weth"), safe, 1 ether)),
+            bytes32(0),
+            bytes32(0),
+            DELAY
+        );
+        vm.stopPrank();
+    }
+
+    /// @dev A bare ETH transfer has no selector, and is allowed: the Safe may
+    ///      spend the treasury's ETH.
     function test_aPlainTransferIsAllowed() public {
         vm.deal(address(timelock), 1 ether);
         address to = makeAddr("to");

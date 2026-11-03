@@ -23,8 +23,8 @@ import { collectWinnings, renderWinnings, requestBalance } from './payouts.js';
  * Two clicks, like a join from a spoke: the first asks the server what the
  * hub holds for this wallet, and Across what bridging all of it costs, and
  * turns the button into what will arrive; the second signs the withdrawal
- * — on the spoke, which its EIP-712 domain allows — and hands it to the
- * server, which submits it on the hub and pays the gas there.
+ * and that quote — on the spoke, which its EIP-712 domain allows — and hands
+ * them to the server, which submits them on the hub and pays the gas there.
  *
  * Without `VITE_ACROSS_API`, as on the local stack, the quote has no fee.
  */
@@ -109,7 +109,7 @@ async function collectHome(
   for (const button of buttons()) button.disabled = true;
   try {
     dom.collectStatus.textContent = 'Sign the withdrawal in your wallet…';
-    const signature = await wallet.client.signTypedData({ account: wallet.signer, ...withdrawalTypedData(receiver, withdrawal) });
+    const signature = await wallet.client.signTypedData({ account: wallet.signer, ...withdrawalTypedData(receiver, withdrawal, quote) });
     dom.collectStatus.textContent = 'Submitting it on the hub…';
     await sendRelayed((id) => ({
       type: 'withdrawToChain',
