@@ -1,6 +1,7 @@
 Fuzz Testing (/fizz)
 Invariant Testing (/fizz)
 use AI skills (pashov skill, openzeppelin skill)
+complete TO_CHECK.md
 test game with a few real players (locally)
 test, run all the features on local fork mainnet (dont forget cross chain)
 deploy to testnet
