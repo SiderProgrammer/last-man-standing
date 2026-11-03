@@ -196,7 +196,9 @@ cross-chain flow — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For a
 feature-by-feature reference of what each mechanism does and why it is there,
 see [docs/FEATURES.md](docs/FEATURES.md). Why the big decisions went the way
 they did is in [docs/adr/](docs/adr/README.md), one short record each.
-Outstanding work is tracked in [docs/TODO.md](docs/TODO.md).
+Outstanding work is tracked in [docs/TODO.md](docs/TODO.md). What to do when a
+contract has a bug or a key leaks, and how to move to fixed contracts, is in
+[docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Wallets
 

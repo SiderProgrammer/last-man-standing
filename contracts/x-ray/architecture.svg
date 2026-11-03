@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1398" height="645" viewBox="0 0 559 258" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 6" refX="8" refY="3"
+      markerWidth="4" markerHeight="3" orient="auto">
+      <path d="M0.5,0.5 L7,3 L0.5,5.5" fill="none" stroke="#94A3B8"
+        stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+    </marker>
+    <filter id="shadow" x="-6%" y="-8%" width="112%" height="128%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8"
+        flood-color="#000" flood-opacity="0.05"/>
+    </filter>
+  </defs>
+  <rect width="559" height="258" fill="#F8F9FB" rx="3"/>
+  <text x="280" y="11" text-anchor="middle" font-size="6" font-weight="700" fill="#1E293B">Last Man Standing Architecture</text>
+  <rect x="205" y="16" width="150" height="10" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="210" y="18.5" width="5" height="5" rx="2.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <text x="218" y="22.5" font-size="3.5" fill="#1E293B">Actor</text>
+  <rect x="250" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="251" y="19.5" width="0.8" height="3" rx="0.4" fill="#3B82F6"/>
+  <text x="258" y="22.5" font-size="3.5" fill="#1E293B">Protocol</text>
+  <rect x="298" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="299" y="19.5" width="0.8" height="3" rx="0.4" fill="#F59E0B"/>
+  <text x="306" y="22.5" font-size="3.5" fill="#1E293B">External</text>
+  <rect x="20.0" y="84.0" width="498.2" height="40.0" rx="5" fill="#EDEEF2"/>
+  <text x="515.2" y="89.0" text-anchor="end" font-size="3.5" fill="#94A3B8" font-weight="500">Hub Core</text>
+  <rect x="20.0" y="146.0" width="498.2" height="40.0" rx="5" fill="#EDEEF2"/>
+  <text x="515.2" y="151.0" text-anchor="end" font-size="3.5" fill="#94A3B8" font-weight="500">Satellites</text>
+  <path d="M134.1,46.0 C134.1,70.0 100.6,70.0 100.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M134.1,46.0 C134.1,70.0 241.6,70.0 241.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M251.7,46.0 C251.7,70.0 241.6,70.0 241.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M358.5,46.0 C358.5,70.0 241.6,70.0 241.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M470.7,46.0 C470.7,70.0 428.3,70.0 428.3,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M161.0,112.0 C167.6,134.0 176.4,134.0 183.0,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M300.2,112.0 C323.7,126.0 355.2,126.0 378.7,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M83.2,156.0 C83.2,135.0 241.6,135.0 241.6,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M241.6,114.0 C241.6,135.0 231.8,135.0 231.8,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M344.6,156.0 C344.6,135.0 241.6,135.0 241.6,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M455.0,156.0 C455.0,135.0 241.6,135.0 241.6,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M78.4,218.0 C78.4,197.0 83.2,197.0 83.2,176.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M231.8,176.0 C231.8,197.0 231.4,197.0 231.4,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M344.6,176.0 C344.6,197.0 344.2,197.0 344.2,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <g filter="url(#shadow)">
+    <rect x="91.7" y="32.0" width="84.8" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="134.1" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Player</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="198.5" y="32.0" width="106.4" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="251.7" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Keeper + Attestors</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="326.9" y="32.0" width="63.2" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="358.5" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Guardian</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="412.1" y="32.0" width="117.2" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="470.7" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Timelock</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="40.2" y="94.0" width="120.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="43.2" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="100.6" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Periphery</text>
+    <text x="100.6" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">ZapJoin / SessionKeyDelegate</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="183.0" y="94.0" width="117.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="186.0" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="241.6" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">GameEscrow</text>
+    <text x="241.6" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">PullPayable / ExpiringPause</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="378.7" y="94.0" width="99.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="381.7" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="428.3" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ProtocolConfig</text>
+    <text x="428.3" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Params / attestor sets</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="156.0" width="106.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="33.0" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="83.2" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">BridgeJoinReceiver</text>
+    <text x="83.2" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">Across hub end</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="176.2" y="156.0" width="111.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="179.2" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="231.8" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ChainlinkVrfAdapter</text>
+    <text x="231.8" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">Seed oracle</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="309.4" y="156.0" width="70.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="312.4" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="344.6" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">FeeRouter</text>
+    <text x="344.6" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">Treasury split</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="401.8" y="156.0" width="106.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="404.8" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="455.0" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">RewardsDistributor</text>
+    <text x="455.0" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">+ RewardVesting</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="218.0" width="96.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="33.0" y="221.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="78.4" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Across SpokePool</text>
+    <text x="78.4" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">SpokeRouter on spokes</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="190.2" y="218.0" width="82.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="193.2" y="221.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="231.4" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Chainlink VRF</text>
+    <text x="231.4" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">Coordinator v2.5</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="294.6" y="218.0" width="99.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="297.6" y="221.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="344.2" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">StakedLms</text>
+    <text x="344.2" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">sLMS votes + ETH yield</text>
+  </g>
+  <rect x="99.8" y="65.0" width="35.2" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="117.4" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">zap / session</text>
+  <rect x="167.9" y="65.0" width="40.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="187.9" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">join / withdraw</text>
+  <rect x="227.9" y="65.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="246.7" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">settle / abort</text>
+  <rect x="283.7" y="65.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="300.1" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">pause / veto</text>
+  <rect x="435.5" y="65.0" width="28.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="449.5" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">set params</text>
+  <rect x="161.6" y="133.0" width="20.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="172.0" y="138.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">joinFor</text>
+  <rect x="320.7" y="125.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="339.5" y="130.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">snapshot terms</text>
+  <rect x="148.4" y="126.0" width="28.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="162.4" y="131.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">bridgeJoin</text>
+  <rect x="220.3" y="130.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="236.7" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">request seed</text>
+  <rect x="276.7" y="130.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="293.1" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">harvest fees</text>
+  <rect x="330.7" y="134.0" width="35.2" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="348.3" y="139.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">read feesPaid</text>
+  <rect x="64.4" y="192.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="80.8" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">fill handler</text>
+  <rect x="208.0" y="192.0" width="47.2" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="231.6" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">requestRandomWords</text>
+  <rect x="325.6" y="192.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="344.4" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">depositRewards</text>
+</svg>
