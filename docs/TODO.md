@@ -91,6 +91,9 @@ mainnet. Still open:
 - **Nobody watches yet.** A veto needs someone to notice. A small watcher that audits
   every `ResultProposed` transcript and alerts the guardian, and watches
   `ResultDisputed`, would close that.
+- **A dispute costs only gas.** Any seated player can hold a payout back 48 hours, so a
+  loser can delay every match they lose, and the guardian has to answer each one. Add a
+  bond: returned on a veto or if the guardian never answers, forfeited on a dismissal.
 - **The attestors are not independent.** The attestor signs in a child process of the
   server, which reads `ATTESTOR_PK` from its own environment to hand it over. Moving the
   attestor to another host is the same IPC over a socket, not done.
@@ -101,6 +104,13 @@ mainnet. Still open:
 
 ### 3.2 Governance and the token
 
+- **The Safe can schedule past `phaseEnd`.** `MultisigPhase` forwards `delay` unchecked,
+  so a call scheduled late in the phase, or with a long delay, still runs after `retire`.
+  `setBridgeReceiver` is one such call, and the receiver it names can take any player's
+  balance. Stopping it takes a proposal that grants the timelock the canceller role and
+  then cancels the call, which needs the quorum floor and more time than a call scheduled
+  near the end leaves. Require `block.timestamp + delay <= phaseEnd` in `schedule` and
+  `scheduleBatch`.
 - **Governance is idle at launch** until players hold the quorum floor in sLMS: with the
   10,000 LMS per ETH cap binding, 100 ETH of fees paid in settled matches (2,000 ETH of
   stakes at the 5% fee), and rewards vest for six months first. Until then the Safe
@@ -113,6 +123,34 @@ mainnet. Still open:
 - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide env, so
   it always sets one; the case where the Safe is the deployer (the `dev:fork` setup) is
   covered only by an `assert` in `_distribute`.
+
+### 3.3 Incidents and migration
+
+The contracts cannot be upgraded, so a fix means a config change or a new deployment.
+[MIGRATION.md](MIGRATION.md) is the runbook. What it found missing:
+
+- **A pause can lapse after the multisig phase.** The guardian's pause lasts 7 days and
+  cannot be renewed for 7 more, and a governor proposal takes about 9 days (1 day voting
+  delay, 5 days voting, 3 days timelock). So play resumes from about day 7 to day 9
+  unless the exploit is already fixed. Until `phaseEnd`, the Safe's 3-day route covers it.
+- **Nothing stops bridged withdrawals quickly.** `withdrawToBridge` is not paused, and
+  the bridge receiver can withdraw any account's balance, so a signature bug in
+  `BridgeJoinReceiver` could drain every balance. Removing the receiver takes the
+  timelock delay.
+- **Payout bugs need a veto per match.** `finalize` is not paused, on purpose, so if the
+  bug is in the payout maths the guardian has to veto every `Proposed` match by hand
+  inside its challenge window, 1 hour by default.
+- **No script to replace the escrow.** `Deploy.s.sol` redeploys the whole protocol, LMS
+  and governance included, and overwrites `deployments/<chainId>.json`. A
+  `DeployEscrow.s.sol` would take the existing timelock, Safe, LMS and `StakedLms`, and
+  its Foundry test would prove the steps in MIGRATION.md §4.3.
+- **No way to withdraw from an old escrow in the app.** The server and client know one
+  escrow, so after a cut-over, balances left in the old one can only be withdrawn from
+  an explorer. Add a withdraw page, or relay `withdrawFor` for every address with a
+  balance.
+- **No incident tooling.** Nothing lists open `Proposed` matches for the guardian, or
+  pauses and vetoes in one go. The watcher in 3.1 would be the natural place for the
+  list.
 
 ---
 
@@ -166,3 +204,36 @@ These are open questions, not bugs:
   wallets with one owner queueing together in a quiet tier can still be matched with
   each other. Candidates still open: flagging seat pairs that never strike each other
   from the public history, and a payout schedule that pays a pact less.
+
+---
+
+## 7. Before it goes on a CV
+
+A reviewer gives the repo a few minutes and will not run `npm run dev:fork`. Roughly in
+order, with the testnet deployment from section 1 before the hosting:
+
+- **Host it.** The client and server run only on a developer's machine: there is no
+  Dockerfile, compose file or hosting config. Serve the client and a server pointed at
+  Base Sepolia from a public URL.
+- **Practice without a wallet.** A production build has no way in without a wallet
+  extension: the burner in `wallet/flows.ts` is for dev builds, and Privy is not wired
+  in. Practice needs only a login signature, so a key generated in the browser and
+  limited to practice would let a visitor play within seconds.
+- **Run every feature on a local mainnet fork**, cross-chain joins and withdrawals
+  included, then play with a few real people: locally, then with testnet wallets.
+- **Record a walkthrough:** 2–3 minutes, after the playtests so it does not show bugs
+  they would have caught. Add a GIF and screenshots; the README has no image yet.
+- **A short front section in the README,** above the rules: a one-line pitch, the live
+  link, the video, the stack, about six engineering highlights and the main limitations.
+  The threat and trust models stay, further down.
+- **Say "testnet only" at the top of the README.** Today it first appears at line 264.
+- **Fix the README's clone URL.** It points at `SiderProgrammer/gambling-project`; the
+  remote is `SiderProgrammer/last-man-standing`.
+- **Link the audit work from the README:** `contracts/x-ray/` and
+  `.solidity-auditor/runs/`, described as AI-assisted reviews, not an independent audit.
+- **Clear out the working notes.** Finish `TO_CHECK.md` and `TODO_IDEAS.md`, then delete
+  them or fold what is left into this file.
+- **Add a root `LICENSE`.** Only `packages/client/public/fx/` has one.
+- **Set the GitHub repo up:** public, with a description, topics and the live link.
+- **Freeze features.** The leaderboard, the prediction market, Yul and the Guard damage
+  change in `TODO_IDEAS.md` can wait until this list is done.
