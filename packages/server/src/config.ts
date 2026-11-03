@@ -9,6 +9,10 @@ export type ServerConfig = ReturnType<typeof loadConfig>;
 /** A malformed environment, with every problem listed, one per line. */
 export class ConfigError extends Error {
   override name = 'ConfigError';
+
+  constructor(problems: readonly string[]) {
+    super(`invalid server configuration:\n${problems.map((problem) => `  ${problem}`).join('\n')}`);
+  }
 }
 
 // Blank counts as unset: `.env.example` ships with empty values.
@@ -179,25 +183,19 @@ export function loadConfig(
 ) {
   const result = ENV.safeParse(env);
   if (!result.success) {
-    throw new ConfigError(
-      `invalid server configuration:\n${result.error.issues.map((issue) => `  ${issue.path.join('.')} ${issue.message}`).join('\n')}`,
-    );
+    throw new ConfigError(result.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`));
   }
   const e = result.data;
   const deployment = deployments(e.CHAIN_ID);
   const deployed = (name: string): `0x${string}` => deployment?.contracts[name] ?? ZERO_ADDRESS;
   const fromBlock = deployment ? BigInt(deployment.deployBlock) : undefined;
   if (e.NODE_ENV === 'production' && !e.DATABASE_URL && e.ARCHIVE !== 'memory') {
-    throw new ConfigError(
-      'invalid server configuration:\n  DATABASE_URL is required in production; set ARCHIVE=memory to run without one',
-    );
+    throw new ConfigError(['DATABASE_URL is required in production; set ARCHIVE=memory to run without one']);
   }
   // A session grant names the page that asked for it, and a page on another
   // origin could otherwise ask a player's wallet for one this server honours.
   if (e.NODE_ENV === 'production' && !e.ALLOWED_ORIGINS.trim()) {
-    throw new ConfigError(
-      'invalid server configuration:\n  ALLOWED_ORIGINS is required in production; set ALLOWED_ORIGINS=* to accept any origin',
-    );
+    throw new ConfigError(['ALLOWED_ORIGINS is required in production; set ALLOWED_ORIGINS=* to accept any origin']);
   }
   // One key per job, as `Deploy.s.sol` gives every role its own address: a
   // drained relayer must not stop settlement, and a leaked keeper key must
@@ -210,18 +208,14 @@ export function loadConfig(
   }).flatMap(([name, key]) => (key ? [[name, key.toLowerCase()] as const] : []));
   const shared = keys.filter(([, key], i) => keys.some(([, other], j) => j !== i && other === key));
   if (shared.length > 0) {
-    throw new ConfigError(
-      `invalid server configuration:\n  ${shared.map(([name]) => name).join(', ')} are the same key; each job needs its own`,
-    );
+    throw new ConfigError([`${shared.map(([name]) => name).join(', ')} are the same key; each job needs its own`]);
   }
   // Its meaning, the left-most forwarded address, was the one a client can forge.
   if (e.TRUST_PROXY) {
-    throw new ConfigError(
-      'invalid server configuration:\n  TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS to the number of proxies in front of the server',
-    );
+    throw new ConfigError(['TRUST_PROXY is gone; set TRUSTED_PROXY_HOPS to the number of proxies in front of the server']);
   }
   if (e.ARCHIVE === 'postgres' && !e.DATABASE_URL) {
-    throw new ConfigError('invalid server configuration:\n  ARCHIVE=postgres needs DATABASE_URL');
+    throw new ConfigError(['ARCHIVE=postgres needs DATABASE_URL']);
   }
 
   return {

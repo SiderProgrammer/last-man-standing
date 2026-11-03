@@ -95,10 +95,7 @@ contract BridgeJoinReceiverTest is Fixtures {
     }
 
     function test_aLobbyThatFilledInFlightIsCredited() public {
-        for (uint256 i = 0; i < 4; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 4);
         vm.expectEmit(true, true, false, true, address(escrow));
         emit GameEscrow.JoinRefunded(matchId, player, STAKE, GameEscrow.JoinFailure.LobbyFull);
         _fill(STAKE, _message(matchId, player));

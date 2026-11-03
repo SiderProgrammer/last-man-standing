@@ -8,6 +8,8 @@ import {
   commitTypedData,
   grantTypedData,
   revealTypedData,
+  sameAddress,
+  sameHex,
   type ActionValue,
   type PublicMatchState,
   type SealedMove,
@@ -260,11 +262,7 @@ export class BotClient {
       case 'error':
         this.emit({ type: 'error', message: message.message });
         // A match lost to a server restart can never be re-joined: move on.
-        if (/unknown match|cancelled after a server restart/.test(message.message)) {
-          this.matchId = null;
-          this.pending = null;
-          this.nextGame();
-        }
+        if (/unknown match|cancelled after a server restart/.test(message.message)) this.abandonMatch();
         return;
       default:
         return;
@@ -274,6 +272,13 @@ export class BotClient {
   private nextGame(): void {
     if (this.done || !this.options.play) return;
     this.send({ type: 'practice', bots: this.options.opponents });
+  }
+
+  /** Gives up on the match this bot was in, uncounted, and plays the next. */
+  private abandonMatch(): void {
+    this.matchId = null;
+    this.pending = null;
+    this.nextGame();
   }
 
   /**
@@ -291,7 +296,7 @@ export class BotClient {
       this.matchId = null;
       this.pending = null;
     }
-    this.emit({ type: 'finished', won: winner?.toLowerCase() === this.address.toLowerCase() });
+    this.emit({ type: 'finished', won: sameAddress(winner, this.address) });
     if (this.done) this.stop();
     else this.nextGame();
   }
@@ -300,16 +305,14 @@ export class BotClient {
     if (you === null) {
       // Attached to the match it was playing, but not seated in it: that match
       // is not the one it left. Give up on it rather than spectate forever.
-      if (this.matchId?.toLowerCase() === state.matchId.toLowerCase()) {
+      if (sameHex(this.matchId, state.matchId)) {
         this.emit({ type: 'error', message: `not seated in ${state.matchId} after re-attaching` });
-        this.matchId = null;
-        this.pending = null;
-        this.nextGame();
+        this.abandonMatch();
       }
       return;
     }
     if (state.phase === MatchPhase.Finished || state.phase === MatchPhase.Aborted) {
-      if (this.matchId?.toLowerCase() === state.matchId.toLowerCase()) this.finish(state.matchId, undefined);
+      if (sameHex(this.matchId, state.matchId)) this.finish(state.matchId, undefined);
       return;
     }
     this.matchId = state.matchId;
@@ -381,13 +384,17 @@ export class BotClient {
   private async sendCommit(target: Pending): Promise<void> {
     const commitment = commitMove(target.matchId, target.round, target.seat, target.move);
     const signature = await this.signer.typed(this.sessionKey, commitTypedData(this.chainId, target, commitment));
-    const aim = { matchId: target.matchId, round: target.round };
-    if (this.options.hold) {
-      const held = await this.signer.typed(this.sessionKey, revealTypedData(this.chainId, target, target.move));
-      this.send({ type: 'commit', commitment, signature, hold: { ...target.move, signature: held }, ...aim });
-    } else {
-      this.send({ type: 'commit', commitment, signature, ...aim });
-    }
+    const hold = this.options.hold
+      ? { ...target.move, signature: await this.signer.typed(this.sessionKey, revealTypedData(this.chainId, target, target.move)) }
+      : null;
+    this.send({
+      type: 'commit',
+      commitment,
+      signature,
+      matchId: target.matchId,
+      round: target.round,
+      ...(hold ? { hold } : {}),
+    });
     this.emit({ type: 'committed', round: target.round });
   }
 

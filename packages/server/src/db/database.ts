@@ -28,6 +28,9 @@ export class InstanceLockHeld extends Error {
 /** The advisory lock key one server instance holds for its whole life. */
 const INSTANCE_LOCK = 7429;
 
+/** Held, per transaction, by whichever process is applying a migration. */
+const MIGRATION_LOCK = 7428;
+
 /**
  * Claims the database for this process, or throws `InstanceLockHeld`.
  *
@@ -139,7 +142,7 @@ export async function migrate(database: Database, migrations: readonly Migration
     await database.transaction(async (tx) => {
       // Two processes starting against one database take turns; the second
       // finds the migration recorded and applies nothing twice.
-      await tx.query('SELECT pg_advisory_xact_lock(7428)');
+      await tx.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
       const { rows: again } = await tx.query('SELECT 1 FROM schema_migrations WHERE id = $1', [migration.id]);
       if (again.length > 0) return;
       for (const statement of migration.statements) await tx.query(statement);

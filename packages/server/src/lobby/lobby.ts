@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { keccak256, toHex } from 'viem';
 import {
@@ -95,11 +96,6 @@ const DEFAULT_MAX_PRACTICE_ROOMS = 200;
  */
 export class Lobby {
   private readonly rooms = new Map<string, Room>();
-  /**
-   * Staked matches that were live when this server started. Their rooms died
-   * with the previous process, so they are aborted and refunded rather than
-   * resumed; a player reconnecting to one is told so.
-   */
   /** Staked matches this server will not play, with the reason a reconnecting player is told. */
   private readonly abandoned = new Map<string, string>();
   /** The one practice room each wallet may hold, keyed by address. */
@@ -509,7 +505,7 @@ export class Lobby {
    */
   private async withRetry<T>(what: string, attempt: () => Promise<T>, forMs?: number): Promise<T | null> {
     const backoff = this.options.settleBackoffMs ?? DEFAULT_SETTLE_BACKOFF_MS;
-    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const sleep = this.options.sleep ?? delay;
     let waited = 0;
     for (let tries = 0; ; tries += 1) {
       try {
@@ -602,5 +598,3 @@ function botAddress(matchId: `0x${string}`, seat: number): `0x${string}` {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
-
-

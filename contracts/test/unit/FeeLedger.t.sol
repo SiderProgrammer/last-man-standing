@@ -39,10 +39,7 @@ contract FeeLedgerTest is Fixtures {
 
     function test_joiningCountsNothing_soAnUnfillableLobbyEarnsNothing() public {
         bytes32 matchId = _createMatchmade(8, _firstPlayers(8));
-        for (uint256 i = 0; i < 3; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 3);
 
         uint256 epoch = block.timestamp / EPOCH;
         assertEq(escrow.feesPaid(players[0], epoch), 0);

@@ -88,149 +88,90 @@ export function start(): void {
   }, 30_000);
 }
 
+/** One handler per server message type: a type with none is a compile error, not a dropped message. */
+type Handlers = { [K in ServerMessage['type']]: (message: Extract<ServerMessage, { type: K }>) => void };
+
+const HANDLERS: Handlers = {
+  hello: onHello,
+  authed: (message) => {
+    onAuthed();
+    dom.connect.textContent = short(message.address);
+    dom.connect.disabled = true;
+    net.flush();
+    net.send({ type: 'lobbies' });
+    requestHistory();
+    void renderWinnings();
+    refreshStaking();
+    refreshGovernance();
+    // A reconnect drops the socket, not the seat: ask to be re-attached to the
+    // match that is still running on the server.
+    if (app.match && app.match.phase !== MatchPhase.Finished) {
+      net.send({ type: 'watch', matchId: app.match.matchId });
+    }
+  },
+  lobbies: (message) => onLobbies(message.open, message.live),
+  state: (message) => onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor),
+  delta: onDelta,
+  // A match this wallet sits in has its room now: go to the table.
+  live: (message) => {
+    if (app.match?.matchId !== message.matchId) net.send({ type: 'watch', matchId: message.matchId });
+  },
+  // The watch is held until the room opens; `state` follows then.
+  waiting: () => undefined,
+  avatars: onAvatars,
+  dossier: onDossier,
+  round: onRound,
+  receipt: (message) => void onReceipt(message),
+  finished: onFinished,
+  settled: (message) => {
+    void onSettled(message);
+    // Archived just before this was sent, so it belongs in the list now.
+    requestHistory();
+  },
+  history: onHistory,
+  review: onReview,
+  crossChain: (message) => onCrossChain(message.event),
+  matched: (message) => {
+    onDequeued();
+    onMatched(message);
+  },
+  queued: onQueued,
+  dequeued: () => onDequeued(),
+  'analysis.step': onAnalysisStep,
+  'analysis.done': onAnalysisDone,
+  'analysis.error': onAnalysisError,
+  relayed: onRelayed,
+  balance: onBalance,
+  'relay.error': onRelayError,
+  error: onError,
+};
+
 /** Routes each server message to the screen that owns it. */
 function onServerMessage(message: ServerMessage): void {
-  switch (message.type) {
-    case 'hello':
-      if (app.wallet) app.wallet.hubChainId = message.chainId;
-      // Every panel that shows any of this is subscribed to it.
-      store.set({
-        nonce: message.nonce,
-        chainId: message.chainId,
-        escrow: message.escrow,
-        avatarCollections: message.avatarCollections,
-        sessionDelegate: message.sessionDelegate,
-        relayQuota: message.relayQuota,
-        receiptSigner: message.receiptSigner,
-        practiceReceiptSigner: message.practiceReceiptSigner,
-        zap: message.zap,
-        spokes: message.spokes,
-        staking: message.staking,
-        analyst: message.analyst,
-        matchmaking: message.matchmaking,
-        withdrawToChain: message.withdrawToChain,
-        // A new connection: the server let the old one's place in the queue go.
-        queue: null,
-      });
-      break;
+  (HANDLERS[message.type] as (message: ServerMessage) => void)(message);
+}
 
-    case 'authed':
-      onAuthed();
-      dom.connect.textContent = short(message.address);
-      dom.connect.disabled = true;
-      net.flush();
-      net.send({ type: 'lobbies' });
-      requestHistory();
-      void renderWinnings();
-      refreshStaking();
-      refreshGovernance();
-      // A reconnect drops the socket, not the seat: ask to be re-attached to the
-      // match that is still running on the server.
-      if (app.match && app.match.phase !== MatchPhase.Finished) {
-        net.send({ type: 'watch', matchId: app.match.matchId });
-      }
-      break;
-
-    case 'lobbies':
-      onLobbies(message.open, message.live);
-      break;
-
-    case 'state':
-      onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor);
-      break;
-
-    case 'delta':
-      onDelta(message);
-      break;
-
-    // A match this wallet sits in has its room now: go to the table.
-    case 'live':
-      if (app.match?.matchId !== message.matchId) net.send({ type: 'watch', matchId: message.matchId });
-      break;
-
-    // The watch is held until the room opens; `state` follows then.
-    case 'waiting':
-      break;
-
-    case 'avatars':
-      onAvatars(message);
-      break;
-
-    case 'dossier':
-      onDossier(message);
-      break;
-
-    case 'round':
-      onRound(message);
-      break;
-
-    case 'receipt':
-      void onReceipt(message);
-      break;
-
-    case 'finished':
-      onFinished(message);
-      break;
-
-    case 'settled':
-      void onSettled(message);
-      // Archived just before this was sent, so it belongs in the list now.
-      requestHistory();
-      break;
-
-    case 'history':
-      onHistory(message);
-      break;
-
-    case 'review':
-      onReview(message);
-      break;
-
-    case 'crossChain':
-      onCrossChain(message.event);
-      break;
-
-    case 'matched':
-      onDequeued();
-      onMatched(message);
-      break;
-
-    case 'queued':
-      onQueued(message);
-      break;
-
-    case 'dequeued':
-      onDequeued();
-      break;
-
-    case 'analysis.step':
-      onAnalysisStep(message);
-      break;
-
-    case 'analysis.done':
-      onAnalysisDone(message);
-      break;
-
-    case 'analysis.error':
-      onAnalysisError(message);
-      break;
-
-    case 'relayed':
-      onRelayed(message);
-      break;
-
-    case 'balance':
-      onBalance(message);
-      break;
-
-    case 'relay.error':
-      onRelayError(message);
-      break;
-
-    case 'error':
-      onError(message);
-      break;
-  }
+function onHello(message: Extract<ServerMessage, { type: 'hello' }>): void {
+  if (app.wallet) app.wallet.hubChainId = message.chainId;
+  // Every panel that shows any of this is subscribed to it.
+  store.set({
+    nonce: message.nonce,
+    chainId: message.chainId,
+    escrow: message.escrow,
+    avatarCollections: message.avatarCollections,
+    sessionDelegate: message.sessionDelegate,
+    relayQuota: message.relayQuota,
+    receiptSigner: message.receiptSigner,
+    practiceReceiptSigner: message.practiceReceiptSigner,
+    zap: message.zap,
+    spokes: message.spokes,
+    staking: message.staking,
+    analyst: message.analyst,
+    matchmaking: message.matchmaking,
+    withdrawToChain: message.withdrawToChain,
+    // A new connection: the server let the old one's place in the queue go.
+    queue: null,
+  });
 }
 
 function onError(message: Extract<ServerMessage, { type: 'error' }>): void {

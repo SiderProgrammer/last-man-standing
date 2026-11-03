@@ -45,7 +45,7 @@ import {
   sessionKeyDelegateAbi,
   withdrawForCall,
 } from '@lms/contracts';
-import { SessionRelay, viemRelayPort, viemTxSender } from '@lms/server';
+import { SessionRelay, keySigner, viemRelayPort, viemTxSender } from '@lms/server';
 
 const PORT = Number(process.env.CHECK_ANVIL_PORT ?? 8599);
 const RPC = `http://127.0.0.1:${PORT}`;
@@ -110,7 +110,7 @@ try {
     port: viemRelayPort({
       rpcUrl: RPC,
       chainId: CHAIN_ID,
-      sender: viemTxSender({ privateKey: RELAYER_KEY, chainId: CHAIN_ID, rpcUrl: RPC }, { pollMs: 250, label: 'relay' }),
+      sender: viemTxSender({ signer: keySigner(RELAYER_KEY), chainId: CHAIN_ID, rpcUrl: RPC }, { pollMs: 250, label: 'relay' }),
     }),
     escrow,
     delegate,

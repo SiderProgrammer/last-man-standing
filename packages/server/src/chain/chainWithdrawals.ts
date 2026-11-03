@@ -78,19 +78,13 @@ export class ChainWithdrawals {
       throw new RequestError('RELAY_REFUSED', 'this server does not bridge to that chain');
     }
 
-    const { quota } = this.options;
-    quota.take(account);
-    try {
-      const tx = await this.options.port
-        .submit(withdrawal, quoteFromWire(message.quote), message.signature)
-        .catch((error: unknown) => {
-          throw new RequestError('RELAY_REFUSED', `the withdrawal would fail: ${revertReason(error)}`);
-        });
-      return { tx, left: quota.left(account) };
-    } catch (error) {
-      quota.giveBack(account);
-      throw error;
-    }
+    const { quota, port } = this.options;
+    const tx = await quota.spend(account, () =>
+      port.submit(withdrawal, quoteFromWire(message.quote), message.signature).catch((error: unknown) => {
+        throw new RequestError('RELAY_REFUSED', `the withdrawal would fail: ${revertReason(error)}`);
+      }),
+    );
+    return { tx, left: quota.left(account) };
   }
 }
 

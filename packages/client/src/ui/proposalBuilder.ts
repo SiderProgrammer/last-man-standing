@@ -1,4 +1,4 @@
-import { encodeFunctionData, isAddress, isHex, keccak256, pad, parseEther, toBytes, type Address, type Hex } from 'viem';
+import { encodeFunctionData, isAddress, isHex, keccak256, parseEther, toBytes, type Address, type Hex } from 'viem';
 import { governableAbi, type ProtocolParams } from '@lms/contracts';
 
 /**
@@ -58,6 +58,8 @@ const MAX_FEE_BPS = 1_000;
 const COOLDOWN_DAYS = { min: 1, max: 30 };
 const DAY = 86_400;
 const CANCELLER_ROLE = keccak256(toBytes('CANCELLER_ROLE'));
+const NO_FEE_ROUTER = 'This deployment has no fee router.';
+const NO_CONFIG = 'Could not find the protocol config.';
 
 const address = (name: string, label: string): TemplateField => ({ name, label, placeholder: '0x…' });
 
@@ -151,7 +153,7 @@ export function buildAction(templateId: string, values: Record<string, string>, 
     case 'stakerShare': {
       const bps = percentToBps(field('percent'), 10_000);
       if (typeof bps === 'string') return { ok: false, error: bps };
-      return call(context.feeRouter, 'This deployment has no fee router.', encode('setStakerBps', [bps]));
+      return call(context.feeRouter, NO_FEE_ROUTER, encode('setStakerBps', [bps]));
     }
     case 'protocolFee': {
       const bps = percentToBps(field('percent'), MAX_FEE_BPS);
@@ -159,7 +161,7 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       if (!context.params) return { ok: false, error: 'Could not read the current parameters.' };
       return call(
         context.config,
-        'Could not find the protocol config.',
+        NO_CONFIG,
         encode('setParams', [{ ...context.params, feeBps: bps }]),
       );
     }
@@ -168,8 +170,8 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       const to = field('to');
       if (!isAddress(to)) return { ok: false, error: 'Enter a valid address.' };
       return templateId === 'treasury'
-        ? call(context.feeRouter, 'This deployment has no fee router.', encode('setTreasury', [to]))
-        : call(context.config, 'Could not find the protocol config.', encode('setGuardian', [to]));
+        ? call(context.feeRouter, NO_FEE_ROUTER, encode('setTreasury', [to]))
+        : call(context.config, NO_CONFIG, encode('setGuardian', [to]));
     }
     case 'cooldown': {
       const days = wholeDays(field('days'), COOLDOWN_DAYS.min, COOLDOWN_DAYS.max);
@@ -191,7 +193,7 @@ export function buildAction(templateId: string, values: Record<string, string>, 
     case 'bridgeReceiver': {
       const receiver = field('receiver');
       if (!isAddress(receiver)) return { ok: false, error: 'Enter a valid address, or the zero address to turn it off.' };
-      return call(context.config, 'Could not find the protocol config.', encode('setBridgeReceiver', [receiver]));
+      return call(context.config, NO_CONFIG, encode('setBridgeReceiver', [receiver]));
     }
     case 'custom': {
       const target = field('target');
@@ -238,13 +240,7 @@ function percentToBps(text: string, maxBps: number): number | string {
   return bps;
 }
 
-/** A positive whole number that fits a `uint32`, or null. */
-function uint32(text: string): number | null {
-  if (!/^\d+$/.test(text)) return null;
-  const value = Number(text);
-  return value > 0 && value <= 0xffff_ffff ? value : null;
-}
-
+/** A whole number of days from `min` to `max`, or why the text is not one. */
 function wholeDays(text: string, min: number, max: number): number | string {
   if (!/^\d+$/.test(text)) return 'Enter a whole number of days.';
   const days = Number(text);

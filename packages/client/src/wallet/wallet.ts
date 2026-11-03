@@ -306,11 +306,6 @@ export class Wallet {
     return this.client.writeContract({ ...request, chain });
   }
 
-
-
-
-
-
   async withdraw(escrow: Address): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
@@ -323,7 +318,6 @@ export class Wallet {
     return this.client.writeContract({ ...request, chain });
   }
 
-  /** History root the escrow stored when the match settled; zero before that. */
   /**
    * What the escrow holds about a proposed match: everything a transcript is
    * checked against, read from the chain rather than from the server.
@@ -419,45 +413,15 @@ export class Wallet {
   async avatarStatus(
     collection: Address,
   ): Promise<{ equipped: bigint; minted: boolean; totalMinted: bigint; maxSupply: bigint }> {
+    const at = { address: collection, abi: playerAvatarsAbi } as const;
     const [equipped, minted, totalMinted, maxSupply] = await Promise.all([
-      this.rpc.readContract({
-        address: collection,
-        abi: playerAvatarsAbi,
-        functionName: 'equipped',
-        args: [this.address],
-      }),
-      this.rpc.readContract({
-        address: collection,
-        abi: playerAvatarsAbi,
-        functionName: 'hasMinted',
-        args: [this.address],
-      }),
-      this.rpc.readContract({
-        address: collection,
-        abi: playerAvatarsAbi,
-        functionName: 'totalMinted',
-      }),
-      this.rpc.readContract({
-        address: collection,
-        abi: playerAvatarsAbi,
-        functionName: 'maxSupply',
-      }),
+      this.rpc.readContract({ ...at, functionName: 'equipped', args: [this.address] }),
+      this.rpc.readContract({ ...at, functionName: 'hasMinted', args: [this.address] }),
+      this.rpc.readContract({ ...at, functionName: 'totalMinted' }),
+      this.rpc.readContract({ ...at, functionName: 'maxSupply' }),
     ]);
     return { equipped, minted, totalMinted, maxSupply };
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   /**
    * True when this wallet can sign an EIP-7702 authorization itself. Injected

@@ -129,20 +129,25 @@ contract BridgeJoinReceiver is AcrossMessageHandler, Ownable2Step, ReentrancyGua
         if (msg.sender != spokePool) revert NotSpokePool(msg.sender);
         if (tokenSent != address(weth) || !_unwrap(amount)) {
             emit Unroutable(tokenSent, amount, message);
-            return;
+        } else if (!_routeJoin(amount, message)) {
+            // Unwrapped by now: what is held is ETH.
+            emit Unroutable(address(0), amount, message);
         }
+    }
 
+    /// @dev Seats the player `message` names with `amount` ETH. False, with
+    ///      nothing done, for a message that does not decode or names no
+    ///      player, or a join the escrow refused.
+    function _routeJoin(uint256 amount, bytes memory message) private returns (bool) {
         try this.decodeJoin(message) returns (bytes32 matchId, address player, uint32 originChainId) {
-            if (player == address(0)) {
-                emit Unroutable(address(0), amount, message);
-                return;
-            }
-            try escrow.bridgeJoin{value: amount}(matchId, player, originChainId) {}
-            catch {
-                emit Unroutable(address(0), amount, message);
+            if (player == address(0)) return false;
+            try escrow.bridgeJoin{value: amount}(matchId, player, originChainId) {
+                return true;
+            } catch {
+                return false;
             }
         } catch {
-            emit Unroutable(address(0), amount, message);
+            return false;
         }
     }
 

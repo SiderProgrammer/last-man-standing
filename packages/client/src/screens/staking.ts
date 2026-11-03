@@ -1,3 +1,4 @@
+import { formatUnits } from 'viem';
 import { chainInfo } from '@lms/contracts';
 import { errorFirstLine } from '@lms/api';
 import { app, dom, store } from '../context.js';
@@ -11,6 +12,7 @@ import {
   type Vesting,
 } from '../ui/staking.js';
 import * as stakingCalls from '../wallet/staking.js';
+import type { Wallet } from '../wallet/wallet.js';
 
 /**
  * The staking panel: stake, unstake, withdraw, claim the ETH that staking
@@ -135,30 +137,33 @@ async function act(done: string, pending: Promise<`0x${string}` | null>): Promis
   }
 }
 
-async function stake(): Promise<`0x${string}` | null> {
+/** The wallet and the staking vault, when there are both to act with. */
+function walletAndVault(): { wallet: Wallet; vault: `0x${string}` } | null {
   const wallet = app.wallet;
   const vault = app.staking?.vault;
-  if (!wallet || !vault) return null;
+  return wallet && vault ? { wallet, vault } : null;
+}
+
+async function stake(): Promise<`0x${string}` | null> {
+  const at = walletAndVault();
+  if (!at) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to stake.');
-  return stakingCalls.stake(wallet, vault, amount);
+  return stakingCalls.stake(at.wallet, at.vault, amount);
 }
 
 async function unstake(): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const vault = app.staking?.vault;
-  if (!wallet || !vault || !position) return null;
+  const at = walletAndVault();
+  if (!at || !position) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
   // One sLMS is one LMS; more than the position unstakes all of it.
-  return stakingCalls.requestUnstake(wallet, vault, amount < position.staked ? amount : position.staked);
+  return stakingCalls.requestUnstake(at.wallet, at.vault, amount < position.staked ? amount : position.staked);
 }
 
 async function claimRewards(): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const vault = app.staking?.vault;
-  if (!wallet || !vault) return null;
-  return stakingCalls.claimRewards(wallet, vault);
+  const at = walletAndVault();
+  return at && stakingCalls.claimRewards(at.wallet, at.vault);
 }
 
 async function claimPlayRewards(): Promise<`0x${string}` | null> {
@@ -175,28 +180,23 @@ async function releaseVested(): Promise<`0x${string}` | null> {
 }
 
 async function delegate(): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const vault = app.staking?.vault;
-  if (!wallet || !vault) return null;
+  const at = walletAndVault();
+  if (!at) return null;
   const parsed = parseDelegatee(dom.delegateTo.value);
   if (!parsed.ok) throw new Error(parsed.error);
-  const hash = await stakingCalls.delegateVotes(wallet, vault, parsed.address);
+  const hash = await stakingCalls.delegateVotes(at.wallet, at.vault, parsed.address);
   dom.delegateTo.value = '';
   return hash;
 }
 
 async function undelegate(): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const vault = app.staking?.vault;
-  if (!wallet || !vault) return null;
-  return stakingCalls.delegateVotes(wallet, vault, wallet.address);
+  const at = walletAndVault();
+  return at && stakingCalls.delegateVotes(at.wallet, at.vault, at.wallet.address);
 }
 
 async function withdraw(): Promise<`0x${string}` | null> {
-  const wallet = app.wallet;
-  const vault = app.staking?.vault;
-  if (!wallet || !vault) return null;
-  return stakingCalls.claimUnstaked(wallet, vault);
+  const at = walletAndVault();
+  return at && stakingCalls.claimUnstaked(at.wallet, at.vault);
 }
 
 /**
@@ -204,8 +204,5 @@ async function withdraw(): Promise<`0x${string}` | null> {
  * stake, or else the whole position to unstake.
  */
 function maxText(current: StakingPosition): string {
-  const wei = current.lmsBalance > 0n ? current.lmsBalance : current.staked;
-  const whole = wei / 10n ** 18n;
-  const fraction = (wei % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '');
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
+  return formatUnits(current.lmsBalance > 0n ? current.lmsBalance : current.staked, 18);
 }

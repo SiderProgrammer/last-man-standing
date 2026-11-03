@@ -1,10 +1,8 @@
 import { concatHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
-  MATCH_RESULT_TYPES,
   addressKey,
-  matchResultDomain,
-  matchResultMessage,
+  matchResultTypedData,
   receiptTypedData,
   type AttestedResult,
   type Transcript,
@@ -28,13 +26,7 @@ export async function signResult(
   chainId: number,
   escrow: Address,
 ): Promise<Hex> {
-  const account = privateKeyToAccount(privateKey);
-  return account.signTypedData({
-    domain: matchResultDomain(chainId, escrow),
-    types: MATCH_RESULT_TYPES,
-    primaryType: 'MatchResult',
-    message: matchResultMessage(result),
-  });
+  return privateKeyToAccount(privateKey).signTypedData(matchResultTypedData(chainId, escrow, result));
 }
 
 /**

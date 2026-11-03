@@ -179,7 +179,13 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
     }
 
     function isClaimed(address player, uint256 epoch) public view returns (bool) {
-        return claimedBits[player][epoch >> 8] & (1 << (epoch & 0xff)) != 0;
+        (uint256 word, uint256 bit) = _claimBit(epoch);
+        return claimedBits[player][word] & bit != 0;
+    }
+
+    /// @dev Where `epoch`'s claimed flag lives: its word, and its bit in it.
+    function _claimBit(uint256 epoch) private pure returns (uint256 word, uint256 bit) {
+        return (epoch >> 8, 1 << (epoch & 0xff));
     }
 
     // ------------------------------------------------------------------- claims
@@ -201,7 +207,8 @@ contract RewardsDistributor is Ownable2Step, ReentrancyGuardTransient {
             uint256 paid = escrow.feesPaid(player, epoch);
             if (paid == 0) continue;
 
-            claimedBits[player][epoch >> 8] |= 1 << (epoch & 0xff);
+            (uint256 word, uint256 bit) = _claimBit(epoch);
+            claimedBits[player][word] |= bit;
             Rate memory terms = _fixRate(epoch);
             amounts[i] = _reward(paid, terms.value, terms.walletCap);
             reward += amounts[i];

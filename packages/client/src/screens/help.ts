@@ -1,5 +1,6 @@
 import { DEFAULT_RULES } from '@lms/consensus';
 import { app, dom } from '../context.js';
+import { element } from '../ui/dom.js';
 import { rulesSheet } from '../ui/rules.js';
 
 /**
@@ -33,16 +34,8 @@ function renderRules(): void {
   const sections = rulesSheet(app.match?.rules ?? DEFAULT_RULES);
   dom.helpRulesBody.replaceChildren(
     ...sections.map((section) => {
-      const block = document.createElement('div');
-      block.className = `rule${section.tone ? ` ${section.tone}` : ''}`;
-      const title = document.createElement('h4');
-      title.textContent = section.title;
-      block.append(title);
-      for (const line of section.lines) {
-        const text = document.createElement('p');
-        text.textContent = line;
-        block.append(text);
-      }
+      const block = element('div', `rule${section.tone ? ` ${section.tone}` : ''}`);
+      block.append(element('h4', '', section.title), ...section.lines.map((line) => element('p', '', line)));
       return block;
     }),
   );

@@ -30,16 +30,12 @@ import type { Wallet } from './wallet.js';
  */
 export async function proposalLive(wallet: Wallet, governor: Address, vault: Address, proposal: ProposalSummary): Promise<ProposalLive> {
   const id = BigInt(proposal.id);
+  const at = { address: governor, abi: lmsGovernorAbi } as const;
   const [state, [against, forVotes, abstain], hasVoted, eta, block] = await Promise.all([
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'state', args: [id] }),
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalVotes', args: [id] }),
-    wallet.rpc.readContract({
-      address: governor,
-      abi: lmsGovernorAbi,
-      functionName: 'hasVoted',
-      args: [id, wallet.address],
-    }),
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalEta', args: [id] }),
+    wallet.rpc.readContract({ ...at, functionName: 'state', args: [id] }),
+    wallet.rpc.readContract({ ...at, functionName: 'proposalVotes', args: [id] }),
+    wallet.rpc.readContract({ ...at, functionName: 'hasVoted', args: [id, wallet.address] }),
+    wallet.rpc.readContract({ ...at, functionName: 'proposalEta', args: [id] }),
     wallet.rpc.getBlock(),
   ]);
   const pending = state === ProposalState.Pending;
@@ -50,13 +46,8 @@ export async function proposalLive(wallet: Wallet, governor: Address, vault: Add
         null,
       ]
     : await Promise.all([
-        wallet.rpc.readContract({
-          address: governor,
-          abi: lmsGovernorAbi,
-          functionName: 'getVotes',
-          args: [wallet.address, snapshot],
-        }),
-        wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'quorum', args: [snapshot] }),
+        wallet.rpc.readContract({ ...at, functionName: 'getVotes', args: [wallet.address, snapshot] }),
+        wallet.rpc.readContract({ ...at, functionName: 'quorum', args: [snapshot] }),
       ]);
   return {
     state: state as ProposalStateValue,
@@ -100,26 +91,23 @@ export async function castVote(wallet: Wallet, governor: Address, proposalId: st
  * The governor checks the proposer's votes one second in the past, so that
  * is the number compared against the threshold here too.
  */
-export async function proposalContext(wallet: Wallet, 
+export async function proposalContext(
+  wallet: Wallet,
   governor: Address,
   known: Pick<ProposalContext, 'vault' | 'feeRouter' | 'escrow'>,
 ): Promise<{ context: ProposalContext; power: bigint; threshold: bigint }> {
+  const at = { address: governor, abi: lmsGovernorAbi } as const;
   const [timelock, threshold, clock, config] = await Promise.all([
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'timelock' }),
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'proposalThreshold' }),
-    wallet.rpc.readContract({ address: governor, abi: lmsGovernorAbi, functionName: 'clock' }),
+    wallet.rpc.readContract({ ...at, functionName: 'timelock' }),
+    wallet.rpc.readContract({ ...at, functionName: 'proposalThreshold' }),
+    wallet.rpc.readContract({ ...at, functionName: 'clock' }),
     known.escrow
       ? wallet.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'config' })
       : Promise.resolve(null),
   ]);
   const [power, params] = await Promise.all([
     clock > 0
-      ? wallet.rpc.readContract({
-          address: governor,
-          abi: lmsGovernorAbi,
-          functionName: 'getVotes',
-          args: [wallet.address, BigInt(clock - 1)],
-        })
+      ? wallet.rpc.readContract({ ...at, functionName: 'getVotes', args: [wallet.address, BigInt(clock - 1)] })
       : Promise.resolve(0n),
     config
       ? wallet.rpc.readContract({ address: config, abi: protocolConfigAbi, functionName: 'getParams' })

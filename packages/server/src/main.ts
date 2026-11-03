@@ -3,10 +3,10 @@
  * starts listening. The only file in the package with side effects at the
  * top level, which is why it is not the one `@lms/server` resolves to.
  */
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
-import { MAX_CLIENT_FRAME_BYTES, errorMessage } from '@lms/api';
+import { MAX_CLIENT_FRAME_BYTES, errorMessage, type StakingInfo } from '@lms/api';
 import { config, ZERO_ADDRESS } from './config.js';
 import { Gateway } from './gateway/gateway.js';
 import { Heartbeat } from './gateway/heartbeat.js';
@@ -14,6 +14,8 @@ import { peerFrom } from './gateway/peer.js';
 import { VerifyPool, layeredVerifier } from './gateway/verifyPool.js';
 import { Lobby } from './lobby/lobby.js';
 import { openStorage } from './db/storage.js';
+import type { MatchArchive } from './lobby/store.js';
+import type { StyleBook } from './lobby/styles.js';
 import { transcriptResponse } from './lobby/transcripts.js';
 import { generatePrivateKey } from 'viem/accounts';
 import { attestorReceipts, receiptSigner, relayerFrom } from './chain/attestor.js';
@@ -31,6 +33,7 @@ import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.j
 import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
+import { repeat } from './util/poll.js';
 
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
@@ -104,7 +107,6 @@ async function main(): Promise<void> {
     practiceReceiptSigner: practiceReceipts.address,
   });
 
-
   bridge = config.onChain
     ? ChainBridge.start({
         rpcUrl: config.rpcUrl,
@@ -120,6 +122,8 @@ async function main(): Promise<void> {
         abort: (matchId) => relayer.abort(matchId),
       })
     : null;
+  // Empty when there is no chain to list lobbies from.
+  const directory = () => bridge?.directory() ?? { open: [], live: [] };
 
   // With an RPC the gateway can verify ERC-1271 signatures, which is what lets
   // a contract wallet sign its session grant. Without one, EOAs still work.
@@ -136,7 +140,6 @@ async function main(): Promise<void> {
 
   // Spokes bridge stakes into the hub escrow, so likewise.
   const spokes = config.onChain ? parseSpokes(config.spokes, config.chainId) : [];
-
 
   // Proposals made to the governor, which cannot list its own.
   const proposals =
@@ -184,33 +187,7 @@ async function main(): Promise<void> {
 
   // Reads finished matches from the archive and nothing else, in a worker
   // thread of its own; see `analyst/analyst.ts`.
-  const analyst = config.analyst.enabled
-    ? new AnalystWorker({
-        archive,
-        styles,
-        config: {
-          model: {
-            apiKey: config.analyst.geminiApiKey,
-            baseUrl: config.analyst.geminiBaseUrl,
-            timeoutMs: config.analyst.timeoutMs,
-            maxRetries: config.analyst.maxRetries,
-          },
-          analyst: {
-            modelId: config.analyst.model,
-            effort: config.analyst.effort,
-            maxTokens: config.analyst.maxTokens,
-            deadlineMs: config.analyst.deadlineMs,
-          },
-          limits: {
-            perWalletPerHour: config.analyst.quotaPerHour,
-            maxConcurrent: config.analyst.maxConcurrent,
-            dailyBudgetUsd: config.analyst.dailyBudgetUsd,
-            requestsPerMinute: config.analyst.requestsPerMinute,
-            requestsPerDay: config.analyst.requestsPerDay,
-          },
-        },
-      })
-    : undefined;
+  const analyst = config.analyst.enabled ? analystWorker(archive, styles) : undefined;
 
   // Opens matchmade lobbies, the only ones that earn play-mining, with its
   // own key. Told who to notify once the gateway exists.
@@ -230,7 +207,7 @@ async function main(): Promise<void> {
     archive,
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
-    directory: () => bridge?.directory() ?? { open: [], live: [] },
+    directory,
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // A contract wallet's grant can only be checked by asking the wallet.
@@ -244,15 +221,7 @@ async function main(): Promise<void> {
     zap,
     spokes,
     ...(matchmaker ? { matchmaker } : {}),
-    staking:
-      config.stakedLms !== ZERO_ADDRESS
-        ? {
-            vault: config.stakedLms,
-            governor: proposals ? config.governor : null,
-            feeRouter: config.feeRouter !== ZERO_ADDRESS ? config.feeRouter : null,
-            rewards: config.rewardsDistributor !== ZERO_ADDRESS ? config.rewardsDistributor : null,
-          }
-        : null,
+    staking: stakingInfo(proposals !== null),
     limits: {
       ...config.gatewayLimits,
       maxConnections: config.maxConnections,
@@ -262,109 +231,42 @@ async function main(): Promise<void> {
     },
   });
 
-  const http = createServer((request, response) => {
-    // Both read by the client from its own origin, which is not this one.
-    const answer = (route: { status: number; body: string }) => {
-      response.writeHead(route.status, {
-        'content-type': 'application/json',
-        'access-control-allow-origin': '*',
-      });
-      response.end(route.body);
-    };
-    const route = proposalsResponse(proposals, request.url ?? '');
-    if (route) {
-      answer(route);
-      return;
-    }
-    if ((request.url ?? '').startsWith('/transcripts/')) {
-      transcriptResponse(archive, request.url ?? '').then(
-        (found) => answer(found ?? { status: 404, body: '{}' }),
-        (error: unknown) => answer({ status: 500, body: JSON.stringify({ error: errorMessage(error) }) }),
-      );
-      return;
-    }
-    if (request.url === '/health') {
-      const directory = bridge?.directory() ?? { open: [], live: [] };
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(
-        JSON.stringify({
-          ok: true,
-          rooms: lobby.size,
-          pendingSettlements: lobby.pendingSettlements,
-          clients: gateway.connections,
-          onChain: config.onChain,
-          lobbies: { open: directory.open.length, live: directory.live.length },
-          analyst: analyst
-            ? {
-                model: config.analyst.model,
-                requestsToday: analyst.requests,
-                spentTodayUsd: Math.round(analyst.spent * 1e4) / 1e4,
-              }
-            : null,
-        }),
-      );
-      return;
-    }
-    response.writeHead(404).end();
+  const http = httpServer({
+    proposals,
+    archive,
+    health: () => {
+      const lobbies = directory();
+      return {
+        ok: true,
+        rooms: lobby.size,
+        pendingSettlements: lobby.pendingSettlements,
+        clients: gateway.connections,
+        onChain: config.onChain,
+        lobbies: { open: lobbies.open.length, live: lobbies.live.length },
+        analyst: analyst
+          ? {
+              model: config.analyst.model,
+              requestsToday: analyst.requests,
+              spentTodayUsd: Math.round(analyst.spent * 1e4) / 1e4,
+            }
+          : null,
+      };
+    },
   });
 
-  const wss = new WebSocketServer({
-    server: http,
-    // `ws` defaults to 100 MiB. Refusing at the transport means an oversized
-    // frame is never buffered at all; the gateway's own check stays as the
-    // backstop for anything that reaches it some other way.
-    maxPayload: MAX_CLIENT_FRAME_BYTES,
-    // Compression costs memory per socket and opens decompression bombs, for
-    // frames that are a few hundred bytes of JSON.
-    perMessageDeflate: false,
-  });
   const heartbeat = new Heartbeat();
-  // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
-  // the shapes are bridged here rather than by casting the socket into place.
-  wss.on('error', (error) => console.error('[server] websocket server error:', error.message));
-  wss.on('connection', (socket, request) => {
-    // First, before anything can fail: `ws` reports protocol violations — a
-    // frame over `maxPayload`, invalid UTF-8, a bad opcode — as an `error`
-    // event, and one with no listener is thrown, taking the whole process
-    // down on one malformed frame. With a listener, `ws` closes that socket.
-    socket.on('error', () => undefined);
-    const admitted = gateway.accept(
-      {
-        get readyState() {
-          return socket.readyState;
-        },
-        get bufferedAmount() {
-          return socket.bufferedAmount;
-        },
-        send: (data) => socket.send(data),
-        close: (code, reason) => socket.close(code, reason),
-        onMessage: (listener) => void socket.on('message', listener),
-        onClose: (listener) => void socket.on('close', listener),
-      },
-      peerFrom(request, config.trustedProxyHops),
-    );
-    if (!admitted) return;
-    const pingable = {
-      ping: () => socket.ping(),
-      terminate: () => socket.terminate(),
-      onPong: (listener: () => void) => void socket.on('pong', listener),
-    };
-    heartbeat.track(pingable);
-    socket.on('close', () => heartbeat.untrack(pingable));
-  });
+  const wss = acceptSockets(http, gateway, heartbeat);
 
   notify = (player, message) => gateway.notify(player, message);
-  const ticker = setInterval(() => lobby.tick(), TICK_MS);
-  ticker.unref();
-  const matching = matchmaker ? setInterval(() => void matchmaker.tick(), 1_000) : null;
-  matching?.unref();
-  if (matchmaker) console.log(`[server] matchmaking ${matchmaker.tiers.length} tiers`);
-  const sweeper = setInterval(() => {
-    gateway.sweep();
-  }, SWEEP_MS);
-  sweeper.unref();
-  const beat = setInterval(() => heartbeat.sweep(), HEARTBEAT_MS);
-  beat.unref();
+  const timers = [
+    repeat(() => lobby.tick(), TICK_MS),
+    repeat(() => gateway.sweep(), SWEEP_MS),
+    repeat(() => heartbeat.sweep(), HEARTBEAT_MS),
+  ];
+  if (matchmaker) {
+    timers.push(repeat(() => void matchmaker.tick(), 1_000));
+    console.log(`[server] matchmaking ${matchmaker.tiers.length} tiers`);
+  }
 
   console.log(
     config.onChain
@@ -425,10 +327,7 @@ async function main(): Promise<void> {
     feeKeeper?.stop();
     crossChain?.stop();
     proposals?.stop();
-    clearInterval(ticker);
-    if (matching) clearInterval(matching);
-    clearInterval(sweeper);
-    clearInterval(beat);
+    for (const stop of timers) stop();
     wss.close();
     http.close();
     void verifyPool.close();
@@ -444,3 +343,125 @@ void main().catch((error: unknown) => {
   console.error('[server] failed to start', error);
   process.exitCode = 1;
 });
+
+/** The analyst worker, configured from `config.analyst`. */
+function analystWorker(archive: MatchArchive, styles: StyleBook): AnalystWorker {
+  const { analyst } = config;
+  return new AnalystWorker({
+    archive,
+    styles,
+    config: {
+      model: {
+        apiKey: analyst.geminiApiKey,
+        baseUrl: analyst.geminiBaseUrl,
+        timeoutMs: analyst.timeoutMs,
+        maxRetries: analyst.maxRetries,
+      },
+      analyst: {
+        modelId: analyst.model,
+        effort: analyst.effort,
+        maxTokens: analyst.maxTokens,
+        deadlineMs: analyst.deadlineMs,
+      },
+      limits: {
+        perWalletPerHour: analyst.quotaPerHour,
+        maxConcurrent: analyst.maxConcurrent,
+        dailyBudgetUsd: analyst.dailyBudgetUsd,
+        requestsPerMinute: analyst.requestsPerMinute,
+        requestsPerDay: analyst.requestsPerDay,
+      },
+    },
+  });
+}
+
+/**
+ * What `hello` says about staking: null hides the panel. The governor is
+ * named only when its proposals are indexed, since the client cannot list them.
+ */
+function stakingInfo(proposalsIndexed: boolean): StakingInfo | null {
+  if (config.stakedLms === ZERO_ADDRESS) return null;
+  const configured = (address: `0x${string}`) => (address !== ZERO_ADDRESS ? address : null);
+  return {
+    vault: config.stakedLms,
+    governor: proposalsIndexed ? config.governor : null,
+    feeRouter: configured(config.feeRouter),
+    rewards: configured(config.rewardsDistributor),
+  };
+}
+
+/** The HTTP side: proposals and transcripts, which the client reads, and `/health`. */
+function httpServer(options: { proposals: ProposalIndex | null; archive: MatchArchive; health: () => object }): Server {
+  return createServer((request, response) => {
+    const url = request.url ?? '';
+    // Both read by the client from its own origin, which is not this one.
+    const answer = (route: { status: number; body: string }) => {
+      response.writeHead(route.status, {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*',
+      });
+      response.end(route.body);
+    };
+    const route = proposalsResponse(options.proposals, url);
+    if (route) {
+      answer(route);
+    } else if (url.startsWith('/transcripts/')) {
+      transcriptResponse(options.archive, url).then(
+        (found) => answer(found ?? { status: 404, body: '{}' }),
+        (error: unknown) => answer({ status: 500, body: JSON.stringify({ error: errorMessage(error) }) }),
+      );
+    } else if (url === '/health') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(options.health()));
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+}
+
+/** Hands every WebSocket on `http` to the gateway, and the ones it admits to the heartbeat. */
+function acceptSockets(http: Server, gateway: Gateway, heartbeat: Heartbeat): WebSocketServer {
+  const wss = new WebSocketServer({
+    server: http,
+    // `ws` defaults to 100 MiB. Refusing at the transport means an oversized
+    // frame is never buffered at all; the gateway's own check stays as the
+    // backstop for anything that reaches it some other way.
+    maxPayload: MAX_CLIENT_FRAME_BYTES,
+    // Compression costs memory per socket and opens decompression bombs, for
+    // frames that are a few hundred bytes of JSON.
+    perMessageDeflate: false,
+  });
+  // `ws` speaks `on(event, listener)`; the gateway wants two named methods, so
+  // the shapes are bridged here rather than by casting the socket into place.
+  wss.on('error', (error) => console.error('[server] websocket server error:', error.message));
+  wss.on('connection', (socket, request) => {
+    // First, before anything can fail: `ws` reports protocol violations — a
+    // frame over `maxPayload`, invalid UTF-8, a bad opcode — as an `error`
+    // event, and one with no listener is thrown, taking the whole process
+    // down on one malformed frame. With a listener, `ws` closes that socket.
+    socket.on('error', () => undefined);
+    const admitted = gateway.accept(
+      {
+        get readyState() {
+          return socket.readyState;
+        },
+        get bufferedAmount() {
+          return socket.bufferedAmount;
+        },
+        send: (data) => socket.send(data),
+        close: (code, reason) => socket.close(code, reason),
+        onMessage: (listener) => void socket.on('message', listener),
+        onClose: (listener) => void socket.on('close', listener),
+      },
+      peerFrom(request, config.trustedProxyHops),
+    );
+    if (!admitted) return;
+    const pingable = {
+      ping: () => socket.ping(),
+      terminate: () => socket.terminate(),
+      onPong: (listener: () => void) => void socket.on('pong', listener),
+    };
+    heartbeat.track(pingable);
+    socket.on('close', () => heartbeat.untrack(pingable));
+  });
+  return wss;
+}

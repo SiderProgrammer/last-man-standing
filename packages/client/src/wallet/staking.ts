@@ -12,15 +12,17 @@ import type { Wallet } from './wallet.js';
 
 /** Everything the staking panel shows, read in one round trip. */
 export async function stakingPosition(wallet: Wallet, vault: Address): Promise<StakingPosition> {
-  const lms = await wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
+  const at = { address: vault, abi: stakedLmsAbi } as const;
+  const mine = [wallet.address] as const;
+  const lms = await wallet.rpc.readContract({ ...at, functionName: 'underlying' });
   const [lmsBalance, staked, votes, delegate, earned, cooldown, [pendingAssets, unlockAt], block] = await Promise.all([
-    wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: [wallet.address] }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'balanceOf', args: [wallet.address] }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'getVotes', args: [wallet.address] }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'delegates', args: [wallet.address] }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'earned', args: [wallet.address] }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'cooldown' }),
-    wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'unstakeOf', args: [wallet.address] }),
+    wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'balanceOf', args: mine }),
+    wallet.rpc.readContract({ ...at, functionName: 'balanceOf', args: mine }),
+    wallet.rpc.readContract({ ...at, functionName: 'getVotes', args: mine }),
+    wallet.rpc.readContract({ ...at, functionName: 'delegates', args: mine }),
+    wallet.rpc.readContract({ ...at, functionName: 'earned', args: mine }),
+    wallet.rpc.readContract({ ...at, functionName: 'cooldown' }),
+    wallet.rpc.readContract({ ...at, functionName: 'unstakeOf', args: mine }),
     wallet.rpc.getBlock(),
   ]);
   return {
@@ -103,13 +105,7 @@ export async function claimUnstaked(wallet: Wallet, vault: Address): Promise<Hex
  * One `eth_call` over every epoch that has ended: the distributor loops.
  */
 export async function playRewards(wallet: Wallet, distributor: Address): Promise<PlayRewards> {
-  const [firstEpoch, epochLength, programEpochs, block] = await Promise.all([
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'firstEpoch' }),
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'epochLength' }),
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'PROGRAM_EPOCHS' }),
-    wallet.rpc.getBlock(),
-  ]);
-  const range = claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp);
+  const { range } = await endedEpochs(wallet, distributor);
   if (!range) return { claimable: 0n, epochs: [] };
   const [claimable, epochs] = await wallet.rpc.readContract({
     address: distributor,
@@ -118,6 +114,28 @@ export async function playRewards(wallet: Wallet, distributor: Address): Promise
     args: [wallet.address, range.from, range.to],
   });
   return { claimable, epochs: [...epochs] };
+}
+
+/**
+ * The distributor's epochs that have ended by the chain's clock, null before
+ * the first has; how long an epoch is, in seconds; and that clock, in unix seconds.
+ */
+async function endedEpochs(
+  wallet: Wallet,
+  distributor: Address,
+): Promise<{ range: { from: bigint; to: bigint } | null; epochLength: bigint; chainTime: number }> {
+  const at = { address: distributor, abi: rewardsDistributorAbi } as const;
+  const [firstEpoch, epochLength, programEpochs, block] = await Promise.all([
+    wallet.rpc.readContract({ ...at, functionName: 'firstEpoch' }),
+    wallet.rpc.readContract({ ...at, functionName: 'epochLength' }),
+    wallet.rpc.readContract({ ...at, functionName: 'PROGRAM_EPOCHS' }),
+    wallet.rpc.getBlock(),
+  ]);
+  return {
+    range: claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp),
+    epochLength,
+    chainTime: Number(block.timestamp),
+  };
 }
 
 /** Claims play-mining rewards for `epochs`, vesting to this wallet over six months. */
@@ -154,16 +172,11 @@ export async function claimRewards(wallet: Wallet, vault: Address): Promise<Hex>
  * a year of weekly epochs.
  */
 export async function vesting(wallet: Wallet, distributor: Address): Promise<Vesting> {
-  const [address, firstEpoch, epochLength, programEpochs, block] = await Promise.all([
+  const [address, { range, epochLength, chainTime }] = await Promise.all([
     wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'vesting' }),
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'firstEpoch' }),
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'epochLength' }),
-    wallet.rpc.readContract({ address: distributor, abi: rewardsDistributorAbi, functionName: 'PROGRAM_EPOCHS' }),
-    wallet.rpc.getBlock(),
+    endedEpochs(wallet, distributor),
   ]);
-  const chainTime = Number(block.timestamp);
   const none: Vesting = { address, held: 0n, releasable: 0n, epochs: [], fullyVestedAt: 0, chainTime };
-  const range = claimableEpochRange(firstEpoch, epochLength, programEpochs, block.timestamp);
   if (!range) return none;
 
   const contract = { address, abi: rewardVestingAbi } as const;

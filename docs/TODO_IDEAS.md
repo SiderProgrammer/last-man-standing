@@ -1,6 +1,3 @@
-what are bad design, architecture choices in this project? Fix them
-code refactor
-
 Fuzz Testing (/fizz)
 Invariant Testing (/fizz)
 use AI skills (pashov skill, openzeppelin skill)

@@ -2,15 +2,13 @@ import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
 import {
   DEFAULT_RULES,
   TRANSCRIPT_VERSION,
-  commitMove,
   hashTranscript,
-  type Move,
   type Rules,
   type Seat,
   type Transcript,
 } from '@lms/consensus';
 import { Match } from '@lms/engine';
-import { Prng, type Strategy } from '@lms/engine/bots';
+import { Prng, playRound } from '@lms/engine/bots';
 import { strategyByName, type StrategyName } from '@lms/engine/sim';
 import type { ArchivedMatch } from '../lobby/store.js';
 
@@ -49,17 +47,7 @@ export function playReferenceMatch(options: {
 
   while (!match.finished) {
     const round = match.round;
-    const living = match.alive;
-    const chosen = new Map<number, Move & { salt: `0x${string}` }>();
-    for (const seat of living) {
-      const move = (players[seat] as Strategy)(seat, match);
-      const sealed = { ...move, salt: label(`${base}:salt:${round}:${seat}`) };
-      chosen.set(seat, sealed);
-      match.submitCommit(seat, commitMove(match.matchId, round, seat, sealed));
-    }
-    match.openRevealPhase();
-    for (const seat of living) match.submitReveal(seat, chosen.get(seat) as Move & { salt: `0x${string}` });
-    match.resolve();
+    playRound(match, players, (seat) => label(`${base}:salt:${round}:${seat}`));
   }
 
   // Every seat is a bot, so nothing in it is signed.

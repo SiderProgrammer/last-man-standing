@@ -244,13 +244,18 @@ contract Deploy is Registry, AcrossBook {
         return _registry(deployment.deployBlock);
     }
 
+    /// @dev Whether this is a local node, where every role may default.
+    function _local() private view returns (bool) {
+        return block.chainid == LOCAL_CHAIN_ID;
+    }
+
     /// @dev Required everywhere but a local node. Pointing it at the deployer's
     ///      own address is allowed, but it has to be a deliberate choice rather
     ///      than something a missing variable does silently.
     function _safe(address deployer) private view returns (address safe) {
         safe = vm.envOr("SAFE", address(0));
         if (safe != address(0)) return safe;
-        if (block.chainid != LOCAL_CHAIN_ID) revert SafeRequired();
+        if (!_local()) revert SafeRequired();
         return deployer;
     }
 
@@ -261,7 +266,7 @@ contract Deploy is Registry, AcrossBook {
     function _guardian() internal view virtual returns (address guardian) {
         guardian = vm.envOr("GUARDIAN", address(0));
         if (guardian != address(0)) return guardian;
-        if (block.chainid != LOCAL_CHAIN_ID) revert GuardianRequired();
+        if (!_local()) revert GuardianRequired();
         return LOCAL_GUARDIAN;
     }
 
@@ -270,7 +275,7 @@ contract Deploy is Registry, AcrossBook {
     ///      `npm run dev:fork` gives the server; elsewhere unset means none.
     function _matchmaker() internal view virtual returns (address matchmaker) {
         matchmaker = vm.envOr("MATCHMAKER", address(0));
-        if (matchmaker == address(0) && block.chainid == LOCAL_CHAIN_ID) return LOCAL_MATCHMAKER;
+        if (matchmaker == address(0) && _local()) return LOCAL_MATCHMAKER;
     }
 
     /// @dev Safe, guardian and treasury (the timelock) are separate, so that
@@ -302,10 +307,9 @@ contract Deploy is Registry, AcrossBook {
     ///      `MOCKS=false` on a local node is a fork run against the real one.
     function _oracle(Deployment memory deployment, address deployer) private {
         address oracle = vm.envOr("ORACLE", address(0));
-        bool local = block.chainid == LOCAL_CHAIN_ID;
-        bool mocks = _mocks(local);
+        bool mocks = _mocks(_local());
 
-        if (mocks && !local) revert MockOffLocal();
+        if (mocks && !_local()) revert MockOffLocal();
         if (!mocks && oracle == address(0)) {
             deployment.vrf = _vrfAdapter(deployer);
             oracle = address(deployment.vrf);
@@ -440,7 +444,7 @@ contract Deploy is Registry, AcrossBook {
         (address pool,) = _across(block.chainid);
         pool = vm.envOr("ACROSS_SPOKE_POOL", pool);
         if (pool == address(0)) {
-            if (!_mocks(block.chainid == LOCAL_CHAIN_ID)) return;
+            if (!_mocks(_local())) return;
             pool = address(new MockAcrossSpokePool(IWETH9(address(new MockWETH()))));
         }
         deployment.acrossSpokePool = pool;
@@ -540,26 +544,29 @@ contract Deploy is Registry, AcrossBook {
         uint256 supply = lms.totalSupply();
 
         deployment.rewards = _rewards(deployment);
-        uint256 play = (supply * PLAY_MINING_BPS) / BPS;
-        lms.transfer(address(deployment.rewards), play);
+        uint256 play = _share(lms, address(deployment.rewards), PLAY_MINING_BPS);
         uint256 budget = deployment.rewards.totalBudget();
         if (budget > play) revert RewardsUnderfunded(budget, play);
 
         uint64 vestingStart = uint64(block.timestamp + TEAM_CLIFF);
         deployment.teamVesting =
             new VestingWallet(_teamBeneficiary(deployment.safe), vestingStart, TEAM_VESTING);
-        uint256 team = (supply * TEAM_BPS) / BPS;
-        lms.transfer(address(deployment.teamVesting), team);
+        uint256 team = _share(lms, address(deployment.teamVesting), TEAM_BPS);
 
         deployment.liquidityReserve = new LiquidityReserve(
             lms, deployment.safe, address(deployment.stakedLms), address(deployment.timelock)
         );
-        uint256 liquidity = (supply * LIQUIDITY_BPS) / BPS;
-        lms.transfer(address(deployment.liquidityReserve), liquidity);
+        uint256 liquidity = _share(lms, address(deployment.liquidityReserve), LIQUIDITY_BPS);
 
         // Treasury and reserve, and the rounding of the other three.
         lms.transfer(address(deployment.timelock), supply - play - team - liquidity);
         assert(lms.balanceOf(deployer) == 0);
+    }
+
+    /// @dev Sends `to` its `bps` of the LMS supply, and returns how much that was.
+    function _share(LmsToken lms, address to, uint256 bps) private returns (uint256 amount) {
+        amount = (lms.totalSupply() * bps) / BPS;
+        lms.transfer(to, amount);
     }
 
     function _rewards(Deployment memory deployment) private returns (RewardsDistributor) {
@@ -584,7 +591,7 @@ contract Deploy is Registry, AcrossBook {
     function _teamBeneficiary(address safe) internal view virtual returns (address team) {
         team = vm.envOr("TEAM_BENEFICIARY", address(0));
         if (team != address(0)) return team;
-        if (block.chainid != LOCAL_CHAIN_ID) revert TeamBeneficiaryRequired();
+        if (!_local()) revert TeamBeneficiaryRequired();
         return safe;
     }
 
@@ -643,17 +650,21 @@ contract Deploy is Registry, AcrossBook {
 
         timelock.revokeRole(timelock.PROPOSER_ROLE(), deployer);
         timelock.revokeRole(timelock.CANCELLER_ROLE(), deployer);
-        // The governor proposes. It also needs the canceller role, which `GovernorTimelockControl` uses to cancel its own
-        // queued proposals.
-        timelock.grantRole(timelock.PROPOSER_ROLE(), address(deployment.governor));
-        timelock.grantRole(timelock.CANCELLER_ROLE(), address(deployment.governor));
+        // The governor proposes. It also needs the canceller role, which
+        // `GovernorTimelockControl` uses to cancel its own queued proposals.
+        _grantProposer(timelock, address(deployment.governor));
         // The Safe proposes and vetoes through `MultisigPhase` until its end
         // date, and never holds a role itself, so the veto ends when the
         // contract says rather than when governance manages to remove it.
         MultisigPhase phase = new MultisigPhase(timelock, safe, _multisigPhaseEnd());
         deployment.multisigPhase = phase;
-        timelock.grantRole(timelock.PROPOSER_ROLE(), address(phase));
-        timelock.grantRole(timelock.CANCELLER_ROLE(), address(phase));
+        _grantProposer(timelock, address(phase));
         timelock.renounceRole(timelock.DEFAULT_ADMIN_ROLE(), deployer);
+    }
+
+    /// @dev Lets `account` propose to the timelock, and cancel what is queued.
+    function _grantProposer(TimelockController timelock, address account) private {
+        timelock.grantRole(timelock.PROPOSER_ROLE(), account);
+        timelock.grantRole(timelock.CANCELLER_ROLE(), account);
     }
 }

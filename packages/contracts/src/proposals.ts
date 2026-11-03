@@ -60,16 +60,9 @@ export const ProposalState = {
 
 export type ProposalStateValue = (typeof ProposalState)[keyof typeof ProposalState];
 
-export const PROPOSAL_STATE_NAMES: Record<ProposalStateValue, string> = {
-  0: 'Pending',
-  1: 'Active',
-  2: 'Canceled',
-  3: 'Defeated',
-  4: 'Succeeded',
-  5: 'Queued',
-  6: 'Expired',
-  7: 'Executed',
-};
+export const PROPOSAL_STATE_NAMES = Object.fromEntries(
+  Object.entries(ProposalState).map(([name, value]) => [value, name]),
+) as Record<ProposalStateValue, string>;
 
 /** `GovernorCountingSimple`'s vote types. */
 export const VoteSupport = { Against: 0, For: 1, Abstain: 2 } as const;

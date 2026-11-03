@@ -47,10 +47,7 @@ export class Net {
   /** Opens the socket. A no-op while one is already open or opening. */
   connect(): void {
     this.closed = false;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.cancelReconnect();
     if (this.socket) return;
     const socket = new WebSocket(this.url);
     this.socket = socket;
@@ -110,13 +107,15 @@ export class Net {
 
   close(): void {
     this.closed = true;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.cancelReconnect();
     const socket = this.socket;
     this.socket = null;
     this.onStatus(false);
     socket?.close();
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 }

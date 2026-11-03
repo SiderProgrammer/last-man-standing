@@ -1,11 +1,12 @@
 import { canonicalJson, type MatchResult, type PublicMatchState } from '@lms/consensus';
-import { PRACTICE_CHAIN_ID } from '@lms/contracts';
+import { isPracticeTable } from '@lms/contracts';
 import { errorFirstLine, type ServerMessage } from '@lms/api';
 import { app, dom } from '../context.js';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain, type EvidenceBundle, type Verification } from '../game/verify.js';
 import { forgetMatch, recallMatch } from '../game/salts.js';
 import { writeRaw } from '../io/storage.js';
 import { showLobbyScreen, toast } from '../ui/chrome.js';
+import { element } from '../ui/dom.js';
 import { ordinal, short } from '../ui/format.js';
 import type { Wallet } from '../wallet/wallet.js';
 import { renderWinnings } from '../wallet/payouts.js';
@@ -32,14 +33,12 @@ export function showResult(
 
   dom.resultRanking.replaceChildren(
     ...message.ranking.map((seat, place) => {
-      const item = document.createElement('li');
+      const item = element('li');
       const address = state.players[seat]?.address ?? '0x?';
-      const medal = document.createElement('span');
-      medal.className = 'medal';
-      medal.textContent = MEDALS[place] ?? String(place + 1);
-      const name = document.createElement('span');
-      name.textContent = `#${seat} ${short(address)}${seat === app.you ? ' (you)' : ''}`;
-      item.append(medal, name);
+      item.append(
+        element('span', 'medal', MEDALS[place] ?? String(place + 1)),
+        element('span', '', `#${seat} ${short(address)}${seat === app.you ? ' (you)' : ''}`),
+      );
       if (place === 0) item.classList.add('winner');
       if (seat === app.you) item.classList.add('you');
       return item;
@@ -54,7 +53,7 @@ export function showResult(
   // A practice match never reaches the chain, so the replay is the whole
   // check. A staked match keeps its moves until the chain check passes: they
   // are the evidence if it does not.
-  const practice = state.players.every((player) => player.chainId === PRACTICE_CHAIN_ID);
+  const practice = isPracticeTable(state.players);
   if (practice && verification.ok) forgetMatch(state.matchId);
   void renderWinnings();
 }
@@ -157,20 +156,14 @@ const MEDALS = ['🏆', '🥈', '🥉'];
 /** One line that says how it went for you, before the details. */
 function renderHeadline(ranking: readonly number[], rounds: number): void {
   const place = app.you === null ? -1 : ranking.indexOf(app.you);
-  const title = document.createElement('strong');
-  const detail = document.createElement('span');
-  if (place === 0) {
-    title.textContent = 'Victory';
-    detail.textContent = `Last one standing after ${rounds} rounds`;
-  } else if (place > 0) {
-    title.textContent = `${ordinal(place + 1)} of ${ranking.length}`;
-    detail.textContent = `Seat #${ranking[0]} survived ${rounds} rounds`;
-  } else {
-    title.textContent = `Seat #${ranking[0] ?? '?'} wins`;
-    detail.textContent = `${rounds} rounds`;
-  }
+  const [title, detail] =
+    place === 0
+      ? ['Victory', `Last one standing after ${rounds} rounds`]
+      : place > 0
+        ? [`${ordinal(place + 1)} of ${ranking.length}`, `Seat #${ranking[0]} survived ${rounds} rounds`]
+        : [`Seat #${ranking[0] ?? '?'} wins`, `${rounds} rounds`];
   dom.resultHeadline.className = `result-headline ${place === 0 ? 'won' : place > 0 ? 'lost' : ''}`;
-  dom.resultHeadline.replaceChildren(title, detail);
+  dom.resultHeadline.replaceChildren(element('strong', '', title), element('span', '', detail));
 }
 
 export function hideResult(): void {

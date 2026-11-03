@@ -2,7 +2,7 @@ import { describeCall } from '@lms/contracts';
 import { errorFirstLine } from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { fillSelect } from '../ui/dom.js';
+import { element, fillSelect } from '../ui/dom.js';
 import {
   ACTION_TEMPLATES,
   buildAction,
@@ -101,9 +101,8 @@ function renderTemplateFields(): void {
   dom.actionError.textContent = '';
   dom.actionFields.replaceChildren(
     ...template.fields.map((field) => {
-      const label = document.createElement('label');
-      label.textContent = field.label;
-      const input = document.createElement('input');
+      const label = element('label', '', field.label);
+      const input = element('input');
       input.dataset.field = field.name;
       input.placeholder = field.placeholder;
       input.setAttribute('aria-label', field.label);
@@ -138,26 +137,25 @@ function renderDraft(): void {
   dom.draftActions.replaceChildren(
     ...draft.map((action, index) => {
       const described = describeCall(action.target, action.value, action.calldata, labels);
-      const item = document.createElement('li');
-      const code = document.createElement('code');
-      code.textContent = `${described.target}.${described.call}`;
-      const remove = document.createElement('button');
-      remove.className = 'ghost';
-      remove.textContent = 'Remove';
+      const item = element('li');
+      const code = element('code', '', `${described.target}.${described.call}`);
+      const remove = element('button', 'ghost', 'Remove');
       remove.onclick = () => {
         draft.splice(index, 1);
         renderDraft();
       };
       item.append(code, ' ', remove);
       if (!described.recognised || action.value > 0n) {
-        const warn = document.createElement('div');
-        warn.className = 'warn';
-        warn.textContent = [
-          described.recognised ? null : 'Voters will see this flagged as an unrecognised call.',
-          action.value > 0n ? `Sends ${formatLms(action.value, 6)} ETH from the timelock.` : null,
-        ]
-          .filter(Boolean)
-          .join(' ');
+        const warn = element(
+          'div',
+          'warn',
+          [
+            described.recognised ? null : 'Voters will see this flagged as an unrecognised call.',
+            action.value > 0n ? `Sends ${formatLms(action.value, 6)} ETH from the timelock.` : null,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        );
         item.append(warn);
       }
       return item;

@@ -46,6 +46,21 @@ import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
  */
 export const QUOTE_TTL_MS = 30_000;
 
+/**
+ * Turns a priced join button into the offer the player confirms: `label`
+ * until it is clicked, which pays, or until `QUOTE_TTL_MS` passes, which
+ * puts it back with `expire`.
+ */
+export function armQuote(button: HTMLButtonElement, label: string, expire: () => void, pay: () => void): void {
+  button.textContent = label;
+  button.classList.add('primary');
+  const expiry = setTimeout(expire, QUOTE_TTL_MS);
+  button.onclick = () => {
+    clearTimeout(expiry);
+    pay();
+  };
+}
+
 /** A little over the chain bridge's poll interval: how stale the directory can be. */
 const DIRECTORY_LAG_MS = 5_000;
 
@@ -131,7 +146,7 @@ export function onLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
   // server's report of it was missed while the socket was down.
   const landed = new Set(
     [...open, ...live]
-      .filter((lobby) => lobby.players.some((player) => sameAddress(player.address, app.wallet?.address)))
+      .filter(isSeatedIn)
       .map((lobby) => lobby.matchId.toLowerCase()),
   );
   const inTransit = [...app.inTransit].filter((id) => !landed.has(id));
@@ -161,7 +176,7 @@ export function renderLobbies(): void {
 }
 
 function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
-  const li = document.createElement('li');
+  const li = element('li');
   const label = element('span');
   const chips = chainChips(lobby.players).map((chip) => {
     const node = element('span', 'chain-chip', chip.label);
@@ -180,10 +195,8 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     label.append(row);
   }
 
-  const button = document.createElement('button');
-  const seated = lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
-  const action = lobbyAction(lobby, seated, Math.floor(Date.now() / 1000), app.matched.has(lobby.matchId.toLowerCase()));
-
+  const button = element('button');
+  const action = lobbyAction(lobby, isSeatedIn(lobby), Math.floor(Date.now() / 1000), app.matched.has(lobby.matchId.toLowerCase()));
   const spoke = currentSpoke();
 
   if (action === 'cancel') {
@@ -197,17 +210,11 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
       showMatchScreen();
     };
   } else if (action === 'closed') {
-    button.textContent = 'Closed';
-    button.disabled = true;
-    button.title = 'Its join window has closed.';
+    disable(button, 'Closed', 'Its join window has closed.');
   } else if (action === 'matchmade') {
-    button.textContent = 'Matchmade';
-    button.disabled = true;
-    button.title = 'The matchmaking queue put this table together; only its players can take a seat.';
+    disable(button, 'Matchmade', 'The matchmaking queue put this table together; only its players can take a seat.');
   } else if (app.inTransit.has(lobby.matchId.toLowerCase())) {
-    button.textContent = 'In transit…';
-    button.disabled = true;
-    button.title = `Your stake is on its way to ${chainInfo(app.chainId).name}. You will be told when it lands.`;
+    disable(button, 'In transit…', `Your stake is on its way to ${chainInfo(app.chainId).name}. You will be told when it lands.`);
   } else if (spoke) {
     idleSpokeButton(button, lobby, spoke);
   } else {
@@ -224,6 +231,18 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
 
   li.append(label, button);
   return li;
+}
+
+/** Whether the connected wallet holds a seat in `lobby`. */
+function isSeatedIn(lobby: LobbyInfo): boolean {
+  return lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
+}
+
+/** A row's button with nothing to do, saying why. */
+function disable(button: HTMLButtonElement, label: string, why: string): void {
+  button.textContent = label;
+  button.disabled = true;
+  button.title = why;
 }
 
 async function createLobby(): Promise<void> {
@@ -358,8 +377,9 @@ async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke
   button.textContent = 'Quoting…';
   try {
     const key = spoke.router.toLowerCase();
-    if (!routes.has(key)) routes.set(key, wallet.spokeRoute(spoke.router));
-    const route = await routes.get(key)!;
+    let pending = routes.get(key);
+    if (!pending) routes.set(key, (pending = wallet.spokeRoute(spoke.router)));
+    const route = await pending;
     const priced = ACROSS_API
       ? await quoteAcross(
           ACROSS_API,
@@ -374,13 +394,12 @@ async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke
           stake,
         )
       : localQuote(stake, await wallet.chainTime());
-    button.textContent = spokeQuoteLabel(stake, priced.inputAmount);
-    button.classList.add('primary');
-    const expiry = setTimeout(() => idleSpokeButton(button, lobby, spoke), QUOTE_TTL_MS);
-    button.onclick = () => {
-      clearTimeout(expiry);
-      void paySpokeJoin(button, lobby, spoke, priced.quote, priced.inputAmount);
-    };
+    armQuote(
+      button,
+      spokeQuoteLabel(stake, priced.inputAmount),
+      () => idleSpokeButton(button, lobby, spoke),
+      () => void paySpokeJoin(button, lobby, spoke, priced.quote, priced.inputAmount),
+    );
     button.disabled = false;
   } catch (error) {
     toast(spokeQuoteError(errorMessage(error), spoke.chainId));

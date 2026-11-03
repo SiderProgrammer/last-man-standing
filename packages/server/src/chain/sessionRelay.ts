@@ -6,7 +6,7 @@ import {
   sessionKeyDelegateAbi,
   type SessionCallKind,
 } from '@lms/contracts';
-import { type RelayedCall } from '@lms/api';
+import { errorFirstLine, type RelayedCall } from '@lms/api';
 import { RequestError } from '../errors.js';
 import { RevertedError, type TxSender } from './txSender.js';
 import { readClient } from './viem.js';
@@ -90,6 +90,20 @@ export class DailyQuota {
     this.used.set(key, Math.max(0, (this.used.get(key) ?? 0) - 1));
   }
 
+  /**
+   * Runs `send` on one of `account`'s calls for today: taken before it
+   * starts, and handed back if it fails, since then it never reached the chain.
+   */
+  async spend<T>(account: Address, send: () => Promise<T>): Promise<T> {
+    this.take(account);
+    try {
+      return await send();
+    } catch (error) {
+      this.giveBack(account);
+      throw error;
+    }
+  }
+
   private turnDay(): void {
     const day = Math.floor(this.now() / DAY_MS);
     if (day === this.day) return;
@@ -130,22 +144,16 @@ export class SessionRelay {
       { escrow: this.options.escrow, account },
     );
     if (!kind) throw new RequestError('RELAY_REFUSED', 'a session key may only join a lobby or collect winnings');
-    // Taken before the first await, and handed back if the call never
-    // reaches the chain.
-    this.quota.take(account);
-    try {
+    const tx = await this.quota.spend(account, async () => {
       const code = await this.options.port.codeOf(account);
       if (!isDelegatedTo(code, this.options.delegate)) {
         throw new RequestError('RELAY_REFUSED', 'this wallet has not turned on one-click play');
       }
-      const tx = await this.options.port.submit(account, call).catch((error: unknown) => {
+      return this.options.port.submit(account, call).catch((error: unknown) => {
         throw new RequestError('RELAY_REFUSED', `the call would fail: ${revertReason(error)}`);
       });
-      return { kind, tx, left: this.left(account) };
-    } catch (error) {
-      this.quota.giveBack(account);
-      throw error;
-    }
+    });
+    return { kind, tx, left: this.left(account) };
   }
 }
 
@@ -164,8 +172,7 @@ export function revertReason(error: unknown): string {
       return (errorName === 'CallFailed' ? escrowErrorName(args?.[1]) : undefined) ?? errorName;
     }
   }
-  const message = error instanceof Error ? ((error as { shortMessage?: string }).shortMessage ?? error.message) : String(error);
-  return message.split('\n')[0] ?? message;
+  return errorFirstLine(error);
 }
 
 function escrowErrorName(reason: unknown): string | undefined {

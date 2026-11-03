@@ -2,11 +2,9 @@ import {
   MatchPhase,
   addressKey,
   commitMove,
+  sameHex,
   type BotDifficulty,
   type CommitReceipt,
-  type MatchResult,
-  type PublicMatchState,
-  type RoundRecord,
   type SealedMove,
   type SeatProof,
   type SignedGrant,
@@ -202,8 +200,7 @@ export class Room {
     this.started = false;
     this.readyUntil = now + (this.options.readyMs ?? 0);
     this.replayUntil = 0;
-    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
-    this.deadlineAt = this.readyUntil + window;
+    this.deadlineAt = this.readyUntil + this.windowMs();
     this.journal?.({ kind: 'rebase', at: now });
   }
 
@@ -221,16 +218,19 @@ export class Room {
   /** Starts the clock now, everyone being here. */
   private start(now: number): void {
     this.started = true;
-    const window = this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
-    this.deadlineAt = Math.min(this.deadlineAt, now + window);
+    this.deadlineAt = Math.min(this.deadlineAt, now + this.windowMs());
     this.journal?.({ kind: 'start', at: now });
     this.broadcastState();
   }
 
+  /** How long the window the match is in lasts: commit or reveal. */
+  private windowMs(): number {
+    return this.match.phase === MatchPhase.Reveal ? this.options.revealMs : this.options.commitMs;
+  }
+
   /** Tells everyone watching how the match settled on-chain. */
   announceSettled(tx: `0x${string}` | null): void {
-    const message = { type: 'settled', matchId: this.matchId, tx } as const;
-    for (const client of this.clients) client.send(message);
+    this.broadcast({ type: 'settled', matchId: this.matchId, tx });
   }
 
   get matchId(): `0x${string}` {
@@ -271,19 +271,18 @@ export class Room {
     // While the table fills, everyone sees who is still to come.
     if (!this.started && this.absent().length === 0) this.start(now);
     else if (!this.started) this.broadcastState();
-    if (this.avatars.length > 0) this.pushAvatars(client);
-    if (this.dossier.length > 0) this.pushDossier(client);
+    if (this.avatars.length > 0) client.send(this.avatarsMessage());
+    if (this.dossier.length > 0) client.send(this.dossierMessage());
   }
 
   /** Publishes the seated wallets' records from earlier settled matches. */
   setDossier(entries: ReadonlyArray<{ address: `0x${string}`; style: PlayStyle }>): void {
     this.dossier = [...entries];
-    if (this.dossier.length === 0) return;
-    for (const client of this.clients) this.pushDossier(client);
+    if (this.dossier.length > 0) this.broadcast(this.dossierMessage());
   }
 
-  private pushDossier(client: Client): void {
-    client.send({ type: 'dossier', matchId: this.matchId, entries: this.dossier });
+  private dossierMessage(): ServerMessage {
+    return { type: 'dossier', matchId: this.matchId, entries: this.dossier };
   }
 
   /**
@@ -295,8 +294,7 @@ export class Room {
    */
   setAvatars(entries: readonly AvatarEntry[]): void {
     this.avatars = [...entries];
-    if (this.avatars.length === 0) return;
-    for (const client of this.clients) this.pushAvatars(client);
+    if (this.avatars.length > 0) this.broadcast(this.avatarsMessage());
   }
 
   detach(client: Client): void {
@@ -325,13 +323,11 @@ export class Room {
     aim?: MoveAim,
     proof?: MoveProof,
   ): CommitReceipt {
-    const seat = this.requireSeat(address);
-    this.requireAim(aim);
-    this.clock = now;
+    const seat = this.mover(address, aim, now);
     const round = this.match.round;
     if (hold) {
       const opened = commitMove(this.matchId, this.match.round, seat, hold);
-      if (opened.toLowerCase() !== commitment.toLowerCase()) {
+      if (!sameHex(opened, commitment)) {
         throw new RequestError('COMMITMENT_MISMATCH', 'the held move does not open the commitment');
       }
       this.match.assertPlayable(seat, hold);
@@ -367,9 +363,7 @@ export class Room {
     aim?: MoveAim,
     proof?: MoveProof,
   ): void {
-    const seat = this.requireSeat(address);
-    this.requireAim(aim);
-    this.clock = now;
+    const seat = this.mover(address, aim, now);
     const round = this.match.round;
     this.match.submitReveal(seat, move);
     this.journal?.({ kind: 'reveal', at: now, seat, move, aim: { matchId: this.matchId, round }, ...(proof ? { proof } : {}) });
@@ -423,12 +417,20 @@ export class Room {
    */
   private requireAim(aim: MoveAim | undefined): void {
     if (!aim) return;
-    if (aim.matchId.toLowerCase() !== this.matchId.toLowerCase()) {
+    if (!sameHex(aim.matchId, this.matchId)) {
       throw new RequestError('STALE_MOVE', 'this move is for another match');
     }
     if (aim.round !== this.match.round) {
       throw new RequestError('STALE_MOVE', `this move is for round ${aim.round}; the match is on round ${this.match.round}`);
     }
+  }
+
+  /** The seat of a player making a move aimed at this match and round, now. */
+  private mover(address: `0x${string}`, aim: MoveAim | undefined, now: number): number {
+    const seat = this.requireSeat(address);
+    this.requireAim(aim);
+    this.clock = now;
+    return seat;
   }
 
   private recordGrant(grant: SignedGrant): void {
@@ -485,10 +487,7 @@ export class Room {
     this.revealSignatures.clear();
     this.receivedAt.clear();
 
-    // One object for the whole table: the gateway serialises a shared message
-    // once, however many sockets it goes to.
-    const message = { type: 'round', record, proofs, lines: describeRound(record), replayMs } as const;
-    for (const client of this.clients) client.send(message);
+    this.broadcast({ type: 'round', record, proofs, lines: describeRound(record), replayMs });
 
     // Settlement is never held for a cosmetic: the client defers showing the
     // result until its replay ends, the server does not defer producing it.
@@ -515,8 +514,7 @@ export class Room {
     // The final snapshot first: it carries the last round, which is what a
     // client needs to replay the whole match and check `result` for itself.
     this.broadcastState();
-    const message = { type: 'finished', result, ranking } as const;
-    for (const client of this.clients) client.send(message);
+    this.broadcast({ type: 'finished', result, ranking });
     this.options.onFinished?.(this.transcript());
   }
 
@@ -538,25 +536,29 @@ export class Room {
   }
 
   /**
-   * Tells every client what changed. One object for the whole table, so the
-   * gateway serialises it once however many sockets it goes to.
+   * Sends one message to every attached client. One object for the whole
+   * table, so the gateway serialises it once however many sockets it goes to.
    */
+  private broadcast(message: ServerMessage): void {
+    for (const client of this.clients) client.send(message);
+  }
+
+  /** Tells every client what changed. */
   private broadcastState(): void {
-    const message = {
+    this.broadcast({
       type: 'delta',
       delta: matchDelta(this.match.publicState()),
       msRemaining: this.remaining(),
       waitingFor: this.absent(),
-    } as const;
-    for (const client of this.clients) client.send(message);
+    });
   }
 
   private remaining(): number {
     return Math.max(0, this.deadlineAt - this.clock);
   }
 
-  private pushAvatars(client: Client): void {
-    client.send({ type: 'avatars', matchId: this.matchId, entries: this.avatars });
+  private avatarsMessage(): ServerMessage {
+    return { type: 'avatars', matchId: this.matchId, entries: this.avatars };
   }
 
   /** The whole match, for a client that has just attached. */

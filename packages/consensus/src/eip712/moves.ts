@@ -4,7 +4,7 @@ import { EIP712_DOMAIN_NAME, EIP712_DOMAIN_VERSION } from './result.js';
 
 /**
  * What players and the server sign about play itself, as opposed to what the
- * attestors sign about its result (`eip712.ts`).
+ * attestors sign about its result (`result.ts`).
  *
  * A player's wallet signs one `SessionGrant`, which names a key held in the
  * browser. That key then signs every commit and every reveal, so a move in the

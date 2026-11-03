@@ -11,7 +11,8 @@ import { type MatchAnalysis } from '@lms/api';
 export interface ArchivedMatch {
   result: MatchResult;
   history: readonly RoundRecord[];
-  settledTx: string | null;
+  /** The transaction that proposed the result on-chain; null until one has. */
+  settledTx: `0x${string}` | null;
   /** Who sat where. `result.ranking` names the wallets but not their seats. */
   seats: readonly Seat[];
   /** The rule set the match was played under. */
@@ -48,7 +49,7 @@ export interface ArchivedAnalysis {
 export interface MatchArchive {
   save(entry: ArchivedMatch): Promise<void>;
   /** Records the transaction that proposed an archived match's result. */
-  recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void>;
+  recordSettlement(matchId: `0x${string}`, settledTx: `0x${string}`): Promise<void>;
   load(matchId: `0x${string}`): Promise<ArchivedMatch | null>;
   /** The match whose transcript hashes to `transcriptHash`. */
   loadByTranscript(transcriptHash: `0x${string}`): Promise<ArchivedMatch | null>;
@@ -85,7 +86,7 @@ export class MemoryArchive implements MatchArchive {
     this.entries.set(key, entry);
   }
 
-  async recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void> {
+  async recordSettlement(matchId: `0x${string}`, settledTx: `0x${string}`): Promise<void> {
     const entry = this.entries.get(matchId.toLowerCase());
     if (entry) this.entries.set(matchId.toLowerCase(), { ...entry, settledTx });
   }
@@ -175,7 +176,7 @@ export class PostgresArchive implements MatchArchive {
     );
   }
 
-  async recordSettlement(matchId: `0x${string}`, settledTx: string): Promise<void> {
+  async recordSettlement(matchId: `0x${string}`, settledTx: `0x${string}`): Promise<void> {
     await this.pool.query('UPDATE matches SET settled_tx = $2 WHERE match_id = $1', [matchId.toLowerCase(), settledTx]);
   }
 
@@ -246,7 +247,7 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
       ranking: row.ranking as `0x${string}`[],
     },
     history: row.history as RoundRecord[],
-    settledTx: (row.settled_tx as string | null) ?? null,
+    settledTx: (row.settled_tx as `0x${string}` | null) ?? null,
     seats: row.seats as Seat[],
     rules: row.rules as Rules,
     staked: row.staked as boolean,
@@ -255,6 +256,12 @@ function rowToEntry(row: Record<string, unknown>): ArchivedMatch {
     transcript: row.transcript as Transcript,
     transcriptHash: row.transcript_hash as `0x${string}`,
   };
+}
+
+/** The seat `address` sat in, or null for a wallet that did not play the match. */
+export function seatIn(match: Pick<ArchivedMatch, 'seats'>, address: `0x${string}`): number | null {
+  const key = address.toLowerCase();
+  return match.seats.find((seat) => seat.address.toLowerCase() === key)?.index ?? null;
 }
 
 /** Every wallet that sat in the match, lower-cased. */

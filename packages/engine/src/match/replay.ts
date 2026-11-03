@@ -1,6 +1,8 @@
 import {
   Action,
   chainHistory,
+  sameAddresses,
+  sameHex,
   hashRound,
   hashRules,
   historySeed,
@@ -113,12 +115,9 @@ export function verifyResult(
 ): boolean {
   const { result } = replayMatch(setup, moveLog);
   return (
-    result.matchId.toLowerCase() === claimed.matchId.toLowerCase() &&
+    sameHex(result.matchId, claimed.matchId) &&
     result.rounds === claimed.rounds &&
-    result.historyRoot.toLowerCase() === claimed.historyRoot.toLowerCase() &&
-    result.ranking.length === claimed.ranking.length &&
-    result.ranking.every(
-      (address, i) => address.toLowerCase() === (claimed.ranking[i] ?? '').toLowerCase(),
-    )
+    sameHex(result.historyRoot, claimed.historyRoot) &&
+    sameAddresses(result.ranking, claimed.ranking)
   );
 }

@@ -3,6 +3,7 @@ import {
   DEFAULT_RULES,
   hashRules,
   addressKey,
+  sameHex,
   type Seat,
 } from '@lms/consensus';
 import { LOCK_GRACE_SECONDS, MatchStatus, originChainId } from '@lms/contracts';
@@ -13,6 +14,7 @@ import type { MatchArchive } from '../lobby/store.js';
 import { viemEscrowReader, type EscrowMatch, type EscrowMatchRead, type EscrowReader } from './escrowReader.js';
 import { chunkedLogs, confirmedHead } from './logs.js';
 import type { TxSender } from './txSender.js';
+import { exclusive, repeat } from '../util/poll.js';
 
 export interface ChainBridgeOptions {
   rpcUrl: string;
@@ -109,9 +111,8 @@ export class ChainBridge {
   private readonly tracked = new Map<string, TrackedMatch>();
   private readonly reader: EscrowReader;
   private readonly now: () => number;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTimer: (() => void) | null = null;
   private cursor: bigint | null = null;
-  private polling = false;
   /**
    * Matches that were live when this process started, by lower-cased id:
    * whatever was played of them died with the previous process. Read once,
@@ -144,15 +145,13 @@ export class ChainBridge {
       ...(options.confirmations !== undefined ? { confirmations: options.confirmations } : {}),
       ...(options.archive ? { archive: options.archive } : {}),
     });
-    void bridge.poll();
-    bridge.timer = setInterval(() => void bridge.poll(), options.pollMs ?? 4_000);
-    bridge.timer.unref?.();
+    bridge.stopTimer = repeat(() => void bridge.poll(), options.pollMs ?? 4_000);
     return bridge;
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.stopTimer?.();
+    this.stopTimer = null;
   }
 
   /**
@@ -177,20 +176,20 @@ export class ChainBridge {
     return { open, live };
   }
 
-  async poll(): Promise<void> {
-    // Overlapping polls would double-submit keeper transactions.
-    if (this.polling) return;
-    this.polling = true;
+  /**
+   * One poll. Never rejects: a failure is logged and retried next time. A poll
+   * while one runs does nothing: overlapping polls would double-submit keeper
+   * transactions.
+   */
+  readonly poll: () => Promise<void> = exclusive(async () => {
     try {
       await this.discover();
       this.liveAtBoot ??= await this.snapshot();
       await this.refresh(this.liveAtBoot);
     } catch (error) {
       console.error('[chain] poll failed:', errorMessage(error));
-    } finally {
-      this.polling = false;
     }
-  }
+  });
 
   private async discover(): Promise<void> {
     const latest = confirmedHead(await this.reader.blockNumber(), this.deps.confirmations ?? 0);
@@ -256,7 +255,7 @@ export class ChainBridge {
         this.tracked.delete(key);
         continue;
       }
-      const nowSeconds = Math.floor(this.now() / 1000);
+      const nowSeconds = this.seconds();
       const cancellableAt = cancellableFrom(raw);
       if (raw.status === MatchStatus.Proposed) {
         entry.proposed = true;
@@ -358,7 +357,7 @@ export class ChainBridge {
 
   /** The permissionless refund, once `deadline` has passed: for an abandoned match, and every dead one. */
   private async maybeCancel(matchId: `0x${string}`, deadline: bigint): Promise<void> {
-    if (BigInt(Math.floor(this.now() / 1000)) < deadline) return;
+    if (BigInt(this.seconds()) < deadline) return;
     if (await this.reader.cancelMatch(matchId)) console.log(`[chain] cancelling ${matchId}`);
   }
 
@@ -369,7 +368,7 @@ export class ChainBridge {
    * the window loses nothing.
    */
   private async maybeFinalize(matchId: `0x${string}`, match: EscrowMatch): Promise<void> {
-    if (BigInt(Math.floor(this.now() / 1000)) < match.deadline) return;
+    if (BigInt(this.seconds()) < match.deadline) return;
     const ranking = await this.rankingOf(matchId, match.rankingHash);
     if (!ranking) return;
     if (await this.reader.finalize(matchId, ranking)) console.log(`[chain] finalising ${matchId}`);
@@ -383,7 +382,7 @@ export class ChainBridge {
   private async rankingOf(matchId: `0x${string}`, stored: `0x${string}`): Promise<readonly Address[] | null> {
     const archived = await this.deps.archive?.load(matchId).catch(() => null);
     const ranking = archived?.result.ranking;
-    if (ranking && rankingHash(ranking).toLowerCase() === stored.toLowerCase()) return ranking;
+    if (ranking && sameHex(rankingHash(ranking), stored)) return ranking;
     return this.reader.proposedRanking(matchId);
   }
 
@@ -393,7 +392,7 @@ export class ChainBridge {
    */
   private async maybeLock(info: LobbyInfo): Promise<void> {
     const full = info.seatCount >= info.maxSeats;
-    const expired = Math.floor(this.now() / 1000) >= info.joinDeadline;
+    const expired = this.seconds() >= info.joinDeadline;
     if (!full && !expired) return;
     if (info.seatCount < info.minSeats) return;
 
@@ -421,6 +420,11 @@ export class ChainBridge {
     const chainId = originChainId(origin, this.deps.chainId);
     entry.origins.set(key, chainId);
     return chainId;
+  }
+
+  /** The clock in unix seconds, as the escrow counts its deadlines. */
+  private seconds(): number {
+    return Math.floor(this.now() / 1000);
   }
 
   private adopt(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): void {

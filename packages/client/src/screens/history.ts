@@ -56,30 +56,25 @@ function renderHistory(): void {
 }
 
 function historyRow(match: MatchSummary): HTMLLIElement {
-  const li = document.createElement('li');
-  li.classList.toggle('won', match.place === 1);
+  const li = element('li', match.place === 1 ? 'won' : '');
+  const place = element('strong', 'history-place', placeLabel(match.place, match.players));
+  const detail = element(
+    'span',
+    'muted small',
+    [
+      match.staked ? 'Staked' : 'Practice',
+      `${match.rounds} rounds`,
+      formatWhen(match.finishedAt),
+      match.settledTx ? `tx ${short(match.settledTx)}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join(' · '),
+  );
 
-  const place = document.createElement('strong');
-  place.className = 'history-place';
-  place.textContent = placeLabel(match.place, match.players);
-
-  const detail = document.createElement('span');
-  detail.className = 'muted small';
-  detail.textContent = [
-    match.staked ? 'Staked' : 'Practice',
-    `${match.rounds} rounds`,
-    formatWhen(match.finishedAt),
-    match.settledTx ? `tx ${short(match.settledTx)}` : null,
-  ]
-    .filter((part) => part !== null)
-    .join(' · ');
-
-  const label = document.createElement('span');
-  label.className = 'history-label';
+  const label = element('span', 'history-label');
   label.append(place, detail);
 
-  const open = document.createElement('button');
-  open.textContent = 'Open';
+  const open = element('button', '', 'Open');
   open.onclick = () => net.send({ type: 'review', matchId: match.matchId });
 
   li.append(label, open);

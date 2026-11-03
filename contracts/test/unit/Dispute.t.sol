@@ -15,9 +15,7 @@ contract DisputeTest is Fixtures {
 
     function setUp() public override {
         super.setUp();
-        guardian = makeAddr("guardian");
-        vm.prank(owner);
-        config.setGuardian(guardian);
+        guardian = _newGuardian();
     }
 
     function _proposed() internal returns (bytes32 matchId, address[] memory ranking, uint40 deadline) {
@@ -138,14 +136,7 @@ contract DisputeTest is Fixtures {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0xD16)));
         vm.prank(players[0]);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Proposed,
-                GameEscrow.MatchStatus.Live
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Proposed, GameEscrow.MatchStatus.Live);
         escrow.dispute(matchId, EVIDENCE);
     }
 
@@ -166,14 +157,7 @@ contract DisputeTest is Fixtures {
         escrow.veto(matchId);
 
         vm.prank(guardian);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Proposed,
-                GameEscrow.MatchStatus.Cancelled
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Proposed, GameEscrow.MatchStatus.Cancelled);
         escrow.dismissDispute(matchId);
     }
 

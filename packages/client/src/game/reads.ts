@@ -1,5 +1,5 @@
 import { Action, addressKey, type RoundRecord } from '@lms/consensus';
-import type { PlayStyle } from '@lms/api';
+import { favouriteTarget, tallySeat, type PlayStyle } from '@lms/api';
 import { describeStyle } from './style.js';
 
 /**
@@ -42,64 +42,39 @@ export function readOpponents(
   you: number | null,
   dossier: ReadonlyMap<string, PlayStyle> = new Map(),
 ): Read[] {
-  const reads = new Map<number, Read>();
-
-  for (const player of state.players) {
-    if (player.index === you) continue;
-    reads.set(player.index, {
-      past: describeStyle(dossier.get(addressKey(player.address))),
-      seat: player.index,
-      alive: player.alive,
-      strikes: 0,
-      guards: 0,
-      charges: 0,
-      noShows: 0,
-      favourite: null,
-      againstYou: 0,
-      tell: '',
+  const reads = state.players
+    .filter((player) => player.index !== you)
+    .map((player): Read => {
+      const { strikes, guards, charges, noShows, targets } = tallySeat(state.history, player.index);
+      const favourite = favouriteTarget(targets);
+      const read: Read = {
+        seat: player.index,
+        alive: player.alive,
+        strikes,
+        guards,
+        charges,
+        noShows,
+        favourite: favourite?.seat ?? null,
+        againstYou: you === null ? 0 : (targets.get(you) ?? 0),
+        tell: '',
+        past: describeStyle(dossier.get(addressKey(player.address))),
+      };
+      read.tell = tellFor(read, leaderHunts(state.history, player.index), favourite?.hits ?? 0, you);
+      return read;
     });
-  }
+  return reads.sort((a, b) => Number(b.alive) - Number(a.alive) || a.seat - b.seat);
+}
 
-  const targetCounts = new Map<number, Map<number, number>>();
-  const leaderHunts = new Map<number, number>();
-
-  for (const [index, record] of state.history.entries()) {
-    const leaders = hpLeaders(record, state.history[index - 1]);
-    for (const move of record.moves) {
-      const read = reads.get(move.index);
-      if (!read) continue;
-
-      if (!move.revealed) {
-        read.noShows += 1;
-        continue;
-      }
-
-      if (move.action === Action.Guard) read.guards += 1;
-      else if (move.action === Action.Charge) read.charges += 1;
-      else if (move.action === Action.Strike) {
-        read.strikes += 1;
-        if (move.target === you) read.againstYou += 1;
-        if (leaders.has(move.target)) {
-          leaderHunts.set(move.index, (leaderHunts.get(move.index) ?? 0) + 1);
-        }
-        const counts = targetCounts.get(move.index) ?? new Map<number, number>();
-        counts.set(move.target, (counts.get(move.target) ?? 0) + 1);
-        targetCounts.set(move.index, counts);
-      }
+/** How many of `seat`'s strikes went to a seat on top of the table at the time. */
+function leaderHunts(history: readonly RoundRecord[], seat: number): number {
+  let hunts = 0;
+  for (const [index, record] of history.entries()) {
+    const move = record.moves.find((entry) => entry.index === seat);
+    if (move?.revealed && move.action === Action.Strike && hpLeaders(record, history[index - 1]).has(move.target)) {
+      hunts += 1;
     }
   }
-
-  for (const read of reads.values()) {
-    const counts = targetCounts.get(read.seat);
-    let favouriteHits = 0;
-    if (counts) {
-      const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-      if (best) [read.favourite, favouriteHits] = best;
-    }
-    read.tell = tellFor(read, leaderHunts.get(read.seat) ?? 0, favouriteHits, you);
-  }
-
-  return [...reads.values()].sort((a, b) => Number(b.alive) - Number(a.alive) || a.seat - b.seat);
+  return hunts;
 }
 
 /**

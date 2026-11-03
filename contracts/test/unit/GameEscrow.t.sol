@@ -77,14 +77,7 @@ contract GameEscrowTest is Fixtures {
         bytes32 locked = _createAndFill(4);
         escrow.lockMatch(locked);
         vm.prank(players[4]);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                locked,
-                GameEscrow.MatchStatus.Open,
-                GameEscrow.MatchStatus.Pending
-            )
-        );
+        _expectWrongStatus(locked, GameEscrow.MatchStatus.Open, GameEscrow.MatchStatus.Pending);
         escrow.join{value: STAKE}(locked);
     }
 
@@ -159,10 +152,7 @@ contract GameEscrowTest is Fixtures {
     function test_lockMatch_rejectsUnderfilledBeforeDeadline() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 6);
-        for (uint256 i = 0; i < 4; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 4);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.LobbyNotReady.selector, matchId));
         escrow.lockMatch(matchId);
     }
@@ -170,10 +160,7 @@ contract GameEscrowTest is Fixtures {
     function test_lockMatch_allowsQuorateLobbyAfterDeadline() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 6);
-        for (uint256 i = 0; i < 4; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 4);
         vm.warp(block.timestamp + 1 hours);
         _lockAndSeed(matchId, bytes32(uint256(1)));
         assertEq(uint8(escrow.getMatch(matchId).status), uint8(GameEscrow.MatchStatus.Live));
@@ -207,10 +194,7 @@ contract GameEscrowTest is Fixtures {
     function test_cancel_aQuorateLobbyWaitsOutTheLockGrace() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 6);
-        for (uint256 i = 0; i < 4; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 4);
         uint40 joinDeadline = escrow.getMatch(matchId).joinDeadline;
 
         vm.warp(joinDeadline + 10 minutes - 1);
@@ -240,10 +224,7 @@ contract GameEscrowTest is Fixtures {
     function test_lockMatch_rejectsAnExpiredLobbyShortOfSeats() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 6);
-        for (uint256 i = 0; i < 3; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 3);
         vm.warp(block.timestamp + 1 hours);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotEnoughPlayers.selector, uint16(3), uint16(4)));
         escrow.lockMatch(matchId);
@@ -253,14 +234,7 @@ contract GameEscrowTest is Fixtures {
         bytes32 matchId = _createAndFill(4);
         address[] memory ranking = _rankingOf(matchId);
         bytes memory early = _signResult(_twoAttestors(), matchId, ROUNDS, HISTORY_ROOT, ranking);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Live,
-                GameEscrow.MatchStatus.Open
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Live, GameEscrow.MatchStatus.Open);
         escrow.settle(matchId, ROUNDS, HISTORY_ROOT, TRANSCRIPT_HASH, ranking, early);
 
         _lockAndSeed(matchId, bytes32(uint256(6)));
@@ -511,10 +485,7 @@ contract GameEscrowTest is Fixtures {
     function test_crossChainJoin_refundsALobbyThatFilledInFlight() public {
         vm.prank(players[0]);
         bytes32 matchId = escrow.createMatch(STAKE, 4);
-        for (uint256 i = 0; i < 4; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, 4);
         // Full but not yet locked: still Open, with no seat left.
         _assertRefunded(matchId, makeAddr("late"), STAKE, GameEscrow.JoinFailure.LobbyFull);
         assertFalse(escrow.hasSeat(matchId, makeAddr("late")));
@@ -689,14 +660,7 @@ contract GameEscrowTest is Fixtures {
         oracle.fulfill(requestId, bytes32(uint256(1)));
 
         vm.prank(address(oracle));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Pending,
-                GameEscrow.MatchStatus.Live
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Pending, GameEscrow.MatchStatus.Live);
         escrow.fulfillRandomness(matchId, bytes32(uint256(2)));
     }
 

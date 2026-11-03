@@ -5,6 +5,7 @@ import {
   isActionValue,
   isLegalAction,
   receiptTypedData,
+  sameHex,
   strikeDamageFor,
   type ActionValue,
   type MatchResult,
@@ -12,7 +13,7 @@ import {
   type PublicMatchState,
   type SealedMove,
 } from '@lms/consensus';
-import { PRACTICE_CHAIN_ID } from '@lms/contracts';
+import { isPracticeTable } from '@lms/contracts';
 import {
   applyDelta,
   withRound,
@@ -106,11 +107,11 @@ export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>
 export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt' }>): Promise<void> {
   const { receipt, signature } = message;
   const stored = recallMove(receipt.matchId, receipt.round);
-  const practice = app.match?.matchId === receipt.matchId && app.match.players.every((player) => player.chainId === PRACTICE_CHAIN_ID);
+  const practice = app.match?.matchId === receipt.matchId && isPracticeTable(app.match.players);
   const signer = practice ? app.practiceReceiptSigner : app.receiptSigner;
   if (!stored || !signer) return;
   const sealed = commitMove(receipt.matchId, receipt.round, receipt.seat, stored);
-  if (sealed.toLowerCase() !== receipt.commitment.toLowerCase()) return;
+  if (!sameHex(sealed, receipt.commitment)) return;
   const valid = await verifyTypedData({ address: signer, ...receiptTypedData(app.chainId, receipt), signature }).catch(
     () => false,
   );
@@ -209,6 +210,16 @@ export function onDelta(message: Extract<ServerMessage, { type: 'delta' }>): voi
   onState(applyDelta(app.match, message.delta), app.you, Date.now() + message.msRemaining, message.waitingFor);
 }
 
+/** What belongs to one match alone: cleared when another takes its place. Shared, so never mutated. */
+const FRESH_MATCH: Partial<AppState> = {
+  committedRound: null,
+  revealedRound: null,
+  avatars: [],
+  dossier: new Map<string, PlayStyle>(),
+  replaying: false,
+  pendingFinish: null,
+};
+
 export function onState(
   state: PublicMatchState,
   you: number | null,
@@ -228,16 +239,7 @@ export function onState(
   }
   const committedRound = switched ? null : app.committedRound;
   store.set({
-    ...(switched
-      ? {
-          committedRound: null,
-          revealedRound: null,
-          avatars: [],
-          dossier: new Map<string, PlayStyle>(),
-          replaying: false,
-          pendingFinish: null,
-        }
-      : {}),
+    ...(switched ? FRESH_MATCH : {}),
     match: state,
     you,
     deadline,
@@ -458,18 +460,12 @@ function renderMove(): void {
   const options = [...dom.target.options].map((option) => Number(option.value));
   dom.targetChips.replaceChildren(
     ...options.map((seat) => {
-      const chip = document.createElement('button');
+      const chip = element('button', striking && draft?.target === seat ? 'chip active' : 'chip');
       chip.type = 'button';
-      chip.className = 'chip';
       chip.disabled = !controlsOpen;
-      chip.classList.toggle('active', striking && draft?.target === seat);
-      const name = document.createElement('b');
-      name.textContent = `#${seat}`;
-      const life = document.createElement('span');
-      // Not mid-replay: the snapshot already holds the HP the replay is
+      // No HP mid-replay: the snapshot already holds the HP the replay is
       // still on its way to.
-      life.textContent = app.replaying ? '' : `${hp.get(seat) ?? '?'} hp`;
-      chip.append(name, life);
+      chip.append(element('b', '', `#${seat}`), element('span', '', app.replaying ? '' : `${hp.get(seat) ?? '?'} hp`));
       chip.onclick = () => pickTarget(seat);
       return chip;
     }),
@@ -501,10 +497,7 @@ function renderPhaseLabel(label: string): void {
     dom.phaseLabel.textContent = label;
     return;
   }
-  const chip = document.createElement('span');
-  chip.className = `phase-chip ${phase}`;
-  chip.textContent = phase;
-  dom.phaseLabel.replaceChildren(round ?? '', chip);
+  dom.phaseLabel.replaceChildren(round ?? '', element('span', `phase-chip ${phase}`, phase));
 }
 
 function renderReads(): void {
@@ -560,9 +553,7 @@ function appendRound(lines: string[], round: number, eliminated: number[]): void
 }
 
 function appendLine(text: string, className = ''): void {
-  const li = document.createElement('li');
-  li.textContent = text;
-  li.className = className || lineKind(text);
+  const li = element('li', className || lineKind(text), text);
   if (app.you !== null && text.startsWith(`#${app.you} `)) li.classList.add('mine');
   dom.feed.append(li);
 }

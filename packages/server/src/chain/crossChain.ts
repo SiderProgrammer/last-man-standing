@@ -1,11 +1,12 @@
-import type { Address } from 'viem';
+import { isAddress, type Address } from 'viem';
 import { ZERO_ADDRESS } from '@lms/consensus';
 import { gameEscrowAbi, originChainId } from '@lms/contracts';
 import { errorMessage, type CrossChainEvent, type SpokeInfo } from '@lms/api';
 import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
+import { fieldsOf, parseJsonList } from '../util/envList.js';
+import { exclusive, repeat } from '../util/poll.js';
 
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 /**
  * Parses `SPOKES`: the spoke chains players may stake from.
@@ -18,34 +19,20 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
  * know which router to stake through.
  */
 export function parseSpokes(raw: string, hubChainId: number): SpokeInfo[] {
-  if (raw.trim().length === 0) return [];
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
-
-    const seen = new Set<number>();
-    return parsed.flatMap((item): SpokeInfo[] => {
-      const spoke = toSpoke(item);
-      if (!spoke || spoke.chainId === hubChainId || seen.has(spoke.chainId)) {
-        console.warn('[spokes] ignoring entry:', JSON.stringify(item));
-        return [];
-      }
-      seen.add(spoke.chainId);
-      return [spoke];
-    });
-  } catch (error) {
-    console.warn('[spokes] SPOKES is not valid JSON:', errorMessage(error));
-    return [];
-  }
+  const seen = new Set<number>();
+  return parseJsonList(raw, 'SPOKES', 'spokes', (item) => {
+    const spoke = toSpoke(item);
+    if (!spoke || spoke.chainId === hubChainId || seen.has(spoke.chainId)) return null;
+    seen.add(spoke.chainId);
+    return spoke;
+  });
 }
 
 function toSpoke(item: unknown): SpokeInfo | null {
-  if (typeof item !== 'object' || item === null) return null;
-  const { chainId, router } = item as Record<string, unknown>;
+  const { chainId, router } = fieldsOf(item) ?? {};
   if (typeof chainId !== 'number' || !Number.isInteger(chainId) || chainId <= 0) return null;
-  if (typeof router !== 'string' || !ADDRESS.test(router) || router === ZERO_ADDRESS) return null;
-  return { chainId, router: router as `0x${string}` };
+  if (typeof router !== 'string' || !isAddress(router, { strict: false }) || router === ZERO_ADDRESS) return null;
+  return { chainId, router };
 }
 
 /** The hub events the watcher reacts to, in the order they happened. */
@@ -84,34 +71,25 @@ export interface CrossChainWatcherOptions {
  */
 export class CrossChainWatcher {
   private cursor: bigint | null;
-  private running = false;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTimer: (() => void) | null = null;
 
   constructor(private readonly options: CrossChainWatcherOptions) {
     this.cursor = options.fromBlock ?? null;
   }
 
   start(pollMs: number): void {
-    void this.tickLogged();
-    this.timer = setInterval(() => void this.tickLogged(), pollMs);
-    this.timer.unref?.();
+    this.stopTimer = repeat(() => {
+      this.tick().catch((error: unknown) => console.error('[spokes] poll failed:', errorMessage(error)));
+    }, pollMs);
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.stopTimer?.();
+    this.stopTimer = null;
   }
 
-  async tick(): Promise<void> {
-    // Overlapping ticks would report the same blocks twice.
-    if (this.running) return;
-    this.running = true;
-    try {
-      await this.read();
-    } finally {
-      this.running = false;
-    }
-  }
+  /** One poll. Overlapping ticks would report the same blocks twice, so a tick while one runs does nothing. */
+  readonly tick: () => Promise<void> = exclusive(() => this.read());
 
   private async read(): Promise<void> {
     const { port } = this.options;
@@ -149,14 +127,6 @@ export class CrossChainWatcher {
           reason: log.reason,
         });
         return;
-    }
-  }
-
-  private async tickLogged(): Promise<void> {
-    try {
-      await this.tick();
-    } catch (error) {
-      console.error('[spokes] poll failed:', errorMessage(error));
     }
   }
 }

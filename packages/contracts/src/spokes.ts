@@ -1,4 +1,5 @@
 import { encodeAbiParameters, type Address, type Hex } from 'viem';
+import { ZERO_ADDRESS } from '@lms/consensus';
 import { bridgeJoinReceiverAbi, spokeRouterAbi } from './abis.js';
 
 /**
@@ -34,28 +35,20 @@ export const JoinFailure = {
 
 export type JoinFailureValue = (typeof JoinFailure)[keyof typeof JoinFailure];
 
+const JOIN_FAILURE_TEXT: Readonly<Record<number, string>> = {
+  [JoinFailure.Paused]: 'play was paused',
+  [JoinFailure.UnknownMatch]: 'the hub does not know that lobby',
+  [JoinFailure.NotOpen]: 'the lobby had already closed',
+  [JoinFailure.WindowClosed]: 'the join window ended while your stake was in transit',
+  [JoinFailure.LobbyFull]: 'the lobby filled while your stake was in transit',
+  [JoinFailure.AlreadyJoined]: 'you already had a seat in it',
+  [JoinFailure.StakeTooLow]: 'less than the stake arrived',
+  [JoinFailure.NotRostered]: 'that lobby was matched for other players',
+};
+
 /** Why the hub refunded a join, as the player should read it. */
 export function joinFailureText(reason: number): string {
-  switch (reason) {
-    case JoinFailure.Paused:
-      return 'play was paused';
-    case JoinFailure.UnknownMatch:
-      return 'the hub does not know that lobby';
-    case JoinFailure.NotOpen:
-      return 'the lobby had already closed';
-    case JoinFailure.WindowClosed:
-      return 'the join window ended while your stake was in transit';
-    case JoinFailure.LobbyFull:
-      return 'the lobby filled while your stake was in transit';
-    case JoinFailure.AlreadyJoined:
-      return 'you already had a seat in it';
-    case JoinFailure.StakeTooLow:
-      return 'less than the stake arrived';
-    case JoinFailure.NotRostered:
-      return 'that lobby was matched for other players'
-    default:
-      return 'the seat could not be taken';
-  }
+  return JOIN_FAILURE_TEXT[reason] ?? 'the seat could not be taken';
 }
 
 // ------------------------------------------------------------------ Across
@@ -113,11 +106,8 @@ export async function quoteAcross(
   outputAmount: bigint,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ inputAmount: bigint; quote: BridgeQuote }> {
-  const params = feeParams(route, outputAmount);
-  const body = await suggestedFees(api, params, fetchFn);
-  const fee = BigInt(body.totalRelayFee.total);
-  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
-  return { inputAmount: outputAmount + fee + buffer, quote: quoteFrom(body, outputAmount) };
+  const body = await suggestedFees(api, feeParams(route, outputAmount), fetchFn);
+  return { inputAmount: outputAmount + feeWithBuffer(body), quote: quoteFrom(body, outputAmount) };
 }
 
 /**
@@ -132,11 +122,15 @@ export async function quoteAcrossFrom(
   fetchFn: typeof fetch = fetch,
 ): Promise<{ outputAmount: bigint; quote: BridgeQuote }> {
   const body = await suggestedFees(api, feeParams(route, inputAmount), fetchFn);
-  const fee = BigInt(body.totalRelayFee.total);
-  const buffer = (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
-  const outputAmount = inputAmount - fee - buffer;
+  const outputAmount = inputAmount - feeWithBuffer(body);
   if (outputAmount <= 0n) throw new Error('Across would take all of it in fees.');
   return { outputAmount, quote: quoteFrom(body, outputAmount) };
+}
+
+/** The quoted fee, plus `FEE_BUFFER_BPS` of it rounded up: what the relayer is offered. */
+function feeWithBuffer(body: AcrossFees): bigint {
+  const fee = BigInt(body.totalRelayFee.total);
+  return fee + (fee * FEE_BUFFER_BPS + 9_999n) / 10_000n;
 }
 
 function feeParams(route: AcrossRoute, amount: bigint): URLSearchParams {
@@ -195,7 +189,7 @@ export function localQuote(outputAmount: bigint, now: number): { inputAmount: bi
       outputAmount,
       quoteTimestamp: now,
       fillDeadline: now + LOCAL_FILL_SECONDS,
-      exclusiveRelayer: '0x0000000000000000000000000000000000000000',
+      exclusiveRelayer: ZERO_ADDRESS,
       exclusivityParameter: 0,
     },
   };

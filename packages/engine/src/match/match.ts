@@ -21,6 +21,7 @@ import {
   type SealedMove,
   type Seat,
   ZERO_SALT,
+  sameHex,
 } from '@lms/consensus';
 import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kernel/resolve.js';
 
@@ -174,7 +175,7 @@ export class Match {
     this.assertLegalMove(seat, move.action, move.target);
 
     const expected = commitMove(this.matchId, this.roundValue, seat, move);
-    if (expected.toLowerCase() !== commitment.toLowerCase()) {
+    if (!sameHex(expected, commitment)) {
       throw new MatchError('COMMITMENT_MISMATCH', `reveal from seat ${seat} does not match its commitment`);
     }
 

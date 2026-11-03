@@ -58,3 +58,23 @@ export function matchResultMessage(result: AttestedResult) {
     ranking: result.ranking,
   };
 }
+
+/** Arguments for `signTypedData` / `verifyTypedData` over a result, for the escrow at `escrow`. */
+export function matchResultTypedData(chainId: number, escrow: `0x${string}`, result: AttestedResult) {
+  return {
+    domain: matchResultDomain(chainId, escrow),
+    types: MATCH_RESULT_TYPES,
+    primaryType: 'MatchResult' as const,
+    message: matchResultMessage(result),
+  };
+}
+
+/** Arguments for `signTypedData` / `verifyTypedData` over an abort of `matchId`. */
+export function matchAbortTypedData(chainId: number, escrow: `0x${string}`, matchId: `0x${string}`) {
+  return {
+    domain: matchResultDomain(chainId, escrow),
+    types: MATCH_ABORT_TYPES,
+    primaryType: 'MatchAbort' as const,
+    message: { matchId },
+  };
+}

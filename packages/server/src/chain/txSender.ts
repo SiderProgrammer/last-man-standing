@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -119,7 +120,7 @@ export class TxSender {
     this.stuckAfterMs = options.stuckAfterMs ?? 30_000;
     this.bumpPercent = BigInt(Math.max(110, options.bumpPercent ?? 125));
     this.maxBumps = options.maxBumps ?? 5;
-    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.sleep = options.sleep ?? delay;
     this.now = options.now ?? Date.now;
     this.label = options.label ?? 'tx';
   }

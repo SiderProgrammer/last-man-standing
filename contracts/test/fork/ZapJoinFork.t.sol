@@ -22,12 +22,7 @@ contract ZapJoinForkTest is Fixtures {
     address private player;
 
     function setUp() public override {
-        string memory rpc = vm.envOr("MAINNET_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            vm.skip(true);
-            return;
-        }
-        vm.createSelectFork(rpc);
+        if (!_forkOrSkip("MAINNET_RPC_URL")) return;
         super.setUp();
 
         zap = new ZapJoin(POOL_MANAGER, escrow);

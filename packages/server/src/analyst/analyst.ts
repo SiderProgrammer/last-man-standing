@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { addressKey } from '@lms/consensus';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   errorMessage,
   type AnalysisErrorCode,
   type KeyMoment,
   type MatchAnalysis,
 } from '@lms/api';
-import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
+import { seatIn, type ArchivedMatch, type MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
 import { ProviderError, type AnalystModel, type Effort, type ModelReply, type ModelRequest } from './model.js';
 import { SYSTEM_PROMPT, renderRequest } from './prompt.js';
@@ -178,7 +178,7 @@ export class Analyst implements MatchAnalyst {
   private async authorize(matchId: `0x${string}`, requester: `0x${string}`): Promise<{ match: ArchivedMatch; seat: number | null }> {
     const match = await this.options.archive.load(matchId);
     if (!match) throw new AnalystError('not_found', 'no finished match with that id');
-    const seat = match.seats.find((entry) => addressKey(entry.address) === addressKey(requester))?.index ?? null;
+    const seat = seatIn(match, requester);
     if (seat === null && !match.staked) {
       throw new AnalystError('forbidden', 'only the players who sat in this match can analyse it');
     }
@@ -348,17 +348,8 @@ function analysisVersion(options: AnalystOptions): string {
 
 /** Waits `ms`, or rejects as soon as `signal` aborts. */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new ProviderError('aborted', 'the request was cancelled'));
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, ms);
-    const abort = () => {
-      clearTimeout(timer);
-      reject(new ProviderError('aborted', 'the request was cancelled'));
-    };
-    signal.addEventListener('abort', abort, { once: true });
+  return delay(ms, undefined, { signal }).catch(() => {
+    throw new ProviderError('aborted', 'the request was cancelled');
   });
 }
 
