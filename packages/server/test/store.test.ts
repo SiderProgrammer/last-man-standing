@@ -21,7 +21,7 @@ import {
 import { bytes32, setupWithBots, transcriptOf } from './helpers.js';
 import { pglite } from './pglite.js';
 
-function entry(matchId: `0x${string}`, rounds = 3, settledTx: string | null = null): ArchivedMatch {
+function entry(matchId: `0x${string}`, rounds = 3, settledTx: `0x${string}` | null = null): ArchivedMatch {
   const result: MatchResult = {
     matchId,
     rounds,

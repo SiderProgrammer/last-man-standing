@@ -107,6 +107,13 @@ contract Fixtures is Test {
         escrow.finalize(matchId, ranking);
     }
 
+    /// @dev Names a fresh address the config's guardian, as governance would.
+    function _newGuardian() internal returns (address guardian) {
+        guardian = makeAddr("guardian");
+        vm.prank(owner);
+        config.setGuardian(guardian);
+    }
+
     /// @dev Pauses the escrow the way governance does, for a day.
     function _pause() internal {
         vm.prank(owner);
@@ -116,19 +123,41 @@ contract Fixtures is Test {
     function _createAndFill(uint16 seats) internal returns (bytes32 matchId) {
         vm.prank(players[0]);
         matchId = escrow.createMatch(STAKE, seats);
-        for (uint16 i = 0; i < seats; ++i) {
-            vm.prank(players[i]);
-            escrow.join{value: STAKE}(matchId);
-        }
+        _joinFirst(matchId, seats);
     }
 
     /// @dev A matchmade lobby for the first `seats` players, every one of them seated.
     function _createMatchmadeAndFill(uint16 seats) internal returns (bytes32 matchId) {
         matchId = _createMatchmade(seats, _firstPlayers(seats));
-        for (uint16 i = 0; i < seats; ++i) {
+        _joinFirst(matchId, seats);
+    }
+
+    /// @dev Seats the first `count` players, each paying the stake.
+    function _joinFirst(bytes32 matchId, uint256 count) internal {
+        for (uint256 i = 0; i < count; ++i) {
             vm.prank(players[i]);
             escrow.join{value: STAKE}(matchId);
         }
+    }
+
+    function _expectWrongStatus(
+        bytes32 matchId,
+        GameEscrow.MatchStatus expected,
+        GameEscrow.MatchStatus actual
+    ) internal {
+        vm.expectRevert(abi.encodeWithSelector(GameEscrow.WrongStatus.selector, matchId, expected, actual));
+    }
+
+    /// @dev Forks the chain `rpcVariable` names and returns true; with the
+    ///      variable unset, skips the test and returns false.
+    function _forkOrSkip(string memory rpcVariable) internal returns (bool) {
+        string memory rpc = vm.envOr(rpcVariable, string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return false;
+        }
+        vm.createSelectFork(rpc);
+        return true;
     }
 
     function _createMatchmade(uint16 seats, address[] memory roster) internal returns (bytes32 matchId) {

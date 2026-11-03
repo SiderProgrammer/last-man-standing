@@ -11,9 +11,7 @@ contract ExpiringPauseTest is Fixtures {
 
     function setUp() public override {
         super.setUp();
-        guardian = makeAddr("guardian");
-        vm.prank(owner);
-        config.setGuardian(guardian);
+        guardian = _newGuardian();
         vm.warp(1_000_000);
     }
 

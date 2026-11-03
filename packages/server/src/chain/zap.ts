@@ -1,12 +1,8 @@
+import { isAddress } from 'viem';
 import { ZERO_ADDRESS, sameAddress } from '@lms/consensus';
-import {
-  errorMessage,
-  type ZapInfo,
-  type ZapPathKey,
-  type ZapToken,
-} from '@lms/api';
+import { type ZapInfo, type ZapPathKey, type ZapToken } from '@lms/api';
+import { fieldsOf, parseJsonList } from '../util/envList.js';
 
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const HEX = /^0x([0-9a-fA-F]{2})*$/;
 
 /**
@@ -23,21 +19,7 @@ const HEX = /^0x([0-9a-fA-F]{2})*$/;
  * the contract would charge a different token than the one the player picked.
  */
 export function parseZapTokens(raw: string): ZapToken[] {
-  if (raw.trim().length === 0) return [];
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
-
-    return parsed.flatMap((item): ZapToken[] => {
-      const token = toToken(item);
-      if (!token) console.warn('[zap] ignoring malformed token:', JSON.stringify(item));
-      return token ? [token] : [];
-    });
-  } catch (error) {
-    console.warn('[zap] ZAP_TOKENS is not valid JSON:', errorMessage(error));
-    return [];
-  }
+  return parseJsonList(raw, 'ZAP_TOKENS', 'zap', toToken);
 }
 
 /**
@@ -56,11 +38,10 @@ export function zapInfo(
 }
 
 function toToken(item: unknown): ZapToken | null {
-  if (typeof item !== 'object' || item === null) return null;
-  const { symbol, address, decimals, path } = item as Record<string, unknown>;
+  const { symbol, address, decimals, path } = fieldsOf(item) ?? {};
 
   if (typeof symbol !== 'string' || symbol.length === 0) return null;
-  if (typeof address !== 'string' || !ADDRESS.test(address) || address === ZERO_ADDRESS) return null;
+  if (typeof address !== 'string' || !isAddress(address, { strict: false }) || address === ZERO_ADDRESS) return null;
   if (typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) return null;
   if (!Array.isArray(path) || path.length === 0) return null;
 
@@ -69,15 +50,15 @@ function toToken(item: unknown): ZapToken | null {
   const route = hops as ZapPathKey[];
   if (!sameAddress(route[0]?.intermediateCurrency, address)) return null;
 
-  return { symbol, address: address as `0x${string}`, decimals, path: route };
+  return { symbol, address, decimals, path: route };
 }
 
 function toHop(item: unknown): ZapPathKey | null {
-  if (typeof item !== 'object' || item === null) return null;
-  const { intermediateCurrency, fee, tickSpacing, hooks = ZERO_ADDRESS, hookData = '0x' } =
-    item as Record<string, unknown>;
+  const fields = fieldsOf(item);
+  if (!fields) return null;
+  const { intermediateCurrency, fee, tickSpacing, hooks = ZERO_ADDRESS, hookData = '0x' } = fields;
 
-  if (typeof intermediateCurrency !== 'string' || !ADDRESS.test(intermediateCurrency)) return null;
+  if (typeof intermediateCurrency !== 'string' || !isAddress(intermediateCurrency, { strict: false })) return null;
   if (typeof fee !== 'number' || !Number.isInteger(fee) || fee < 0 || fee > 0xffffff) return null;
   if (
     typeof tickSpacing !== 'number' ||
@@ -87,14 +68,14 @@ function toHop(item: unknown): ZapPathKey | null {
   ) {
     return null;
   }
-  if (typeof hooks !== 'string' || !ADDRESS.test(hooks)) return null;
+  if (typeof hooks !== 'string' || !isAddress(hooks, { strict: false })) return null;
   if (typeof hookData !== 'string' || !HEX.test(hookData)) return null;
 
   return {
-    intermediateCurrency: intermediateCurrency as `0x${string}`,
+    intermediateCurrency,
     fee,
     tickSpacing,
-    hooks: hooks as `0x${string}`,
+    hooks,
     hookData: hookData as `0x${string}`,
   };
 }

@@ -1,5 +1,5 @@
-import { Action, addressKey, type MatchResult, type RoundRecord } from '@lms/consensus';
-import type { PlayStyle } from '@lms/api';
+import { addressKey, type MatchResult, type RoundRecord } from '@lms/consensus';
+import { tallySeat, type PlayStyle } from '@lms/api';
 import type { Queryable } from '../db/database.js';
 
 export function emptyStyle(): PlayStyle {
@@ -12,26 +12,12 @@ export function tallyStyles(
   history: readonly RoundRecord[],
   seatAddresses: readonly `0x${string}`[],
 ): Map<string, PlayStyle> {
-  const styles = new Map<string, PlayStyle>();
-  for (const address of seatAddresses) {
-    styles.set(addressKey(address), { ...emptyStyle(), matches: 1 });
-  }
   const winner = result.ranking[0];
-  if (winner) {
-    const style = styles.get(addressKey(winner));
-    if (style) style.wins = 1;
-  }
-
-  for (const record of history) {
-    for (const move of record.moves) {
-      const address = seatAddresses[move.index];
-      const style = address ? styles.get(addressKey(address)) : undefined;
-      if (!style) continue;
-      if (!move.revealed) style.noShows += 1;
-      else if (move.action === Action.Strike) style.strikes += 1;
-      else if (move.action === Action.Guard) style.guards += 1;
-      else if (move.action === Action.Charge) style.charges += 1;
-    }
+  const styles = new Map<string, PlayStyle>();
+  for (const [seat, address] of seatAddresses.entries()) {
+    const { strikes, guards, charges, noShows } = tallySeat(history, seat);
+    const wins = winner !== undefined && addressKey(winner) === addressKey(address) ? 1 : 0;
+    styles.set(addressKey(address), { matches: 1, wins, strikes, guards, charges, noShows });
   }
   return styles;
 }

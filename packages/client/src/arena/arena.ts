@@ -163,9 +163,7 @@ export class Arena {
   render(state: PublicMatchState, you: number | null): void {
     // A different match: nothing from the last one's replay belongs here.
     if (this.state && this.state.matchId !== state.matchId) {
-      this.replay?.timeline.kill();
-      this.replay = null;
-      this.effects.clear();
+      this.stopReplay();
       for (const seat of this.seats.values()) seat.destroy();
       this.seats.clear();
     }
@@ -228,20 +226,25 @@ export class Arena {
     replay.timeline.play();
   }
 
-  /** Crowns the winner once the final round's replay has played out. */
   /**
    * Plays a round of a finished match again, from the table as it stood
    * before it. Whatever is on screen — a replay in flight, the winner's
    * banner — is cleared first: it belongs to a later point in the match.
    */
   rewindTo(before: PublicMatchState, record: RoundRecord): void {
-    this.replay?.timeline.kill();
-    this.replay = null;
-    this.effects.clear();
+    this.stopReplay();
     this.render(before, this.you);
     this.showRound(record);
   }
 
+  /** Stops the replay in flight and every effect on screen. */
+  private stopReplay(): void {
+    this.replay?.timeline.kill();
+    this.replay = null;
+    this.effects.clear();
+  }
+
+  /** Crowns the winner once the final round's replay has played out. */
   showWinner(seat: number): void {
     this.effects.showWinner(seat);
   }

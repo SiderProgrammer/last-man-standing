@@ -26,8 +26,8 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 /** Any even-length hex. Session-key and ERC-1271 signatures are not always 65 bytes. */
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
-/** Generous for any signature scheme, still far below the frame cap. */
-const MAX_SIGNATURE_HEX = 2 + 2 * 1024;
+/** Generous for any signature scheme or calldata, still far below the frame cap: 1 KiB. */
+const MAX_HEX = 2 + 2 * 1024;
 
 const hexMatching = (pattern: RegExp, what: string) =>
   z
@@ -38,9 +38,12 @@ const hexMatching = (pattern: RegExp, what: string) =>
 const address = hexMatching(ADDRESS, 'an address');
 const bytes32 = hexMatching(BYTES32, '32 bytes of hex');
 const signature = hexMatching(HEX, 'hex').refine(
-  (value) => value.length >= 4 && value.length <= MAX_SIGNATURE_HEX,
+  (value) => value.length >= 4 && value.length <= MAX_HEX,
   'has an implausible length',
 );
+
+/** An object with exactly these fields checked; unknown ones are dropped. */
+const object = <T extends z.ZodRawShape>(shape: T) => z.object(shape, { error: 'must be an object' });
 
 const integer = (min: number, max: number) => {
   const error = `must be an integer from ${min} to ${max}`;
@@ -56,31 +59,25 @@ const seconds = integer(0, 2 ** 40);
 /** Long enough for any real host or origin, short enough to stay well inside a frame. */
 const origin = z.string({ error: 'must be a string' }).max(256, 'is too long');
 
-const grant = z.object(
-  {
-    grant: z.object(
-      {
-        wallet: address,
-        sessionKey: address,
-        domain: origin,
-        uri: origin,
-        chainId: integer(1, Number.MAX_SAFE_INTEGER),
-        issuedAt: seconds,
-        expiresAt: seconds,
-        nonce: bytes32,
-      },
-      { error: 'must be an object' },
-    ),
-    signature,
-  },
-  { error: 'must be an object' },
-);
+const grant = object({
+  grant: object({
+    wallet: address,
+    sessionKey: address,
+    domain: origin,
+    uri: origin,
+    chainId: integer(1, Number.MAX_SAFE_INTEGER),
+    issuedAt: seconds,
+    expiresAt: seconds,
+    nonce: bytes32,
+  }),
+  signature,
+});
 
 /** Decimal wei, up to a uint256. */
 const wei = z.string({ error: 'must be a decimal string' }).regex(/^\d{1,78}$/, 'must be a decimal string');
 
 /** Calldata for one of the two calls a session key may make: a selector and one word. */
-const calldata = hexMatching(HEX, 'hex').refine((value) => value.length <= 2 + 2 * 1024, 'is too long');
+const calldata = hexMatching(HEX, 'hex').refine((value) => value.length <= MAX_HEX, 'is too long');
 
 /** A relayed call's id, which its answer carries back. */
 const relayId = z.string({ error: 'must be a string' }).min(1).max(64, 'is too long');
@@ -108,7 +105,7 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
     type: z.literal('commit'),
     commitment: bytes32,
     signature,
-    hold: z.object({ action, target, salt: bytes32, signature }, { error: 'must be an object' }).optional(),
+    hold: object({ action, target, salt: bytes32, signature }).optional(),
     ...aim,
   }),
   reveal: z.object({ type: z.literal('reveal'), action, target, salt: bytes32, signature, ...aim }),
@@ -118,35 +115,29 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   withdrawToChain: z.object({
     type: z.literal('withdrawToChain'),
     id: relayId,
-    withdrawal: z.object(
-      {
-        player: address,
-        hubChainId: wei,
-        destinationChainId: wei,
-        recipient: address,
-        outputToken: address,
-        maxFee: wei,
-        nonce: wei,
-        deadline: wei,
-      },
-      { error: 'must be an object' },
-    ),
-    quote: z.object(
-      {
-        outputAmount: wei,
-        quoteTimestamp: uint32,
-        fillDeadline: uint32,
-        exclusiveRelayer: address,
-        exclusivityParameter: uint32,
-      },
-      { error: 'must be an object' },
-    ),
+    withdrawal: object({
+      player: address,
+      hubChainId: wei,
+      destinationChainId: wei,
+      recipient: address,
+      outputToken: address,
+      maxFee: wei,
+      nonce: wei,
+      deadline: wei,
+    }),
+    quote: object({
+      outputAmount: wei,
+      quoteTimestamp: uint32,
+      fillDeadline: uint32,
+      exclusiveRelayer: address,
+      exclusivityParameter: uint32,
+    }),
     signature,
   }),
   relay: z.object({
     type: z.literal('relay'),
     id: relayId,
-    call: z.object({ target: address, value: wei, data: calldata, nonce: wei, signature }, { error: 'must be an object' }),
+    call: object({ target: address, value: wei, data: calldata, nonce: wei, signature }),
   }),
 };
 

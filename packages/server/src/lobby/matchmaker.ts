@@ -5,6 +5,7 @@ import { errorMessage, type MatchmakingTier, type ServerMessage } from '@lms/api
 import { RequestError } from '../errors.js';
 import type { TxSender } from '../chain/txSender.js';
 import { readClient } from '../chain/viem.js';
+import { fieldsOf, parseJsonList } from '../util/envList.js';
 
 /** Opens a matchmade lobby on the escrow and says which match it is. */
 export interface MatchmakerPort {
@@ -68,7 +69,7 @@ export class Matchmaker {
 
   /** Puts `player` in the tier's queue, leaving any other it was in. */
   join(player: Address, stake: string, seats: number, now = this.now()): { waiting: number } {
-    const tier = this.options.tiers.findIndex((t) => t.stake === stake && t.seats === seats);
+    const tier = this.tierFor(stake, seats);
     if (tier < 0) throw new RequestError('BAD_QUEUE', 'this server runs no queue for that stake and table size');
     this.leave(player);
     const queue = this.queues[tier] as Waiting[];
@@ -94,7 +95,7 @@ export class Matchmaker {
 
   /** Wallets queued in a tier now. */
   waiting(stake: string, seats: number): number {
-    const tier = this.options.tiers.findIndex((t) => t.stake === stake && t.seats === seats);
+    const tier = this.tierFor(stake, seats);
     return tier < 0 ? 0 : (this.queues[tier]?.length ?? 0);
   }
 
@@ -151,6 +152,11 @@ export class Matchmaker {
   }
 
   /** Tells everyone still in a queue how many are in it. */
+  /** The index of the tier for `stake` and `seats`, or -1 for none. */
+  private tierFor(stake: string, seats: number): number {
+    return this.options.tiers.findIndex((tier) => tier.stake === stake && tier.seats === seats);
+  }
+
   private tell(queue: readonly Waiting[], tier: number): void {
     const { stake, seats } = this.options.tiers[tier] as MatchmakingTier;
     const message = { type: 'queued', stake, seats, waiting: queue.length } as const;
@@ -168,22 +174,12 @@ export class Matchmaker {
  * `SPOKES`: a malformed entry is dropped with a warning.
  */
 export function parseTiers(raw: string): MatchmakingTier[] {
-  if (raw.trim().length === 0) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
-    return parsed.flatMap((item): MatchmakingTier[] => {
-      const { stake, seats } = (item ?? {}) as Record<string, unknown>;
-      if (typeof stake === 'string' && /^[1-9]\d{0,38}$/.test(stake) && typeof seats === 'number' && Number.isInteger(seats) && seats >= 2) {
-        return [{ stake, seats }];
-      }
-      console.warn('[matchmaker] ignoring tier:', JSON.stringify(item));
-      return [];
-    });
-  } catch (error) {
-    console.warn('[matchmaker] MATCHMAKING_TIERS is not valid JSON:', errorMessage(error));
-    return [];
-  }
+  return parseJsonList(raw, 'MATCHMAKING_TIERS', 'matchmaker', (item) => {
+    const { stake, seats } = fieldsOf(item) ?? {};
+    if (typeof stake !== 'string' || !/^[1-9]\d{0,38}$/.test(stake)) return null;
+    if (typeof seats !== 'number' || !Number.isInteger(seats) || seats < 2) return null;
+    return { stake, seats };
+  });
 }
 
 /** `MatchmakerPort` over viem: `createMatchmade` from the matchmaker's own sender. */

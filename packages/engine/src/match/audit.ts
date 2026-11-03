@@ -3,6 +3,8 @@ import {
   Action,
   NO_COMMITMENT,
   addressKey,
+  sameAddresses,
+  sameHex,
   commitMove,
   commitTypedData,
   grantTypedData,
@@ -10,6 +12,7 @@ import {
   hashTranscript,
   revealTypedData,
   type ActionValue,
+  type SealedMove,
   type SessionGrant,
   type Transcript,
 } from '@lms/consensus';
@@ -34,10 +37,7 @@ export interface ChainRecord {
 }
 
 /** A move this browser sealed, as it remembers it. */
-export interface OwnMove {
-  action: ActionValue;
-  target: number;
-  salt: `0x${string}`;
+export interface OwnMove extends SealedMove {
   /** The server's receipt for the commitment, if one came back. */
   receipt?: { receivedAt: number; signature: `0x${string}` };
   /** True once the reveal was sent, or handed to the server to hold. */
@@ -96,34 +96,29 @@ export async function auditTranscript(transcript: Transcript, options: AuditOpti
 
   const chain = options.chain;
   if (chain) {
-    if (hashTranscript(transcript).toLowerCase() !== chain.transcriptHash.toLowerCase()) {
+    if (!sameHex(hashTranscript(transcript), chain.transcriptHash)) {
       problems.push('the transcript does not hash to the one the escrow stored');
     }
-    if (transcript.seed.toLowerCase() !== chain.seed.toLowerCase()) problems.push('the seed is not the one the oracle delivered');
-    if (hashRules(transcript.rules).toLowerCase() !== chain.rulesHash.toLowerCase()) {
+    if (!sameHex(transcript.seed, chain.seed)) problems.push('the seed is not the one the oracle delivered');
+    if (!sameHex(hashRules(transcript.rules), chain.rulesHash)) {
       problems.push('the rules are not the ones the lobby was opened under');
     }
-    const sameSeats =
-      seats.length === chain.seats.length && seats.every((seat, i) => addressKey(seat.address) === addressKey(chain.seats[i] ?? '0x'));
-    if (!sameSeats) problems.push('the seats are not the ones that staked');
-    if (result.historyRoot.toLowerCase() !== chain.historyRoot.toLowerCase() || result.rounds !== chain.rounds) {
+    if (!sameAddresses(seats.map((seat) => seat.address), chain.seats)) problems.push('the seats are not the ones that staked');
+    if (!sameHex(result.historyRoot, chain.historyRoot) || result.rounds !== chain.rounds) {
       problems.push('the result is not the one proposed on-chain');
     }
-    if (rankingHash(result.ranking).toLowerCase() !== chain.rankingHash.toLowerCase()) {
+    if (!sameHex(rankingHash(result.ranking), chain.rankingHash)) {
       problems.push('the ranking is not the one proposed on-chain');
     }
   }
 
-  if (root.toLowerCase() !== result.historyRoot.toLowerCase() || replay.result.rounds !== result.rounds) {
+  if (!sameHex(root, result.historyRoot) || replay.result.rounds !== result.rounds) {
     problems.push('the rounds do not replay to the signed history root');
   }
-  const sameRanking =
-    replay.result.ranking.length === result.ranking.length &&
-    replay.result.ranking.every((address, i) => addressKey(address) === addressKey(result.ranking[i] ?? '0x'));
-  if (!sameRanking) problems.push('the ranking is not what the rounds produce');
+  if (!sameAddresses(replay.result.ranking, result.ranking)) problems.push('the ranking is not what the rounds produce');
   replay.rounds.forEach((round, i) => {
     const published = transcript.rounds[i]?.record.hash ?? '0x';
-    if (round.hash.toLowerCase() !== published.toLowerCase()) problems.push(`round ${round.round} does not hash to its published hash`);
+    if (!sameHex(round.hash, published)) problems.push(`round ${round.round} does not hash to its published hash`);
   });
 
   problems.push(...(await checkSignatures(transcript, options)));
@@ -182,7 +177,7 @@ async function checkSignatures(transcript: Transcript, options: AuditOptions): P
     for (const move of record.moves) {
       const seat = move.index;
       const place = { matchId, round: record.round, seat };
-      if (move.revealed && commitMove(matchId, record.round, seat, move).toLowerCase() !== move.commitment.toLowerCase()) {
+      if (move.revealed && !sameHex(commitMove(matchId, record.round, seat, move), move.commitment)) {
         problems.push(`round ${record.round}: seat ${seat}'s reveal does not open its commitment`);
       }
       if (bots.has(seat)) continue;
@@ -212,7 +207,7 @@ function checkOwnMoves(transcript: Transcript, own: NonNullable<AuditOptions['ow
     const record = records.get(round);
     const mine = commitMove(transcript.matchId, round, own.seat, sealed);
     const entry = record?.moves.find((move) => move.index === own.seat);
-    if (!entry || entry.commitment.toLowerCase() !== mine.toLowerCase()) {
+    if (!entry || !sameHex(entry.commitment, mine)) {
       // Without a receipt the commit may simply never have arrived.
       if (sealed.receipt) problems.push(`round ${round}: the server receipted your commitment, and the transcript leaves it out`);
       continue;
@@ -234,6 +229,6 @@ function sameMove(
   return (
     published.action === sealed.action &&
     published.target === target &&
-    published.salt.toLowerCase() === sealed.salt.toLowerCase()
+    sameHex(published.salt, sealed.salt)
   );
 }

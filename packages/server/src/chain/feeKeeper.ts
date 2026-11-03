@@ -3,6 +3,7 @@ import { feeRouterAbi, gameEscrowAbi } from '@lms/contracts';
 import { errorMessage } from '@lms/api';
 import type { TxSender } from './txSender.js';
 import { readClient } from './viem.js';
+import { exclusive, repeat } from '../util/poll.js';
 
 /**
  * Everything the keeper needs from the chain, as an interface, for the same
@@ -46,8 +47,7 @@ export function feeKeeperPolicy(overrides: {
  * `minHarvest` so that gas is not spent moving dust.
  */
 export class FeeKeeper {
-  private running = false;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTimer: (() => void) | null = null;
 
   constructor(
     private readonly port: FeeRouterPort,
@@ -55,39 +55,31 @@ export class FeeKeeper {
   ) {}
 
   start(pollMs: number): void {
-    void this.tickLogged();
-    this.timer = setInterval(() => void this.tickLogged(), pollMs);
-    this.timer.unref?.();
+    this.stopTimer = repeat(() => {
+      this.tick().then(
+        (harvested) => {
+          if (harvested) console.log(`[fees] harvested ${harvested} wei`);
+        },
+        (error: unknown) => console.error('[fees] harvest failed:', errorMessage(error)),
+      );
+    }, pollMs);
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.stopTimer?.();
+    this.stopTimer = null;
   }
 
-  /** Wei harvested, null if below the threshold, or undefined if a tick was already running. */
-  async tick(): Promise<bigint | null | undefined> {
-    // Overlapping ticks would double-submit the transaction.
-    if (this.running) return undefined;
-    this.running = true;
-    try {
-      const credited = await this.port.credited();
-      if (credited === 0n || credited < this.policy.minHarvest) return null;
-      await this.port.harvest();
-      return credited;
-    } finally {
-      this.running = false;
-    }
-  }
-
-  private async tickLogged(): Promise<void> {
-    try {
-      const harvested = await this.tick();
-      if (harvested) console.log(`[fees] harvested ${harvested} wei`);
-    } catch (error) {
-      console.error('[fees] harvest failed:', errorMessage(error));
-    }
-  }
+  /**
+   * Wei harvested, null if below the threshold, or undefined if a tick was
+   * already running: overlapping ticks would double-submit the transaction.
+   */
+  readonly tick: () => Promise<bigint | null | undefined> = exclusive(async () => {
+    const credited = await this.port.credited();
+    if (credited === 0n || credited < this.policy.minHarvest) return null;
+    await this.port.harvest();
+    return credited;
+  });
 }
 
 export interface ViemFeeRouterOptions {

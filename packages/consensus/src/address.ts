@@ -1,5 +1,5 @@
 /**
- * Address comparison.
+ * Address and hex comparison.
  *
  * EVM addresses are case-insensitive, but the mixed-case EIP-55 checksum form
  * is what wallets hand out and what the chain emits in logs. Anything that
@@ -18,8 +18,21 @@ export function addressKey(value: string): string {
   return value.toLowerCase();
 }
 
-/** True when two addresses are the same account, whatever their casing. */
-export function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
+/**
+ * True when two hex strings — hashes, ids, signatures — are equal, whatever
+ * their casing. False when either is missing.
+ */
+export function sameHex(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   return a.toLowerCase() === b.toLowerCase();
+}
+
+/** True when two addresses are the same account, whatever their casing. */
+export function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
+  return sameHex(a, b);
+}
+
+/** True when two lists name the same accounts in the same order. */
+export function sameAddresses(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((address, i) => sameAddress(address, b[i]));
 }

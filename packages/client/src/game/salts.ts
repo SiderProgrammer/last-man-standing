@@ -1,21 +1,15 @@
 import { toHex } from 'viem';
-import type { ActionValue } from '@lms/consensus';
+import type { OwnMove } from '@lms/engine';
 import { readRaw, writeRaw } from '../io/storage.js';
 
 const KEY = 'lms.moves.v1';
 
-export interface StoredMove {
-  action: ActionValue;
-  target: number;
-  salt: `0x${string}`;
-  /**
-   * The server's signed receipt for the commitment, once it arrives. Kept as
-   * evidence: the transcript must then show the commitment.
-   */
-  receipt?: { receivedAt: number; signature: `0x${string}` };
-  /** Set once the reveal was sent, or handed to the server to hold. */
-  revealed?: boolean;
-}
+/**
+ * A sealed move as this browser stores it, with the server's receipt once it
+ * arrives (evidence: the transcript must then show the commitment) and whether
+ * it was revealed. What the audit checks the transcript against.
+ */
+export type StoredMove = OwnMove;
 
 /**
  * Commit-reveal only works if the sealed move outlives the page.

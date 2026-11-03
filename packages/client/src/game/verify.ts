@@ -1,6 +1,6 @@
 import { keccak256, stringToHex } from 'viem';
 import { auditTranscript, moveLogFromHistory, replayMatch, type Audit, type AuditOptions, type ChainRecord, type OwnMove } from '@lms/engine';
-import { canonicalJson, type MatchResult, type PublicMatchState, type Transcript } from '@lms/consensus';
+import { canonicalJson, sameAddresses, sameHex, type MatchResult, type PublicMatchState, type Transcript } from '@lms/consensus';
 
 /** What the browser concluded after replaying a finished match itself. */
 export interface Verification {
@@ -37,13 +37,10 @@ export function verifyMatch(state: PublicMatchState, claimed: MatchResult): Veri
   );
   const root = replay.result.historyRoot;
 
-  if (root.toLowerCase() !== claimed.historyRoot.toLowerCase()) {
+  if (!sameHex(root, claimed.historyRoot)) {
     return { ok: false, root, reason: 'the published rounds do not hash to the announced root' };
   }
-  const sameRanking =
-    replay.result.ranking.length === claimed.ranking.length &&
-    replay.result.ranking.every((address, i) => address.toLowerCase() === claimed.ranking[i]?.toLowerCase());
-  if (!sameRanking) return { ok: false, root, reason: 'the announced ranking is not what the rounds produce' };
+  if (!sameAddresses(replay.result.ranking, claimed.ranking)) return { ok: false, root, reason: 'the announced ranking is not what the rounds produce' };
   return { ok: true, root };
 }
 

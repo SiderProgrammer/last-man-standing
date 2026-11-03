@@ -1,4 +1,5 @@
-import { Action, addressKey, type RoundRecord } from '@lms/consensus';
+import { addressKey } from '@lms/consensus';
+import { favouriteTarget, tallySeat } from '@lms/api';
 import type { StyleBook } from '../lobby/styles.js';
 import type { ArchivedMatch } from '../lobby/store.js';
 import { renderRound } from './prompt.js';
@@ -37,38 +38,17 @@ export async function briefMatch(match: ArchivedMatch, you: number | null, style
 
 /** One line on what `seat` did over the match. */
 function describeSeat(match: ArchivedMatch, seat: number, you: number | null): string {
-  const read = tendencies(match.history, seat, you);
+  // Plain counts; spotting the pattern in them is the model's job.
+  const tally = tallySeat(match.history, seat);
+  const favourite = favouriteTarget(tally.targets);
   const parts = [
-    `Seat #${seat} over the whole match: ${read.strikes} strikes, ${read.guards} guards, ${read.charges} charges, ${read.noShows} timeouts.`,
-    read.favourite === null ? 'Never struck.' : `Struck #${read.favourite} most often.`,
+    `Seat #${seat} over the whole match: ${tally.strikes} strikes, ${tally.guards} guards, ${tally.charges} charges, ${tally.noShows} timeouts.`,
+    favourite === null ? 'Never struck.' : `Struck #${favourite.seat} most often.`,
   ];
-  if (you !== null && seat !== you) parts.push(`Struck #${you} (the player this analysis is for) ${read.againstYou} times.`);
+  if (you !== null && seat !== you) {
+    parts.push(`Struck #${you} (the player this analysis is for) ${tally.targets.get(you) ?? 0} times.`);
+  }
   const fell = match.history.find((record) => record.eliminated.includes(seat));
   parts.push(fell ? `Eliminated in round ${fell.round}.` : 'Still standing at the end.');
   return parts.join(' ');
-}
-
-/**
- * What one seat did over the match: counts, its most frequent target, and how
- * often it struck `you`. Plain counts; spotting the pattern in them is the
- * model's job.
- */
-function tendencies(history: readonly RoundRecord[], seat: number, you: number | null) {
-  const read = { strikes: 0, guards: 0, charges: 0, noShows: 0, favourite: null as number | null, againstYou: 0 };
-  const targets = new Map<number, number>();
-  for (const record of history) {
-    const move = record.moves.find((entry) => entry.index === seat);
-    if (!move) continue;
-    if (!move.revealed) read.noShows += 1;
-    else if (move.action === Action.Guard) read.guards += 1;
-    else if (move.action === Action.Charge) read.charges += 1;
-    else if (move.action === Action.Strike) {
-      read.strikes += 1;
-      if (move.target === you) read.againstYou += 1;
-      targets.set(move.target, (targets.get(move.target) ?? 0) + 1);
-    }
-  }
-  const [best] = [...targets.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-  if (best) read.favourite = best[0];
-  return read;
 }

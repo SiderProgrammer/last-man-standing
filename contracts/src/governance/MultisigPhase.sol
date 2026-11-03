@@ -55,10 +55,16 @@ contract MultisigPhase {
         phaseEnd = phaseEnd_;
     }
 
+    /// @dev The check is a function so its code is not copied into every
+    ///      function the modifier guards.
     modifier onlySafeInPhase() {
+        _onlySafeInPhase();
+        _;
+    }
+
+    function _onlySafeInPhase() private view {
         if (msg.sender != safe) revert NotSafe(msg.sender);
         if (block.timestamp >= phaseEnd) revert PhaseOver(phaseEnd);
-        _;
     }
 
     /// @notice Schedules one call through the timelock.

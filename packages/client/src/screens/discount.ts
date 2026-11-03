@@ -3,7 +3,7 @@ import { app, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { discountJoinLabel } from '../ui/views.js';
 import * as discountCalls from '../wallet/discount.js';
-import { QUOTE_TTL_MS, idleDiscountButton, seated } from './lobby.js';
+import { armQuote, idleDiscountButton, seated } from './lobby.js';
 
 /**
  * Paying part of a seat's fee in LMS. Loaded once a wallet is on the hub,
@@ -40,13 +40,12 @@ export async function quoteDiscountJoin(button: HTMLButtonElement, lobby: LobbyI
       idleDiscountButton(button, lobby);
       return;
     }
-    button.textContent = discountJoinLabel(lobby.stake, quote);
-    button.classList.add('primary');
-    const expiry = setTimeout(() => idleDiscountButton(button, lobby), QUOTE_TTL_MS);
-    button.onclick = () => {
-      clearTimeout(expiry);
-      void payDiscountJoin(button, lobby, discount.token, quote);
-    };
+    armQuote(
+      button,
+      discountJoinLabel(lobby.stake, quote),
+      () => idleDiscountButton(button, lobby),
+      () => void payDiscountJoin(button, lobby, discount.token, quote),
+    );
   } catch (error) {
     toast(`Could not price the discount: ${errorFirstLine(error)}`);
     idleDiscountButton(button, lobby);

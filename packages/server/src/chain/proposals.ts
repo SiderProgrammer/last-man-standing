@@ -3,6 +3,7 @@ import { lmsGovernorAbi, type ProposalSummary } from '@lms/contracts';
 import { errorMessage } from '@lms/api';
 import { chunkedLogs, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
+import { exclusive, repeat } from '../util/poll.js';
 
 /** Everything the index needs from the chain, so the polling can be tested with a fake. */
 export interface ProposalReader {
@@ -24,8 +25,7 @@ export interface ProposalReader {
 export class ProposalIndex {
   private readonly proposals = new Map<string, ProposalSummary>();
   private cursor: bigint;
-  private polling = false;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private stopTimer: (() => void) | null = null;
 
   constructor(
     private readonly reader: ProposalReader,
@@ -45,15 +45,13 @@ export class ProposalIndex {
     pollMs?: number;
   }) {
     const index = new ProposalIndex(viemProposalReader(options), options.fromBlock, options.confirmations);
-    void index.poll();
-    index.timer = setInterval(() => void index.poll(), options.pollMs ?? 15_000);
-    index.timer.unref?.();
+    index.stopTimer = repeat(() => void index.poll(), options.pollMs ?? 15_000);
     return index;
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.stopTimer?.();
+    this.stopTimer = null;
   }
 
   /** Newest first. */
@@ -61,9 +59,8 @@ export class ProposalIndex {
     return [...this.proposals.values()].sort((a, b) => b.block - a.block || (BigInt(b.id) > BigInt(a.id) ? 1 : -1));
   }
 
-  async poll(): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
+  /** One poll; a poll while one runs does nothing. Never rejects: a failure is logged and retried next time. */
+  readonly poll: () => Promise<void> = exclusive(async () => {
     try {
       const head = confirmedHead(await this.reader.blockNumber(), this.confirmations);
       if (head === null || this.cursor > head) return;
@@ -76,10 +73,8 @@ export class ProposalIndex {
       });
     } catch (error) {
       console.error('[governance] poll failed:', errorMessage(error));
-    } finally {
-      this.polling = false;
     }
-  }
+  });
 }
 
 export function viemProposalReader(options: { rpcUrl: string; chainId: number; governor: Address }): ProposalReader {

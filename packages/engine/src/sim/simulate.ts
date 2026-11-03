@@ -1,7 +1,7 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
-import { Action, BOT_DIFFICULTIES, commitMove, type BotDifficulty, type Move, type Rules, type Seat } from '@lms/consensus';
+import { Action, BOT_DIFFICULTIES, type BotDifficulty, type Rules, type Seat } from '@lms/consensus';
 import { Match } from '../match/match.js';
-import { always, Prng, randomStrategy, readerStrategy, smartStrategy, type Strategy } from '../bots/strategy.js';
+import { always, playRound, Prng, randomStrategy, readerStrategy, smartStrategy, type Strategy } from '../bots/strategy.js';
 
 /**
  * Balance simulator: plays many bot matches under a rule set and reports how
@@ -124,17 +124,7 @@ export function simulate(options: SimulationOptions): SimulationReport {
 
     while (!match.finished) {
       const round = match.round;
-      const living = match.alive;
-      const chosen = new Map<number, Move & { salt: `0x${string}` }>();
-      for (const seat of living) {
-        const move = (strategies[seat] as Strategy)(seat, match);
-        const salt = label(`${base}:salt:${n}:${round}:${seat}`);
-        chosen.set(seat, { ...move, salt });
-        match.submitCommit(seat, commitMove(match.matchId, round, seat, { ...move, salt }));
-      }
-      match.openRevealPhase();
-      for (const seat of living) match.submitReveal(seat, chosen.get(seat) as Move & { salt: `0x${string}` });
-      const record = match.resolve();
+      const record = playRound(match, strategies, (seat) => label(`${base}:salt:${n}:${round}:${seat}`));
       // Everyone left fell in the same round and the survivor sits on exactly
       // 1 HP: the rescue rule, not play, picked the winner. (A survivor can
       // also land on 1 HP honestly, so this slightly overcounts.)

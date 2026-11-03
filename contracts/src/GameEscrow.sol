@@ -380,9 +380,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
 
     /// @notice Takes a seat by staking on this chain.
     function join(bytes32 matchId) external payable whenNotPaused {
-        MatchInfo storage info = _open(matchId);
-        if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
-        _seat(matchId, info, msg.sender, 0, info.stake);
+        _joinWithStake(matchId, msg.sender);
     }
 
     /// @notice Takes a seat paying part of its fee in LMS: up to `lmsIn`,
@@ -422,7 +420,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         uint256 rate = config.lmsPerEthDiscount();
         if (rate == 0 || config.lmsToken() == address(0)) return (0, 0);
         MatchInfo storage info = matchInfo[matchId];
-        uint256 fee = (uint256(info.stake) * terms[info.termsId].feeBps) / BPS_DENOMINATOR;
+        uint256 fee = _fee(info.stake, terms[info.termsId].feeBps);
         uint256 maxDiscount = (fee * MAX_DISCOUNT_BPS) / BPS_DENOMINATOR;
 
         discount = Math.mulDiv(lmsIn, 1 ether, rate);
@@ -465,6 +463,11 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      being paid into a lobby can only ever credit them, never charge them.
     function joinFor(bytes32 matchId, address player) external payable whenNotPaused {
         if (player == address(0)) revert ZeroAddress();
+        _joinWithStake(matchId, player);
+    }
+
+    /// @dev Seats `player` for exactly the stake, sent with the call.
+    function _joinWithStake(bytes32 matchId, address player) private {
         MatchInfo storage info = _open(matchId);
         if (msg.value != info.stake) revert IncorrectStake(msg.value, info.stake);
         _seat(matchId, info, player, 0, info.stake);
@@ -542,10 +545,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     function fulfillRandomness(bytes32 matchId, bytes32 randomness) external {
         MatchInfo storage info = matchInfo[matchId];
         if (msg.sender != info.oracle || msg.sender == address(0)) revert NotOracle(msg.sender);
-
-        if (info.status != MatchStatus.Pending) {
-            revert WrongStatus(matchId, MatchStatus.Pending, info.status);
-        }
+        _requireStatus(matchId, info.status, MatchStatus.Pending);
 
         // Bind the seed to the match so one oracle response cannot seed two
         // matches, and so a zero response is still a usable seed.
@@ -576,10 +576,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         address[] calldata ranking,
         bytes calldata signatures
     ) external nonReentrant whenNotPaused {
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Live) {
-            revert WrongStatus(matchId, MatchStatus.Live, info.status);
-        }
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Live);
         if (rounds == 0 || rounds > type(uint16).max) revert RoundsOutOfRange(rounds);
 
         config.checkQuorum(
@@ -629,10 +626,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      without this it would quietly shorten the challenge window.
     /// @param ranking The ranking from `ResultProposed`.
     function finalize(bytes32 matchId, address[] calldata ranking) external nonReentrant {
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Proposed) {
-            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
-        }
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Proposed);
         if (block.timestamp < info.deadline) revert ChallengeWindowOpen(info.deadline);
         if (keccak256(abi.encode(ranking)) != info.rankingHash) revert RankingMismatch();
         _checkSequencer();
@@ -673,7 +667,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         address[] calldata ranking,
         bool discounted
     ) private {
-        uint256 fee = (uint256(stake) * feeBps) / BPS_DENOMINATOR;
+        uint256 fee = _fee(stake, feeBps);
         if (fee == 0) return;
         uint256 epoch = block.timestamp / FEE_EPOCH;
         uint256 total;
@@ -698,11 +692,8 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      their stake. Never paused: a veto must always be possible in time.
     function veto(bytes32 matchId) external nonReentrant {
         _onlyGuardianOrGovernance();
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Proposed) {
-            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
-        }
-        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Proposed);
+        _requireChallengeOpen(info);
 
         _refundAll(matchId, info);
         emit ResultVetoed(matchId, msg.sender);
@@ -722,11 +713,8 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      Never paused: a player must always be able to object in time.
     /// @param evidenceHash Hash of the evidence bundle the player published.
     function dispute(bytes32 matchId, bytes32 evidenceHash) external {
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Proposed) {
-            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
-        }
-        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Proposed);
+        _requireChallengeOpen(info);
         uint256 number = seatNumber[matchId][msg.sender];
         if (number == 0) revert NotSeated(matchId, msg.sender);
         uint256 bit = 1 << (number - 1);
@@ -748,12 +736,9 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      disputed may still do so before the restored deadline.
     function dismissDispute(bytes32 matchId) external {
         _onlyGuardianOrGovernance();
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Proposed) {
-            revert WrongStatus(matchId, MatchStatus.Proposed, info.status);
-        }
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Proposed);
         if (!info.disputed) revert NotDisputed(matchId);
-        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+        _requireChallengeOpen(info);
 
         info.disputed = false;
         // Extended exactly once while disputed, so this is the deadline it had.
@@ -773,7 +758,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
         uint256 discountEth
     ) private {
         uint256 pool = uint256(info.stake) * info.seatCount;
-        uint256 distributable = pool - (pool * matchTerms.feeBps) / BPS_DENOMINATOR;
+        uint256 distributable = pool - _fee(pool, matchTerms.feeBps);
 
         uint16[] memory schedule = matchTerms.payoutBps;
         uint256 paid;
@@ -816,10 +801,7 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     ///      result it could always force exactly this outcome, at the
     ///      deadline. Aborting only gets everyone their stake back sooner.
     function abortMatch(bytes32 matchId, bytes calldata signatures) external nonReentrant {
-        MatchInfo storage info = matchInfo[matchId];
-        if (info.status != MatchStatus.Live) {
-            revert WrongStatus(matchId, MatchStatus.Live, info.status);
-        }
+        MatchInfo storage info = _inStatus(matchId, MatchStatus.Live);
         config.checkQuorum(
             info.attestorSetVersion,
             _hashTypedDataV4(keccak256(abi.encode(MATCH_ABORT_TYPEHASH, matchId))),
@@ -846,14 +828,12 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
             if (info.seatCount >= terms[info.termsId].minSeats) cancellableAt += LOCK_GRACE;
             if (block.timestamp < cancellableAt) revert CannotCancelYet(matchId);
             reason = CancelReason.JoinWindowExpired;
-        } else if (info.status == MatchStatus.Pending) {
-            // The oracle never answered.
+        } else if (info.status == MatchStatus.Pending || info.status == MatchStatus.Live) {
             if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
-            reason = CancelReason.RandomnessNotDelivered;
-        } else if (info.status == MatchStatus.Live) {
-            // No quorum produced a result in time.
-            if (block.timestamp < info.deadline) revert CannotCancelYet(matchId);
-            reason = CancelReason.SettlementDeadlinePassed;
+            // The oracle never answered, or no quorum produced a result in time.
+            reason = info.status == MatchStatus.Pending
+                ? CancelReason.RandomnessNotDelivered
+                : CancelReason.SettlementDeadlinePassed;
         } else {
             revert WrongStatus(matchId, MatchStatus.Live, info.status);
         }
@@ -951,10 +931,30 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
 
     function _open(bytes32 matchId) private view returns (MatchInfo storage info) {
         info = matchInfo[matchId];
-        if (info.status == MatchStatus.None) revert UnknownMatch(matchId);
-        if (info.status != MatchStatus.Open) {
-            revert WrongStatus(matchId, MatchStatus.Open, info.status);
-        }
+        MatchStatus status = info.status;
+        if (status == MatchStatus.None) revert UnknownMatch(matchId);
+        _requireStatus(matchId, status, MatchStatus.Open);
+    }
+
+    /// @dev The match, which must be in `expected`.
+    function _inStatus(bytes32 matchId, MatchStatus expected) private view returns (MatchInfo storage info) {
+        info = matchInfo[matchId];
+        _requireStatus(matchId, info.status, expected);
+    }
+
+    function _requireStatus(bytes32 matchId, MatchStatus actual, MatchStatus expected) private pure {
+        if (actual != expected) revert WrongStatus(matchId, expected, actual);
+    }
+
+    /// @dev Reverts once a proposed result's challenge window, extension
+    ///      included, has closed: too late to object to it.
+    function _requireChallengeOpen(MatchInfo storage info) private view {
+        if (block.timestamp >= info.deadline) revert ChallengeWindowClosed(info.deadline);
+    }
+
+    /// @dev The protocol's cut of `amount` at `feeBps`.
+    function _fee(uint256 amount, uint16 feeBps) private pure returns (uint256) {
+        return (amount * feeBps) / BPS_DENOMINATOR;
     }
 
     /// @dev The same conditions `join` reverts on, as a value: the

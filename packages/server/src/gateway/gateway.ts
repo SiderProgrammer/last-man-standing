@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { verifyMessage, verifyTypedData, type TypedDataDefinition } from 'viem';
+import type { TypedDataDefinition } from 'viem';
 import {
   addressKey,
   commitTypedData,
@@ -17,16 +17,18 @@ import {
   type LobbyInfo,
   type MatchSummary,
   type MoveAim,
+  type RelayKind,
   type ServerMessage,
   type SpokeInfo,
   type StakingInfo,
   type ZapInfo,
 } from '@lms/api';
 import type { Lobby } from '../lobby/lobby.js';
-import type { ArchivedMatch, MatchArchive } from '../lobby/store.js';
+import { seatIn, type ArchivedMatch, type MatchArchive } from '../lobby/store.js';
 import { RequestError } from '../errors.js';
 import { FrameError, errorFrame, parseClientMessage } from './frames.js';
 import { CloseCode, DEFAULT_GATEWAY_LIMITS, KeyedLimiter, TokenBucket, type GatewayLimits } from './limits.js';
+import { offlineVerify, offlineVerifyTyped } from './verifyPool.js';
 import type { Client } from '../match/room.js';
 import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
 import type { ChainWithdrawals } from '../chain/chainWithdrawals.js';
@@ -298,10 +300,7 @@ export class Gateway {
    * join landed; a player who is not connected simply misses it.
    */
   notify(address: `0x${string}`, message: ServerMessage): void {
-    const key = addressKey(address);
-    for (const session of this.sessions.values()) {
-      if (session.address !== null && addressKey(session.address) === key) session.send(message);
-    }
+    for (const session of this.sessionsOf(address)) session.send(message);
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */
@@ -386,15 +385,7 @@ export class Gateway {
         return;
       }
       case 'history': {
-        // Always the authenticated wallet's own: there is no field to ask for anyone else's.
-        const archive = this.requireArchive();
-        const found = await archive.forPlayer(address, HISTORY_PAGE + 1, message.before);
-        session.send({
-          type: 'history',
-          matches: found.slice(0, HISTORY_PAGE).map((match) => summarise(match, address)),
-          before: message.before ?? null,
-          more: found.length > HISTORY_PAGE,
-        });
+        await this.history(session, address, message.before);
         return;
       }
       case 'review': {
@@ -402,25 +393,20 @@ export class Gateway {
         return;
       }
       case 'relay': {
-        await this.relay(session, address, message);
+        const relay = this.options.relay;
+        await this.answerRelayed(session, message.id, relay ? () => relay.relay(address, message.call) : null, 'this server relays no session calls');
         return;
       }
       case 'balance': {
-        const withdrawals = this.options.withdrawals;
-        if (!withdrawals) throw new RequestError('UNAVAILABLE', 'this server bridges no withdrawals');
-        const balance = await withdrawals.balance(address);
-        session.send({
-          type: 'balance',
-          amount: balance.amount.toString(),
-          receiver: balance.receiver,
-          withdrawalNonce: balance.nonce.toString(),
-          minimum: balance.minimum.toString(),
-          chainTime: balance.chainTime,
-        });
+        await this.balance(session, address);
         return;
       }
       case 'withdrawToChain': {
-        await this.withdrawToChain(session, address, message);
+        const withdrawals = this.options.withdrawals;
+        const submit = withdrawals
+          ? async () => ({ ...(await withdrawals.submit(address, message)), kind: 'withdrawToChain' as const })
+          : null;
+        await this.answerRelayed(session, message.id, submit, 'this server bridges no withdrawals');
         return;
       }
       case 'queue': {
@@ -438,39 +424,89 @@ export class Gateway {
         return;
       }
       case 'commit': {
-        const grant = this.requireGrant(session);
-        const room = this.requireRoom(address, message.matchId);
-        const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
-        await this.requireKeySigned(grant, commitTypedData(this.options.chainId, place, message.commitment), message.signature);
-        const hold = message.hold;
-        if (hold) await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, hold), hold.signature);
-        // The clock is read again: the signature checks took time, and the
-        // room compares against its own deadlines.
-        const receipt = room.submitCommit(
-          address,
-          message.commitment,
-          this.now(),
-          hold ? { action: hold.action, target: hold.target, salt: hold.salt } : undefined,
-          aimOf(message),
-          { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
-        );
-        const signer = room.staked ? this.options.receipts : this.options.practiceReceipts;
-        // Not before the commit is in the room's journal: a receipt for a
-        // commit a restart could lose would be a promise the server cannot keep.
-        await this.options.lobby.persisted(room.matchId);
-        if (signer) session.send({ type: 'receipt', receipt, signature: await signer.sign(receipt) });
+        await this.commit(session, address, message);
         return;
       }
       case 'reveal': {
-        const grant = this.requireGrant(session);
-        const room = this.requireRoom(address, message.matchId);
-        const move = { action: message.action, target: message.target, salt: message.salt };
-        const place = { ...aimOf(message), seat: room.seatOf(address) ?? -1 };
-        await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, move), message.signature);
-        room.submitReveal(address, move, this.now(), aimOf(message), { grant, signature: message.signature });
+        await this.reveal(session, address, message);
         return;
       }
     }
+  }
+
+  /**
+   * Takes a commitment, and with it a held move, once the session key is
+   * shown to have signed both; then answers with the server's receipt.
+   */
+  private async commit(
+    session: Session,
+    address: `0x${string}`,
+    message: Extract<ClientMessage, { type: 'commit' }>,
+  ): Promise<void> {
+    const { grant, room, place } = this.movePlace(session, address, message);
+    await this.requireKeySigned(grant, commitTypedData(this.options.chainId, place, message.commitment), message.signature);
+    const hold = message.hold;
+    if (hold) await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, hold), hold.signature);
+    // The clock is read again: the signature checks took time, and the
+    // room compares against its own deadlines.
+    const receipt = room.submitCommit(
+      address,
+      message.commitment,
+      this.now(),
+      hold ? { action: hold.action, target: hold.target, salt: hold.salt } : undefined,
+      aimOf(message),
+      { grant, signature: message.signature, ...(hold ? { holdSignature: hold.signature } : {}) },
+    );
+    const signer = room.staked ? this.options.receipts : this.options.practiceReceipts;
+    // Not before the commit is in the room's journal: a receipt for a
+    // commit a restart could lose would be a promise the server cannot keep.
+    await this.options.lobby.persisted(room.matchId);
+    if (signer) session.send({ type: 'receipt', receipt, signature: await signer.sign(receipt) });
+  }
+
+  /** Takes a reveal, once the session key is shown to have signed it. */
+  private async reveal(
+    session: Session,
+    address: `0x${string}`,
+    message: Extract<ClientMessage, { type: 'reveal' }>,
+  ): Promise<void> {
+    const { grant, room, place } = this.movePlace(session, address, message);
+    const move = { action: message.action, target: message.target, salt: message.salt };
+    await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, move), message.signature);
+    room.submitReveal(address, move, this.now(), aimOf(message), { grant, signature: message.signature });
+  }
+
+  /** The grant a move is signed under, the room it is for, and the match, round and seat it names. */
+  private movePlace(session: Session, address: `0x${string}`, aim: MoveAim) {
+    const grant = this.requireGrant(session);
+    const room = this.requireRoom(address, aim.matchId);
+    return { grant, room, place: { ...aimOf(aim), seat: room.seatOf(address) ?? -1 } };
+  }
+
+  /** A page of the wallet's own finished matches: there is no field to ask for anyone else's. */
+  private async history(session: Session, address: `0x${string}`, before: number | undefined): Promise<void> {
+    const found = await this.requireArchive().forPlayer(address, HISTORY_PAGE + 1, before);
+    session.send({
+      type: 'history',
+      matches: found.slice(0, HISTORY_PAGE).map((match) => summarise(match, address)),
+      before: before ?? null,
+      more: found.length > HISTORY_PAGE,
+    });
+  }
+
+  /** The wallet's hub balance, and what a withdrawal of it to a spoke must carry. */
+  private async balance(session: Session, address: `0x${string}`): Promise<void> {
+    const withdrawals = this.options.withdrawals;
+    if (!withdrawals) throw new RequestError('UNAVAILABLE', 'this server bridges no withdrawals');
+    const balance = await withdrawals.balance(address);
+    session.send({
+      type: 'balance',
+      amount: balance.amount.toString(),
+      receiver: balance.receiver,
+      withdrawalNonce: balance.nonce.toString(),
+      minimum: balance.minimum.toString(),
+      chainTime: balance.chainTime,
+    });
   }
 
   private async login(session: Session, message: Extract<ClientMessage, { type: 'auth' }>): Promise<void> {
@@ -570,51 +606,29 @@ export class Gateway {
   }
 
   /**
-   * Relays one session call for the socket's own wallet. Answered on its own
-   * frames, by `id`, because a join takes a block to land and the client may
-   * have more than one in flight.
+   * Sends one transaction for the socket's own wallet — a session call, or a
+   * signed withdrawal to a spoke — with the server paying the gas. Answered on
+   * `relayed` or `relay.error` frames, by `id`, because it takes a block to
+   * land and the client may have more than one in flight.
+   *
+   * @param send Null when the server offers no such transaction; refused with `unavailable`.
    */
-  private async relay(
+  private async answerRelayed(
     session: Session,
-    address: `0x${string}`,
-    message: Extract<ClientMessage, { type: 'relay' }>,
+    id: string,
+    send: (() => Promise<{ kind: RelayKind; tx: `0x${string}`; left: number }>) | null,
+    unavailable: string,
   ): Promise<void> {
-    const { id } = message;
-    const relay = this.options.relay;
-    if (!relay) {
-      session.send({ type: 'relay.error', id, code: 'UNAVAILABLE', message: 'this server relays no session calls' });
+    if (!send) {
+      session.send({ type: 'relay.error', id, code: 'UNAVAILABLE', message: unavailable });
       return;
     }
     try {
-      const { kind, tx, left } = await relay.relay(address, message.call);
+      const { kind, tx, left } = await send();
       session.send({ type: 'relayed', id, kind, tx, left });
     } catch (error) {
-      const { code, message: reason } = errorFrame(error);
-      session.send({ type: 'relay.error', id, code, message: reason });
-    }
-  }
-
-  /**
-   * Submits the socket's own wallet's signed withdrawal to a spoke. Answered
-   * on `relayed` frames by `id`, like a session call: it takes a block too.
-   */
-  private async withdrawToChain(
-    session: Session,
-    address: `0x${string}`,
-    message: Extract<ClientMessage, { type: 'withdrawToChain' }>,
-  ): Promise<void> {
-    const { id } = message;
-    const withdrawals = this.options.withdrawals;
-    if (!withdrawals) {
-      session.send({ type: 'relay.error', id, code: 'UNAVAILABLE', message: 'this server bridges no withdrawals' });
-      return;
-    }
-    try {
-      const { tx, left } = await withdrawals.submit(address, message);
-      session.send({ type: 'relayed', id, kind: 'withdrawToChain', tx, left });
-    } catch (error) {
-      const { code, message: reason } = errorFrame(error);
-      session.send({ type: 'relay.error', id, code, message: reason });
+      const { code, message } = errorFrame(error);
+      session.send({ type: 'relay.error', id, code, message });
     }
   }
 
@@ -626,8 +640,7 @@ export class Gateway {
   private async review(session: Session, address: `0x${string}`, matchId: `0x${string}`): Promise<void> {
     const match = await this.requireArchive().load(matchId);
     if (!match) throw new RequestError('NOT_FOUND', 'no finished match with that id');
-    const seated = match.seats.some((seat) => addressKey(seat.address) === addressKey(address));
-    if (!seated && !match.staked) throw new RequestError('FORBIDDEN', 'only the players who sat in this match can open it');
+    if (seatIn(match, address) === null && !match.staked) throw new RequestError('FORBIDDEN', 'only the players who sat in this match can open it');
     session.send({
       type: 'review',
       match: {
@@ -637,7 +650,7 @@ export class Gateway {
         rules: match.rules,
         seed: match.seed,
         staked: match.staked,
-        settledTx: (match.settledTx as `0x${string}` | null) ?? null,
+        settledTx: match.settledTx,
         finishedAt: match.finishedAt,
       },
     });
@@ -709,11 +722,15 @@ export class Gateway {
 
   /** Whether any open socket is logged in as `address`. */
   private connected(address: `0x${string}`): boolean {
+    return !this.sessionsOf(address).next().done;
+  }
+
+  /** Every open socket logged in as `address`. */
+  private *sessionsOf(address: `0x${string}`): Generator<Session> {
     const key = addressKey(address);
     for (const session of this.sessions.values()) {
-      if (session.address !== null && addressKey(session.address) === key) return true;
+      if (session.address !== null && addressKey(session.address) === key) yield session;
     }
-    return false;
   }
 
   private now(): number {
@@ -725,11 +742,6 @@ function aimOf(message: MoveAim): MoveAim {
   return { matchId: message.matchId, round: message.round };
 }
 
-/** `ecrecover` only: no network, and therefore no ERC-1271. */
-const offlineVerify: SignatureVerifier = (args) => verifyMessage(args);
-
-const offlineVerifyTyped: TypedSignatureVerifier = (args) => verifyTypedData(args).catch(() => false);
-
 /** One archived match as its player sees it in their history. */
 export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSummary {
   const key = addressKey(player);
@@ -739,9 +751,9 @@ export function summarise(match: ArchivedMatch, player: `0x${string}`): MatchSum
     finishedAt: match.finishedAt,
     rounds: match.result.rounds,
     players: match.result.ranking.length,
-    seat: match.seats.find((seat) => addressKey(seat.address) === key)?.index ?? null,
+    seat: seatIn(match, player),
     place: place + 1,
     staked: match.staked,
-    settledTx: (match.settledTx as `0x${string}` | null) ?? null,
+    settledTx: match.settledTx,
   };
 }

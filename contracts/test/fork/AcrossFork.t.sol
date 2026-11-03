@@ -65,12 +65,7 @@ contract AcrossHubForkTest is Fixtures, AcrossMainnet {
     bytes32 private matchId;
 
     function setUp() public override {
-        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            vm.skip(true);
-            return;
-        }
-        vm.createSelectFork(rpc);
+        if (!_forkOrSkip("BASE_RPC_URL")) return;
         super.setUp();
 
         receiver = new BridgeJoinReceiver(owner, escrow, IAcrossSpokePool(BASE_POOL));

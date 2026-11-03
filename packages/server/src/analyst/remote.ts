@@ -1,9 +1,7 @@
 import { Worker } from 'node:worker_threads';
-import { extname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { ArchivedAnalysis, MatchArchive } from '../lobby/store.js';
 import type { StyleBook } from '../lobby/styles.js';
-import { RemoteError, Rpc } from '../util/rpc.js';
+import { RemoteError, Rpc, siblingModule } from '../util/rpc.js';
 import { AnalystError, type AnalystOptions, type AnalyzeRequest, type AnalyzeResult, type MatchAnalyst } from './analyst.js';
 import type { GeminiModelOptions } from './gemini.js';
 import type { AnalystLimitOptions } from './limits.js';
@@ -72,12 +70,8 @@ export class AnalystWorker implements MatchAnalyst {
   }
 
   private start(): Rpc {
-    const here = fileURLToPath(import.meta.url);
-    const entry = here.replace(/remote(\.[cm]?[jt]s)$/, 'worker$1');
-    const worker = new Worker(entry, {
-      workerData: this.options.config,
-      execArgv: extname(entry) === '.ts' ? ['--import', 'tsx'] : [],
-    });
+    const { entry, execArgv } = siblingModule(import.meta.url, 'remote', 'worker');
+    const worker = new Worker(entry, { workerData: this.options.config, execArgv });
     const { archive, styles } = this.options;
     const rpc = new Rpc(
       { send: (message) => worker.postMessage(message), listen: (listener) => void worker.on('message', listener) },

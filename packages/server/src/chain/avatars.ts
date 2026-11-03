@@ -1,8 +1,9 @@
-import type { Address, PublicClient } from 'viem';
+import { isAddress, type Address, type PublicClient } from 'viem';
 import { addressKey } from '@lms/consensus';
 import { playerAvatarsAbi } from '@lms/contracts';
 import { errorMessage, type AvatarEntry } from '@lms/api';
 import { readClient } from './viem.js';
+import { fieldsOf, parseJsonList } from '../util/envList.js';
 
 /** One `PlayerAvatars` deployment, and the RPC that can be used to read it. */
 export interface AvatarCollection {
@@ -31,9 +32,12 @@ export interface AvatarSubject {
   chainId: number;
 }
 
+/** What a seat wears, before it is pinned to a seat. */
+type Avatar = Omit<AvatarEntry, 'seat'>;
+
 interface CacheEntry {
   expires: number;
-  value: Omit<AvatarEntry, 'seat'> | null;
+  value: Avatar | null;
 }
 
 const DEFAULT_GATEWAY = 'https://ipfs.io/ipfs/';
@@ -107,7 +111,7 @@ export class AvatarRegistry {
     return settled.filter((entry): entry is AvatarEntry => entry !== null);
   }
 
-  private async resolveOne(subject: AvatarSubject): Promise<Omit<AvatarEntry, 'seat'> | null> {
+  private async resolveOne(subject: AvatarSubject): Promise<Avatar | null> {
     const collection = this.clients.get(subject.chainId);
     if (!collection) return null;
 
@@ -124,7 +128,7 @@ export class AvatarRegistry {
     collection: { client: PublicClient; address: Address },
     chainId: number,
     player: Address,
-  ): Promise<Omit<AvatarEntry, 'seat'> | null> {
+  ): Promise<Avatar | null> {
     try {
       const [tokenId, uri] = await collection.client.readContract({
         address: collection.address,
@@ -164,10 +168,7 @@ export class AvatarRegistry {
       });
       if (!response.ok) return null;
 
-      const metadata: unknown = await response.json();
-      if (typeof metadata !== 'object' || metadata === null) return null;
-
-      const image = (metadata as { image?: unknown }).image;
+      const image = fieldsOf(await response.json())?.image;
       return typeof image === 'string' && image.length > 0 ? this.toHttp(image) : null;
     } catch (error) {
       console.warn('[avatars] metadata fetch failed:', errorMessage(error));
@@ -188,29 +189,11 @@ export class AvatarRegistry {
  * stop matches from being played or settled.
  */
 export function parseCollections(raw: string): AvatarCollection[] {
-  if (raw.trim().length === 0) return [];
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
-
-    return parsed.flatMap((item): AvatarCollection[] => {
-      const { chainId, address, rpcUrl } = item as Partial<AvatarCollection>;
-      if (
-        typeof chainId !== 'number' ||
-        typeof address !== 'string' ||
-        !/^0x[0-9a-fA-F]{40}$/.test(address) ||
-        typeof rpcUrl !== 'string' ||
-        rpcUrl.length === 0
-      ) {
-        console.warn('[avatars] ignoring malformed collection:', JSON.stringify(item));
-        return [];
-      }
-      return [{ chainId, address: address as Address, rpcUrl }];
-    });
-  } catch (error) {
-    console.warn('[avatars] AVATAR_COLLECTIONS is not valid JSON:', errorMessage(error));
-    return [];
-  }
+  return parseJsonList(raw, 'AVATAR_COLLECTIONS', 'avatars', (item) => {
+    const { chainId, address, rpcUrl } = fieldsOf(item) ?? {};
+    if (typeof chainId !== 'number' || typeof address !== 'string' || !isAddress(address, { strict: false })) return null;
+    if (typeof rpcUrl !== 'string' || rpcUrl.length === 0) return null;
+    return { chainId, address, rpcUrl };
+  });
 }
 

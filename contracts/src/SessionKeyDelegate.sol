@@ -260,17 +260,14 @@ contract SessionKeyDelegate is IERC1271, IERC721Receiver, IERC1155Receiver {
         returns (bytes4 selector)
     {
         if (data.length >= 4) selector = bytes4(data[:4]);
-        if (target != address(escrow)) revert SessionNotPermitted(target, selector);
         // Exactly one word of arguments: no trailing bytes for a future
         // overload, or a lenient decoder, to read differently.
-        if (data.length != 36) revert SessionNotPermitted(target, selector);
-
-        if (selector == GameEscrow.join.selector) return selector;
-        if (selector == PullPayable.withdrawFor.selector) {
-            if (value != 0 || abi.decode(data[4:], (address)) != address(this)) {
-                revert SessionNotPermitted(target, selector);
-            }
-            return selector;
+        if (target == address(escrow) && data.length == 36) {
+            if (selector == GameEscrow.join.selector) return selector;
+            if (
+                selector == PullPayable.withdrawFor.selector && value == 0
+                    && abi.decode(data[4:], (address)) == address(this)
+            ) return selector;
         }
         revert SessionNotPermitted(target, selector);
     }

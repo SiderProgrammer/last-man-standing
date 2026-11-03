@@ -1,5 +1,6 @@
 import type { MatchAnalysis, ServerMessage } from '@lms/api';
 import { app, dom, net } from '../context.js';
+import { element } from '../ui/dom.js';
 import { analysisNote, errorText, momentHeading, paragraphs, progressText } from '../ui/analysis.js';
 
 /**
@@ -70,10 +71,7 @@ export function onAnalysisStep(message: Extract<ServerMessage, { type: 'analysis
 /** Marks the step before as done and shows this one as current. */
 function addStep(text: string): void {
   for (const item of dom.analysisSteps.children) item.classList.remove('current');
-  const item = document.createElement('li');
-  item.className = 'current';
-  item.textContent = text;
-  dom.analysisSteps.append(item);
+  dom.analysisSteps.append(element('li', 'current', text));
   dom.analysisSteps.classList.remove('hidden');
 }
 
@@ -111,25 +109,15 @@ export function onAnalysisError(message: Extract<ServerMessage, { type: 'analysi
 
 function renderAnalysis(analysis: MatchAnalysis): void {
   dom.analysisSummary.replaceChildren(
-    ...paragraphs(analysis.summary).map((text) => {
-      const p = document.createElement('p');
-      p.textContent = text;
-      return p;
-    }),
+    ...paragraphs(analysis.summary).map((text) => element('p', '', text)),
   );
 
   dom.analysisMoments.replaceChildren(
     ...analysis.keyMoments.map((moment) => {
-      const item = document.createElement('li');
-      const button = document.createElement('button');
-      button.className = 'moment';
+      const item = element('li');
+      const button = element('button', 'moment');
       button.title = `Replay round ${moment.round}`;
-      const heading = document.createElement('span');
-      heading.className = 'moment-head';
-      heading.textContent = momentHeading(moment);
-      const claim = document.createElement('span');
-      claim.textContent = moment.claim;
-      button.append(heading, claim);
+      button.append(element('span', 'moment-head', momentHeading(moment)), element('span', '', moment.claim));
       if (moment.round === analysis.decisiveRound) button.classList.add('decisive');
       button.onclick = () => replayRound(moment.round);
       item.append(button);
@@ -139,11 +127,7 @@ function renderAnalysis(analysis: MatchAnalysis): void {
   dom.analysisMomentsHead.classList.toggle('hidden', analysis.keyMoments.length === 0);
 
   dom.analysisAdvice.replaceChildren(
-    ...analysis.advice.map((tip) => {
-      const item = document.createElement('li');
-      item.textContent = tip;
-      return item;
-    }),
+    ...analysis.advice.map((tip) => element('li', '', tip)),
   );
   dom.analysisAdviceHead.classList.toggle('hidden', analysis.advice.length === 0);
   dom.analyse.textContent = 'Analyse match';

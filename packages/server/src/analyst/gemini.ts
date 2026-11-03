@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   ProviderError,
   type AnalystModel,
@@ -34,7 +35,7 @@ export interface GeminiModelOptions {
  */
 export function geminiModel(options: GeminiModelOptions): AnalystModel {
   const doFetch = options.fetch ?? fetch;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep = options.sleep ?? delay;
   const baseUrl = (options.baseUrl || GEMINI_BASE_URL).replace(/\/+$/, '');
 
   return {

@@ -26,6 +26,15 @@ parentPort.on('message', ({ id, typed, args }) => {
 });
 `;
 
+/**
+ * `ecrecover` on the event loop: no network, and therefore no ERC-1271. A
+ * signature that does not even parse is simply not valid.
+ */
+export const offlineVerify: SignatureVerifier = (args) => verifyMessage(args).catch(() => false);
+
+/** `offlineVerify` for EIP-712 typed data. */
+export const offlineVerifyTyped: TypedSignatureVerifier = (args) => verifyTypedData(args).catch(() => false);
+
 interface Slot {
   worker: Worker;
   pending: Map<number, (valid: boolean) => void>;
@@ -46,7 +55,7 @@ export class VerifyPool {
 
   /** True when `signature` over `message` recovers to `address`. Never throws. */
   readonly verify: SignatureVerifier = (args) => {
-    if (this.slots.length === 0) return verifyMessage(args).catch(() => false);
+    if (this.slots.length === 0) return offlineVerify(args);
     return this.post(false, args);
   };
 
@@ -56,7 +65,7 @@ export class VerifyPool {
    * one recovery, and a full table makes two a round per seat.
    */
   readonly verifyTyped: TypedSignatureVerifier = (args) => {
-    if (this.slots.length === 0) return verifyTypedData(args).catch(() => false);
+    if (this.slots.length === 0) return offlineVerifyTyped(args);
     return this.post(true, args);
   };
 

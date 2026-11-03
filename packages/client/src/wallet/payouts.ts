@@ -31,12 +31,14 @@ export async function renderWinnings(): Promise<void> {
   const escrow = app.escrow;
   const buttons = [dom.collect, dom.resultCollect];
 
-  const disable = (status: string, pill = '–') => {
+  /** The balance pill, the status line, and whether there is anything to collect. */
+  const show = (pill: string, status: string, open: boolean) => {
     dom.winnings.textContent = pill;
-    dom.collect.disabled = true;
-    dom.resultCollect.classList.add('hidden');
+    dom.collect.disabled = !open;
+    dom.resultCollect.classList.toggle('hidden', !open);
     dom.collectStatus.textContent = status;
   };
+  const disable = (status: string, pill = '–') => show(pill, status, false);
   for (const button of buttons) {
     button.textContent = button === dom.collect ? 'Collect' : 'Collect winnings';
     button.onclick = () => void collectWinnings();
@@ -51,14 +53,13 @@ export async function renderWinnings(): Promise<void> {
     // there is the server's to read: this wallet's node is the spoke's.
     if (!spoke) return disable(`Winnings and refunds are paid on ${hub}. Switch your wallet there to collect.`);
     const name = chainInfo(spoke.chainId).name;
-    dom.winnings.textContent = `on ${hub}`;
     for (const button of buttons) button.textContent = `Collect to ${name}`;
-    dom.collect.disabled = false;
-    dom.resultCollect.classList.remove('hidden');
-    dom.collectStatus.textContent =
+    return show(
+      `on ${hub}`,
       `Your winnings and refunds wait on ${hub}. Collecting brings all of them to ${name} through Across: ` +
-      `the bridge fee comes out of them, and the server pays the ${hub} gas.`;
-    return;
+        `the bridge fee comes out of them, and the server pays the ${hub} gas.`,
+      true,
+    );
   }
 
   let owed: string;
@@ -70,12 +71,7 @@ export async function renderWinnings(): Promise<void> {
 
   if (Number(owed) === 0) return disable('Nothing waiting for you.', '0 ETH');
 
-  dom.winnings.textContent = `${owed} ETH`;
-  dom.collect.disabled = false;
-  dom.resultCollect.classList.remove('hidden');
-  dom.collectStatus.textContent = canRelay()
-    ? 'One click: the server pays the gas.'
-    : 'Your wallet will ask you to confirm.';
+  show(`${owed} ETH`, canRelay() ? 'One click: the server pays the gas.' : 'Your wallet will ask you to confirm.', true);
 }
 
 export async function collectWinnings(): Promise<void> {

@@ -4,7 +4,6 @@ import {
   addressKey,
   type RoundRecord,
   type Rules,
-  type Seat,
 } from '@lms/consensus';
 import { KEY_MOMENT_KINDS } from '@lms/api';
 import type { ArchivedMatch } from '../lobby/store.js';

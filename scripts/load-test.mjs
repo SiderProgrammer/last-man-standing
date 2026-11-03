@@ -28,6 +28,8 @@ import { writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 
 const SAMPLE_CAP = 50_000;
+/** The plain counters in a tally, which merge by adding. */
+const COUNTERS = ['attempted', 'open', 'connectedEver', 'authed', 'rounds', 'finished'];
 
 if (isMainThread) await main();
 else await worker();
@@ -118,29 +120,18 @@ async function main() {
 }
 
 function emptyTotals() {
-  return {
-    attempted: 0,
-    open: 0,
-    connectedEver: 0,
-    authed: 0,
-    rounds: 0,
-    finished: 0,
-    errors: {},
-    closes: {},
-    auth: [],
-    round: [],
-  };
+  return { ...Object.fromEntries(COUNTERS.map((name) => [name, 0])), errors: {}, closes: {}, auth: [], round: [] };
+}
+
+/** Adds `n` to `record[key]`. */
+function count(record, key, n = 1) {
+  record[key] = (record[key] ?? 0) + n;
 }
 
 function merge(into, from) {
-  into.attempted += from.attempted;
-  into.open += from.open;
-  into.connectedEver += from.connectedEver;
-  into.authed += from.authed;
-  into.rounds += from.rounds;
-  into.finished += from.finished;
-  for (const [key, n] of Object.entries(from.errors)) into.errors[key] = (into.errors[key] ?? 0) + n;
-  for (const [key, n] of Object.entries(from.closes)) into.closes[key] = (into.closes[key] ?? 0) + n;
+  for (const name of COUNTERS) into[name] += from[name];
+  for (const [key, n] of Object.entries(from.errors)) count(into.errors, key, n);
+  for (const [key, n] of Object.entries(from.closes)) count(into.closes, key, n);
   for (const sample of from.auth) reservoir(into.auth, sample, into.authed);
   for (const sample of from.round) reservoir(into.round, sample, into.rounds);
 }
@@ -164,12 +155,19 @@ function percentile(samples, p) {
   return Math.round(sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]);
 }
 
+/** The median, p95 and p99 of `samples`. */
+function spread(samples) {
+  return { p50: percentile(samples, 50), p95: percentile(samples, 95), p99: percentile(samples, 99) };
+}
+
 function summarise(options, totals, elapsedMs) {
   const connectPct = (100 * totals.connectedEver) / Math.max(1, options.clients);
   const actions = totals.rounds + totals.authed;
   const errorPct = (100 * sum(totals.errors)) / Math.max(1, actions);
-  const authP99 = percentile(totals.auth, 99);
-  const roundP99 = percentile(totals.round, 99);
+  const loginMs = spread(totals.auth);
+  const revealToRoundMs = spread(totals.round);
+  const authP99 = loginMs.p99;
+  const roundP99 = revealToRoundMs.p99;
   const slo = [
     { name: `connected ≥ ${options.sloConnectPct}%`, value: `${connectPct.toFixed(2)}%`, ok: connectPct >= options.sloConnectPct },
     { name: `login p99 ≤ ${options.sloAuthP99} ms`, value: `${authP99} ms`, ok: authP99 !== null && authP99 <= options.sloAuthP99 },
@@ -190,8 +188,8 @@ function summarise(options, totals, elapsedMs) {
     authed: totals.authed,
     rounds: totals.rounds,
     gamesFinished: totals.finished,
-    loginMs: { p50: percentile(totals.auth, 50), p95: percentile(totals.auth, 95), p99: authP99 },
-    revealToRoundMs: { p50: percentile(totals.round, 50), p95: percentile(totals.round, 95), p99: roundP99 },
+    loginMs,
+    revealToRoundMs,
     errors: totals.errors,
     closeCodes: totals.closes,
     slo,
@@ -239,14 +237,12 @@ async function worker() {
       case 'finished':
         totals.finished += 1;
         break;
-      case 'error': {
-        const key = event.message.slice(0, 60);
-        totals.errors[key] = (totals.errors[key] ?? 0) + 1;
+      case 'error':
+        count(totals.errors, event.message.slice(0, 60));
         break;
-      }
       case 'closed':
         totals.open -= 1;
-        totals.closes[event.code] = (totals.closes[event.code] ?? 0) + 1;
+        count(totals.closes, event.code);
         break;
     }
   };

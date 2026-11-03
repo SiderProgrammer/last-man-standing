@@ -1,9 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
-import { extname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Address, Hex } from 'viem';
-import type { CommitReceipt, Transcript } from '@lms/consensus';
-import { RemoteError, Rpc } from '../util/rpc.js';
+import { ZERO_ADDRESS, type CommitReceipt, type Transcript } from '@lms/consensus';
+import { RemoteError, Rpc, siblingModule } from '../util/rpc.js';
 import { AttestationRefused, type Attestor } from './service.js';
 
 export interface AttestorProcessOptions {
@@ -28,7 +26,7 @@ export class AttestorProcess implements Attestor {
   private rpc: Rpc | null = null;
   private starting: Promise<Rpc> | null = null;
   private stopped = false;
-  private signerAddress: Address = '0x0000000000000000000000000000000000000000';
+  private signerAddress: Address = ZERO_ADDRESS;
 
   private constructor(private readonly options: AttestorProcessOptions) {}
 
@@ -92,9 +90,7 @@ export class AttestorProcess implements Attestor {
 
   private spawn(): Promise<{ rpc: Rpc; address: Address }> {
     const { privateKey, chainId, escrow, rpcUrl } = this.options;
-    const here = fileURLToPath(import.meta.url);
-    // `.ts` under tsx and vitest, `.js` once built.
-    const entry = here.replace(/remote(\.[cm]?[jt]s)$/, 'process$1');
+    const { entry, execArgv } = siblingModule(import.meta.url, 'remote', 'process');
     const child = fork(entry, [], {
       // The other keys and secrets stay in the server; this one leaves it.
       env: {
@@ -104,7 +100,7 @@ export class AttestorProcess implements Attestor {
         ESCROW_ADDRESS: escrow,
         ...(rpcUrl ? { RPC_URL: rpcUrl } : {}),
       },
-      execArgv: extname(entry) === '.ts' ? ['--import', 'tsx'] : [],
+      execArgv,
       serialization: 'advanced',
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });

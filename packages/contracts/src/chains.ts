@@ -8,6 +8,11 @@
 /** Seat origin used by practice matches, which never touch a chain. */
 export const PRACTICE_CHAIN_ID = 0;
 
+/** True for a practice match: every seat is on the practice pseudo-chain. */
+export function isPracticeTable(seats: ReadonlyArray<{ chainId: number }>): boolean {
+  return seats.every((seat) => seat.chainId === PRACTICE_CHAIN_ID);
+}
+
 export interface ChainInfo {
   chainId: number;
   name: string;

@@ -4,7 +4,7 @@ import { app } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { planTokenJoin } from '../ui/views.js';
 import * as zapCalls from '../wallet/zap.js';
-import { QUOTE_TTL_MS, idleTokenButton, seated } from './lobby.js';
+import { armQuote, idleTokenButton, seated } from './lobby.js';
 
 /**
  * Paying a stake in a token, through `ZapJoin`: the second and third clicks
@@ -30,13 +30,12 @@ export async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo
       return;
     }
 
-    button.textContent = plan.label;
-    button.classList.add('primary');
-    const expiry = setTimeout(() => idleTokenButton(button, lobby, token), QUOTE_TTL_MS);
-    button.onclick = () => {
-      clearTimeout(expiry);
-      void payTokenJoin(button, lobby, token, plan.maxAmountIn);
-    };
+    armQuote(
+      button,
+      plan.label,
+      () => idleTokenButton(button, lobby, token),
+      () => void payTokenJoin(button, lobby, token, plan.maxAmountIn),
+    );
   } catch (error) {
     // Almost always a route with no pool behind it, or a wallet on another chain.
     toast(`Could not price ${token.symbol}: ${errorFirstLine(error)}`);

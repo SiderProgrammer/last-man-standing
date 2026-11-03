@@ -12,9 +12,7 @@ contract VetoTest is Fixtures {
 
     function setUp() public override {
         super.setUp();
-        guardian = makeAddr("guardian");
-        vm.prank(owner);
-        config.setGuardian(guardian);
+        guardian = _newGuardian();
     }
 
     function _proposed() internal returns (bytes32 matchId, address[] memory ranking) {
@@ -50,14 +48,7 @@ contract VetoTest is Fixtures {
         escrow.veto(matchId);
 
         vm.warp(block.timestamp + CHALLENGE_WINDOW);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Proposed,
-                GameEscrow.MatchStatus.Cancelled
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Proposed, GameEscrow.MatchStatus.Cancelled);
         escrow.finalize(matchId, ranking);
     }
 
@@ -96,14 +87,7 @@ contract VetoTest is Fixtures {
         bytes32 matchId = _createAndFill(4);
         _lockAndSeed(matchId, bytes32(uint256(0x7E71)));
         vm.prank(guardian);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                GameEscrow.WrongStatus.selector,
-                matchId,
-                GameEscrow.MatchStatus.Proposed,
-                GameEscrow.MatchStatus.Live
-            )
-        );
+        _expectWrongStatus(matchId, GameEscrow.MatchStatus.Proposed, GameEscrow.MatchStatus.Live);
         escrow.veto(matchId);
     }
 

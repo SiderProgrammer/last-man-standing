@@ -170,6 +170,17 @@ const DEMO_PROPOSAL = [
   'the fork starts and closes thirty minutes later.',
 ].join('\n');
 
+/** The hub fork, read through by everything below; anvil is up before it is first used. */
+const hub = createPublicClient({ transport: http(RPC) });
+/** `OPERATOR_KEY`'s wallet on the hub. */
+const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
+
+/** Sends a contract call on the hub and waits for it to land. */
+async function sendAndWait(wallet, request) {
+  const hash = await wallet.writeContract({ chain: null, ...request });
+  await hub.waitForTransactionReceipt({ hash });
+}
+
 const children = [];
 let stopping = false;
 
@@ -185,6 +196,11 @@ function fail(message) {
   log('fork', `\x1b[31m${message}\x1b[0m`);
   shutdown(1);
 }
+
+/** viem's one-line summary of an error, or its message. */
+const reason = (error) => error.shortMessage ?? error.message;
+
+const NO_FOUNDRY = 'was not found. Install Foundry (https://getfoundry.sh) and make sure it is on PATH.';
 
 // --------------------------------------------------------------- processes
 
@@ -207,8 +223,7 @@ function start(tag, command, args, { tagged = true, ...options } = {}) {
       for (const line of lines) {
         if (!line.trim()) continue;
         if (tagged) log(tag, line);
-        else process.stdout.write(`${line}
-`);
+        else process.stdout.write(`${line}\n`);
       }
     });
   };
@@ -218,7 +233,7 @@ function start(tag, command, args, { tagged = true, ...options } = {}) {
   child.on('error', (error) => {
     fail(
       error.code === 'ENOENT'
-        ? `\`${command}\` was not found. Install Foundry (https://getfoundry.sh) and make sure it is on PATH.`
+        ? `\`${command}\` ${NO_FOUNDRY}`
         : `${tag} failed to start: ${error.message}`,
     );
   });
@@ -251,7 +266,7 @@ process.on('SIGTERM', () => shutdown(0));
 function run(tag, command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: ROOT, encoding: 'utf8', ...options });
   if (result.error?.code === 'ENOENT') {
-    fail(`\`${command}\` was not found. Install Foundry (https://getfoundry.sh) and make sure it is on PATH.`);
+    fail(`\`${command}\` ${NO_FOUNDRY}`);
   }
   if (result.status !== 0) {
     process.stdout.write(`${result.stdout ?? ''}${result.stderr ?? ''}`);
@@ -299,11 +314,12 @@ async function listening(port) {
   return v4 || v6;
 }
 
-async function waitForAnvil(publicClient, chainId = CHAIN_ID, rpc = RPC) {
+async function waitForAnvil(rpc, chainId) {
+  const client = createPublicClient({ transport: http(rpc) });
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
-      if ((await publicClient.getChainId()) === chainId) return;
+      if ((await client.getChainId()) === chainId) return;
     } catch {
       // Not listening yet.
     }
@@ -358,54 +374,59 @@ function created(chainId) {
   return addresses;
 }
 
-function deploy() {
-  const env = { ...process.env, DEPLOYER_PK: OPERATOR_KEY, POOL_MANAGER };
-  for (const key of DEPLOY_KEYS) {
-    delete env[key];
-  }
-  // Votes that open in a minute and last half an hour, so a proposal can be
-  // voted on, and run to completion, in one sitting.
-  env.VOTING_DELAY = '60';
-  env.VOTING_PERIOD = '1800';
-  // Low enough that each dev player's 1,000 staked LMS can make a proposal.
-  env.PROPOSAL_THRESHOLD = parseEther(PLAYER_STAKE).toString();
-  // The production floor is 1M sLMS; the operator's demo stake has to clear it.
-  env.QUORUM_FLOOR = parseEther(PLAYER_STAKE).toString();
-  // Staker rewards stream over an hour, not a week, so they visibly accrue.
-  env.REWARD_DURATION = '3600';
-  run('forge script', 'forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', RPC, '--broadcast'], {
-    cwd: CONTRACTS,
-    env,
-  });
+/**
+ * Runs one deploy script against `rpc` with the operator's key and `settings`,
+ * and returns what it created, failing unless every `required` contract is there.
+ */
+function runDeploy(script, rpc, chainId, settings, required) {
+  const env = { ...process.env, DEPLOYER_PK: OPERATOR_KEY };
+  for (const key of DEPLOY_KEYS) delete env[key];
+  Object.assign(env, settings);
+  run('forge script', 'forge', ['script', script, '--rpc-url', rpc, '--broadcast'], { cwd: CONTRACTS, env });
 
-  // `deployBlock` is where the server starts looking for proposals.
-  const addresses = created(CHAIN_ID);
-  const required = ['GameEscrow', 'ZapJoin', 'MockRandomnessOracle', 'FeeRouter', 'BridgeJoinReceiver', 'MockAcrossSpokePool', 'MockWETH'];
+  const addresses = created(chainId);
   const missing = required.filter((name) => !addresses[name]);
-  if (missing.length > 0) fail(`Deploy did not produce: ${missing.join(', ')}.`);
+  if (missing.length > 0) fail(`${script} did not produce: ${missing.join(', ')}.`);
   return addresses;
 }
 
+function deploy() {
+  // `deployBlock`, in what this returns, is where the server starts looking for proposals.
+  return runDeploy(
+    'script/Deploy.s.sol:Deploy',
+    RPC,
+    CHAIN_ID,
+    {
+      POOL_MANAGER,
+      // Votes that open in a minute and last half an hour, so a proposal can be
+      // voted on, and run to completion, in one sitting.
+      VOTING_DELAY: '60',
+      VOTING_PERIOD: '1800',
+      // Low enough that each dev player's 1,000 staked LMS can make a proposal.
+      PROPOSAL_THRESHOLD: parseEther(PLAYER_STAKE).toString(),
+      // The production floor is 1M sLMS; the operator's demo stake has to clear it.
+      QUORUM_FLOOR: parseEther(PLAYER_STAKE).toString(),
+      // Staker rewards stream over an hour, not a week, so they visibly accrue.
+      REWARD_DURATION: '3600',
+    },
+    ['GameEscrow', 'ZapJoin', 'MockRandomnessOracle', 'FeeRouter', 'BridgeJoinReceiver', 'MockAcrossSpokePool', 'MockWETH'],
+  );
+}
+
 /** `DeploySpoke.s.sol` on the spoke anvil, pointed at the hub just deployed. */
-function deploySpoke(hub) {
-  const env = { ...process.env, DEPLOYER_PK: OPERATOR_KEY };
-  for (const key of DEPLOY_KEYS) {
-    delete env[key];
-  }
-  Object.assign(env, {
-    HUB_CHAIN_ID: String(CHAIN_ID),
-    HUB_RECEIVER: hub.BridgeJoinReceiver,
-    // The hub's mock WETH: a local chain is not in `config/across.json`.
-    HUB_WETH: hub.MockWETH,
-  });
-  run('forge script', 'forge', ['script', 'script/DeploySpoke.s.sol:DeploySpoke', '--rpc-url', SPOKE_RPC, '--broadcast'], {
-    cwd: CONTRACTS,
-    env,
-  });
-  const spoke = created(SPOKE_CHAIN_ID);
-  const missing = ['SpokeRouter', 'MockAcrossSpokePool', 'PlayerAvatars'].filter((name) => !spoke[name]);
-  if (missing.length > 0) fail(`DeploySpoke did not produce: ${missing.join(', ')}.`);
-  return spoke;
+function deploySpoke(hubContracts) {
+  return runDeploy(
+    'script/DeploySpoke.s.sol:DeploySpoke',
+    SPOKE_RPC,
+    SPOKE_CHAIN_ID,
+    {
+      HUB_CHAIN_ID: String(CHAIN_ID),
+      HUB_RECEIVER: hubContracts.BridgeJoinReceiver,
+      // The hub's mock WETH: a local chain is not in `config/across.json`.
+      HUB_WETH: hubContracts.MockWETH,
+    },
+    ['SpokeRouter', 'MockAcrossSpokePool', 'PlayerAvatars'],
+  );
 }
 
 /**
@@ -416,9 +437,11 @@ function deploySpoke(hub) {
  * withdrawals to the spoke go hub to spoke. The delay is there so the
  * client's "in transit" state can be seen.
  */
-function runRelayer(hub, spoke) {
-  relayDeposits({ name: 'the hub', rpc: SPOKE_RPC, pool: spoke.MockAcrossSpokePool }, { rpc: RPC, pool: hub.MockAcrossSpokePool, chainId: CHAIN_ID });
-  relayDeposits({ name: 'the spoke', rpc: RPC, pool: hub.MockAcrossSpokePool }, { rpc: SPOKE_RPC, pool: spoke.MockAcrossSpokePool, chainId: SPOKE_CHAIN_ID });
+function runRelayer(hubContracts, spoke) {
+  const hubPool = { rpc: RPC, pool: hubContracts.MockAcrossSpokePool, chainId: CHAIN_ID };
+  const spokePool = { rpc: SPOKE_RPC, pool: spoke.MockAcrossSpokePool, chainId: SPOKE_CHAIN_ID };
+  relayDeposits({ ...spokePool, name: 'the hub' }, hubPool);
+  relayDeposits({ ...hubPool, name: 'the spoke' }, spokePool);
 }
 
 function relayDeposits(from, to) {
@@ -441,7 +464,7 @@ function relayDeposits(from, to) {
         setTimeout(() => void fill(index, deposit), FILL_DELAY_MS);
       }
     } catch (error) {
-      log('across', `could not read deposits for ${from.name}: ${error.shortMessage ?? error.message}`);
+      log('across', `could not read deposits for ${from.name}: ${reason(error)}`);
     } finally {
       busy = false;
     }
@@ -459,7 +482,7 @@ function relayDeposits(from, to) {
       });
       log('across', `deposit ${index} to ${from.name} filled`);
     } catch (error) {
-      log('across', `deposit ${index} to ${from.name} could not be filled: ${error.shortMessage ?? error.message}`);
+      log('across', `deposit ${index} to ${from.name} could not be filled: ${reason(error)}`);
     }
   };
 
@@ -478,25 +501,20 @@ async function rpc(method, params, url = RPC) {
 }
 
 /** Writes a token balance straight into its `balances` mapping, then checks it landed. */
-async function fundToken(publicClient, token, holder) {
+async function fundToken(token, holder) {
   const amount = parseUnits(TOKEN_FUNDING, token.decimals);
   const slot = keccak256(
     encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [holder, token.balanceSlot]),
   );
   await rpc('anvil_setStorageAt', [token.address, slot, pad(numberToHex(amount), { size: 32 })]);
 
-  const balance = await publicClient.readContract({
-    address: token.address,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [holder],
-  });
+  const balance = await hub.readContract({ address: token.address, abi: erc20Abi, functionName: 'balanceOf', args: [holder] });
   if (balance !== amount) {
     fail(`Funding ${token.symbol} missed: its balance slot is not ${token.balanceSlot} on this fork.`);
   }
 }
 
-async function seed(publicClient, escrow) {
+async function seed(escrow) {
   const player = privateKeyToAccount(PLAYER_KEY).address;
   const holders = [player];
   // Anvil's dev keys are public, and on mainnet someone has delegated these
@@ -505,7 +523,7 @@ async function seed(publicClient, escrow) {
   // rewards would vanish the moment they arrived. Clear it: these accounts are
   // plain EOAs here. `FORK_PLAYER` is left alone; its delegation, if any, is
   // its owner's.
-  for (const account of [player, privateKeyToAccount(OPERATOR_KEY).address]) {
+  for (const account of [player, operator.account.address]) {
     await rpc('anvil_setCode', [account, '0x']);
   }
   if (EXTRA_PLAYER) {
@@ -517,19 +535,16 @@ async function seed(publicClient, escrow) {
     await rpc('anvil_setBalance', [EXTRA_PLAYER, numberToHex(parseEther('100'))], SPOKE_RPC);
   }
   for (const holder of holders) {
-    for (const token of TOKENS) await fundToken(publicClient, token, holder);
+    for (const token of TOKENS) await fundToken(token, holder);
   }
 
-  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
   for (const lobby of LOBBIES) {
-    const hash = await operator.writeContract({
-      chain: null,
+    await sendAndWait(operator, {
       address: escrow,
       abi: abiOf('GameEscrow'),
       functionName: 'createMatch',
       args: [parseEther(lobby.stake), lobby.seats],
     });
-    await publicClient.waitForTransactionReceipt({ hash });
   }
   return holders;
 }
@@ -540,32 +555,23 @@ async function seed(publicClient, escrow) {
  * match. The LMS comes from the treasury, sent as the timelock itself, which
  * anvil lets us impersonate; on a real deployment that is a grant proposal.
  */
-async function stakeAsOperator(publicClient, lms, vault, timelock, holders) {
-  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
+async function stakeAsOperator(lms, vault, timelock, holders) {
   const own = parseEther(OPERATOR_STAKE);
   const each = parseEther(PLAYER_STAKE);
+  const total = own + each * BigInt(holders.length);
 
   await rpc('anvil_impersonateAccount', [timelock]);
   await rpc('anvil_setBalance', [timelock, numberToHex(parseEther('1'))]);
   const asTimelock = createWalletClient({ account: timelock, transport: http(RPC) });
-  const grant = await asTimelock.writeContract({
-    chain: null,
-    address: lms,
-    abi: erc20Abi,
-    functionName: 'transfer',
-    args: [operator.account.address, own + each * BigInt(holders.length)],
-  });
-  await publicClient.waitForTransactionReceipt({ hash: grant });
+  await sendAndWait(asTimelock, { address: lms, abi: erc20Abi, functionName: 'transfer', args: [operator.account.address, total] });
   await rpc('anvil_stopImpersonatingAccount', [timelock]);
-  const calls = [
-    [lms, erc20Abi, 'approve', [vault, own + each * BigInt(holders.length)]],
-    [vault, abiOf('StakedLms'), 'deposit', [own]],
-    // Deposited *for* each player: the shares, and the votes, are theirs.
-    ...holders.map((holder) => [vault, abiOf('StakedLms'), 'depositFor', [holder, each]]),
-  ];
-  for (const [address, abi, functionName, args] of calls) {
-    const hash = await operator.writeContract({ chain: null, address, abi, functionName, args });
-    await publicClient.waitForTransactionReceipt({ hash });
+
+  const stakedLms = abiOf('StakedLms');
+  await sendAndWait(operator, { address: lms, abi: erc20Abi, functionName: 'approve', args: [vault, total] });
+  await sendAndWait(operator, { address: vault, abi: stakedLms, functionName: 'deposit', args: [own] });
+  // Deposited *for* each player: the shares, and the votes, are theirs.
+  for (const holder of holders) {
+    await sendAndWait(operator, { address: vault, abi: stakedLms, functionName: 'depositFor', args: [holder, each] });
   }
 }
 
@@ -573,20 +579,18 @@ async function stakeAsOperator(publicClient, lms, vault, timelock, holders) {
  * Proposes raising the stakers' share of fees, so the governance screen has
  * something to vote on. The operator holds enough sLMS to clear the threshold.
  */
-async function demoProposal(publicClient, governor, router) {
+async function demoProposal(governor, router) {
   // Voting power is read one second in the past, and the stake above may
   // share a timestamp with this transaction: step the clock first.
   await rpc('evm_increaseTime', [2]);
   await rpc('evm_mine', []);
-  const operator = createWalletClient({ account: privateKeyToAccount(OPERATOR_KEY), transport: http(RPC) });
-  const hash = await operator.writeContract({
-    chain: null,
+  const raiseShare = encodeFunctionData({ abi: abiOf('FeeRouter'), functionName: 'setStakerBps', args: [6_000] });
+  await sendAndWait(operator, {
     address: governor,
     abi: abiOf('LmsGovernor'),
     functionName: 'propose',
-    args: [[router], [0n], [encodeFunctionData({ abi: abiOf('FeeRouter'), functionName: 'setStakerBps', args: [6_000] })], DEMO_PROPOSAL],
+    args: [[router], [0n], [raiseShare], DEMO_PROPOSAL],
   });
-  await publicClient.waitForTransactionReceipt({ hash });
 }
 
 /**
@@ -596,10 +600,10 @@ async function demoProposal(publicClient, governor, router) {
  * the escrow before it has recorded which match asked — so without this every
  * full lobby would sit `Pending` until it could only be cancelled.
  */
-function runOracleNode(publicClient, oracle) {
+function runOracleNode(oracle) {
   const node = createWalletClient({ account: ORACLE_NODE, transport: http(RPC) });
   const answered = new Set();
-  publicClient.watchContractEvent({
+  hub.watchContractEvent({
     address: oracle,
     abi: abiOf('MockRandomnessOracle'),
     eventName: 'RandomnessRequested',
@@ -618,11 +622,11 @@ function runOracleNode(publicClient, oracle) {
           });
           log('oracle', `seeded match ${args.context.slice(0, 10)}…`);
         } catch (error) {
-          log('oracle', `could not seed ${args.context.slice(0, 10)}…: ${error.shortMessage ?? error.message}`);
+          log('oracle', `could not seed ${args.context.slice(0, 10)}…: ${reason(error)}`);
         }
       }
     },
-    onError: (error) => log('oracle', `watch failed: ${error.shortMessage ?? error.message}`),
+    onError: (error) => log('oracle', `watch failed: ${reason(error)}`),
   });
 }
 
@@ -650,12 +654,11 @@ async function main() {
     String(ANVIL_PORT),
     '--quiet',
   ]);
-  const publicClient = createPublicClient({ transport: http(RPC) });
-  await waitForAnvil(publicClient);
+  await waitForAnvil(RPC, CHAIN_ID);
 
   log('fork', `Starting the spoke chain (${SPOKE_CHAIN_ID})…`);
   start('spoke', 'anvil', ['--chain-id', String(SPOKE_CHAIN_ID), '--port', String(SPOKE_PORT), '--quiet']);
-  await waitForAnvil(createPublicClient({ transport: http(SPOKE_RPC) }), SPOKE_CHAIN_ID, SPOKE_RPC);
+  await waitForAnvil(SPOKE_RPC, SPOKE_CHAIN_ID);
 
   log('fork', 'Deploying the protocol (compiles on first run)…');
   const addresses = deploy();
@@ -666,13 +669,13 @@ async function main() {
   const spoke = deploySpoke(addresses);
   log('fork', `SpokeRouter ${spoke.SpokeRouter} on ${SPOKE_CHAIN_ID} · hub receiver ${addresses.BridgeJoinReceiver}`);
 
-  runOracleNode(publicClient, addresses.MockRandomnessOracle);
+  runOracleNode(addresses.MockRandomnessOracle);
   runRelayer(addresses, spoke);
 
   log('fork', 'Funding players and opening lobbies…');
-  const holders = await seed(publicClient, addresses.GameEscrow);
-  await stakeAsOperator(publicClient, addresses.LmsToken, addresses.StakedLms, addresses.TimelockController, holders);
-  await demoProposal(publicClient, addresses.LmsGovernor, addresses.FeeRouter);
+  const holders = await seed(addresses.GameEscrow);
+  await stakeAsOperator(addresses.LmsToken, addresses.StakedLms, addresses.TimelockController, holders);
+  await demoProposal(addresses.LmsGovernor, addresses.FeeRouter);
 
   start('server', process.execPath, ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], {
     tagged: false,

@@ -1,6 +1,7 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters } from 'viem';
 import {
   Action,
+  commitMove,
   exposedDamage,
   isLegalAction,
   legalActions,
@@ -11,6 +12,7 @@ import {
   type BotDifficulty,
   type Move,
   type PlayerState,
+  type RoundRecord,
   type Rules,
 } from '@lms/consensus';
 import type { Match } from '../match/match.js';
@@ -52,6 +54,31 @@ function fastRandom(seed: number): () => number {
 }
 
 export type Strategy = (seat: number, match: Match) => Move;
+
+/**
+ * Plays one round of `match` with a bot in every living seat: each commits
+ * its strategy's move under the salt `salt` names, then reveals it, and the
+ * round resolves.
+ *
+ * @param strategies By seat.
+ */
+export function playRound(
+  match: Match,
+  strategies: readonly Strategy[],
+  salt: (seat: number) => `0x${string}`,
+): RoundRecord {
+  const sealed = new Map(
+    match.alive.map((seat) => {
+      const strategy = strategies[seat];
+      if (!strategy) throw new Error(`no strategy for seat ${seat}`);
+      return [seat, { ...strategy(seat, match), salt: salt(seat) }] as const;
+    }),
+  );
+  for (const [seat, move] of sealed) match.submitCommit(seat, commitMove(match.matchId, match.round, seat, move));
+  match.openRevealPhase();
+  for (const [seat, move] of sealed) match.submitReveal(seat, move);
+  return match.resolve();
+}
 
 const opponentsOf = (seat: number, match: Match): number[] => match.alive.filter((other) => other !== seat);
 

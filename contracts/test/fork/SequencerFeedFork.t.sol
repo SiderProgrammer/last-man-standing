@@ -29,12 +29,7 @@ contract SequencerFeedForkTest is Fixtures {
     IAggregatorRounds private constant FEED = IAggregatorRounds(0xBCF85224fc0756B9Fa45aA7892530B47e10b6433);
 
     function setUp() public override {
-        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            vm.skip(true);
-            return;
-        }
-        vm.createSelectFork(rpc);
+        if (!_forkOrSkip("BASE_RPC_URL")) return;
         super.setUp();
         vm.prank(owner);
         config.setSequencerUptimeFeed(address(FEED));

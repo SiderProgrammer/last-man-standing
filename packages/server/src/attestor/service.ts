@@ -1,10 +1,8 @@
 import type { Address, Hex } from 'viem';
 import {
-  MATCH_ABORT_TYPES,
-  MATCH_RESULT_TYPES,
   hashTranscript,
-  matchResultDomain,
-  matchResultMessage,
+  matchAbortTypedData,
+  matchResultTypedData,
   receiptTypedData,
   type CommitReceipt,
   type Transcript,
@@ -96,21 +94,11 @@ export class AttestorService implements Attestor {
         : {},
     );
     if (!audit.ok) throw new AttestationRefused(`${transcript.matchId}: ${audit.problems.join('; ')}`);
-    return signer.signTypedData({
-      domain: matchResultDomain(chainId, escrow),
-      types: MATCH_RESULT_TYPES,
-      primaryType: 'MatchResult',
-      message: matchResultMessage({ ...result, transcriptHash }),
-    });
+    return signer.signTypedData(matchResultTypedData(chainId, escrow, { ...result, transcriptHash }));
   }
 
   abort(matchId: `0x${string}`): Promise<Hex> {
-    return this.options.signer.signTypedData({
-      domain: matchResultDomain(this.options.chainId, this.options.escrow),
-      types: MATCH_ABORT_TYPES,
-      primaryType: 'MatchAbort',
-      message: { matchId },
-    });
+    return this.options.signer.signTypedData(matchAbortTypedData(this.options.chainId, this.options.escrow, matchId));
   }
 
   receipt(receipt: CommitReceipt): Promise<Hex> {

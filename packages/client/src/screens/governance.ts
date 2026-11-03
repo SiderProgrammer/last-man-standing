@@ -2,6 +2,7 @@ import { VoteSupport, type ProposalSummary, type VoteSupportValue } from '@lms/c
 import { errorFirstLine } from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
+import { element } from '../ui/dom.js';
 import { proposalCard, type ProposalCard, type ProposalLive } from '../ui/governance.js';
 import { knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
 import * as governorCalls from '../wallet/governance.js';
@@ -82,45 +83,45 @@ export async function renderGovernance(): Promise<void> {
 }
 
 function cardElement(card: ProposalCard): HTMLLIElement {
-  const li = el('li', 'proposal') as HTMLLIElement;
+  const li = element('li', 'proposal');
 
-  const head = el('div', 'panel-head');
-  head.append(el('h3', '', card.title), el('span', `pill proposal-state ${card.state.tone}`, card.state.label));
-  li.append(head, el('p', 'muted small', [card.byline, card.window].filter(Boolean).join(' · ')));
+  const head = element('div', 'panel-head');
+  head.append(element('h3', '', card.title), element('span', `pill proposal-state ${card.state.tone}`, card.state.label));
+  li.append(head, element('p', 'muted small', [card.byline, card.window].filter(Boolean).join(' · ')));
 
-  const actions = el('ol', 'proposal-actions');
+  const actions = element('ol', 'proposal-actions');
   for (const action of card.actions) {
-    const item = el('li');
-    item.append(el('code', '', `${action.target}.${action.call}`));
-    if (action.warning) item.append(el('div', 'warn', action.warning));
+    const item = element('li');
+    item.append(element('code', '', `${action.target}.${action.call}`));
+    if (action.warning) item.append(element('div', 'warn', action.warning));
     actions.append(item);
   }
   li.append(actions);
 
   if (card.body) {
-    const details = el('details');
-    details.append(el('summary', 'small', 'Full description'), el('pre', 'proposal-body', card.body));
+    const details = element('details');
+    details.append(element('summary', 'small', 'Full description'), element('pre', 'proposal-body', card.body));
     li.append(details);
   }
 
   if (card.tally) {
-    const bar = el('div', 'tally-bar');
+    const bar = element('div', 'tally-bar');
     for (const side of ['for', 'against', 'abstain'] as const) {
-      const segment = el('span', side);
+      const segment = element('span', side);
       segment.style.width = `${card.tally.shares[side]}%`;
       bar.append(segment);
     }
     li.append(
       bar,
-      el('p', 'small', `For ${card.tally.for} · Against ${card.tally.against} · Abstain ${card.tally.abstain}`),
-      el('p', 'muted small', card.quorum),
+      element('p', 'small', `For ${card.tally.for} · Against ${card.tally.against} · Abstain ${card.tally.abstain}`),
+      element('p', 'muted small', card.quorum),
     );
   }
-  li.append(el('p', 'small', card.you));
+  li.append(element('p', 'small', card.you));
 
-  const row = el('div', 'row');
+  const row = element('div', 'row');
   if (card.canVote) {
-    const reason = el('input') as HTMLInputElement;
+    const reason = element('input');
     reason.placeholder = 'Reason (optional, public)';
     reason.dataset.reasonFor = card.id;
     row.append(
@@ -170,15 +171,8 @@ async function act(proposal: ProposalSummary, step: string, origin: HTMLButtonEl
 }
 
 function button(id: string, step: string, label: string, kind = ''): HTMLButtonElement {
-  const b = el('button', kind, label) as HTMLButtonElement;
+  const b = element('button', kind, label);
   b.dataset.id = id;
   b.dataset.step = step;
   return b;
-}
-
-function el(tag: string, className = '', text?: string): HTMLElement {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
 }

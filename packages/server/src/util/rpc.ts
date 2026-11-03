@@ -1,3 +1,6 @@
+import { extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Calls across a process or thread boundary, both ways.
  *
@@ -106,4 +109,14 @@ export class Rpc {
         return;
     }
   }
+}
+
+/**
+ * The module beside `self` (an `import.meta.url`) whose name replaces
+ * `from` with `to`, and the flags a child or worker runs it with: `.ts` under
+ * tsx and vitest, `.js` once built.
+ */
+export function siblingModule(self: string, from: string, to: string): { entry: string; execArgv: string[] } {
+  const entry = fileURLToPath(self).replace(new RegExp(`${from}(\\.[cm]?[jt]s)$`), `${to}$1`);
+  return { entry, execArgv: extname(entry) === '.ts' ? ['--import', 'tsx'] : [] };
 }
