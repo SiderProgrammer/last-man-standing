@@ -105,6 +105,13 @@ abstract contract BridgeJoinReceiverHandler is Properties {
             } catch {}
             return;
         }
+        if (escrow.paused()) {
+            vm.prank(actor);
+            try bridgeReceiver.withdrawToChainFor(w, q, signature) {
+                t(false, "SP-14: a bridge-out went through while paused");
+            } catch {}
+            return;
+        }
         bridge_withdrawToChainFor(w, q, signature);
     }
 

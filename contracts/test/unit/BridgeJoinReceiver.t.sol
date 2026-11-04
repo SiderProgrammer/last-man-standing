@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {Fixtures} from "../helpers/Fixtures.sol";
 import {GameEscrow} from "../../src/GameEscrow.sol";
+import {ExpiringPause} from "../../src/ExpiringPause.sol";
 import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../../src/Errors.sol";
 import {BridgeJoinReceiver} from "../../src/periphery/BridgeJoinReceiver.sol";
 import {SpokeRouter} from "../../src/periphery/SpokeRouter.sol";
@@ -438,6 +439,35 @@ contract BridgeJoinReceiverTest is Fixtures {
         _credit(player, STAKE);
         vm.expectRevert(abi.encodeWithSelector(GameEscrow.NotBridgeReceiver.selector, address(this)));
         escrow.withdrawToBridge(player);
+    }
+
+    /// @dev A pause stops the bridge route, which could reach every balance if the
+    ///      receiver had a bug, and leaves the player's own withdrawal open.
+    function test_withdrawToChain_stopsWhilePaused_butTheHubStaysOpen() public {
+        _credit(player, STAKE);
+        BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
+        bytes memory signature = _sign(PLAYER_PK, w, _quote(STAKE));
+
+        _pause();
+        vm.expectRevert(ExpiringPause.EnforcedPause.selector);
+        receiver.withdrawToChainFor(w, _quote(STAKE), signature);
+        assertEq(escrow.withdrawable(player), STAKE);
+        assertEq(receiver.nonces(player), 0, "the signature is not used up");
+
+        uint256 before = player.balance;
+        vm.prank(player);
+        escrow.withdraw(player);
+        assertEq(player.balance, before + STAKE);
+    }
+
+    /// @dev The route opens again by itself when the pause ends.
+    function test_withdrawToChain_resumesAfterThePause() public {
+        _credit(player, STAKE);
+        _pause();
+        vm.warp(block.timestamp + 1 days);
+
+        BridgeJoinReceiver.Withdrawal memory w = _withdrawal(player, 0);
+        assertEq(receiver.withdrawToChainFor(w, _quote(STAKE), _sign(PLAYER_PK, w, _quote(STAKE))), STAKE);
     }
 
     /// @dev Pins the type string, which the client builds the typed data from:

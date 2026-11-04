@@ -505,8 +505,10 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     /// @notice Pays `account`'s whole balance to the bridge receiver, which
     ///         bridges it to the chain and address the account signed for.
     /// @dev The receiver checks that signature; this only checks the caller.
-    ///      Like every withdrawal, it works while paused.
-    function withdrawToBridge(address account) external nonReentrant returns (uint256 amount) {
+    ///      The one exit a pause stops: a bug in the receiver could reach every
+    ///      balance, and removing it takes the timelock delay. Nothing is
+    ///      trapped, because `withdraw` and `withdrawFor` keep working on the hub.
+    function withdrawToBridge(address account) external nonReentrant whenNotPaused returns (uint256 amount) {
         if (msg.sender != config.bridgeReceiver()) revert NotBridgeReceiver(msg.sender);
         amount = _payOut(account, msg.sender);
     }

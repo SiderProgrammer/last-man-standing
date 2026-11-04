@@ -54,6 +54,11 @@ abstract contract MultisigPhaseHandler is Properties {
     function _multisig_retire() internal asActor {
         try phase.retire() {
             t(block.timestamp >= phase.phaseEnd(), "SP-33: the phase retired before its end");
+            for (uint256 i = 0; i < scheduledOps.length; ++i) {
+                ScheduledOp storage op = scheduledOps[i];
+                bytes32 id = timelock.hashOperation(op.target, 0, op.data, bytes32(0), op.salt);
+                t(!timelock.isOperationPending(id), "SP-33: a call the Safe scheduled outlived the phase");
+            }
         } catch {
             return;
         }

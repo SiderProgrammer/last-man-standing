@@ -163,6 +163,151 @@ contract MultisigPhaseTest is Test {
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), governor), "governance carries on");
     }
 
+    /// @dev A call that would only be ready after the phase is refused, batches included.
+    function test_cannotScheduleACallReadyAfterTheEnd() public {
+        uint256 end = phase.phaseEnd();
+        bytes memory call = abi.encodeCall(Owned.set, (1));
+
+        vm.warp(end - DELAY + 1);
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(MultisigPhase.ReadyAfterPhase.selector, end + 1, end));
+        phase.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
+
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = call;
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(MultisigPhase.ReadyAfterPhase.selector, end + 1, end));
+        phase.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), DELAY);
+
+        vm.warp(end - DELAY);
+        vm.prank(safe);
+        phase.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
+    }
+
+    /// @dev The call the check alone cannot stop: ready before the end, left
+    ///      unexecuted, and otherwise runnable by anyone for ever after.
+    function test_retire_cancelsADormantCall() public {
+        bytes memory call = abi.encodeCall(Owned.set, (666));
+        vm.prank(safe);
+        phase.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
+        bytes32 id = timelock.hashOperation(address(target), 0, call, bytes32(0), bytes32(0));
+
+        vm.warp(phase.phaseEnd() + 400 days);
+        assertTrue(timelock.isOperationReady(id), "ready, long after the phase");
+        phase.retire();
+
+        assertFalse(timelock.isOperation(id));
+        vm.expectRevert();
+        timelock.execute(address(target), 0, call, bytes32(0), bytes32(0));
+        assertEq(target.value(), 0);
+    }
+
+    function test_retire_cancelsADormantBatch() public {
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodeCall(Owned.set, (666));
+        vm.prank(safe);
+        phase.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), DELAY);
+        bytes32 id = timelock.hashOperationBatch(targets, values, payloads, bytes32(0), bytes32(0));
+
+        vm.warp(phase.phaseEnd());
+        phase.retire();
+        assertFalse(timelock.isOperation(id));
+    }
+
+    /// @dev Executed and already cancelled calls are skipped: cancelling either would revert.
+    function test_retire_skipsWhatIsNoLongerPending() public {
+        bytes memory executed = abi.encodeCall(Owned.set, (1));
+        bytes memory cancelled = abi.encodeCall(Owned.set, (2));
+        vm.startPrank(safe);
+        phase.schedule(address(target), 0, executed, bytes32(0), bytes32(0), DELAY);
+        phase.schedule(address(target), 0, cancelled, bytes32(0), bytes32(0), DELAY);
+        phase.cancel(timelock.hashOperation(address(target), 0, cancelled, bytes32(0), bytes32(0)));
+        // Scheduled again after its cancellation, so its id is listed twice.
+        phase.schedule(address(target), 0, cancelled, bytes32(0), bytes32(0), DELAY);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DELAY);
+        timelock.execute(address(target), 0, executed, bytes32(0), bytes32(0));
+
+        vm.warp(phase.phaseEnd());
+        phase.retire();
+        assertEq(target.value(), 1);
+        assertTrue(
+            timelock.isOperationDone(
+                timelock.hashOperation(address(target), 0, executed, bytes32(0), bytes32(0))
+            )
+        );
+        assertFalse(
+            timelock.isOperation(
+                timelock.hashOperation(address(target), 0, cancelled, bytes32(0), bytes32(0))
+            )
+        );
+    }
+
+    /// @dev Only what went through the phase: the governor's queue is not the Safe's to clear.
+    function test_retire_leavesTheGovernorsProposalsAlone() public {
+        bytes memory call = abi.encodeCall(Owned.set, (3));
+        vm.prank(governor);
+        timelock.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
+        bytes32 id = timelock.hashOperation(address(target), 0, call, bytes32(0), bytes32(0));
+
+        vm.warp(phase.phaseEnd());
+        phase.retire();
+        assertTrue(timelock.isOperationReady(id));
+    }
+
+    /// @dev Thousands of calls cannot block `retire`: anyone can clear them in pieces first.
+    function test_cancelLeftovers_inPieces_thenRetire() public {
+        bytes32[] memory ids = new bytes32[](5);
+        for (uint256 i = 0; i < ids.length; ++i) {
+            bytes32 salt = bytes32(i);
+            bytes memory call = abi.encodeCall(Owned.set, (i));
+            vm.prank(safe);
+            phase.schedule(address(target), 0, call, bytes32(0), salt, DELAY);
+            ids[i] = timelock.hashOperation(address(target), 0, call, bytes32(0), salt);
+        }
+
+        uint256 end = phase.phaseEnd();
+        vm.expectRevert(abi.encodeWithSelector(MultisigPhase.PhaseNotOver.selector, end));
+        phase.cancelLeftovers(1);
+
+        vm.warp(end);
+        phase.cancelLeftovers(2);
+        assertEq(phase.leftoversChecked(), 2);
+        assertFalse(timelock.isOperation(ids[1]));
+        assertTrue(timelock.isOperation(ids[2]));
+
+        phase.cancelLeftovers(type(uint256).max);
+        assertEq(phase.leftoversChecked(), ids.length);
+        assertFalse(timelock.isOperation(ids[4]));
+
+        phase.retire();
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), address(phase)));
+    }
+
+    /// @dev "Remove the multisig's veto" revokes the role early, and the phase must still retire.
+    function test_retire_stillWorks_withoutTheCancellerRole() public {
+        bytes memory call = abi.encodeCall(Owned.set, (1));
+        vm.prank(safe);
+        phase.schedule(address(target), 0, call, bytes32(0), bytes32(0), DELAY);
+        bytes32 id = timelock.hashOperation(address(target), 0, call, bytes32(0), bytes32(0));
+
+        bytes32 role = timelock.CANCELLER_ROLE();
+        vm.prank(address(timelock));
+        timelock.revokeRole(role, address(phase));
+
+        vm.warp(phase.phaseEnd());
+        phase.retire();
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), address(phase)));
+        assertTrue(timelock.isOperation(id), "nothing cancelled without the role");
+    }
+
     /// @dev Granting itself a role, or a new proposer, goes through the
     ///      timelock as a call to itself.
     function test_cannotScheduleACallOnTheTimelock() public {

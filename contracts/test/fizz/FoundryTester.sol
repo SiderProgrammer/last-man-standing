@@ -122,6 +122,12 @@ contract FoundryTester is Test, Handlers {
     }
 
     function test_harness_governance() public {
+        // First, while a call scheduled now can still be ready before the phase ends.
+        multisig_secondary(0, 2_222, 0);
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+        multisig_secondary(3, 0, 0);
+        assertEq(feeRouter.stakerBps(), 2_222, "safe's operation executed");
+
         for (uint256 i = 0; i < actors.length; ++i) {
             stakedLms_deposit_clamped(i, 500_000e18);
         }
@@ -138,11 +144,6 @@ contract FoundryTester is Test, Handlers {
         vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
         governor_secondary(3, 0, 0, 0);
         assertEq(feeRouter.stakerBps(), 1_234, "proposal executed");
-
-        multisig_secondary(0, 2_222, 0);
-        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
-        multisig_secondary(3, 0, 0);
-        assertEq(feeRouter.stakerBps(), 2_222, "safe's operation executed");
 
         vm.warp(block.timestamp + MULTISIG_PHASE);
         multisig_secondary(4, 0, 0);

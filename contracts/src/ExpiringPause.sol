@@ -16,8 +16,8 @@ pragma solidity 0.8.28;
 ///
 ///      A compromised guardian can therefore stop play for a week at a time,
 ///      with a week of play in between, until governance replaces it. Since
-///      the deriving contract never pauses refunds or withdrawals, it can never
-///      trap funds.
+///      the deriving contract never pauses refunds or withdrawals on its own
+///      chain, it can never trap funds.
 ///
 ///      Events and errors follow OpenZeppelin's `Pausable`.
 abstract contract ExpiringPause {
