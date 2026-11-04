@@ -25,3 +25,10 @@ Thumbs.db
 contracts/slither.json
 contracts/lcov.info
 contracts/coverage.txt
+
+# Fuzzing output
+contracts/fizz_data/corpus_medusa/
+contracts/fizz_data/corpus_echidna/
+contracts/fizz_data/crytic-export/
+contracts/fizz_data/logs_medusa/
+contracts/fizz_data/slither_results.json

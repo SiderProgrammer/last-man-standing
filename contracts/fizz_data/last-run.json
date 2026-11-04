@@ -1,0 +1,2956 @@
+{
+  "version": 1,
+  "createdAt": "2026-11-04T13:12:37.905Z",
+  "projectRoot": ".",
+  "suiteDir": "test/fizz",
+  "metaDir": "fizz_data",
+  "contracts": [
+    {
+      "name": "GameEscrow",
+      "sourcePath": "src\\GameEscrow.sol",
+      "sourceHash": "sha256:15cc12d51391c716d4387286c787215375586589c04b0e871710596262e377bb",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "config_",
+            "type": "contract",
+            "internalType": "ProtocolConfig"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "abortMatch",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "signatures",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "abortMatch(bytes32,bytes)"
+        },
+        {
+          "name": "bridgeJoin",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "player",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "originChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "bridgeJoin(bytes32,address,uint32)"
+        },
+        {
+          "name": "cancelMatch",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "cancelMatch(bytes32)"
+        },
+        {
+          "name": "createMatch",
+          "inputs": [
+            {
+              "name": "stake",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "maxSeats",
+              "type": "uint16",
+              "internalType": "uint16"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "createMatch(uint128,uint16)"
+        },
+        {
+          "name": "createMatchmade",
+          "inputs": [
+            {
+              "name": "stake",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "maxSeats",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "roster",
+              "type": "array",
+              "internalType": "address[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "createMatchmade(uint128,uint16,address[])"
+        },
+        {
+          "name": "dismissDispute",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "dismissDispute(bytes32)"
+        },
+        {
+          "name": "dispute",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "evidenceHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "dispute(bytes32,bytes32)"
+        },
+        {
+          "name": "extendPause",
+          "inputs": [
+            {
+              "name": "until",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "extendPause(uint64)"
+        },
+        {
+          "name": "finalize",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ranking",
+              "type": "array",
+              "internalType": "address[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "finalize(bytes32,address[])"
+        },
+        {
+          "name": "fulfillRandomness",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "randomness",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "fulfillRandomness(bytes32,bytes32)"
+        },
+        {
+          "name": "join",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "join(bytes32)"
+        },
+        {
+          "name": "joinFor",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "player",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "joinFor(bytes32,address)"
+        },
+        {
+          "name": "joinWithLms",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "lmsIn",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "joinWithLms(bytes32,uint256)"
+        },
+        {
+          "name": "joinWithLmsPermit",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "lmsIn",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "v",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "r",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "s",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "joinWithLmsPermit(bytes32,uint256,uint256,uint8,bytes32,bytes32)"
+        },
+        {
+          "name": "lockMatch",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "lockMatch(bytes32)"
+        },
+        {
+          "name": "pause",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "pause()"
+        },
+        {
+          "name": "settle",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "rounds",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "historyRoot",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "transcriptHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ranking",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "signatures",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "settle(bytes32,uint32,bytes32,bytes32,address[],bytes)"
+        },
+        {
+          "name": "unpause",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "unpause()"
+        },
+        {
+          "name": "veto",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "veto(bytes32)"
+        },
+        {
+          "name": "withdraw",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "withdraw(address)"
+        },
+        {
+          "name": "withdrawFor",
+          "inputs": [
+            {
+              "name": "account",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "withdrawFor(address)"
+        },
+        {
+          "name": "withdrawToBridge",
+          "inputs": [
+            {
+              "name": "account",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "withdrawToBridge(address)"
+        }
+      ]
+    },
+    {
+      "name": "FeeRouter",
+      "sourcePath": "src\\governance\\FeeRouter.sol",
+      "sourceHash": "sha256:2ac5bde2514d9b6c81285ea87db1e517926b2d6332ab57c3f136c870c0e7a87c",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "escrow_",
+            "type": "contract",
+            "internalType": "PullPayable"
+          },
+          {
+            "name": "vault_",
+            "type": "contract",
+            "internalType": "StakedLms"
+          },
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "treasury_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "stakerBps_",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "harvest",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "harvest()"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "setStakerBps",
+          "inputs": [
+            {
+              "name": "stakerBps_",
+              "type": "uint16",
+              "internalType": "uint16"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setStakerBps(uint16)"
+        },
+        {
+          "name": "setTreasury",
+          "inputs": [
+            {
+              "name": "treasury_",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setTreasury(address)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "LiquidityReserve",
+      "sourcePath": "src\\governance\\LiquidityReserve.sol",
+      "sourceHash": "sha256:96760b82476cd7b832354ba4c53443ec4052fc86a074ea51189ee5f7c86ae52f",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "lms_",
+            "type": "contract",
+            "internalType": "IERC20"
+          },
+          {
+            "name": "safe_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "vault_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "release",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "release(address,uint256)"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "setRecipient",
+          "inputs": [
+            {
+              "name": "recipient",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "approved",
+              "type": "bool",
+              "internalType": "bool"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setRecipient(address,bool)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "LmsGovernor",
+      "sourcePath": "src\\governance\\LmsGovernor.sol",
+      "sourceHash": "sha256:313cabde5f8dcec80d1001e673cd3d6dfbc55d219b82944db5466e0cd0e8502d",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "token_",
+            "type": "contract",
+            "internalType": "IVotes"
+          },
+          {
+            "name": "timelock_",
+            "type": "contract",
+            "internalType": "TimelockController"
+          },
+          {
+            "name": "votingDelay_",
+            "type": "uint48",
+            "internalType": "uint48"
+          },
+          {
+            "name": "votingPeriod_",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "proposalThreshold_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quorumPercent_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quorumFloor_",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "cancel",
+          "inputs": [
+            {
+              "name": "targets",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "values",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "calldatas",
+              "type": "array",
+              "internalType": "bytes[]"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "cancel(address[],uint256[],bytes[],bytes32)"
+        },
+        {
+          "name": "castVote",
+          "inputs": [
+            {
+              "name": "proposalId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "support",
+              "type": "uint8",
+              "internalType": "uint8"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "castVote(uint256,uint8)"
+        },
+        {
+          "name": "castVoteBySig",
+          "inputs": [
+            {
+              "name": "proposalId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "support",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "voter",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "castVoteBySig(uint256,uint8,address,bytes)"
+        },
+        {
+          "name": "castVoteWithReason",
+          "inputs": [
+            {
+              "name": "proposalId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "support",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "internalType": "string"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "castVoteWithReason(uint256,uint8,string)"
+        },
+        {
+          "name": "castVoteWithReasonAndParams",
+          "inputs": [
+            {
+              "name": "proposalId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "support",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "params",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "castVoteWithReasonAndParams(uint256,uint8,string,bytes)"
+        },
+        {
+          "name": "castVoteWithReasonAndParamsBySig",
+          "inputs": [
+            {
+              "name": "proposalId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "support",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "voter",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "params",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "castVoteWithReasonAndParamsBySig(uint256,uint8,address,string,bytes,bytes)"
+        },
+        {
+          "name": "execute",
+          "inputs": [
+            {
+              "name": "targets",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "values",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "calldatas",
+              "type": "array",
+              "internalType": "bytes[]"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "secondary",
+          "signature": "execute(address[],uint256[],bytes[],bytes32)"
+        },
+        {
+          "name": "onERC1155BatchReceived",
+          "inputs": [
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"
+        },
+        {
+          "name": "onERC1155Received",
+          "inputs": [
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "onERC1155Received(address,address,uint256,uint256,bytes)"
+        },
+        {
+          "name": "onERC721Received",
+          "inputs": [
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "onERC721Received(address,address,uint256,bytes)"
+        },
+        {
+          "name": "propose",
+          "inputs": [
+            {
+              "name": "targets",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "values",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "calldatas",
+              "type": "array",
+              "internalType": "bytes[]"
+            },
+            {
+              "name": "description",
+              "type": "string",
+              "internalType": "string"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "propose(address[],uint256[],bytes[],string)"
+        },
+        {
+          "name": "queue",
+          "inputs": [
+            {
+              "name": "targets",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "values",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "calldatas",
+              "type": "array",
+              "internalType": "bytes[]"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "queue(address[],uint256[],bytes[],bytes32)"
+        },
+        {
+          "name": "relay",
+          "inputs": [
+            {
+              "name": "target",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "relay(address,uint256,bytes)"
+        },
+        {
+          "name": "setProposalThreshold",
+          "inputs": [
+            {
+              "name": "newProposalThreshold",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setProposalThreshold(uint256)"
+        },
+        {
+          "name": "setQuorumFloor",
+          "inputs": [
+            {
+              "name": "newQuorumFloor",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setQuorumFloor(uint256)"
+        },
+        {
+          "name": "setVotingDelay",
+          "inputs": [
+            {
+              "name": "newVotingDelay",
+              "type": "uint48",
+              "internalType": "uint48"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setVotingDelay(uint48)"
+        },
+        {
+          "name": "setVotingPeriod",
+          "inputs": [
+            {
+              "name": "newVotingPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setVotingPeriod(uint32)"
+        },
+        {
+          "name": "updateQuorumNumerator",
+          "inputs": [
+            {
+              "name": "newQuorumNumerator",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "updateQuorumNumerator(uint256)"
+        },
+        {
+          "name": "updateTimelock",
+          "inputs": [
+            {
+              "name": "newTimelock",
+              "type": "contract",
+              "internalType": "TimelockController"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "updateTimelock(TimelockController)"
+        }
+      ]
+    },
+    {
+      "name": "LmsToken",
+      "sourcePath": "src\\governance\\LmsToken.sol",
+      "sourceHash": "sha256:6df1a619ea0b7779896325436a12ea01985ccb6662001c49a833c4d63a9b754d",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "supply",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "approve",
+          "inputs": [
+            {
+              "name": "spender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "approve(address,uint256)"
+        },
+        {
+          "name": "burn",
+          "inputs": [
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "burn(uint256)"
+        },
+        {
+          "name": "burnFrom",
+          "inputs": [
+            {
+              "name": "account",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "burnFrom(address,uint256)"
+        },
+        {
+          "name": "permit",
+          "inputs": [
+            {
+              "name": "owner",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "spender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "v",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "r",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "s",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)"
+        },
+        {
+          "name": "transfer",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transfer(address,uint256)"
+        },
+        {
+          "name": "transferFrom",
+          "inputs": [
+            {
+              "name": "from",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferFrom(address,address,uint256)"
+        }
+      ]
+    },
+    {
+      "name": "MultisigPhase",
+      "sourcePath": "src\\governance\\MultisigPhase.sol",
+      "sourceHash": "sha256:7b3c4956fd5fa20b4c4ab868e7435b4f5ec2545fb1a5b78053293d44fd2cc481",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "timelock_",
+            "type": "contract",
+            "internalType": "TimelockController"
+          },
+          {
+            "name": "safe_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lms_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "phaseEnd_",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "cancel",
+          "inputs": [
+            {
+              "name": "id",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "cancel(bytes32)"
+        },
+        {
+          "name": "retire",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "retire()"
+        },
+        {
+          "name": "schedule",
+          "inputs": [
+            {
+              "name": "target",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "predecessor",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "salt",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "delay",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "schedule(address,uint256,bytes,bytes32,bytes32,uint256)"
+        },
+        {
+          "name": "scheduleBatch",
+          "inputs": [
+            {
+              "name": "targets",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "values",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "payloads",
+              "type": "array",
+              "internalType": "bytes[]"
+            },
+            {
+              "name": "predecessor",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "salt",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "delay",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)"
+        }
+      ]
+    },
+    {
+      "name": "RewardsDistributor",
+      "sourcePath": "src\\governance\\RewardsDistributor.sol",
+      "sourceHash": "sha256:57e9fd09cbac087d0607cac7e0a03bf9530ee6da2b9fcc3981f94cf2df4fe81c",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "escrow_",
+            "type": "contract",
+            "internalType": "IFeeLedger"
+          },
+          {
+            "name": "lms_",
+            "type": "contract",
+            "internalType": "IERC20"
+          },
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "firstEpoch_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalBudget_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxRewardPerEth_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxRewardPerWalletPerEpoch_",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "claim",
+          "inputs": [
+            {
+              "name": "player",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "epochs",
+              "type": "array",
+              "internalType": "uint256[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "claim(address,uint256[])"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "setMaxRewardPerEth",
+          "inputs": [
+            {
+              "name": "maxRewardPerEth_",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setMaxRewardPerEth(uint256)"
+        },
+        {
+          "name": "setMaxRewardPerWalletPerEpoch",
+          "inputs": [
+            {
+              "name": "maxRewardPerWalletPerEpoch_",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setMaxRewardPerWalletPerEpoch(uint256)"
+        },
+        {
+          "name": "sweep",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "sweep(address)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "RewardVesting",
+      "sourcePath": "src\\governance\\RewardVesting.sol",
+      "sourceHash": "sha256:491f61962c666f9aae81f924c7cc3ba61bad27c70489ebabd65295d0308e6066",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "lms_",
+            "type": "contract",
+            "internalType": "IERC20"
+          },
+          {
+            "name": "epochLength_",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "grant",
+          "inputs": [
+            {
+              "name": "player",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "epochs",
+              "type": "array",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "amounts",
+              "type": "array",
+              "internalType": "uint256[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "grant(address,uint256[],uint256[])"
+        },
+        {
+          "name": "release",
+          "inputs": [
+            {
+              "name": "player",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "epochs",
+              "type": "array",
+              "internalType": "uint256[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "release(address,uint256[])"
+        }
+      ]
+    },
+    {
+      "name": "StakedLms",
+      "sourcePath": "src\\governance\\StakedLms.sol",
+      "sourceHash": "sha256:13201a97b071ea7ca1e36fd11ef2245c382a367c25865d92db37557ae34e94b9",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "lms",
+            "type": "contract",
+            "internalType": "IERC20"
+          },
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "cooldown_",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "rewardDuration_",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "approve",
+          "inputs": [
+            {
+              "name": "spender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "approve(address,uint256)"
+        },
+        {
+          "name": "claim",
+          "inputs": [
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "claim(address)"
+        },
+        {
+          "name": "claimRewards",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "claimRewards(address)"
+        },
+        {
+          "name": "delegate",
+          "inputs": [
+            {
+              "name": "delegatee",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "delegate(address)"
+        },
+        {
+          "name": "delegateBySig",
+          "inputs": [
+            {
+              "name": "delegatee",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "expiry",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "v",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "r",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "s",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "delegateBySig(address,uint256,uint256,uint8,bytes32,bytes32)"
+        },
+        {
+          "name": "deposit",
+          "inputs": [
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "deposit(uint256)"
+        },
+        {
+          "name": "depositFor",
+          "inputs": [
+            {
+              "name": "account",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "depositFor(address,uint256)"
+        },
+        {
+          "name": "depositRewards",
+          "inputs": [],
+          "stateMutability": "payable",
+          "tier": "primary",
+          "signature": "depositRewards()"
+        },
+        {
+          "name": "depositWithPermit",
+          "inputs": [
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "v",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "r",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "s",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "depositWithPermit(uint256,uint256,uint8,bytes32,bytes32)"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "requestUnstake",
+          "inputs": [
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "requestUnstake(uint256)"
+        },
+        {
+          "name": "setCooldown",
+          "inputs": [
+            {
+              "name": "cooldown_",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setCooldown(uint64)"
+        },
+        {
+          "name": "sweepStray",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "sweepStray(address)"
+        },
+        {
+          "name": "transfer",
+          "inputs": [
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transfer(address,uint256)"
+        },
+        {
+          "name": "transferFrom",
+          "inputs": [
+            {
+              "name": "from",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferFrom(address,address,uint256)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "ChainlinkVrfAdapter",
+      "sourcePath": "src\\oracles\\ChainlinkVrfAdapter.sol",
+      "sourceHash": "sha256:fe921080c03789d58934759aecb87ab12b4bf6c11b3e6ecbe6c0539fac30bbdb",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coordinator_",
+            "type": "contract",
+            "internalType": "IVRFCoordinatorV2Plus"
+          },
+          {
+            "name": "keyHash_",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "subId_",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "confirmations_",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callbackGasLimit_",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "deliver",
+          "inputs": [
+            {
+              "name": "vrfId",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "deliver(uint256)"
+        },
+        {
+          "name": "rawFulfillRandomWords",
+          "inputs": [
+            {
+              "name": "vrfId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "randomWords",
+              "type": "array",
+              "internalType": "uint256[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "rawFulfillRandomWords(uint256,uint256[])"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "requestRandomness",
+          "inputs": [
+            {
+              "name": "context",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "requestRandomness(bytes32)"
+        },
+        {
+          "name": "setConsumer",
+          "inputs": [
+            {
+              "name": "consumer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "allowed",
+              "type": "bool",
+              "internalType": "bool"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setConsumer(address,bool)"
+        },
+        {
+          "name": "setCoordinator",
+          "inputs": [
+            {
+              "name": "coordinator_",
+              "type": "contract",
+              "internalType": "IVRFCoordinatorV2Plus"
+            },
+            {
+              "name": "keyHash_",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "subId_",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "confirmations_",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callbackGasLimit_",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setCoordinator(IVRFCoordinatorV2Plus,bytes32,uint256,uint16,uint32)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "BridgeJoinReceiver",
+      "sourcePath": "src\\periphery\\BridgeJoinReceiver.sol",
+      "sourceHash": "sha256:953becd8dc4204a3918d44e133658207ac7ea0cc5582e77a33c6c4fbf585bc7c",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "escrow_",
+            "type": "contract",
+            "internalType": "GameEscrow"
+          },
+          {
+            "name": "spokePool_",
+            "type": "contract",
+            "internalType": "IAcrossSpokePool"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "handleV3AcrossMessage",
+          "inputs": [
+            {
+              "name": "tokenSent",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "message",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "handleV3AcrossMessage(address,uint256,address,bytes)"
+        },
+        {
+          "name": "recover",
+          "inputs": [
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "recover(address,address,uint256)"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        },
+        {
+          "name": "withdrawToChainFor",
+          "inputs": [
+            {
+              "name": "w",
+              "type": "tuple",
+              "internalType": "BridgeJoinReceiver.Withdrawal"
+            },
+            {
+              "name": "q",
+              "type": "tuple",
+              "internalType": "BridgeJoinReceiver.Quote"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "withdrawToChainFor(BridgeJoinReceiver.Withdrawal,BridgeJoinReceiver.Quote,bytes)"
+        }
+      ]
+    },
+    {
+      "name": "ZapJoin",
+      "sourcePath": "src\\periphery\\ZapJoin.sol",
+      "sourceHash": "sha256:d7bba67f64ba24ff190fccbe569c12305c6c275b408ab9d6612ff7ac8143a902",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "poolManager_",
+            "type": "contract",
+            "internalType": "IPoolManager"
+          },
+          {
+            "name": "escrow_",
+            "type": "contract",
+            "internalType": "GameEscrow"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "joinWithToken",
+          "inputs": [
+            {
+              "name": "matchId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "path",
+              "type": "array",
+              "internalType": "ZapJoin.PathKey[]"
+            },
+            {
+              "name": "maxAmountIn",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "joinWithToken(bytes32,ZapJoin.PathKey[],uint256,uint256)"
+        },
+        {
+          "name": "unlockCallback",
+          "inputs": [
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "unlockCallback(bytes)"
+        }
+      ]
+    },
+    {
+      "name": "ProtocolConfig",
+      "sourcePath": "src\\ProtocolConfig.sol",
+      "sourceHash": "sha256:8b45039526af6c23f9f2ece7354ca3b4a36161ac715c56d4f1c0bdbe171243bd",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "initialParams",
+            "type": "tuple",
+            "internalType": "ProtocolConfig.Params"
+          },
+          {
+            "name": "initialPayoutBps",
+            "type": "array",
+            "internalType": "uint16[]"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "acceptOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "acceptOwnership()"
+        },
+        {
+          "name": "renounceOwnership",
+          "inputs": [],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "renounceOwnership()"
+        },
+        {
+          "name": "setAttestorSet",
+          "inputs": [
+            {
+              "name": "attestors",
+              "type": "array",
+              "internalType": "address[]"
+            },
+            {
+              "name": "threshold",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setAttestorSet(address[],uint32)"
+        },
+        {
+          "name": "setBridgeReceiver",
+          "inputs": [
+            {
+              "name": "receiver",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setBridgeReceiver(address)"
+        },
+        {
+          "name": "setChallengeWindow",
+          "inputs": [
+            {
+              "name": "window",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setChallengeWindow(uint64)"
+        },
+        {
+          "name": "setGuardian",
+          "inputs": [
+            {
+              "name": "newGuardian",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setGuardian(address)"
+        },
+        {
+          "name": "setLmsPerEthDiscount",
+          "inputs": [
+            {
+              "name": "lmsPerEth",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setLmsPerEthDiscount(uint256)"
+        },
+        {
+          "name": "setLmsToken",
+          "inputs": [
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setLmsToken(address)"
+        },
+        {
+          "name": "setMatchmaker",
+          "inputs": [
+            {
+              "name": "newMatchmaker",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setMatchmaker(address)"
+        },
+        {
+          "name": "setParams",
+          "inputs": [
+            {
+              "name": "newParams",
+              "type": "tuple",
+              "internalType": "ProtocolConfig.Params"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setParams(ProtocolConfig.Params)"
+        },
+        {
+          "name": "setPayoutSchedule",
+          "inputs": [
+            {
+              "name": "newSchedule",
+              "type": "array",
+              "internalType": "uint16[]"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setPayoutSchedule(uint16[])"
+        },
+        {
+          "name": "setRandomnessOracle",
+          "inputs": [
+            {
+              "name": "oracle",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setRandomnessOracle(address)"
+        },
+        {
+          "name": "setRulesHash",
+          "inputs": [
+            {
+              "name": "newRulesHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "setRulesHash(bytes32)"
+        },
+        {
+          "name": "setSequencerUptimeFeed",
+          "inputs": [
+            {
+              "name": "feed",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "secondary",
+          "signature": "setSequencerUptimeFeed(address)"
+        },
+        {
+          "name": "transferOwnership",
+          "inputs": [
+            {
+              "name": "newOwner",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "transferOwnership(address)"
+        }
+      ]
+    },
+    {
+      "name": "SessionKeyDelegate",
+      "sourcePath": "src\\SessionKeyDelegate.sol",
+      "sourceHash": "sha256:db88a1525b310bff4c147fe0d81825103d04ec49e4a330e74a5ff0da2d6d0772",
+      "constructor": {
+        "inputs": [
+          {
+            "name": "escrow_",
+            "type": "contract",
+            "internalType": "GameEscrow"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      "functions": [
+        {
+          "name": "executeWithSession",
+          "inputs": [
+            {
+              "name": "target",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "executeWithSession(address,uint256,bytes,uint256,bytes)"
+        },
+        {
+          "name": "grantSession",
+          "inputs": [
+            {
+              "name": "sessionKey",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "validUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "valueCap",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "spendCap",
+              "type": "uint128",
+              "internalType": "uint128"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "grantSession(address,uint48,uint128,uint128)"
+        },
+        {
+          "name": "revokeSession",
+          "inputs": [
+            {
+              "name": "sessionKey",
+              "type": "address",
+              "internalType": "address"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "tier": "primary",
+          "signature": "revokeSession(address)"
+        }
+      ]
+    }
+  ],
+  "handlers": {
+    "BridgeJoinReceiverHandler.sol": "sha256:e50366d7a718ef190c5941f7726ec91737b3f8a8243c9c5db74b2eb16b658705",
+    "ChainlinkVrfAdapterHandler.sol": "sha256:9cfd49ca5fb09f6a17aef87a6371b6da190701e03b5323d7fae9c1fe59b278a2",
+    "FeeRouterHandler.sol": "sha256:6b594f7545e1637df941e3bb0c8e2f81148c9462a9875fb02bbd394072a9a0fc",
+    "GameEscrowHandler.sol": "sha256:1003ed454fec3964fbf5177ca473650bbeb6596a23cd9ded6110403c6192f8e0",
+    "Handlers.sol": "sha256:8b57453fa60cbf459b49a9220d9c1f86ba609aca956cc7d05227a86b288db19c",
+    "LiquidityReserveHandler.sol": "sha256:6e3112f3325dc8595fc112d92f03f52a54303fc82d8f0eecec7ae701cf7a62bc",
+    "LmsGovernorHandler.sol": "sha256:7a5c2fca171f0ede76e407bcf0a49ee909d21745e8a455bd6b7d41c86d6f52fd",
+    "LmsTokenHandler.sol": "sha256:a828d26068bda8d70cb14b0982295526cc90e578b9b1a0625570d50e08ef4e4c",
+    "MultisigPhaseHandler.sol": "sha256:cb6e13efe7b9b384744e96336988ab491f4e313ab45356e520c1302e25c501fe",
+    "ProtocolConfigHandler.sol": "sha256:aa86de3f094f126557caa495be8285cd9714d6ec964d262ee38438156bf1167f",
+    "RewardsDistributorHandler.sol": "sha256:0b8416e380c62a3118add884b9f666bb1bb8bc1e62fc03a233dbf03b1769b8dd",
+    "RewardVestingHandler.sol": "sha256:621a63a456f4d3b70bdd0ba7900254791e323f91ad7e020814bdb8646b6744c4",
+    "SessionKeyDelegateHandler.sol": "sha256:cfc6da70c94671b611da71ae377b03467eb02ad243427cf070d60d81a30fe4ee",
+    "StakedLmsHandler.sol": "sha256:add30ac3617838b4c3ea750392e0acb522a35ef0aa2bb0fd5a46fff3213097dd",
+    "ZapJoinHandler.sol": "sha256:f952ae3a834f2129ce23e04362430ea5fb5c6745e29d808af56eca54bde1a09b"
+  },
+  "properties": [
+    {
+      "id": "GL-01",
+      "checkbox": "x",
+      "functionName": "property_escrowLedgerExact",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-02",
+      "checkbox": "x",
+      "functionName": "property_totalOwedIsSumOfBalances",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-03",
+      "checkbox": "x",
+      "functionName": "property_totalEscrowedIsSumOfLiveMatches",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-04",
+      "checkbox": "x",
+      "functionName": "property_lmsEscrowCustody",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-05",
+      "checkbox": "x",
+      "functionName": "property_matchStatusMachine",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-06",
+      "checkbox": "x",
+      "functionName": "property_matchRecordsImmutable",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-07",
+      "checkbox": "x",
+      "functionName": "property_seatBookkeeping",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-08",
+      "checkbox": "x",
+      "functionName": "property_matchmadeSeatsRostered",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-09",
+      "checkbox": "x",
+      "functionName": "property_feeLedgerConsistent",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-10",
+      "checkbox": "x",
+      "functionName": "property_endedEpochFrozen",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-11",
+      "checkbox": "x",
+      "functionName": "property_challengeDeadlineBounded",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-12",
+      "checkbox": "x",
+      "functionName": "property_stakedLmsBacking",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-13",
+      "checkbox": "x",
+      "functionName": "property_stakedLmsSumsAndVotes",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-14",
+      "checkbox": "x",
+      "functionName": "property_stakedLmsRewardsCovered",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-15",
+      "checkbox": "x",
+      "functionName": "property_stakedLmsEthLedger",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-16",
+      "checkbox": "x",
+      "functionName": "property_rewardAccumulatorsMonotone",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-17",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "GL-18",
+      "checkbox": "x",
+      "functionName": "property_vestingBooks",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-19",
+      "checkbox": "x",
+      "functionName": "property_rewardsBudget",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-20",
+      "checkbox": "x",
+      "functionName": "property_rateWriteOnce",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-21",
+      "checkbox": "x",
+      "functionName": "property_lmsSupplyConserved",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-22",
+      "checkbox": "x",
+      "functionName": "property_reserveCustody",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-23",
+      "checkbox": "x",
+      "functionName": "property_pauseFlagsConsistent",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-24",
+      "checkbox": "x",
+      "functionName": "property_feeRouterHoldsOnlyDonations",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-25",
+      "checkbox": "x",
+      "functionName": "property_sessionCaps",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-26",
+      "checkbox": "x",
+      "functionName": "property_governanceTallies",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-27",
+      "checkbox": "x",
+      "functionName": "property_proposalStateForward",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-28",
+      "checkbox": "x",
+      "functionName": "property_phaseRetiredHasNoRoles",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-29",
+      "checkbox": "x",
+      "functionName": "property_ownershipAndTimelockLms",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "GL-30",
+      "checkbox": "x",
+      "functionName": "property_configHistoryAndLifetime",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-01",
+      "checkbox": "x",
+      "functionName": "property_joinSeatAccounting",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-02",
+      "checkbox": "x",
+      "functionName": "property_lmsDiscountBounds",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-03",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-04",
+      "checkbox": "x",
+      "functionName": "property_lockSnapshotsConfig",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-05",
+      "checkbox": "x",
+      "functionName": "property_randomnessDelivery",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-06",
+      "checkbox": "x",
+      "functionName": "property_settleProposes",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-07",
+      "checkbox": "x",
+      "functionName": "property_permutedFinalizeRejected",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-08",
+      "checkbox": "x",
+      "functionName": "property_finalizeConserves",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-09",
+      "checkbox": "x",
+      "functionName": "property_finalizePayouts",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-10",
+      "checkbox": "x",
+      "functionName": "property_finalizeFeeLedger",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-11",
+      "checkbox": "x",
+      "functionName": "property_refundExact",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-12",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-13",
+      "checkbox": "x",
+      "functionName": "property_withdrawExact",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-14",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-15",
+      "checkbox": "x",
+      "functionName": "property_unpause",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-16",
+      "checkbox": "x",
+      "functionName": "property_dismissTransitions",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-17",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-18",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-19",
+      "checkbox": "x",
+      "functionName": "property_bridgeWithdrawOut",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-20",
+      "checkbox": "x",
+      "functionName": "property_claimRewards",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-21",
+      "checkbox": "x",
+      "functionName": "property_claim",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-22",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-23",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-24",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-25",
+      "checkbox": "x",
+      "functionName": "property_sweepStray",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-26",
+      "checkbox": "x",
+      "functionName": "property_harvestSplit",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-27",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-28",
+      "checkbox": "x",
+      "functionName": "property_rewardsClaim",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-29",
+      "checkbox": "x",
+      "functionName": "property_vestingRelease",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-30",
+      "checkbox": "x",
+      "functionName": "property_zapJoinConserves",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-31",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-32",
+      "checkbox": "x",
+      "functionName": "property_sessionExecuted",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-33",
+      "checkbox": "x",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-34",
+      "checkbox": "x",
+      "functionName": "property_reserveRelease",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-35",
+      "checkbox": "x",
+      "functionName": "property_accessControlMatrix",
+      "file": "test\\fizz\\Properties.sol"
+    },
+    {
+      "id": "SP-36",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-37",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    },
+    {
+      "id": "SP-38",
+      "checkbox": " ",
+      "functionName": null,
+      "file": null
+    }
+  ]
+}
