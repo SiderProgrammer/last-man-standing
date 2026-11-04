@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TextureLeases } from '../src/arena/textures.js';
+import { TextureLeases, faceSource } from '../src/arena/textures.js';
 
 /** A cache that records what it was asked, like Pixi's `Assets`. */
 function fakeAssets() {
@@ -92,5 +92,38 @@ describe('texture leases', () => {
     leases.release('gone');
     await flush();
     expect(leases.size).toBe(0);
+  });
+
+  /** Pixi's `skip` strategy resolves a failed load with undefined, and a URL it has no parser for with null. */
+  it.each([undefined, null])('treats a load that resolves with %s as a failure', async (nothing) => {
+    const leases = new TextureLeases<string>(
+      async () => nothing,
+      async () => {},
+    );
+    await expect(leases.acquire('gone')).rejects.toThrow('could not load gone');
+    leases.release('gone');
+    await flush();
+    expect(leases.size).toBe(0);
+  });
+});
+
+describe('face source', () => {
+  it('loads a URL with no extension as an image', () => {
+    const url = 'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
+    expect(faceSource(url)).toEqual({ src: url, parser: 'texture' });
+  });
+
+  it('loads an image with an extension as an image', () => {
+    const url = 'https://ipfs.io/ipfs/bafy/1.png';
+    expect(faceSource(url)).toEqual({ src: url, parser: 'texture' });
+  });
+
+  it.each([
+    'data:image/svg+xml;utf8,%3Csvg%3E',
+    'data:image/png;base64,AAAA',
+    'https://ipfs.io/ipfs/bafy/1.svg',
+    'https://ipfs.io/ipfs/bafy/1.SVG?download=1',
+  ])('leaves %s for Pixi to detect', (url) => {
+    expect(faceSource(url)).toBe(url);
   });
 });

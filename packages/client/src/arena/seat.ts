@@ -2,12 +2,12 @@ import { Assets, Circle, Container, Graphics, Sprite, Text, type Texture } from 
 import { chainInfo } from '@lms/contracts';
 import { gsap } from '../motion.js';
 import { AVATAR_RADIUS, AVATAR_SIZE, BADGE_Y, HP_ARC_RADIUS, SEAT_RADIUS, type Point } from './layout.js';
-import { TextureLeases } from './textures.js';
+import { TextureLeases, faceSource } from './textures.js';
 import { BADGE, COLORS, FX, HP_LABEL, LABEL, SUBLABEL, hpColor } from './theme.js';
 
 /** Every seat's face, shared by URL and unloaded once no seat wears it. */
 const faces = new TextureLeases<Texture>(
-  (url) => Assets.load<Texture>(url),
+  (url) => Assets.load<Texture>(faceSource(url)),
   (url) => Assets.unload(url),
 );
 

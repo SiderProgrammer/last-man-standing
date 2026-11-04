@@ -1,4 +1,15 @@
 /**
+ * What to ask Pixi for to load a face. Pixi picks a parser from the URL's
+ * extension or data URI type, and has none for a URL it cannot read one from,
+ * such as `https://gateway/ipfs/<cid>`, the usual way to name an NFT's image.
+ * Those are loaded as images. A generated face is an SVG data URI, which the
+ * image parser cannot decode, so anything Pixi can tell is an SVG stays with it.
+ */
+export function faceSource(url: string): string | { src: string; parser: 'texture' } {
+  return /^data:|\.svg($|[?#])/i.test(url) ? url : { src: url, parser: 'texture' };
+}
+
+/**
  * Textures loaded by URL and shared, freed when the last user lets go.
  *
  * Seat faces are loaded per wallet — a generated face as a data URI, or an
@@ -17,15 +28,23 @@ export class TextureLeases<T> {
   private readonly unloading = new Map<string, Promise<void>>();
 
   constructor(
-    private readonly load: (url: string) => Promise<T>,
+    private readonly load: (url: string) => Promise<T | null | undefined>,
     private readonly unload: (url: string) => Promise<void> | void,
   ) {}
 
-  /** Loads `url`, or shares it if it is already held. Pair every call with `release`, even one that throws. */
+  /**
+   * Loads `url`, or shares it if it is already held. Pair every call with
+   * `release`, even one that throws.
+   *
+   * Throws if the load comes back empty: the asset loader's `skip` strategy
+   * reports a failed load by resolving with nothing, not by rejecting.
+   */
   async acquire(url: string): Promise<T> {
     this.held.set(url, (this.held.get(url) ?? 0) + 1);
     await this.unloading.get(url);
-    return this.load(url);
+    const loaded = await this.load(url);
+    if (loaded === null || loaded === undefined) throw new Error(`could not load ${url}`);
+    return loaded;
   }
 
   release(url: string): void {
