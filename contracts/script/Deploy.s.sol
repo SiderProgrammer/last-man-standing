@@ -435,7 +435,8 @@ contract Deploy is Registry, AcrossBook {
     ///      `packages/consensus/test/parity.test.ts` checks that file field by
     ///      field against `DEFAULT_RULES`.
     function _rules() private view returns (HashLib.Rules memory rules) {
-        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/config/rules.json"));
+        // Relative, so the gas snapshot does not depend on where the repo is checked out.
+        string memory json = vm.readFile("config/rules.json");
         rules.minPlayers = uint16(vm.parseJsonUint(json, ".minPlayers"));
         rules.maxPlayers = uint16(vm.parseJsonUint(json, ".maxPlayers"));
         rules.startingHp = uint32(vm.parseJsonUint(json, ".startingHp"));

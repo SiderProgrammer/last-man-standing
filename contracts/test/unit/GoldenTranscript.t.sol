@@ -93,7 +93,8 @@ contract GoldenTranscriptTest is Test {
     }
 
     function _load(string memory name) private view returns (string memory) {
-        return vm.readFile(string.concat(vm.projectRoot(), "/test/fixtures/golden/", name, ".json"));
+        // Relative, so the gas snapshot does not depend on where the repo is checked out.
+        return vm.readFile(string.concat("test/fixtures/golden/", name, ".json"));
     }
 
     function _uint8s(uint256[] memory values) private pure returns (uint8[] memory out) {
