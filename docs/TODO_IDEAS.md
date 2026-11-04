@@ -1,7 +1,7 @@
-Fuzz Testing (/fizz)
-Invariant Testing (/fizz)
-
 complete TO_CHECK.md
+complete TODO.md
+update README etc.
+
 test game with a few real players (locally)
 test, run all the features on local fork mainnet (dont forget cross chain)
 deploy to testnet
@@ -10,6 +10,7 @@ deploy to mainnet
 test game with a few real players (real wallet)
 record video
 
+formal verification?
 add back YUL code?
 add leaderboard with players win ratio?
 in-game prediction market?
