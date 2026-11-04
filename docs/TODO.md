@@ -3,6 +3,15 @@
 Open work only. What is done is in the code and its history; the decisions the
 design rests on are in [adr/](adr/).
 
+**Scope:** a portfolio project, on testnet first and then as an unpromoted mainnet demo
+([ADR 0012](adr/0012-launch-scope.md)). Hosting is Render's free tier, whose risks are in
+[HOSTING.md](HOSTING.md).
+
+**Deferred on purpose, still planned:**
+
+- the Privy integration (1.1);
+- the dispute bond (3.1).
+
 ---
 
 ## 1. Checks that need a testnet
@@ -13,7 +22,15 @@ nodes. Everything below waits on a hub on Base Sepolia, which needs the deploy r
 subscription owned by the Safe and funded in ETH, and testnet ETH.
 [TESTNET.md](TESTNET.md) has the steps.
 
-### 1.1 The Privy check
+### 1.1 The Privy check — deferred
+
+**Deferred, still planned.** Neither the first testnet deployment nor the mainnet demo
+waits on this: visitors use wallet-free practice (section 7) or the normal wallet flow.
+Do not remove what it builds on: `SessionKeyDelegate`, the session relayer,
+`Wallet.fromAccount`, `npm run check:one-click`, the one-click buttons, and ADR 0009.
+Privy's docs describe signing an authorization for a contract you choose
+(`useSign7702Authorization`), which is encouraging but not proof, and they do not say
+whether a custom delegate needs allowlisting.
 
 One-click play for embedded wallets assumes Privy's wallet can sign an EIP-7702
 authorization for *our* `SessionKeyDelegate`, not only for its own account. On Base
@@ -57,7 +74,8 @@ Features that have only run against mocks, or once by hand:
   it needs an ended epoch with claims. The view and the reads are unit-tested.
 - **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
   `ChainBridge`, but only the in-arena badges have been seen rendered.
-- **One-click buttons** in the client have not run against a node (see 1.1).
+- **One-click buttons** in the client have not run against a node. Deferred with 1.1:
+  the burner is for dev builds, so a production build has no wallet that can use them.
 
 ---
 
@@ -91,9 +109,13 @@ mainnet. Still open:
 - **Nobody watches yet.** A veto needs someone to notice. A small watcher that audits
   every `ResultProposed` transcript and alerts the guardian, and watches
   `ResultDisputed`, would close that.
-- **A dispute costs only gas.** Any seated player can hold a payout back 48 hours, so a
-  loser can delay every match they lose, and the guardian has to answer each one. Add a
-  bond: returned on a veto or if the guardian never answers, forfeited on a dismissal.
+- **Deferred: a dispute costs only gas.** Any seated player can hold a payout back 48
+  hours, so a loser can delay every match they lose, and the guardian has to answer each
+  one. The plan is a bond: returned on a veto or if the guardian never answers, forfeited
+  on a dismissal. It is accepted as a known limitation for testnet and the mainnet demo,
+  and it is required before real stakes. The contracts cannot be upgraded, so adding it
+  later means a new escrow (3.3), and `GameEscrow` has only about 830 bytes left under
+  the EIP-170 limit.
 - **The attestors are not independent.** The attestor signs in a child process of the
   server, which reads `ATTESTOR_PK` from its own environment to hand it over. Moving the
   attestor to another host is the same IPC over a socket, not done.
@@ -104,13 +126,6 @@ mainnet. Still open:
 
 ### 3.2 Governance and the token
 
-- **The Safe can schedule past `phaseEnd`.** `MultisigPhase` forwards `delay` unchecked,
-  so a call scheduled late in the phase, or with a long delay, still runs after `retire`.
-  `setBridgeReceiver` is one such call, and the receiver it names can take any player's
-  balance. Stopping it takes a proposal that grants the timelock the canceller role and
-  then cancels the call, which needs the quorum floor and more time than a call scheduled
-  near the end leaves. Require `block.timestamp + delay <= phaseEnd` in `schedule` and
-  `scheduleBatch`.
 - **Governance is idle at launch** until players hold the quorum floor in sLMS: with the
   10,000 LMS per ETH cap binding, 100 ETH of fees paid in settled matches (2,000 ETH of
   stakes at the 5% fee), and rewards vest for six months first. Until then the Safe
@@ -118,8 +133,6 @@ mainnet. Still open:
   wanted.
 - **Play-mining parameters are guesses.** The per-ETH cap and the yearly decay should be
   revisited against real volume before mainnet.
-- **Legal review** of the stakers' fee share (0% on Base mainnet by default) and of
-  play-mining itself.
 - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide env, so
   it always sets one; the case where the Safe is the deployer (the `dev:fork` setup) is
   covered only by an `assert` in `_distribute`.
@@ -133,10 +146,6 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
   cannot be renewed for 7 more, and a governor proposal takes about 9 days (1 day voting
   delay, 5 days voting, 3 days timelock). So play resumes from about day 7 to day 9
   unless the exploit is already fixed. Until `phaseEnd`, the Safe's 3-day route covers it.
-- **Nothing stops bridged withdrawals quickly.** `withdrawToBridge` is not paused, and
-  the bridge receiver can withdraw any account's balance, so a signature bug in
-  `BridgeJoinReceiver` could drain every balance. Removing the receiver takes the
-  timelock delay.
 - **Payout bugs need a veto per match.** `finalize` is not paused, on purpose, so if the
   bug is in the payout maths the guardian has to veto every `Proposed` match by hand
   inside its challenge window, 1 hour by default.
@@ -156,6 +165,14 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
 
 ## 4. Tooling and process
 
+- **Fuzz campaign, before the first deploy.** The Medusa suite in `contracts/test/fizz`
+  last passed 134 of 134, but in a 20-minute run of 2,884 sequences, which
+  [its report](../contracts/fizz_data/report.md) calls a weak clean result. Still open:
+  the 7 unimplemented properties (GL-17, SP-03, SP-22, SP-31, SP-36, SP-37, SP-38), with
+  SP-36 needing a hostile-recipient actor; and an overnight run that keeps any
+  `test_results` file, because the `escrow_finalize_clamped` flag from the first campaign
+  is unexplained. Its trace has no panic, a Foundry replay passes, and the sequence was
+  not kept.
 - **CI:** no linter for the TypeScript, and the deep fuzz profile
   (`FOUNDRY_PROFILE=deep`) does not run on a schedule. Aderyn is not wired in.
 - **Slither locally:** CI's pinned 0.11.3 does not install on Python 3.12.0, so the
@@ -177,8 +194,8 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
   address on every chain, and a relayer per spoke.
 - **Stretch goals for sessions:** ERC-4337 `validateUserOp`, ERC-7739 nested typed data
   in `isValidSignature`, and P-256 session keys through RIP-7212.
-- **Mainnet:** independent signers for the Safe and a gambling licence. The README says
-  so.
+- **A real-money launch:** independent signers for the Safe, an independent audit and
+  paid hosting. The mainnet demo in section 8 is not this, and the README says so.
 
 ---
 
@@ -212,9 +229,12 @@ These are open questions, not bugs:
 A reviewer gives the repo a few minutes and will not run `npm run dev:fork`. Roughly in
 order, with the testnet deployment from section 1 before the hosting:
 
-- **Host it.** The client and server run only on a developer's machine: there is no
-  Dockerfile, compose file or hosting config. Serve the client and a server pointed at
-  Base Sepolia from a public URL.
+- **Host it on Render's free tier.** The client and server run only on a developer's
+  machine today. Serve the client and a server pointed at Base Sepolia from a public URL,
+  with Neon for the database and an external ping. [HOSTING.md](HOSTING.md) has the setup
+  and the risks. Test its two possible blockers first: redeploys against the instance
+  lock, and the lock through Neon's pooled connection string. Then run a small load test
+  on the deployed server, because the numbers in LOAD_TESTING.md do not apply there.
 - **Practice without a wallet.** A production build has no way in without a wallet
   extension: the burner in `wallet/flows.ts` is for dev builds, and Privy is not wired
   in. Practice needs only a login signature, so a key generated in the browser and
@@ -226,9 +246,8 @@ order, with the testnet deployment from section 1 before the hosting:
 - **A short front section in the README,** above the rules: a one-line pitch, the live
   link, the video, the stack, about six engineering highlights and the main limitations.
   The threat and trust models stay, further down.
-- **Say "testnet only" at the top of the README.** Today it first appears at line 264.
-- **Fix the README's clone URL.** It points at `SiderProgrammer/gambling-project`; the
-  remote is `SiderProgrammer/last-man-standing`.
+- **Say what is live at the top of the README:** testnet for playing, mainnet only as an
+  unpromoted demo that is not for real use. Today this first appears at line 272.
 - **Link the audit work from the README:** `contracts/x-ray/` and
   `.solidity-auditor/runs/`, described as AI-assisted reviews, not an independent audit.
 - **Clear out the working notes.** Finish `TO_CHECK.md` and `TODO_IDEAS.md`, then delete
@@ -237,3 +256,28 @@ order, with the testnet deployment from section 1 before the hosting:
 - **Set the GitHub repo up:** public, with a description, topics and the live link.
 - **Freeze features.** The leaderboard, the prediction market, Yul and the Guard damage
   change in `TODO_IDEAS.md` can wait until this list is done.
+
+---
+
+## 8. Mainnet demo
+
+After testnet works end to end, deploy the same contracts to Base to show it can be done
+on a real chain, with no promotion and no money meant to go in. This is not a launch.
+
+- **Limit the stakes.** Once deployed, anyone can call the escrow directly and stake real
+  ETH, promoted or not. `Deploy.s.sol` fixes the range at 0.001 to 1 ETH in code. Lower
+  `maxStake` for this deployment, because 1 ETH is too much for contracts with no
+  independent audit and one person holding every key.
+- **Decide whether it stays open.** After the demo matches, the timelock can call
+  `extendPause` so no new match can start, while withdrawals and refunds keep working.
+  That still shows the deployment without leaving an open game running.
+- **Budget real ETH** for the deployer, the VRF subscription, and the keeper and relayer.
+  Measure the amounts on testnet first.
+- **Hosting.** Only one server can stay awake on the free hours, and mainnet needs its own
+  server and database. See [HOSTING.md](HOSTING.md).
+- **Call `retire` when the phase ends.** Until someone does, a call the Safe left ready
+  can still be executed.
+- **State the limits in the README:** one person holds every Safe key and the reviews are
+  AI-assisted. Never describe it as production-ready.
+
+The fuzz campaign in section 4 comes before this, as it does for testnet.

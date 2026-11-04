@@ -326,7 +326,8 @@ to reconnect in and the window it was in given back in full. A restart cannot re
 round. Only a match with no journal (an in-memory server) or one that does not replay is
 abandoned: the attestor signs `MatchAbort` and the keeper calls `GameEscrow.abortMatch`,
 refunding every seat at once, or the permissionless `cancelMatch` does at the settlement
-deadline. Practice rooms are simply gone.
+deadline. Practice rooms are simply gone. Render's free tier makes restarts routine; see
+[HOSTING.md](HOSTING.md).
 
 **One instance.** Rooms, the matchmaking queue and every rate limit live in the
 process, and each key's transactions go out of one `TxSender` in nonce order. A second
@@ -533,7 +534,9 @@ withdraw(to) / withdrawFor(acct)  pull-based, always; withdrawFor pays the accou
 - *Terms are snapshotted.* A governance change cannot alter the deal a player already
   staked into.
 - *Pausing cannot trap funds.* `cancelMatch` and `withdraw` are deliberately not gated,
-  and cancellation is permissionless once the relevant deadline passes.
+  and cancellation is permissionless once the relevant deadline passes. `withdrawToBridge`
+  is gated, because a bug in the bridge receiver could reach every balance, so a pause
+  stops that at once while players withdraw on the hub.
 - *A guardian pause expires.* The guardian can `pause()` without the timelock, but only
   for 7 days, and not again until 7 days after a pause ends. Only governance can
   `extendPause(until)`, through the timelock. Governance can `unpause()` any pause; the
@@ -669,6 +672,10 @@ What stays trusted:
   neither vetoes nor dismisses lets the result finalise when the extension runs out. A
   compromised guardian can void honest results, but every player keeps their stake; it can
   never redirect one.
+- **A dispute costs only gas.** Any seated player can hold a payout back 48 hours for free,
+  and the guardian has to answer each one. A bond is planned and deferred
+  ([TODO.md](TODO.md), 3.1). Adding one means a new escrow, since the contracts cannot be
+  upgraded.
 - **`abortMatch` lets the operator refund any live match.** It needs only the attestor
   quorum, which is the operator today. It can send every stake back early; it cannot take
   one.
@@ -682,7 +689,8 @@ What stays trusted:
   server learns the move at commit time: the one case where it knows a move before the
   reveal.
 
-This is a deliberate trust level for a testnet and a low-stake early mainnet. An on-chain
+This is a deliberate trust level for a testnet and an unpromoted mainnet demo
+([ADR 0012](adr/0012-launch-scope.md)), not for real stakes. An on-chain
 fraud proof — a Solidity port of the kernel that replays a challenged match and slashes
 bonded attestors — was built and removed: it doubled every rule change while the rules
 are still moving. It is in git history (`fadf583`) for when the rules are frozen.
@@ -711,7 +719,8 @@ always routes.
 there withdraws as usual. One without signs an EIP-712 `Withdrawal` (destination chain,
 recipient, the most Across may take), and anyone, typically the server, submits it to
 `withdrawToChainFor`, which moves the whole balance into an Across deposit to that chain.
-The typed data has no chain id in its domain, so a wallet on a spoke can sign it.
+It reverts while the escrow is paused. The typed data has no chain id in its domain, so a
+wallet on a spoke can sign it.
 
 **No registration.** The router is ownerless and the receiver takes a fill from any
 chain Across serves, so a new spoke is a deploy and a line in the server's `SPOKES`, not

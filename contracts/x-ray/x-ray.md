@@ -86,7 +86,7 @@ Anyone ─ RewardsDistributor.claim(player, epochs) → GameEscrow.feesPaid/epoc
 
 ### Protocol Threat Profile
 
-> Protocol classified as: **Escrow / wagering settlement** (closest profile: **Bridge**, because a quorum attests to an off-chain result) with **Governance** and **reward-streaming (vault-like)** characteristics
+> Protocol classified as: **Escrow / match settlement** (closest profile: **Bridge**, because a quorum attests to an off-chain result) with **Governance** and **reward-streaming (vault-like)** characteristics
 
 Signals:
 - Quorum-signed results with an ascending-signer check and snapshotted signer sets are the bridge-validator shape.

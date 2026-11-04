@@ -14,14 +14,15 @@ move to once the old one has wound down. This document is the runbook for both.
 
 | Lever | Who | Delay | Effect |
 |---|---|---|---|
-| `GameEscrow.pause()` | Guardian | Immediate | Stops `createMatch`, `createMatchmade`, every `join*`, `lockMatch` and `settle` for `GUARDIAN_PAUSE` (7 days). Not again for `GUARDIAN_COOLDOWN` (7 days) after it ends. |
+| `GameEscrow.pause()` | Guardian | Immediate | Stops `createMatch`, `createMatchmade`, every `join*`, `lockMatch`, `settle` and `withdrawToBridge` for `GUARDIAN_PAUSE` (7 days). Not again for `GUARDIAN_COOLDOWN` (7 days) after it ends. |
 | `GameEscrow.extendPause(until)` | Governance (timelock) | Timelock delay | Pauses, or keeps the pause on, until `until`. No cooldown. |
 | `GameEscrow.unpause()` | Guardian or governance | Immediate for the guardian | Ends a pause. The guardian ends only its own, never one governance extended or started. |
 | `GameEscrow.veto(matchId)` | Guardian or governance | Immediate for the guardian | Throws out a `Proposed` result inside its challenge window and refunds every seat. Works while paused. |
 | `GameEscrow.dismissDispute(matchId)` | Guardian or governance | Immediate for the guardian | Puts a disputed result back on its own deadline. |
 | `GameEscrow.abortMatch(matchId, sigs)` | Attestor quorum | Immediate | Refunds a `Live` match at once. Works while paused. |
 | `GameEscrow.cancelMatch(matchId)` | Anyone | Once the match's deadline passes | Refunds an `Open`, `Pending` or `Live` match that can no longer finish. Works while paused. |
-| `withdraw`, `withdrawFor`, `withdrawToBridge` | Players (a session's `withdrawFor` relayed), `BridgeJoinReceiver` | Immediate | Never paused. |
+| `withdraw`, `withdrawFor` | Players (a session's `withdrawFor` relayed) | Immediate | Never paused. |
+| `withdrawToBridge` | `BridgeJoinReceiver` | Immediate | Stops while paused, because a bug in the receiver could reach every balance. Players still withdraw on the hub. |
 | `finalize(matchId, ranking)` | Anyone | After the challenge window | **Never paused.** A `Proposed` result pays out at its deadline unless it is vetoed first. |
 | `ProtocolConfig` setters | Governance (timelock) | Timelock delay | Replace the oracle, the attestor set, the guardian, the bridge receiver, the matchmaker, the fee, the windows, the rules hash or the payout schedule. |
 | `FeeRouter`, `BridgeJoinReceiver`, `ChainlinkVrfAdapter`, `RewardsDistributor`, `StakedLms`, `PlayerAvatars` owner calls | Governance (timelock) | Timelock delay | Their own settings; `BridgeJoinReceiver.recover` frees value it could not route. |
@@ -67,8 +68,9 @@ the deadlines can.
    `setAttestorSet`, `setGuardian`, …). It takes 3 days and the guardian's pause
    lasts 7. Queuing on day 0 keeps play paused without a gap. After the
    multisig phase, see §7.
-6. **Tell players:** what is paused, that funds can be withdrawn the whole time,
-   and when the next update comes.
+6. **Tell players:** what is paused, that funds can be withdrawn on the hub the
+   whole time, that bridged withdrawals to a spoke wait for the pause to end, and
+   when the next update comes.
 
 Record each tx hash in the incident log as you go.
 
@@ -113,11 +115,12 @@ disputes. It can't take funds, or lift a pause governance put in place.
 
 ### 3.4 Bridge bug (`BridgeJoinReceiver` or `SpokeRouter`)
 
-`config.bridgeReceiver` can call `withdrawToBridge` for **any** account, and
-no pause covers it (§7).
+`config.bridgeReceiver` can call `withdrawToBridge` for **any** account, so pause
+first: that stops bridged withdrawals at once, without the timelock delay.
 
-1. Governance: `setBridgeReceiver(address(0))`. That stops cross-chain joins and
-   bridged withdrawals. Hub-side `withdraw`/`withdrawFor` keep working.
+1. Governance: `setBridgeReceiver(address(0))`, queued before the guardian's pause
+   runs out. That stops cross-chain joins and bridged withdrawals for good. Hub-side
+   `withdraw`/`withdrawFor` keep working throughout.
 2. Spoke routers are ownerless and can't be stopped. A spoke join that arrives
    after step 1 makes `bridgeJoin` revert, the receiver keeps the ETH and emits
    `Unroutable`, and the timelock pays it back with `recover`. One that arrives
@@ -315,10 +318,6 @@ Found while writing this. None are fixed yet:
   pause lasts 7 days and then can't be renewed for 7 more. A governor proposal
   takes about 9 days. So from day 7 to about day 9, play resumes unless the
   exploit is fixed. During the multisig phase the Safe's 3-day route covers it.
-- **Nothing stops bridged withdrawals quickly.** `withdrawToBridge` isn't paused,
-  and the bridge receiver can withdraw any account's balance. A signature bug
-  in `BridgeJoinReceiver` could drain every balance, and removing the receiver
-  takes the timelock delay.
 - **Results finalise during a pause.** That's deliberate, but if the bug is in the
   payout maths, the guardian has to veto every `Proposed` match by hand within
   its window (1 hour by default).

@@ -19,8 +19,7 @@ say what is and is not guaranteed. Run it on testnet only.
 ## Consequences
 
 - Mainnet is out of scope, and the README says what it would take: independent
-  signers for the Safe (one person holds all three keys today), an audit, and a
-  gambling licence, which is a legal question, not an engineering one.
+  signers for the Safe (one person holds all three keys today) and an audit.
 - Every later decision is judged by "would this be acceptable with real
   money", which is why trade-offs such as the guardian's liveness assumption
   are written down rather than left implicit.

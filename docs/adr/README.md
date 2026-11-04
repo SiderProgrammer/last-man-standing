@@ -1,9 +1,9 @@
 # Architecture decision records
 
 One short record per decision that shaped the design: the situation, what was
-decided, and what it costs. The decisions were made on 2026-10-28 and 2026-10-29,
-with the defaults accepted the same day; the Q numbers are the design questions
-they answered. A record is not edited when a decision changes; a new one
+decided, and what it costs. Records 0001 to 0011 were decided on 2026-10-28 and
+2026-10-29, with the defaults accepted the same day; the Q numbers are the design
+questions they answered. A record is not edited when a decision changes; a new one
 supersedes it.
 
 | # | Decision | Answers |
@@ -19,3 +19,4 @@ supersedes it.
 | [0009](0009-privy-embedded-wallet.md) | Privy as the embedded wallet, Turnkey as the fallback | Wallets |
 | [0010](0010-break-freely-one-instance.md) | Wire, storage and schema may break; fresh deploys; one server instance | Q21–Q24 |
 | [0011](0011-two-resolvers-pinned-by-golden-transcripts.md) | Two match resolvers, pinned by golden transcripts | M22 |
+| [0012](0012-launch-scope.md) | Testnet, then a mainnet demo; Render's free tier; Privy and the dispute bond deferred | Launch |

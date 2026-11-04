@@ -529,10 +529,8 @@ contract Deploy is Registry, AcrossBook {
         return block.chainid == BASE_CHAIN_ID ? 0 : 20_000e18;
     }
 
-    /// @dev Nothing on Base mainnet until there is legal advice on paying
-    ///      holders a share of a gambling protocol's revenue; governance can
-    ///      raise it with one proposal. Half everywhere else, to show the
-    ///      mechanism working.
+    /// @dev Nothing on Base mainnet; governance can raise it with one proposal.
+    ///      Half everywhere else, to show the mechanism working.
     function _defaultStakerBps() internal view returns (uint256) {
         return block.chainid == BASE_CHAIN_ID ? 0 : 5_000;
     }

@@ -89,8 +89,8 @@ Practice bots are predictable on purpose: their moves derive from the match
 seed, which the client receives, so a player who reads the code can call them.
 Practice has no stakes, and staked matches never seat house bots.
 
-Out of scope: a compromised wallet, denial of service beyond per-socket rate
-limits on one instance, and the legal side of running a game for money.
+Out of scope: a compromised wallet, and denial of service beyond per-socket rate
+limits on one instance.
 
 ## Trust model
 
@@ -119,6 +119,9 @@ What you still trust, stated plainly:
   A guardian that does neither lets the result pay out when the 48 hours end:
   that is the liveness assumption. A compromised guardian can void honest
   results, but never redirect a stake.
+- **A dispute costs only gas, for now.** A losing player can hold back a payout
+  for 48 hours for free, and the guardian has to answer each time. A bond is
+  planned and deferred ([docs/TODO.md](docs/TODO.md), 3.1).
 - **The operator can refund any live match.** `abortMatch` needs only the
   attestor quorum, which is the operator. It cannot take a stake, only send
   every stake back.
@@ -198,7 +201,8 @@ see [docs/FEATURES.md](docs/FEATURES.md). Why the big decisions went the way
 they did is in [docs/adr/](docs/adr/README.md), one short record each.
 Outstanding work is tracked in [docs/TODO.md](docs/TODO.md). What to do when a
 contract has a bug or a key leaks, and how to move to fixed contracts, is in
-[docs/MIGRATION.md](docs/MIGRATION.md).
+[docs/MIGRATION.md](docs/MIGRATION.md). Hosting on Render's free tier, and what it
+risks, is in [docs/HOSTING.md](docs/HOSTING.md).
 
 ## Wallets
 
@@ -209,17 +213,21 @@ and collecting winnings can be one click.
 | Wallet | Logins and moves | Joins on Base | Collecting winnings | Joins from a spoke |
 | --- | --- | --- | --- | --- |
 | Burner (`VITE_DEV_KEY`, dev builds only) | Session key, no prompt | One click, relayed | One click, relayed | Its own transaction on the spoke |
-| Privy embedded wallet | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
+| Privy embedded wallet (planned, deferred) | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
 | Injected (MetaMask, Rabby) | Session key, no prompt | Its own transaction | Its own transaction | Its own transaction on the spoke |
 | Coinbase Smart Wallet | Session key; the grant is checked through ERC-1271 | Its own transaction | Its own transaction | Its own transaction on the spoke |
 
 One-click play needs a wallet that can sign an EIP-7702 authorization for *our*
 delegate. An injected wallet will not be asked for one, and a smart wallet
-already has code of its own. Privy is not wired into the client yet: the plan
-is to adopt it only if its embedded wallet signs that authorization on Base
-Sepolia, and fall back to Turnkey, or to the normal flow, if it does not
-([docs/TODO.md](docs/TODO.md)). The contracts are the same either way. `npm run
-check:one-click` runs the whole one-click path on a local Prague anvil, with a
+already has code of its own.
+
+**Privy is planned but deferred.** It is not in the client, and the first
+deployments do not wait for it, so production one-click play is not available
+yet. The plan is unchanged: adopt it if its embedded wallet signs that
+authorization on Base Sepolia, and fall back to Turnkey, or to the normal flow,
+if it does not ([docs/TODO.md](docs/TODO.md), 1.1). The delegate, the relayer and
+the client's entry point for it are all in place, and the contracts are the same
+either way. `npm run check:one-click` runs the whole one-click path on a local Prague anvil, with a
 plain local account standing in for the embedded wallet.
 
 The server relays only when `SESSION_RELAYER_PK` is set, and refuses a relayed
@@ -243,8 +251,8 @@ two coincide.
 | Timelock | `TimelockController`, 3-day delay | Owns `ProtocolConfig`, `StakedLms`, `FeeRouter`, `RewardsDistributor`, `PlayerAvatars` and the VRF adapter. Every change waits out the delay, which is longer than a whole match. | Act without a queued proposal. |
 | Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
 | Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
-| Safe | A 2-of-3 multisig. On testnet all three keys are the owner's, on separate devices; **mainnet needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
-| Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which renounces both roles. | Be extended, or stopped from retiring, by anyone — the Safe included. |
+| Safe | A 2-of-3 multisig. On testnet and the mainnet demo all three keys are the owner's, on separate devices; **real use needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
+| Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which cancels what the Safe left pending and renounces both roles. | Schedule a call that is only ready after `phaseEnd`; be extended, or stopped from retiring, by anyone — the Safe included. |
 | VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be spent by anyone but a registered consumer. |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
 | Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
@@ -261,8 +269,11 @@ are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
 the guardian and the timelock. Each signs through a `Signer` interface, which
 is where a KMS would plug in; today every key is in the server's memory.
 
-**Testnet only.** Mainnet would need independent signers for the Safe, an
-audit, and a gambling licence, which is out of scope.
+**A portfolio project, not a product.** Nothing is on a public chain yet. The plan is
+testnet for playing, then an unpromoted mainnet demo to show it can be deployed there
+([ADR 0012](docs/adr/0012-launch-scope.md)). Real use would need independent signers
+for the Safe, an independent audit and paid hosting, none of which this has. Do not
+stake money on it.
 
 ## Wash-trading economics
 
@@ -320,7 +331,7 @@ which is what makes a match replayable by a third party.
 ## Running it locally
 
 ```bash
-git clone --recurse-submodules https://github.com/SiderProgrammer/gambling-project
+git clone --recurse-submodules https://github.com/SiderProgrammer/last-man-standing
 npm install
 cp .env.example .env
 ```

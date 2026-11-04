@@ -66,6 +66,8 @@ so ids from two deployments or two chains never collide.
   reverting recipient cannot block a payout loop.
 - **Pausing leaves `cancelMatch` and `withdraw` open**, so a pause never traps
   funds, and a guardian pause expires after 7 days unless governance extends it.
+  It does stop bridged withdrawals to a spoke, the one route that a bug in the
+  receiver could use to reach every balance.
 - **Matchmade lobbies** take a seat only with a server-signed `JoinTicket`, and
   only they earn play-mining; private lobbies keep join-by-id.
 
@@ -116,7 +118,8 @@ process of its own that replays the transcript first, signs an EIP-712
 `MatchResult` (`matchId`, `rounds`, `historyRoot`, `transcriptHash`, `ranking`).
 `settle` checks the quorum and *proposes* the result; `finalize` pays it once
 the challenge window closes. Until then a seated player may `dispute` (48 h
-more) and the guardian may `veto` (every stake refunded) or dismiss.
+more) and the guardian may `veto` (every stake refunded) or dismiss. A dispute
+costs only gas for now; a bond is planned and deferred ([TODO.md](TODO.md), 3.1).
 
 - **EIP-712, not a raw digest**, so a hardware wallet shows a structured result
   and the domain binds it to one escrow on one chain.
@@ -192,7 +195,8 @@ relayer on hub  → fills exactly the stake in WETH, then handleV3AcrossMessage
 - **The way back out.** A player signs a `Withdrawal` (no chain id in its
   domain, so a spoke wallet can sign it) and the server's relayer submits
   `withdrawToChainFor`, bridging the whole balance to the chain and address
-  named, Across's fee capped by the signature.
+  named, Across's fee capped by the signature. It waits while the escrow is
+  paused; `withdraw` on the hub does not.
 - **Contract wallets name their hub account**, since their address on a spoke
   may be someone else's on the hub; an EOA delegated under 7702 is still an EOA.
 
@@ -262,8 +266,10 @@ Safe --> MultisigPhase --proposes, cancels---------+  the delay has passed)    B
   key can; the delay makes every change public before it lands. The deploy
   script refuses a delay shorter than `joinWindow + settleWindow`.
 - **The Safe's powers end on a date written into `MultisigPhase`** (a year by
-  default, two at most). After `phaseEnd` anyone calls `retire()`; the Safe
-  cannot cancel its own removal or schedule anything that outlasts the phase.
+  default, two at most). After `phaseEnd` anyone calls `retire()`, which also
+  cancels anything the Safe left pending, because timelock calls never expire;
+  the Safe cannot cancel its own removal or schedule a call that is only ready
+  after the phase.
   It may spend the treasury's ETH, but never move LMS: no call on the token,
   and none of the owner calls that release LMS held elsewhere.
 - **A guardian that can only stop money moving.** It pauses for 7 days
@@ -405,7 +411,9 @@ moving the player to a new one.
 
 Only a wallet that can sign an authorisation for our delegate gets it — the
 dev burner and an embedded wallet; injected wallets and spoke joins keep the
-normal flow. The README's wallet matrix has the detail.
+normal flow. Privy, the planned embedded wallet, is deferred and not in the client
+([TODO.md](TODO.md), 1.1), so only the dev burner can use it today. The README's
+wallet matrix has the detail.
 
 ---
 
