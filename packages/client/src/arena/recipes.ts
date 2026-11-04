@@ -1,4 +1,3 @@
-import type { FxTexture } from '../assets/manifest.js';
 import { FX } from './theme.js';
 
 /**
@@ -9,7 +8,8 @@ import { FX } from './theme.js';
 
 /** One sprite that grows or shrinks between two widths and fades where a moment happens. */
 export interface Puff {
-  texture: FxTexture;
+  /** An image in `packages/client/fx/`, by file name. */
+  texture: string;
   tint: number;
   life: number;
   /** Width in pixels at birth and at death. */
@@ -27,7 +27,8 @@ export interface Puff {
 
 /** A handful of sprites thrown outward: sparks, debris, confetti. */
 export interface Spray {
-  texture: FxTexture;
+  /** An image in `packages/client/fx/`, by file name. */
+  texture: string;
   count: number;
   /** One tint, or a palette each sprite picks from. */
   tint: number | number[];

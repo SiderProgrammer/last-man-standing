@@ -467,11 +467,12 @@ winner is crowned after the final round.
   let the replay fall behind the server's hold and spill into the commit window.
   Moments the timeline only reaches by jumping far past them — a backgrounded tab — are
   skipped rather than fired in a pile.
-- **Textures load at boot, and are optional.** The effects use fourteen CC0 textures
-  from Kenney's Particle Pack in `packages/client/public/fx/` (about 98 KB, provenance in
-  its `LICENSE.txt`), white with the shape in alpha so they tint to the theme exactly.
-  They are declared in a Pixi asset manifest and loaded behind a loading screen when the
-  page opens, so the arena finds them cached. The loader uses Pixi's `skip` strategy: a
+- **Textures load at boot, and are optional.** The effects use CC0 textures from
+  Kenney's Particle Pack in `packages/client/fx/`, white with the shape in alpha so they
+  tint to the theme exactly. The folder is scanned at build time into a Pixi asset
+  manifest, so an image dropped in it loads without a code change, and they load behind
+  a loading screen when the page opens, so the arena finds them cached. The code names
+  them by file name, and a test checks each name has a file. The loader uses Pixi's `skip` strategy: a
   texture that fails is dropped, not the whole bundle, and the effects draw a generated
   glow in its place — just as a seat without an avatar keeps its plain circle.
 - **Hit-stop borrows only spare hold.** The first kill of a round freezes the replay

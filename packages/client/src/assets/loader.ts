@@ -1,8 +1,8 @@
 import { Assets, type Texture } from 'pixi.js';
-import { FX_BUNDLE, FX_TEXTURES, manifest, type FxTexture } from './manifest.js';
+import { FX_BUNDLE, FX_NAMES, manifest } from './manifest.js';
 
-/** The effect textures that loaded. A missing one is simply absent. */
-export type FxTextures = Partial<Record<FxTexture, Texture>>;
+/** The effect textures that loaded, by file name. A missing one is simply absent. */
+export type FxTextures = Record<string, Texture>;
 
 let loading: Promise<FxTextures> | null = null;
 
@@ -25,7 +25,6 @@ export function loadAssets(onProgress?: (fraction: number) => void): Promise<FxT
 async function load(onProgress: (fraction: number) => void): Promise<FxTextures> {
   try {
     await Assets.init({
-      basePath: import.meta.env.BASE_URL,
       manifest,
       loadOptions: {
         strategy: 'skip',
@@ -38,7 +37,7 @@ async function load(onProgress: (fraction: number) => void): Promise<FxTextures>
 
     const loaded: Record<string, Texture | undefined> = await Assets.loadBundle(FX_BUNDLE, onProgress);
     const textures: FxTextures = {};
-    for (const name of FX_TEXTURES) {
+    for (const name of FX_NAMES) {
       const texture = loaded[name];
       if (texture) textures[name] = texture;
     }

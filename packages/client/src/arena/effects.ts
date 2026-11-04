@@ -2,7 +2,6 @@ import 'pixi.js/math-extras';
 import { Container, Graphics, Point, Sprite, Text, type Application, type Texture } from 'pixi.js';
 import { Action, StrikeOutcome } from '@lms/consensus';
 import type { FxTextures } from '../assets/loader.js';
-import { FX_TEXTURES, type FxTexture } from '../assets/manifest.js';
 import { gsap } from '../motion.js';
 import type { Beat, Timeline, Window } from './choreography.js';
 import type { Point as PointLike, StormRing } from './layout.js';
@@ -70,7 +69,6 @@ export class Effects {
   /** Full-screen flashes, above everything and outside the shake. */
   readonly overlay = new Graphics();
 
-  private readonly textures: Record<FxTexture, Texture>;
   /** Drawn here for any texture that failed to load, so it is this object's to free. */
   private readonly fallback: Texture;
   private readonly pool: Sprite[] = [];
@@ -87,9 +85,6 @@ export class Effects {
     this.overlay.alpha = 0;
     this.overlay.eventMode = 'none';
     this.fallback = options.app.renderer.generateTexture(softGlow());
-    this.textures = Object.fromEntries(
-      FX_TEXTURES.map((name) => [name, options.textures[name] ?? this.fallback]),
-    ) as Record<FxTexture, Texture>;
   }
 
   /**
@@ -589,9 +584,9 @@ export class Effects {
   }
 
   /** Sprites are pooled: a busy round spawns dozens of them for half a second. */
-  private acquire(name: FxTexture, tint: number, additive: boolean, parent: Container = this.layer): Sprite {
+  private acquire(name: string, tint: number, additive: boolean, parent: Container = this.layer): Sprite {
     const sprite = this.pool.pop() ?? new Sprite();
-    sprite.texture = this.textures[name];
+    sprite.texture = this.options.textures[name] ?? this.fallback;
     sprite.anchor.set(0.5);
     sprite.tint = tint;
     sprite.blendMode = additive ? 'add' : 'normal';

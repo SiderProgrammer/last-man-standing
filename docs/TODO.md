@@ -233,7 +233,7 @@ order, with the testnet deployment from section 1 before the hosting:
   `.solidity-auditor/runs/`, described as AI-assisted reviews, not an independent audit.
 - **Clear out the working notes.** Finish `TO_CHECK.md` and `TODO_IDEAS.md`, then delete
   them or fold what is left into this file.
-- **Add a root `LICENSE`.** Only `packages/client/public/fx/` has one.
+- **Add a root `LICENSE`.** The repo has none.
 - **Set the GitHub repo up:** public, with a description, topics and the live link.
 - **Freeze features.** The leaderboard, the prediction market, Yul and the Guard damage
   change in `TODO_IDEAS.md` can wait until this list is done.
