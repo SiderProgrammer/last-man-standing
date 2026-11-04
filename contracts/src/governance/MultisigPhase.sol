@@ -168,12 +168,12 @@ contract MultisigPhase {
         uint256 next = leftoversChecked;
         uint256 remaining = scheduled.length - next;
         uint256 end = next + (count < remaining ? count : remaining);
+        leftoversChecked = end;
         bool canCancel = timelock.hasRole(timelock.CANCELLER_ROLE(), address(this));
         for (; next < end; ++next) {
             bytes32 id = scheduled[next];
             if (canCancel && timelock.isOperationPending(id)) timelock.cancel(id);
         }
-        leftoversChecked = next;
     }
 
     function _checkReady(uint256 delay) private view {

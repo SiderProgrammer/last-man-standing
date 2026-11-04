@@ -175,8 +175,9 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
   not kept.
 - **CI:** no linter for the TypeScript, and the deep fuzz profile
   (`FOUNDRY_PROFILE=deep`) does not run on a schedule. Aderyn is not wired in.
-- **Slither locally:** CI's pinned 0.11.3 does not install on Python 3.12.0, so the
-  code since the server phase has only been analysed in CI.
+- **Slither locally:** CI's pinned 0.11.3 does not install on Python 3.12.0, because
+  `crytic-compile` excludes that exact version. Use a newer Python, or a throwaway venv
+  with `pip install --ignore-requires-python slither-analyzer==0.11.3`.
 - **Client tests:** the DOM applier layer in `screens/`, `wallet/flows.ts` and `arena/`'s
   rendering are untested; all of them need a browser rather than node.
 - **Chaos testing** ([CHAOS_TESTING.md](CHAOS_TESTING.md)): no chain-side chaos (RPC

@@ -43,7 +43,9 @@ jobs:
         with:
           version: v1.4.3
       - run: forge fmt --check
-      - run: forge build --sizes
+      # The fuzz harness embeds every deployment and is never deployed itself, so
+      # it would fail the size check. Compiling it is left to `forge test`.
+      - run: forge build --sizes --skip 'test/fizz/**'
       # packages/contracts/src/abis/ must match what was just compiled.
       - run: node ../scripts/gen-abis.mjs --check
       - run: forge test -vv
