@@ -18,7 +18,7 @@ design rests on are in [adr/](adr/).
 
 Nothing is deployed on a public chain yet: `contracts/deployments/` holds only local
 nodes. Everything below waits on a hub on Base Sepolia, which needs the deploy roles
-(Safe, guardian, team beneficiary, matchmaker, three attestors), a Chainlink VRF v2.5
+(Safe, guardian, team beneficiary, matchmaker, one attestor), a Chainlink VRF v2.5
 subscription owned by the Safe and funded in ETH, and testnet ETH.
 [TESTNET.md](TESTNET.md) has the steps.
 
@@ -118,7 +118,9 @@ mainnet. Still open:
   the EIP-170 limit.
 - **The attestors are not independent.** The attestor signs in a child process of the
   server, which reads `ATTESTOR_PK` from its own environment to hand it over. Moving the
-  attestor to another host is the same IPC over a socket, not done.
+  attestor to another host is the same IPC over a socket, not done. The server also
+  submits only one signature, so a threshold above one cannot settle until it collects
+  a quorum.
 - **On-chain fraud proof, later.** A Solidity kernel, `MatchVerifier`, bonded and
   slashable attestors and cross-language vectors were built and then removed (they are
   in `fadf583`). Bring them back once the rules are frozen and stakes justify
