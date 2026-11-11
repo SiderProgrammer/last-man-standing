@@ -11,11 +11,15 @@ contracts/broadcast/
 # Local nodes' registries; testnet and mainnet ones are committed.
 contracts/deployments/31337.json
 contracts/deployments/31338.json
+# `npm run fork:base`: registries and the play profile of the local Base/Arbitrum forks.
+contracts/deployments/fork/
 
 # Local env
 .env
 .env.*
 !.env.example
+# Generated testnet player keys (`npm run testnet -- accounts`).
+.testnet-accounts.json
 
 # Editors / OS
 .DS_Store

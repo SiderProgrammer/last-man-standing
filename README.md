@@ -377,6 +377,13 @@ same fork with `cast`.
 `FORK_RPC_URL` swaps the public RPC for your own — worth doing for long
 sessions, since a pruned node eventually stops serving the fork block's state.
 
+To rehearse the real Base deploy instead, use `npm run fork:base`. It forks
+Base and Arbitrum One with their own chain ids and deploys on the production
+path: Chainlink VRF, Across's real pools, and separate roles. It funds eight
+players, and `npm run play` drives any of them as bots beside browser tabs
+(`/?player=N`). [docs/PLAYTEST.md](docs/PLAYTEST.md) has a checklist of every
+feature, for that fork and for testnet (`npm run testnet -- up`).
+
 ### With a chain
 
 The hub runs on Base (Base Sepolia for testnet). Set `DEPLOYER_PK` in `.env`.

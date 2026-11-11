@@ -48,6 +48,14 @@ export type BotEvent =
   /** A round resolved. `ms` is from this bot's reveal (or commit) to the broadcast, when it acted. */
   | { type: 'round'; round: number; ms: number | null }
   | { type: 'finished'; won: boolean }
+  /** In the matchmaking queue, `waiting` wallets in it. */
+  | { type: 'queued'; waiting: number }
+  /** The queue opened a lobby with this bot on its roster. */
+  | { type: 'matched'; matchId: `0x${string}` }
+  /** A staked match this bot was seated in will not be played (refunded); a table or queue bot stops. */
+  | { type: 'abandoned'; matchId: `0x${string}` }
+  /** Watching a lobby that has no room yet. */
+  | { type: 'waiting'; matchId: `0x${string}` }
   | { type: 'error'; message: string }
   | { type: 'closed'; code: number };
 
@@ -69,6 +77,14 @@ export interface BotClientOptions {
   signer?: BotSigner;
   /** A staked table this bot is already seated at: it watches that match instead of opening a practice room. */
   table?: `0x${string}`;
+  /**
+   * Queue for this matchmaking tier instead of opening a practice room. When
+   * the queue opens a lobby for this bot, `onMatched` takes the seat (on
+   * chain, outside the bot) and the bot then plays the match.
+   */
+  queue?: { stake: string; seats: number };
+  /** Takes the seat in a matchmade lobby. A rejection is reported as an `error` event. */
+  onMatched?: (matchId: `0x${string}`) => Promise<void>;
   /** Ask the server to hold the move and reveal it if this bot drops. */
   hold?: boolean;
   /** Milliseconds to wait before committing, like a human thinking. */
@@ -126,6 +142,8 @@ export class BotClient {
   private connectedAt = 0;
   private backoff: number;
   private gamesPlayed = 0;
+  /** The staked table this bot was sent to, if any. */
+  private readonly table: `0x${string}` | null;
   /** The match this bot is seated in, until it finishes. */
   private matchId: `0x${string}` | null = null;
   private pending: Pending | null = null;
@@ -134,8 +152,8 @@ export class BotClient {
   private you: number | null = null;
   /** Round a commit is already scheduled for, so repeated `state` frames do not stack timers. */
   private thinkingFor: string | null = null;
-  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'signer'>> &
-    Pick<BotClientOptions, 'onEvent' | 'reconnect'>;
+  private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'signer' | 'queue' | 'onMatched'>> &
+    Pick<BotClientOptions, 'onEvent' | 'reconnect' | 'queue' | 'onMatched'>;
 
   constructor(options: BotClientOptions) {
     this.options = {
@@ -153,6 +171,7 @@ export class BotClient {
     this.account = privateKeyToAccount(options.privateKey);
     this.sessionKey = privateKeyToAccount(keccak256(toHex(`session:${options.privateKey}`)));
     this.matchId = options.table ?? null;
+    this.table = options.table ?? null;
     this.signer = options.signer ?? realSigner;
     this.backoff = this.options.reconnect ? this.options.reconnect.baseMs : 0;
   }
@@ -230,9 +249,29 @@ export class BotClient {
         this.emit({ type: 'authed', ms: this.options.now() - this.connectedAt });
         // Back into the match in progress, or into a new one.
         if (this.matchId) this.send({ type: 'watch', matchId: this.matchId });
+        else if (this.options.queue) this.send({ type: 'queue', ...this.options.queue });
         else this.nextGame();
         return;
       }
+      case 'queued':
+        this.emit({ type: 'queued', waiting: message.waiting });
+        return;
+      case 'matched': {
+        if (this.matchId) return;
+        this.matchId = message.matchId;
+        this.emit({ type: 'matched', matchId: message.matchId });
+        try {
+          await this.options.onMatched?.(message.matchId);
+        } catch (error) {
+          this.emit({ type: 'error', message: `could not take the seat: ${error instanceof Error ? error.message : String(error)}` });
+          return;
+        }
+        this.send({ type: 'watch', matchId: message.matchId });
+        return;
+      }
+      case 'waiting':
+        this.emit({ type: 'waiting', matchId: message.matchId });
+        return;
       case 'state':
         this.state = message.state;
         this.you = message.you;
@@ -274,10 +313,20 @@ export class BotClient {
     this.send({ type: 'practice', bots: this.options.opponents });
   }
 
-  /** Gives up on the match this bot was in, uncounted, and plays the next. */
+  /**
+   * Gives up on the match this bot was in, uncounted, and plays the next. A
+   * bot sent to one staked table, or to the queue, has no next game of its
+   * own: it reports the match abandoned and stops.
+   */
   private abandonMatch(): void {
+    const matchId = this.matchId;
     this.matchId = null;
     this.pending = null;
+    if ((this.table || this.options.queue) && matchId) {
+      this.emit({ type: 'abandoned', matchId });
+      this.stop();
+      return;
+    }
     this.nextGame();
   }
 

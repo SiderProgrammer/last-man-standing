@@ -2,7 +2,17 @@ import { toHex } from 'viem';
 import type { OwnMove } from '@lms/engine';
 import { readRaw, writeRaw } from '../io/storage.js';
 
-const KEY = 'lms.moves.v1';
+const BASE_KEY = 'lms.moves.v1';
+let storeKey = BASE_KEY;
+
+/**
+ * Keeps the moves of each wallet apart. Records are keyed by match and round,
+ * so two wallets in two tabs of one browser, seated at the same table, would
+ * otherwise overwrite each other's salts and fail their own audit.
+ */
+export function useMoveStoreFor(wallet: string): void {
+  storeKey = `${BASE_KEY}:${wallet.toLowerCase()}`;
+}
 
 /**
  * A sealed move as this browser stores it, with the server's receipt once it
@@ -69,7 +79,7 @@ export function forgetMatch(matchId: string): void {
 
 function read(): Record<string, StoredMove> {
   try {
-    return JSON.parse(readRaw(KEY) ?? '{}') as Record<string, StoredMove>;
+    return JSON.parse(readRaw(storeKey) ?? '{}') as Record<string, StoredMove>;
   } catch {
     // Unparseable store: start over rather than lose the round to a throw.
     return {};
@@ -77,5 +87,5 @@ function read(): Record<string, StoredMove> {
 }
 
 function write(store: Record<string, StoredMove>): void {
-  writeRaw(KEY, JSON.stringify(store));
+  writeRaw(storeKey, JSON.stringify(store));
 }

@@ -21,6 +21,11 @@ interface ImportMetaEnv {
   readonly VITE_ACROSS_API?: string;
   /** Development-only burner key, ignored in production builds. */
   readonly VITE_DEV_KEY?: string;
+  /**
+   * Development-only burner keys, comma-separated: `?player=N` signs with the
+   * N-th, so each browser tab can be a different player.
+   */
+  readonly VITE_DEV_KEYS?: string;
 }
 
 interface ImportMeta {

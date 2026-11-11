@@ -3,6 +3,7 @@ import { errorFirstLine, type AvatarCollectionInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
+import { useMoveStoreFor } from '../game/salts.js';
 import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
@@ -25,12 +26,16 @@ export function wireWalletControls(): void {
 
 async function connectWallet(): Promise<void> {
   try {
-    const devKey = import.meta.env.DEV ? import.meta.env.VITE_DEV_KEY : undefined;
+    const devKey = import.meta.env.DEV ? devBurnerKey() : undefined;
     const wallet =
-      Wallet.available() || !devKey
+      (Wallet.available() && !playerParam()) || !devKey
         ? await Wallet.connect((chainId) => store.set({ walletChainId: chainId }))
         : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
     wallet.hubChainId = app.chainId;
+    // Each wallet keeps its own sealed moves, so two players in two tabs of
+    // one browser never overwrite each other's salts.
+    useMoveStoreFor(wallet.address);
+    if (import.meta.env.DEV && playerParam()) document.title = `P${playerParam()} · ${wallet.address.slice(0, 6)} · Last Man Standing`;
     store.set({ wallet, walletChainId: wallet.chainId, grantKey: null });
     await authenticate();
   } catch (error) {
@@ -41,6 +46,26 @@ async function connectWallet(): Promise<void> {
 
 /** True from sending a login under a stored grant until the server answers it. */
 let storedGrantPending = false;
+
+/** `?player=N`, 1-based, or null. Picks the N-th of `VITE_DEV_KEYS` for this tab. */
+function playerParam(): number | null {
+  const raw = new URLSearchParams(location.search).get('player');
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * The dev burner's key. `VITE_DEV_KEYS` (comma-separated) gives each tab its
+ * own player with `?player=N`, so one browser can seat a whole table; without
+ * it, `VITE_DEV_KEY`. A `?player=` beyond the list falls back to the wallet
+ * extension, if any.
+ */
+function devBurnerKey(): string | undefined {
+  const keys = (import.meta.env.VITE_DEV_KEYS ?? '').split(',').map((key) => key.trim()).filter(Boolean);
+  const n = playerParam();
+  if (n !== null) return keys[n - 1];
+  return import.meta.env.VITE_DEV_KEY || keys[0];
+}
 
 /**
  * The node the dev burner signs through. `?chain=spoke` puts it on the spoke

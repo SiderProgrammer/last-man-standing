@@ -1,4 +1,6 @@
 import { availableParallelism } from 'node:os';
+import { resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as z from 'zod/v4';
 import { readDeployment, type Deployment } from '@lms/contracts/registry';
 import { ZERO_ADDRESS } from '@lms/consensus';
@@ -410,7 +412,16 @@ function parseLimits(raw: string): Record<string, number> {
   );
 }
 
-export const config = loadConfig(process.env, readDeployment);
+/**
+ * `DEPLOYMENTS_DIR` points the registry somewhere other than
+ * `contracts/deployments/`: a local fork of a public chain keeps its registry
+ * apart, so it never reads or replaces the real chain's committed one.
+ */
+const deploymentsDir = process.env.DEPLOYMENTS_DIR
+  ? pathToFileURL(`${resolvePath(process.env.DEPLOYMENTS_DIR)}/`)
+  : undefined;
+
+export const config = loadConfig(process.env, (chainId) => readDeployment(chainId, deploymentsDir));
 
 export { readDeployment, type Deployment };
 

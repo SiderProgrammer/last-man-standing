@@ -13,6 +13,9 @@
   "scripts": {
     "build": "tsc --build",
     "dev:fork": "node scripts/dev-fork.mjs",
+    "fork:base": "node scripts/fork-base.mjs",
+    "play": "tsc --build && node scripts/play.mjs",
+    "testnet": "tsc --build && node scripts/testnet.mjs",
     "sim": "tsc --build && node scripts/sim.mjs",
     "golden": "tsc --build && node scripts/gen-golden.mjs",
     "load": "tsc --build && node scripts/load-test.mjs",

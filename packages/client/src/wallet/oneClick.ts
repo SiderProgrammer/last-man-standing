@@ -151,6 +151,9 @@ export async function enableOneClick(): Promise<void> {
     toast(errorFirstLine(error));
   } finally {
     await refreshOneClick();
+    // A failure leaves `oneClick` false, as it was, so the store notifies
+    // nobody: redraw anyway, or the panel stays on "Delegating…", disabled.
+    renderOneClickPanel();
   }
 }
 
