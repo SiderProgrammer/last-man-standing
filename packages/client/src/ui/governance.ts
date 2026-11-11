@@ -41,7 +41,15 @@ export interface ProposalCard {
   body: string;
   byline: string;
   state: { label: string; tone: Tone };
+  /** What happens next and how long until it does. */
   window: string;
+  /** When voting opens and closes, as dates. */
+  timeline: string;
+  /**
+   * A vote that has not opened yet, as the label of the vote button it will
+   * become; null otherwise. Shown disabled, so the vote has a visible place.
+   */
+  voteOpens: string | null;
   actions: Array<{ target: string; call: string; warning: string | null }>;
   tally: {
     for: string;
@@ -68,10 +76,21 @@ const TONES: Record<ProposalStateValue, Tone> = {
   [ProposalState.Executed]: 'neutral',
 };
 
+/** Why there are no live results to show, and the clock to time the vote by instead. */
+export interface ProposalOffline {
+  /** Unix seconds: the browser's clock, the best there is without a read. */
+  now: number;
+  /** What the player can do about it, in place of their own part in the vote. */
+  reason: string;
+}
+
+const NO_WALLET = 'Connect a wallet to see the result and vote.';
+
 export function proposalCard(
   summary: ProposalSummary,
   live: ProposalLive | null,
   labels: Readonly<Record<string, string>>,
+  offline: ProposalOffline | null = null,
 ): ProposalCard {
   const { title, body } = splitDescription(summary.description);
   const actions = summary.targets.map((target, i) => {
@@ -88,6 +107,7 @@ export function proposalCard(
     title,
     body,
     byline: `#${short(summary.id)} · proposed by ${short(summary.proposer)}`,
+    timeline: `Voting ${formatWhen(summary.voteStart)} → ${formatWhen(summary.voteEnd)}`,
     actions,
   };
 
@@ -95,10 +115,11 @@ export function proposalCard(
     return {
       ...base,
       state: { label: '—', tone: 'neutral' },
-      window: '',
+      window: offline ? clockWindow(summary, offline.now) : '',
+      voteOpens: null,
       tally: null,
       quorum: '',
-      you: 'Connect a wallet to see the result and vote.',
+      you: offline?.reason ?? NO_WALLET,
       canVote: false,
       canQueue: false,
       canExecute: false,
@@ -113,6 +134,10 @@ export function proposalCard(
     ...base,
     state: { label: PROPOSAL_STATE_NAMES[live.state], tone: TONES[live.state] },
     window: windowText(summary, live),
+    voteOpens:
+      live.state === ProposalState.Pending && !live.hasVoted
+        ? `Voting opens in ${formatDuration(Math.max(0, summary.voteStart - live.chainTime))}`
+        : null,
     tally: {
       for: formatLms(live.votes.for),
       against: formatLms(live.votes.against),
@@ -158,6 +183,26 @@ function windowText(summary: ProposalSummary, live: ProposalLive): string {
     case ProposalState.Executed:
       return 'Executed.';
   }
+}
+
+/**
+ * The vote's window by a clock alone, for a proposal whose state could not be
+ * read: it cannot say whether it passed, only whether voting is open.
+ */
+function clockWindow(summary: ProposalSummary, now: number): string {
+  if (now < summary.voteStart) return `Voting opens in ${formatDuration(summary.voteStart - now)}.`;
+  if (now < summary.voteEnd) return `Voting closes in ${formatDuration(summary.voteEnd - now)}.`;
+  return 'Voting has closed.';
+}
+
+/** A vote boundary as a local date and time: "Nov 12, 14:00". */
+function formatWhen(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function youText(live: ProposalLive): string {

@@ -29,7 +29,8 @@ import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
-import { showMatchScreen } from '../ui/chrome.js';
+import { showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { renderWinnings } from '../wallet/payouts.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { gsap } from '../motion.js';
@@ -171,6 +172,9 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   // The sealed moves are kept until the result panel has verified the match:
   // if it does not verify, they are the evidence.
   lockControls('Match finished.');
+  // The one button left open: back to the lobby.
+  dom.lockIn.disabled = false;
+  dom.lockIn.textContent = lockInLabel(true, false, null);
   if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
   offerAnalysis(message.result.matchId);
 }
@@ -295,7 +299,16 @@ function revealIfDue(): void {
   if (state && currentPlan(state).shouldReveal) revealNow(state);
 }
 
+/** True once the match on screen has ended: by its phase, or by its result being up. */
+function matchOver(): boolean {
+  return app.match?.phase === MatchPhase.Finished || !dom.resultPanel.classList.contains('hidden');
+}
+
 function lockIn(): void {
+  if (matchOver()) {
+    leaveMatch();
+    return;
+  }
   const state = app.match;
   const draft = app.draft;
   if (!state || !draft || app.you === null) return;
@@ -430,7 +443,8 @@ function renderControls(): void {
   const plan = currentPlan(state);
   renderPhaseLabel(plan.label);
   setActionsEnabled(plan.actionsEnabled);
-  dom.lockIn.disabled = plan.lockInDisabled;
+  // Once the match is over the lock-in button is the way back to the lobby.
+  dom.lockIn.disabled = matchOver() ? false : plan.lockInDisabled;
   if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
   renderMove();
 }
@@ -445,16 +459,19 @@ function renderMove(): void {
   const sealed = state !== null && app.committedRound === state.round;
   const striking = draft?.action === Action.Strike;
 
-  const finished = state?.phase === MatchPhase.Finished;
+  const finished = matchOver();
+  const out = !finished && yourSeat(state)?.alive === false;
   dom.movePanel.classList.toggle('sealed', sealed && !finished);
-  dom.targetRow.classList.toggle('hidden', !striking || finished);
+  // Nothing left to pick: the move buttons give way to what matters now.
+  dom.movePanel.classList.toggle('done', finished || out);
+  dom.targetRow.classList.toggle('hidden', !striking || finished || out);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
     const chosen = actionOf(button) === draft?.action;
     button.setAttribute('aria-pressed', String(chosen));
     button.classList.toggle('selected', chosen);
   }
 
-  dom.lockIn.textContent = lockInLabel(finished, sealed, draft);
+  dom.lockIn.textContent = out ? 'Eliminated · spectating' : lockInLabel(finished, sealed, draft);
 
   const hp = new Map(state?.players.map((player) => [player.index, player.hp]) ?? []);
   const options = [...dom.target.options].map((option) => Number(option.value));
@@ -475,7 +492,7 @@ function renderMove(): void {
 }
 
 function lockInLabel(finished: boolean, sealed: boolean, draft: AppState['draft']): string {
-  if (finished) return 'Match over';
+  if (finished) return '← Back to lobby';
   if (sealed) return '✓ Move sealed';
   if (!controlsOpen) return 'Lock in move';
   return draft ? `Lock in · ${describeDraft(draft)}` : 'Pick a move';
@@ -626,9 +643,7 @@ export function wireMatchControls(): void {
   store.subscribe(['match', 'you', 'dossier'], renderReads);
   store.subscribe(['match', 'you', 'draft', 'committedRound', 'revealedRound', 'replaying'], renderControls);
   store.subscribe(['avatars'], () => arena?.setAvatars(app.avatars));
-  // Leaving the finished match for the lobby: nothing on its table is needed again.
-  dom.resultBack.addEventListener('click', disposeArena);
-
+  dom.resultBack.onclick = leaveMatch;
   dom.lockIn.onclick = lockIn;
 
   dom.tabFeed.onclick = () => switchTab('feed');
@@ -643,8 +658,20 @@ export function wireMatchControls(): void {
     if (event.key === '1') clickAction(Action.Strike);
     else if (event.key === '2') clickAction(Action.Guard);
     else if (event.key === '3') clickAction(Action.Charge);
-    else if (event.key === 'Enter' && !dom.lockIn.disabled) lockIn();
+    // Enter only ever seals a move: leaving the table takes a click.
+    else if (event.key === 'Enter' && !dom.lockIn.disabled && !matchOver()) lockIn();
   });
+}
+
+/**
+ * Back to the lobby from a finished match. Nothing on its table is needed
+ * again, so the arena goes with it.
+ */
+function leaveMatch(): void {
+  disposeArena();
+  hideResult();
+  showLobbyScreen();
+  void renderWinnings();
 }
 
 /** Picks a move: a strike on `seat`, or on whoever the target picker shows. */

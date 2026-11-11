@@ -98,7 +98,7 @@ main {
 #lobby-screen {
   display: grid;
   gap: 16px;
-  max-width: 880px;
+  max-width: 1040px;
   margin: 0 auto;
 }
 
@@ -748,6 +748,177 @@ button.lock-in {
   margin-top: 8px;
 }
 
+/* The lobby, grouped: what to play, then the account around it. */
+.section-label {
+  margin: 8px 2px -6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.play-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+/* Side by side once there is room, the queue as the narrow column. With no
+   matchmaker the queue panel is hidden and the lobbies take the row. */
+@media (min-width: 900px) {
+  .play-grid:has(> .queue-panel:not(.hidden)) {
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 1.8fr);
+  }
+}
+
+.queue-panel {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.queue-panel .field select {
+  width: 100%;
+}
+
+.queue-panel #join-queue {
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
+.queue-panel #queue-state.chain-chip {
+  --chain: var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.lobby-list .lobby-group {
+  background: none;
+  border: none;
+  padding: 6px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.lobby-list .lobby-empty {
+  justify-content: center;
+  padding: 18px 10px;
+  border-style: dashed;
+}
+
+.lobby-row.yours {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-2));
+}
+
+.lobby-info {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lobby-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lobby-top .chain-chips {
+  margin-left: 0;
+}
+
+.lobby-stake {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lobby-status.open {
+  color: var(--accent);
+}
+
+.lobby-status.live {
+  color: var(--warn);
+}
+
+.lobby-tag {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.lobby-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby-id {
+  opacity: 0.7;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.seat-bar {
+  display: inline-block;
+  width: 64px;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.seat-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.lobby-row > button {
+  flex-shrink: 0;
+}
+
+.create-lobby {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.create-lobby h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* A panel that only works on another network: why, and the button that fixes it. */
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+}
+
+.proposal-window {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -950,6 +1121,32 @@ button.lock-in {
   to {
     box-shadow: 0 0 26px -6px rgba(245, 208, 111, 0.55);
   }
+}
+
+/* What the place won: the number a winner looks for first. */
+.result-prize {
+  margin: -4px 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 50%, transparent);
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  color: var(--gold);
+  font-weight: 600;
+}
+
+/* Finished, or out of the match: the move buttons give way, and the lock-in
+   button, now the way back to the lobby, is all that is left. */
+.move-panel.done .actions,
+.move-panel.done .check,
+.move-panel.done #move-rules,
+.move-panel.done .timer-track {
+  display: none;
+}
+
+.phase-chip.spectating {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .result-ranking {

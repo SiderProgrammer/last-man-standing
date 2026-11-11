@@ -50,6 +50,135 @@
           </div>
         </div>
 
+        <h3 class="section-label">Play for stakes</h3>
+        <div class="play-grid">
+          <div id="queue-panel" class="panel queue-panel hidden">
+            <div class="panel-head">
+              <h2>Find a match</h2>
+              <span id="queue-state" class="pill">idle</span>
+            </div>
+            <p class="muted small">
+              The matchmaker seats strangers at a table and opens a lobby only they can join.
+              These are the only matches that earn LMS.
+            </p>
+            <div class="field">
+              <label for="queue-tier">Table</label>
+              <select id="queue-tier"></select>
+            </div>
+            <button id="join-queue" class="primary wide" disabled>Find a match</button>
+            <button id="leave-queue" class="ghost wide hidden">Leave queue</button>
+            <p id="queue-status" class="muted small">Connect a wallet to queue.</p>
+          </div>
+
+          <div class="panel lobbies-panel">
+            <div class="panel-head">
+              <h2>Staked lobbies</h2>
+              <button id="refresh-lobbies" class="ghost">Refresh</button>
+            </div>
+            <div id="discount-row" class="row hidden">
+              <label><input id="use-discount" type="checkbox" /> Pay part of the fee in LMS</label>
+              <span id="discount-status" class="muted small"></span>
+            </div>
+            <div id="pay-with-row" class="row hidden">
+              <label for="pay-with">Pay with</label>
+              <select id="pay-with"></select>
+              <span class="muted small">Swapped to exactly the stake through Uniswap v4 as you join.</span>
+            </div>
+            <ul id="lobby-list" class="lobby-list"></ul>
+            <div class="create-lobby">
+              <h3>Open your own lobby</h3>
+              <div class="row">
+                <label for="stake">Stake (ETH)</label>
+                <input id="stake" type="text" value="0.01" size="8" />
+                <label for="seats">Seats</label>
+                <select id="seats">
+                  <option value="4" selected>4</option>
+                  <option value="6">6</option>
+                  <option value="8">8</option>
+                </select>
+                <button id="create-lobby">Create lobby</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Winnings</h2>
+            <span id="winnings" class="pill">–</span>
+          </div>
+          <p class="muted small">
+            Payouts and refunds wait in the escrow until you collect them. Collecting always
+            pays your own address.
+          </p>
+          <div class="row">
+            <button id="collect" class="primary" disabled>Collect</button>
+            <span id="collect-status" class="muted small">Connect a wallet to check.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Your matches</h2>
+            <button id="refresh-history" class="ghost">Refresh</button>
+          </div>
+          <p class="muted small">
+            Every match this wallet has finished, practice included. Open one to replay its
+            rounds, check the result in your browser again, or ask for an analysis.
+          </p>
+          <ul id="history-list" class="lobby-list history-list">
+            <li class="muted small">Connect a wallet to see your matches.</li>
+          </ul>
+          <button id="history-more" class="ghost hidden">Show older</button>
+        </div>
+
+        <h3 class="section-label">Account</h3>
+        <div id="staking-panel" class="panel hidden">
+          <div class="panel-head">
+            <h2>Stake LMS</h2>
+            <span id="staking-rewards" class="pill">—</span>
+          </div>
+          <p class="muted small">
+            Staked LMS votes on how the protocol is run and earns a share of every match
+            fee, paid in ETH. One sLMS is always one LMS.
+          </p>
+          <div id="staking-wrong-chain" class="notice hidden">
+            <span id="staking-wrong-chain-text"></span>
+            <button id="staking-switch" class="primary">Switch network</button>
+          </div>
+          <div class="row">
+            <span id="staking-summary" class="small"></span>
+            <button id="claim-rewards" class="primary hidden">Claim ETH</button>
+          </div>
+          <div class="row">
+            <span id="play-rewards" class="small"></span>
+            <button id="claim-play-rewards" class="primary hidden">Claim LMS</button>
+          </div>
+          <div class="row">
+            <span id="vesting-status" class="small"></span>
+            <button id="release-vested" class="primary hidden">Release LMS</button>
+          </div>
+          <div class="row">
+            <label for="staking-amount">Amount (LMS)</label>
+            <input id="staking-amount" type="text" inputmode="decimal" placeholder="0.0" size="10" />
+            <button id="staking-max" class="ghost">Max</button>
+            <button id="stake-lms" disabled>Stake</button>
+            <button id="unstake-lms" class="ghost" disabled>Unstake</button>
+          </div>
+          <div class="row">
+            <span id="unstake-status" class="small"></span>
+            <button id="withdraw-unstaked" class="hidden">Withdraw</button>
+          </div>
+          <span id="delegation-status" class="small"></span>
+          <div class="row">
+            <label for="delegate-to">Delegate to</label>
+            <input id="delegate-to" type="text" placeholder="0x…" size="20" spellcheck="false" />
+            <button id="delegate-votes" class="ghost" disabled>Delegate</button>
+            <button id="undelegate-votes" class="ghost hidden">Back to me</button>
+          </div>
+          <span id="staking-status" class="muted small">Connect a wallet to see your stake.</span>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>Session key</h2>
@@ -86,21 +215,6 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Winnings</h2>
-            <span id="winnings" class="pill">–</span>
-          </div>
-          <p class="muted small">
-            Payouts and refunds wait in the escrow until you collect them. Collecting always
-            pays your own address.
-          </p>
-          <div class="row">
-            <button id="collect" class="primary" disabled>Collect</button>
-            <span id="collect-status" class="muted small">Connect a wallet to check.</span>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
             <h2>Your avatar</h2>
             <span id="avatar-chain" class="pill">no collection</span>
           </div>
@@ -112,109 +226,6 @@
             <button id="mint-avatar" disabled>Mint avatar</button>
             <span id="avatar-status" class="muted small">Connect a wallet to check.</span>
           </div>
-        </div>
-
-        <div id="staking-panel" class="panel hidden">
-          <div class="panel-head">
-            <h2>Stake LMS</h2>
-            <span id="staking-rewards" class="pill">—</span>
-          </div>
-          <p class="muted small">
-            Staked LMS votes on how the protocol is run and earns a share of every match
-            fee, paid in ETH. One sLMS is always one LMS.
-          </p>
-          <div class="row">
-            <span id="staking-summary" class="small"></span>
-            <button id="claim-rewards" class="primary hidden">Claim ETH</button>
-          </div>
-          <div class="row">
-            <span id="play-rewards" class="small"></span>
-            <button id="claim-play-rewards" class="primary hidden">Claim LMS</button>
-          </div>
-          <div class="row">
-            <span id="vesting-status" class="small"></span>
-            <button id="release-vested" class="primary hidden">Release LMS</button>
-          </div>
-          <div class="row">
-            <label for="staking-amount">Amount (LMS)</label>
-            <input id="staking-amount" type="text" inputmode="decimal" placeholder="0.0" size="10" />
-            <button id="staking-max" class="ghost">Max</button>
-            <button id="stake-lms" disabled>Stake</button>
-            <button id="unstake-lms" class="ghost" disabled>Unstake</button>
-          </div>
-          <div class="row">
-            <span id="unstake-status" class="small"></span>
-            <button id="withdraw-unstaked" class="hidden">Withdraw</button>
-          </div>
-          <span id="delegation-status" class="small"></span>
-          <div class="row">
-            <label for="delegate-to">Delegate to</label>
-            <input id="delegate-to" type="text" placeholder="0x…" size="20" spellcheck="false" />
-            <button id="delegate-votes" class="ghost" disabled>Delegate</button>
-            <button id="undelegate-votes" class="ghost hidden">Back to me</button>
-          </div>
-          <span id="staking-status" class="muted small">Connect a wallet to see your stake.</span>
-        </div>
-
-        <div id="queue-panel" class="panel hidden">
-          <div class="panel-head">
-            <h2>Find a match</h2>
-            <span id="queue-state" class="pill">idle</span>
-          </div>
-          <p class="muted small">
-            The matchmaker seats strangers at a table and opens a lobby only they can join.
-            These are the only matches that earn LMS.
-          </p>
-          <div class="row">
-            <label for="queue-tier">Table</label>
-            <select id="queue-tier"></select>
-            <button id="join-queue" class="primary" disabled>Find a match</button>
-            <button id="leave-queue" class="ghost hidden">Leave queue</button>
-          </div>
-          <span id="queue-status" class="muted small">Connect a wallet to queue.</span>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Staked lobbies</h2>
-            <button id="refresh-lobbies" class="ghost">Refresh</button>
-          </div>
-          <div class="row">
-            <label for="stake">Stake (ETH)</label>
-            <input id="stake" type="text" value="0.01" size="8" />
-            <label for="seats">Seats</label>
-            <select id="seats">
-              <option value="4" selected>4</option>
-              <option value="6">6</option>
-              <option value="8">8</option>
-            </select>
-            <button id="create-lobby">Create lobby</button>
-          </div>
-          <div id="discount-row" class="row hidden">
-            <label><input id="use-discount" type="checkbox" /> Pay part of the fee in LMS</label>
-            <span id="discount-status" class="muted small"></span>
-          </div>
-          <div id="pay-with-row" class="row hidden">
-            <label for="pay-with">Pay with</label>
-            <select id="pay-with"></select>
-            <span class="muted small">Swapped to exactly the stake through Uniswap v4 as you join.</span>
-          </div>
-          <ul id="lobby-list" class="lobby-list"></ul>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Your matches</h2>
-            <button id="refresh-history" class="ghost">Refresh</button>
-          </div>
-          <p class="muted small">
-            Every match this wallet has finished, practice included. Open one to replay its
-            rounds, check the result in your browser again, or ask for an analysis.
-          </p>
-          <ul id="history-list" class="lobby-list history-list">
-            <li class="muted small">Connect a wallet to see your matches.</li>
-          </ul>
-          <button id="history-more" class="ghost hidden">Show older</button>
         </div>
       </section>
 
@@ -233,6 +244,10 @@
             delay before it can execute, and the multisig can still veto it during that time.
           </p>
           <span id="governance-status" class="muted small"></span>
+          <div id="governance-wrong-chain" class="notice hidden">
+            <span id="governance-wrong-chain-text"></span>
+            <button id="governance-switch" class="primary">Switch network</button>
+          </div>
         </div>
 
         <div id="proposal-form" class="panel hidden">
@@ -319,6 +334,7 @@
               <button id="result-verify" type="button" class="pill verify-pill" title="Once the match ends, this browser replays it to check the result. Click to learn more.">checking…</button>
             </div>
             <div id="result-headline" class="result-headline"></div>
+            <p id="result-prize" class="result-prize hidden"></p>
             <ol id="result-ranking" class="result-ranking"></ol>
             <p id="result-detail" class="muted small"></p>
             <button id="result-verify-why" class="link small">What does “verified” mean?</button>
@@ -327,7 +343,7 @@
               <button id="result-dispute" class="danger hidden" title="Holds back the payout 48 hours while the guardian checks your evidence">Dispute result</button>
               <button id="result-collect" class="primary hidden">Collect winnings</button>
               <button id="result-analyse" class="hidden">Analyse match</button>
-              <button id="result-back" class="ghost">Back to lobby</button>
+              <button id="result-back">← Back to lobby</button>
             </div>
           </div>
 

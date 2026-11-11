@@ -1,8 +1,9 @@
+import { formatEther } from 'viem';
 import { chainInfo } from '@lms/contracts';
 import { errorFirstLine, type ServerMessage, type SpokeInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { spokeFor } from '../ui/views.js';
+import { collectHomePlan, spokeFor } from '../ui/views.js';
 import { RelayError, canRelay, relayCollect } from './oneClick.js';
 
 /**
@@ -25,24 +26,29 @@ function homeSpoke(): SpokeInfo | null {
   return spokeFor(app.spokes, wallet.chainId);
 }
 
+/** Bumped on every `renderWinnings`, so a slow read cannot overwrite a newer one. */
+let winningsDraw = 0;
+
 /** Reads what the escrow owes the connected wallet and updates both buttons. */
 export async function renderWinnings(): Promise<void> {
+  const draw = ++winningsDraw;
   const wallet = app.wallet;
   const escrow = app.escrow;
   const buttons = [dom.collect, dom.resultCollect];
 
-  /** The balance pill, the status line, and whether there is anything to collect. */
-  const show = (pill: string, status: string, open: boolean) => {
+  /** The balance pill, the status line, what the buttons say, and whether there is anything to collect. */
+  const show = (pill: string, status: string, open: boolean, label = 'Collect') => {
+    if (draw !== winningsDraw) return;
     dom.winnings.textContent = pill;
     dom.collect.disabled = !open;
     dom.resultCollect.classList.toggle('hidden', !open);
     dom.collectStatus.textContent = status;
+    for (const button of buttons) {
+      button.textContent = label;
+      button.onclick = () => void collectWinnings();
+    }
   };
   const disable = (status: string, pill = '–') => show(pill, status, false);
-  for (const button of buttons) {
-    button.textContent = button === dom.collect ? 'Collect' : 'Collect winnings';
-    button.onclick = () => void collectWinnings();
-  }
 
   if (!wallet) return disable('Connect a wallet to check.');
   if (!escrow) return disable('This server runs practice only; there is nothing to collect.');
@@ -53,12 +59,22 @@ export async function renderWinnings(): Promise<void> {
     // there is the server's to read: this wallet's node is the spoke's.
     if (!spoke) return disable(`Winnings and refunds are paid on ${hub}. Switch your wallet there to collect.`);
     const name = chainInfo(spoke.chainId).name;
-    for (const button of buttons) button.textContent = `Collect to ${name}`;
+    show(`on ${hub}`, `Checking what waits for you on ${hub}…`, false, `Collect to ${name}`);
+    let balance: HubBalance;
+    try {
+      balance = await requestBalance();
+    } catch (error) {
+      return disable(`Could not read your balance on ${hub}: ${errorFirstLine(error)}`);
+    }
+    const amount = BigInt(balance.amount);
+    const plan = collectHomePlan(amount, BigInt(balance.minimum), amount, spoke.chainId, app.chainId);
+    if (!plan.ok) return disable(plan.reason, `${formatEther(amount)} ETH`);
     return show(
-      `on ${hub}`,
-      `Your winnings and refunds wait on ${hub}. Collecting brings all of them to ${name} through Across: ` +
-        `the bridge fee comes out of them, and the server pays the ${hub} gas.`,
+      `${formatEther(amount)} ETH`,
+      `${formatEther(amount)} ETH waits for you on ${hub}. Collecting brings all of it to ${name} through Across: ` +
+        `the bridge fee comes out of it, and the server pays the ${hub} gas.`,
       true,
+      `Collect ${formatEther(amount)} ETH to ${name}`,
     );
   }
 
@@ -71,7 +87,12 @@ export async function renderWinnings(): Promise<void> {
 
   if (Number(owed) === 0) return disable('Nothing waiting for you.', '0 ETH');
 
-  show(`${owed} ETH`, canRelay() ? 'One click: the server pays the gas.' : 'Your wallet will ask you to confirm.', true);
+  show(
+    `${owed} ETH`,
+    canRelay() ? 'One click: the server pays the gas.' : 'Your wallet will ask you to confirm.',
+    true,
+    `Collect ${owed} ETH`,
+  );
 }
 
 export async function collectWinnings(): Promise<void> {

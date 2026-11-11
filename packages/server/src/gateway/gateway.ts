@@ -210,6 +210,8 @@ export class Gateway {
    * as soon as the room is done with it.
    */
   private readonly encoded = new WeakMap<ServerMessage, string>();
+  /** The directory `publishLobbies` last pushed, serialised: unchanged, nothing is sent. */
+  private publishedDirectory = '';
 
   constructor(private readonly options: GatewayOptions) {
     this.limits = { ...DEFAULT_GATEWAY_LIMITS, ...options.limits };
@@ -301,6 +303,24 @@ export class Gateway {
    */
   notify(address: `0x${string}`, message: ServerMessage): void {
     for (const session of this.sessionsOf(address)) session.send(message);
+  }
+
+  /**
+   * Pushes the lobby directory to every logged-in socket, if it changed since
+   * the last push. Driven from the server's ticker, so a lobby someone else
+   * opened — the matchmaker's above all, whose players are told to stake into
+   * it — shows up without anyone pressing Refresh.
+   */
+  publishLobbies(): void {
+    const directory = this.options.directory();
+    const key = JSON.stringify(directory);
+    if (key === this.publishedDirectory) return;
+    this.publishedDirectory = key;
+    // One object for every socket, so it is serialised once.
+    const message: ServerMessage = { type: 'lobbies', open: directory.open, live: directory.live };
+    for (const session of this.sessions.values()) {
+      if (session.address !== null) session.send(message);
+    }
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */

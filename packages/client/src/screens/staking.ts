@@ -12,6 +12,7 @@ import {
   type Vesting,
 } from '../ui/staking.js';
 import * as stakingCalls from '../wallet/staking.js';
+import { switchToHub } from '../wallet/flows.js';
 import type { Wallet } from '../wallet/wallet.js';
 
 /**
@@ -40,6 +41,7 @@ export function wireStakingControls(): void {
   dom.releaseVested.onclick = () => void act('Vested LMS released to your wallet. Stake it to vote.', releaseVested());
   dom.delegateVotes.onclick = () => void act('Votes delegated. Your stake and rewards stay with you.', delegate());
   dom.undelegateVotes.onclick = () => void act('Your votes are back with you.', undelegate());
+  dom.stakingSwitch.onclick = () => void switchToHub();
   store.subscribe(['wallet', 'walletChainId', 'chainId', 'staking'], () => void renderStakingPanel());
 }
 
@@ -48,11 +50,18 @@ export async function renderStakingPanel(): Promise<void> {
   const info = app.staking;
   let error: string | null = null;
 
-  if (wallet && info && wallet.chainId !== app.chainId) {
+  const wrongChain = Boolean(wallet && info && wallet.chainId !== app.chainId);
+  const hub = chainInfo(app.chainId).name;
+  dom.stakingWrongChain.classList.toggle('hidden', !wrongChain);
+  if (wrongChain && wallet) {
     // The vault lives on the hub. A wallet on a spoke plays from there
-    // perfectly well, but stakes LMS on the hub.
+    // perfectly well, but stakes LMS on the hub: say so up front, with the
+    // one button that fixes it, rather than leave every control greyed out.
     position = null;
-    error = `Staking LMS happens on ${chainInfo(app.chainId).name}. Switch your wallet there to stake or vote.`;
+    error = `Switch to ${hub} to stake.`;
+    dom.stakingWrongChainText.textContent =
+      `Your wallet is on ${chainInfo(wallet.chainId).name}. LMS is staked, claimed and voted with on ${hub}.`;
+    dom.stakingSwitch.textContent = `Switch to ${hub}`;
   } else if (wallet && info) {
     try {
       position = await stakingCalls.stakingPosition(wallet, info.vault);
@@ -93,7 +102,8 @@ export async function renderStakingPanel(): Promise<void> {
     error,
   });
   dom.stakingPanel.classList.toggle('hidden', !view.visible);
-  dom.stakingRewards.textContent = view.rewards;
+  dom.stakingRewards.textContent = wrongChain ? `on ${hub}` : view.rewards;
+  dom.stakeLms.title = wrongChain ? `Switch your wallet to ${hub} to stake.` : '';
   dom.claimRewards.classList.toggle('hidden', !view.claimRewardsVisible);
   dom.claimRewards.disabled = busy;
   dom.playRewards.textContent = view.playRewards;

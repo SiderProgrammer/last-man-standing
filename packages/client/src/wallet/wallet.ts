@@ -48,6 +48,19 @@ declare global {
   }
 }
 
+/** What `Wallet.matchPayout` reads from the escrow. */
+export interface MatchPayout {
+  stake: bigint;
+  seatCount: number;
+  feeBps: number;
+  payoutBps: number[];
+  /** `MatchStatus`. */
+  status: number;
+  /** Deadline of the current phase: the challenge window's while a result is proposed. */
+  deadline: number;
+  chainTime: number;
+}
+
 /** What `Wallet.spokeRoute` reads from a `SpokeRouter`. */
 export interface SpokeRoute {
   weth: Address;
@@ -337,6 +350,29 @@ export class Wallet {
       historyRoot: info.historyRoot,
       rankingHash: info.rankingHash,
       transcriptHash: info.transcriptHash,
+    };
+  }
+
+  /**
+   * What a match pays, as the escrow fixed it when the lobby opened: the
+   * stake, the seats, the fee and the payout schedule, plus where the match
+   * stands and the deadline of its current phase.
+   */
+  async matchPayout(escrow: Address, matchId: Hex): Promise<MatchPayout> {
+    const at = { address: escrow, abi: gameEscrowAbi, args: [matchId] } as const;
+    const [info, terms, block] = await Promise.all([
+      this.rpc.readContract({ ...at, functionName: 'getMatch' }),
+      this.rpc.readContract({ ...at, functionName: 'getMatchTerms' }),
+      this.rpc.getBlock(),
+    ]);
+    return {
+      stake: info.stake,
+      seatCount: info.seatCount,
+      feeBps: terms.feeBps,
+      payoutBps: [...terms.payoutBps],
+      status: info.status,
+      deadline: info.deadline,
+      chainTime: Number(block.timestamp),
     };
   }
 

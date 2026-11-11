@@ -24,6 +24,15 @@ export function wireGovernanceNav(origin: string): void {
   dom.navGovernance.onclick = () => showGovernance(true);
   dom.governanceBack.onclick = () => showGovernance(false);
   store.subscribe(['staking'], renderGovernanceNav);
+  // A login, or a switch to or from the hub, changes what the screen can read.
+  store.subscribe(['wallet', 'walletChainId'], refreshGovernance);
+}
+
+/** The nav as the lobby shows it: "Governance", opening the screen. */
+export function resetGovernanceNav(): void {
+  dom.navGovernance.textContent = 'Governance';
+  dom.navGovernance.onclick = () => showGovernance(true);
+  renderGovernanceNav();
 }
 
 /** The entry point is only offered when the server indexes a governor. */

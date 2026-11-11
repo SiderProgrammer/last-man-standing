@@ -134,6 +134,22 @@ export function renderHubLabel(): void {
   dom.chainLabel.title = label.title;
 }
 
+/**
+ * Asks the wallet to move to the hub, for the panels that only work there:
+ * staking and governance. Every panel listening to `walletChainId` redraws.
+ */
+export async function switchToHub(): Promise<void> {
+  const wallet = app.wallet;
+  if (!wallet) return toast('Connect a wallet first.');
+  try {
+    await wallet.onHub();
+  } catch (error) {
+    toast(errorFirstLine(error));
+  }
+  // Also after a refusal: the wallet may have moved anyway, or not at all.
+  store.set({ walletChainId: wallet.chainId });
+}
+
 // ------------------------------------------------------------------- avatars
 
 /** The collection deployed to the chain the player's wallet is actually on. */

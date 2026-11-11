@@ -2,6 +2,7 @@ import { formatEther, formatUnits } from 'viem';
 import { type PublicMatchState } from '@lms/consensus';
 import {
   DEFAULT_ZAP_SLIPPAGE_BPS,
+  MatchStatus,
   chainCss,
   chainInfo,
   joinFailureText,
@@ -17,6 +18,7 @@ import {
   type ZapInfo,
   type ZapToken,
 } from '@lms/api';
+import { formatDuration } from './staking.js';
 
 /**
  * Pure builders for everything the panels display.
@@ -233,6 +235,30 @@ export function lobbySummary(stake: string, seatCount: number, maxSeats: number,
 }
 
 /**
+ * The directory in the order a player scans it: their own tables first, then
+ * the fullest, which start soonest. Stable otherwise.
+ */
+export function sortLobbies<T extends Pick<LobbyInfo, 'seatCount' | 'maxSeats'>>(
+  lobbies: readonly T[],
+  yours: (lobby: T) => boolean,
+): T[] {
+  const fill = (lobby: T) => lobby.seatCount / Math.max(1, lobby.maxSeats);
+  return [...lobbies].sort((a, b) => Number(yours(b)) - Number(yours(a)) || fill(b) - fill(a));
+}
+
+/** A lobby row's second line: how full it is, and for an open one, how long it stays open. */
+export function lobbySeatsText(
+  lobby: Pick<LobbyInfo, 'seatCount' | 'maxSeats' | 'minSeats' | 'status' | 'joinDeadline'>,
+  nowSeconds: number,
+): string {
+  const seats = `${lobby.seatCount}/${lobby.maxSeats} seats`;
+  if (lobby.status !== 'open') return seats;
+  const left = lobby.joinDeadline - nowSeconds;
+  const needs = lobby.seatCount < lobby.minSeats ? ` · needs ${lobby.minSeats - lobby.seatCount} more to start` : '';
+  return left > 0 ? `${seats}${needs} · closes in ${formatDuration(left)}` : `${seats} · join window closed`;
+}
+
+/**
  * What a lobby row's button does for this wallet. A seat in a lobby that can
  * now only be cancelled offers the refund; a lobby whose join window has
  * closed takes no new seats, whatever the directory last said.
@@ -249,6 +275,49 @@ export function lobbyAction(
   if (lobby.status !== 'open') return 'watch';
   if (nowSeconds >= lobby.joinDeadline) return 'closed';
   return lobby.matchmade && !matched ? 'matchmade' : 'join';
+}
+
+// ------------------------------------------------------------------- prizes
+
+/**
+ * What a finishing place pays, exactly as `GameEscrow._distribute` credits
+ * it: the full pool, less the fee, split by the schedule fixed when the
+ * lobby opened. Zero for a place the schedule does not pay.
+ */
+export function prizeFor(
+  terms: { stake: bigint; seatCount: number; feeBps: number; payoutBps: readonly number[] },
+  place: number,
+): bigint {
+  const share = terms.payoutBps[place];
+  if (share === undefined || place < 0) return 0n;
+  const pool = terms.stake * BigInt(terms.seatCount);
+  const distributable = pool - (pool * BigInt(terms.feeBps)) / 10_000n;
+  return (distributable * BigInt(share)) / 10_000n;
+}
+
+/**
+ * The result panel's line about the money: what this place won and when it
+ * can be collected. Null for a place that won nothing, so the line is hidden.
+ */
+export function prizeLine(
+  prize: bigint,
+  match: { status: number; deadline: number; chainTime: number },
+  formatWait: (seconds: number) => string,
+): string | null {
+  if (prize === 0n) return null;
+  const won = `You won ${formatEther(prize)} ETH`;
+  switch (match.status) {
+    case MatchStatus.Settled:
+      return `${won}. It is in your balance: collect it below or from the lobby.`;
+    case MatchStatus.Proposed:
+      return match.chainTime >= match.deadline
+        ? `${won}. The challenge window is over: it is yours to collect as soon as the result is finalised.`
+        : `${won}. Collectable once the challenge window closes, in ${formatWait(match.deadline - match.chainTime)}.`;
+    case MatchStatus.Cancelled:
+      return null;
+    default:
+      return `${won}. Collectable once the result is settled on-chain and its challenge window closes.`;
+  }
 }
 
 // ------------------------------------------------------------ token payment

@@ -76,6 +76,28 @@ describe('proposalCard', () => {
     expect(card.canVote).toBe(false);
   });
 
+  it('gives a pending vote a visible, closed button that says when it opens', () => {
+    const card = proposalCard(
+      { ...SUMMARY, voteStart: NOW + 86_400 },
+      live({ state: ProposalState.Pending, quorum: null }),
+      {},
+    );
+    expect(card.voteOpens).toBe('Voting opens in 1d');
+    expect(card.canVote).toBe(false);
+    expect(proposalCard(SUMMARY, live(), {}).voteOpens).toBeNull();
+  });
+
+  it('always shows when the vote opens and closes', () => {
+    expect(proposalCard(SUMMARY, null, {}).timeline).toMatch(/^Voting .+ → .+$/);
+  });
+
+  it('times the vote by the clock, and says why, when the chain cannot be read', () => {
+    const card = proposalCard(SUMMARY, null, {}, { now: NOW, reason: 'Switch your wallet to Base to see the result and vote.' });
+    expect(card.window).toBe('Voting closes in 3d.');
+    expect(card.you).toBe('Switch your wallet to Base to see the result and vote.');
+    expect(proposalCard(SUMMARY, null, {}, { now: NOW + 4 * 86_400, reason: '' }).window).toBe('Voting has closed.');
+  });
+
   it('offers queue once passed, and execute only after the timelock delay', () => {
     expect(proposalCard(SUMMARY, live({ state: ProposalState.Succeeded }), {}).canQueue).toBe(true);
 

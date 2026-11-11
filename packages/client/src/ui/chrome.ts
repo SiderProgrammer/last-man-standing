@@ -1,4 +1,5 @@
 import { dom } from '../context.js';
+import { resetGovernanceNav } from '../screens/governanceNav.js';
 
 /** Page chrome shared by more than one screen. */
 
@@ -20,5 +21,8 @@ export function toast(message: string): void {
 
 export function showLobbyScreen(): void {
   dom.matchScreen.classList.add('hidden');
+  dom.governanceScreen.classList.add('hidden');
   dom.lobbyScreen.classList.remove('hidden');
+  // `showMatchScreen` hid the way into governance; the lobby offers it again.
+  resetGovernanceNav();
 }

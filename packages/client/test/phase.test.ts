@@ -58,6 +58,27 @@ describe('commit phase', () => {
   });
 });
 
+describe('eliminated seat', () => {
+  function eliminated(phase: MatchPhaseValue): PublicMatchState {
+    const state = at(phase);
+    return { ...state, players: state.players.map((player) => (player.index === 0 ? { ...player, alive: false } : player)) };
+  }
+
+  it('offers no move in the commit phase', () => {
+    const plan = phasePlan(eliminated(MatchPhase.Commit), { ...SEATED, draft: { action: 2, target: 0 } });
+    expect(plan).toMatchObject({ actionsEnabled: false, lockInDisabled: true, shouldReveal: false });
+    expect(plan.statusText).toBe('You were eliminated. Watching the rest of the match.');
+  });
+
+  it('never reveals', () => {
+    expect(phasePlan(eliminated(MatchPhase.Reveal), SEATED).shouldReveal).toBe(false);
+  });
+
+  it('still reads as finished at the end', () => {
+    expect(phasePlan(eliminated(MatchPhase.Finished), SEATED).label).toBe('Finished');
+  });
+});
+
 describe('replay hold', () => {
   it('closes every control and relabels the phase while the last round plays', () => {
     const plan = phasePlan(at(MatchPhase.Commit), {

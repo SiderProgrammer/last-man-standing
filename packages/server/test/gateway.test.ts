@@ -249,6 +249,24 @@ describe('gateway', () => {
     expect(socket.last('lobbies')?.live).toEqual([]);
   });
 
+  it('pushes the directory to logged-in sockets when it changes, and only then', async () => {
+    let open: LobbyInfo[] = [];
+    const { gateway, socket } = harness({ escrow: ESCROW, directory: () => ({ open, live: [] }) });
+    const anonymous = new FakeSocket();
+    gateway.accept(anonymous);
+    await login(socket);
+
+    gateway.publishLobbies();
+    open = [openLobby()];
+    gateway.publishLobbies();
+    gateway.publishLobbies();
+
+    const pushed = socket.sent.filter((message) => message.type === 'lobbies');
+    expect(pushed.map((message) => message.type === 'lobbies' && message.open.length)).toEqual([0, 1]);
+    // Nobody to push to before a login: the directory is for players.
+    expect(anonymous.last('lobbies')).toBeUndefined();
+  });
+
   it('serves an empty directory when the server runs without a chain', async () => {
     const { socket } = harness();
     await login(socket);

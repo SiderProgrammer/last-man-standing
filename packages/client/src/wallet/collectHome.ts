@@ -47,6 +47,14 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
   try {
     const balance = await requestBalance();
     const amount = BigInt(balance.amount);
+    // Nothing to bridge, or too little: said plainly, before asking Across to
+    // price an amount it would refuse.
+    const unpriced = collectHomePlan(amount, BigInt(balance.minimum), amount, spoke.chainId, app.chainId);
+    if (!unpriced.ok) {
+      toast(unpriced.reason);
+      await renderWinnings();
+      return;
+    }
     const route = await wallet.spokeRoute(spoke.router);
     const priced = ACROSS_API
       ? await quoteAcrossFrom(

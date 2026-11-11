@@ -1,13 +1,15 @@
 import { canonicalJson, type MatchResult, type PublicMatchState } from '@lms/consensus';
-import { isPracticeTable } from '@lms/contracts';
+import { chainInfo, isPracticeTable } from '@lms/contracts';
 import { errorFirstLine, type ServerMessage } from '@lms/api';
 import { app, dom } from '../context.js';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain, type EvidenceBundle, type Verification } from '../game/verify.js';
 import { forgetMatch, recallMatch } from '../game/salts.js';
 import { writeRaw } from '../io/storage.js';
-import { showLobbyScreen, toast } from '../ui/chrome.js';
+import { toast } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
 import { ordinal, short } from '../ui/format.js';
+import { formatDuration } from '../ui/staking.js';
+import { prizeFor, prizeLine } from '../ui/views.js';
 import type { Wallet } from '../wallet/wallet.js';
 import { renderWinnings } from '../wallet/payouts.js';
 
@@ -45,6 +47,8 @@ export function showResult(
     }),
   );
   renderHeadline(message.ranking, message.result.rounds);
+  dom.resultPrize.classList.add('hidden');
+  void renderPrize(state, message.ranking);
 
   verification = verify(state, message.result);
   renderVerification();
@@ -76,11 +80,45 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
   if (!wallet || !escrow || wallet.chainId !== app.chainId) return;
   try {
     await wallet.waitFor(message.tx);
+    // Proposed now: the prize line can say when it unlocks.
+    if (app.match && lastRanking) void renderPrize(app.match, lastRanking);
     await checkChain(wallet, escrow, message.matchId);
   } catch {
     // The local check already stands on its own; a failed read just leaves it at that.
   }
   void renderWinnings();
+}
+
+/** The ranking of the result on screen, for redrawing the prize once it settles. */
+let lastRanking: readonly number[] | null = null;
+
+/**
+ * What this wallet won, read from the escrow's terms for the match, and when
+ * it can be collected. Staked matches only, and only for a place that pays.
+ */
+async function renderPrize(state: PublicMatchState, ranking: readonly number[]): Promise<void> {
+  lastRanking = ranking;
+  const show = (text: string | null) => {
+    dom.resultPrize.textContent = text ?? '';
+    dom.resultPrize.classList.toggle('hidden', text === null);
+  };
+  const place = app.you === null ? -1 : ranking.indexOf(app.you);
+  const { wallet, escrow } = app;
+  if (place < 0 || isPracticeTable(state.players) || !wallet || !escrow) return show(null);
+  if (wallet.chainId !== app.chainId) {
+    return show(
+      place === 0
+        ? `You won this table. Your prize waits on ${chainInfo(app.chainId).name}: collect it from the lobby once the challenge window closes.`
+        : null,
+    );
+  }
+  try {
+    const payout = await wallet.matchPayout(escrow, state.matchId);
+    if (shownFor !== state.matchId) return;
+    show(prizeLine(prizeFor(payout, place), payout, formatDuration));
+  } catch (error) {
+    console.warn('[result] could not read the prize', error);
+  }
 }
 
 /**
@@ -168,6 +206,7 @@ function renderHeadline(ranking: readonly number[], rounds: number): void {
 
 export function hideResult(): void {
   shownFor = null;
+  lastRanking = null;
   verification = null;
   dom.resultPanel.classList.add('hidden');
 }
@@ -175,10 +214,7 @@ export function hideResult(): void {
 export function wireResultControls(origin: string): void {
   serverOrigin = origin;
   dom.resultDispute.onclick = () => void disputeResult();
-  dom.resultBack.onclick = () => {
-    hideResult();
-    showLobbyScreen();
-  };
+  // `resultBack` is wired in `match.ts`, which also tears the arena down.
 }
 
 function verify(state: PublicMatchState, result: MatchResult): Verification {

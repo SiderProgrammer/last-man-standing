@@ -38,6 +38,8 @@ import { repeat } from './util/poll.js';
 const TICK_MS = 250;
 /** How often unauthenticated sockets and stale rate-limit state are cleared. */
 const SWEEP_MS = 1_000;
+/** How often the lobby directory is checked for changes and pushed to clients. */
+const LOBBY_PUSH_MS = 1_000;
 /** A socket that misses a ping for this long is terminated. */
 const HEARTBEAT_MS = 30_000;
 
@@ -261,6 +263,7 @@ async function main(): Promise<void> {
   const timers = [
     repeat(() => lobby.tick(), TICK_MS),
     repeat(() => gateway.sweep(), SWEEP_MS),
+    repeat(() => gateway.publishLobbies(), LOBBY_PUSH_MS),
     repeat(() => heartbeat.sweep(), HEARTBEAT_MS),
   ];
   if (matchmaker) {

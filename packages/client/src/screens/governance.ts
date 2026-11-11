@@ -1,9 +1,10 @@
-import { VoteSupport, type ProposalSummary, type VoteSupportValue } from '@lms/contracts';
+import { VoteSupport, chainInfo, type ProposalSummary, type VoteSupportValue } from '@lms/contracts';
 import { errorFirstLine } from '@lms/api';
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
-import { proposalCard, type ProposalCard, type ProposalLive } from '../ui/governance.js';
+import { proposalCard, type ProposalCard, type ProposalLive, type ProposalOffline } from '../ui/governance.js';
+import { switchToHub } from '../wallet/flows.js';
 import { knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
 import * as governorCalls from '../wallet/governance.js';
 
@@ -31,6 +32,7 @@ export function wireGovernanceControls(origin: string): void {
     void renderGovernance();
     setTimeout(() => void renderGovernance(), 16_000);
   });
+  dom.governanceSwitch.onclick = () => void switchToHub();
   // One listener for every card's buttons, which are rebuilt on each render.
   dom.proposalList.onclick = (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-step]');
@@ -54,22 +56,37 @@ export async function renderGovernance(): Promise<void> {
   }
 
   const wallet = app.wallet;
+  const hub = chainInfo(app.chainId).name;
+  // The governor is read through the wallet's own node, so only on the hub;
+  // elsewhere every read would fail and the cards would look disconnected.
+  const onHub = wallet !== null && wallet.chainId === app.chainId;
+  dom.governanceWrongChain.classList.toggle('hidden', !wallet || onHub);
+  if (wallet && !onHub) {
+    dom.governanceWrongChainText.textContent =
+      `Your wallet is on ${chainInfo(wallet.chainId).name}. Proposals are voted on ${hub}: switch to see the results and vote.`;
+    dom.governanceSwitch.textContent = `Switch to ${hub}`;
+  }
+
   renderNewProposalButton();
-  if (wallet) await loadProposalContext().catch(() => null);
+  if (onHub) await loadProposalContext().catch(() => null);
   const labels = knownContracts();
+  const now = Math.floor(Date.now() / 1000);
   const cards: ProposalCard[] = [];
   let readError: string | null = null;
   for (const proposal of proposals) {
     let live: ProposalLive | null = null;
-    if (wallet) {
+    let offline: ProposalOffline = { now, reason: 'Connect a wallet to see the result and vote.' };
+    if (wallet && !onHub) {
+      offline = { now, reason: `Switch your wallet to ${hub} to see the result and vote.` };
+    } else if (wallet) {
       try {
         live = await governorCalls.proposalLive(wallet, governor, vault, proposal);
       } catch (error) {
-        // Almost always a wallet on the wrong chain; show the text regardless.
         readError = `Could not read results: ${errorFirstLine(error)}`;
+        offline = { now, reason: 'Could not read the vote from the chain; try again shortly.' };
       }
     }
-    cards.push(proposalCard(proposal, live, labels));
+    cards.push(proposalCard(proposal, live, labels, offline));
   }
 
   dom.governanceStatus.textContent =
@@ -87,7 +104,9 @@ function cardElement(card: ProposalCard): HTMLLIElement {
 
   const head = element('div', 'panel-head');
   head.append(element('h3', '', card.title), element('span', `pill proposal-state ${card.state.tone}`, card.state.label));
-  li.append(head, element('p', 'muted small', [card.byline, card.window].filter(Boolean).join(' · ')));
+  li.append(head, element('p', 'muted small', card.byline));
+  if (card.window) li.append(element('p', 'proposal-window', card.window));
+  li.append(element('p', 'muted small', card.timeline));
 
   const actions = element('ol', 'proposal-actions');
   for (const action of card.actions) {
@@ -130,6 +149,12 @@ function cardElement(card: ProposalCard): HTMLLIElement {
       button(card.id, 'abstain', 'Abstain', 'ghost'),
       reason,
     );
+  }
+  if (card.voteOpens) {
+    const waiting = element('button', 'primary', card.voteOpens);
+    waiting.disabled = true;
+    waiting.title = 'Proposals wait out a voting delay before the vote opens. Voting power is fixed then.';
+    row.append(waiting);
   }
   if (card.canQueue) row.append(button(card.id, 'queue', 'Queue in timelock', 'primary'));
   if (card.canExecute) row.append(button(card.id, 'execute', 'Execute', 'primary'));

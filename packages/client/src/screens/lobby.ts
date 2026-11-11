@@ -1,3 +1,4 @@
+import { formatEther } from 'viem';
 import { sameAddress, type BotDifficulty } from '@lms/consensus';
 import {
   chainInfo,
@@ -25,7 +26,9 @@ import {
   discountStatus,
   chainChips,
   lobbyAction,
+  lobbySeatsText,
   lobbySummary,
+  sortLobbies,
   payWithOptions,
   spokeFor,
   spokeQuoteError,
@@ -83,7 +86,7 @@ export function wireLobbyControls(): void {
   };
 
   store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
-  store.subscribe(['lobbies', 'inTransit', 'matched'], renderLobbies);
+  store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking'], renderLobbies);
   store.subscribe(['discount'], renderDiscount);
   // The discount is read on the hub, where the escrow is; its module loads
   // the first time a wallet is there.
@@ -162,41 +165,69 @@ export function renderLobbies(): void {
     dom.lobbyList.replaceChildren(
       element(
         'li',
-        'muted small',
-        app.escrow ? 'No staked lobbies yet. Create one above.' : 'Server is running without an escrow: practice only.',
+        'lobby-empty muted small',
+        app.escrow
+          ? app.matchmaking.length > 0
+            ? 'No staked lobbies right now. Find a match, or open your own below.'
+            : 'No staked lobbies right now. Open your own below.'
+          : 'Server is running without an escrow: practice only.',
       ),
     );
     return;
   }
 
-  dom.lobbyList.replaceChildren(
-    ...open.map((lobby) => lobbyRow(lobby, true)),
-    ...live.map((lobby) => lobbyRow(lobby, false)),
-  );
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const rows: HTMLLIElement[] = [];
+  const ordered = sortLobbies(open, (lobby) => isSeatedIn(lobby) || app.matched.has(lobby.matchId.toLowerCase()));
+  if (ordered.length > 0) rows.push(groupHead(`Open · ${ordered.length}`), ...ordered.map((lobby) => lobbyRow(lobby, true, nowSeconds)));
+  if (live.length > 0) {
+    const yoursFirst = sortLobbies(live, isSeatedIn);
+    rows.push(groupHead(`In play · ${live.length}`), ...yoursFirst.map((lobby) => lobbyRow(lobby, false, nowSeconds)));
+  }
+  dom.lobbyList.replaceChildren(...rows);
 }
 
-function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
-  const li = element('li');
-  const label = element('span');
+function groupHead(text: string): HTMLLIElement {
+  return element('li', 'lobby-group', text);
+}
+
+function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTMLLIElement {
+  const seated = isSeatedIn(lobby);
+  const matched = app.matched.has(lobby.matchId.toLowerCase());
+  const li = element('li', `lobby-row${seated || matched ? ' yours' : ''}`);
+  const label = element('div', 'lobby-info');
+
+  const top = element('div', 'lobby-top');
+  top.append(
+    element('strong', 'lobby-stake', `${formatEther(BigInt(lobby.stake))} ETH`),
+    element('span', `pill lobby-status ${lobby.status}`, lobby.status === 'open' ? 'open' : lobby.status === 'pending' ? 'seeding' : 'live'),
+  );
+  if (seated) top.append(element('span', 'pill lobby-tag', 'your seat'));
+  else if (matched) top.append(element('span', 'pill lobby-tag', 'your table'));
+  else if (lobby.matchmade) top.append(element('span', 'pill', 'matchmade'));
   const chips = chainChips(lobby.players).map((chip) => {
     const node = element('span', 'chain-chip', chip.label);
     node.title = chip.title;
     node.style.setProperty('--chain', chip.css);
     return node;
   });
-  label.append(
-    element('strong', '', short(lobby.matchId)),
-    ' ',
-    element('span', 'muted small', lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status)),
-  );
   if (chips.length > 0) {
     const row = element('span', 'chain-chips');
     row.append(...chips);
-    label.append(row);
+    top.append(row);
   }
 
+  const meta = element('div', 'lobby-meta muted small');
+  const bar = element('span', 'seat-bar');
+  const fill = element('span');
+  fill.style.width = `${Math.round((lobby.seatCount / Math.max(1, lobby.maxSeats)) * 100)}%`;
+  bar.append(fill);
+  meta.append(bar, element('span', '', lobbySeatsText(lobby, nowSeconds)), element('span', 'lobby-id', short(lobby.matchId)));
+  meta.title = lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status);
+  label.append(top, meta);
+
   const button = element('button');
-  const action = lobbyAction(lobby, isSeatedIn(lobby), Math.floor(Date.now() / 1000), app.matched.has(lobby.matchId.toLowerCase()));
+  const action = lobbyAction(lobby, seated, nowSeconds, matched);
   const spoke = currentSpoke();
 
   if (action === 'cancel') {
@@ -229,6 +260,9 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean): HTMLLIElement {
     }
   }
 
+  // A seat of yours is the one row that wants a click now. A join stays plain
+  // until it is priced: there, `primary` means "this is the offer, click to pay".
+  if (action === 'enter' || action === 'cancel') button.classList.add('primary');
   li.append(label, button);
   return li;
 }

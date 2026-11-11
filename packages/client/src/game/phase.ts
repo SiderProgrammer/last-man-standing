@@ -42,8 +42,21 @@ export interface PhaseContext {
  * only manufacture no-shows.
  */
 export function phasePlan(state: PublicMatchState, context: PhaseContext): PhasePlan {
-  const seated = context.you !== null;
+  // An eliminated seat has nothing left to commit or reveal: it watches.
+  const eliminated =
+    context.you !== null && state.players.some((player) => player.index === context.you && !player.alive);
+  const seated = context.you !== null && !eliminated;
   const committed = context.committedRound === state.round;
+
+  if (eliminated && (state.phase === MatchPhase.Commit || state.phase === MatchPhase.Reveal)) {
+    return {
+      label: `Round ${state.round} — ${context.replaying && state.phase === MatchPhase.Commit ? 'replay' : 'spectating'}`,
+      actionsEnabled: false,
+      lockInDisabled: true,
+      statusText: 'You were eliminated. Watching the rest of the match.',
+      shouldReveal: false,
+    };
+  }
 
   if (state.phase === MatchPhase.Commit && context.replaying) {
     return {

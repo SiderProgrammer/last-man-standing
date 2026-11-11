@@ -170,6 +170,8 @@ export class ChainBridge {
     const live: LobbyInfo[] = [];
     for (const entry of this.tracked.values()) {
       if (entry.proposed || entry.abandoned || entry.foreign) continue;
+      // Discovered but not read yet: a placeholder with no stake or seats.
+      if (entry.info.maxSeats === 0) continue;
       if (entry.info.status === 'open') open.push(entry.info);
       else live.push(entry.info);
     }
