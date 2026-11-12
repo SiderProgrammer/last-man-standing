@@ -16,9 +16,6 @@
       "default": "./dist/registry.js"
     }
   },
-  "scripts": {
-    "build": "tsc --build"
-  },
   "dependencies": {
     "@lms/consensus": "0.1.0",
     "viem": "^2.21.55",

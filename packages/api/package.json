@@ -12,9 +12,6 @@
       "default": "./dist/index.js"
     }
   },
-  "scripts": {
-    "build": "tsc --build"
-  },
   "dependencies": {
     "@lms/consensus": "0.1.0",
     "@lms/contracts": "0.1.0",

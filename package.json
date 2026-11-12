@@ -30,11 +30,9 @@
     "test:watch": "vitest",
     "abis": "forge build --root contracts && node scripts/gen-abis.mjs",
     "abis:check": "node scripts/gen-abis.mjs --check",
-    "sol:build": "forge build --root contracts",
     "sol:test": "forge test --root contracts -vv",
     "sol:fuzz": "forge test --root contracts --match-path \"test/fuzz/*\" -vv",
     "sol:invariant": "forge test --root contracts --match-path \"test/invariant/*\" -vv",
-    "sol:fmt": "forge fmt --root contracts",
     "sol:snapshot": "forge snapshot --root contracts --snap contracts/.gas-snapshot",
     "sol:snapshot:check": "forge snapshot --root contracts --snap contracts/.gas-snapshot --check"
   },

@@ -12,9 +12,6 @@
       "default": "./dist/index.js"
     }
   },
-  "scripts": {
-    "build": "tsc --build"
-  },
   "dependencies": {
     "viem": "^2.21.55"
   }

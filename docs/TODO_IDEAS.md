@@ -4,7 +4,7 @@ update README, docs
 update missing envs
 clean up package.json
 
-make sure eth chain is tested and handled
+make sure eth / optimism chain is tested and handled
 test, run all the features on local fork mainnet (dont forget cross chain)
 redeploy fixed game
 test game with a few real players (testnet wallet)

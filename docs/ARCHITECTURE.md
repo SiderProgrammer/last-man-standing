@@ -794,7 +794,7 @@ See `.env.example` for the annotated template.
 npm run build          # tsc project references
 npm run typecheck      # src, the client, and every test file
 npm test               # vitest
-npm run sol:build      # forge build
+npm run abis           # forge build + regenerate the TypeScript ABIs
 npm run sol:test       # forge test
 npm run sol:fuzz       # fuzz suites only
 npm run sol:invariant  # invariant suites only
