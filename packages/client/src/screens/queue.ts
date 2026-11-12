@@ -1,7 +1,8 @@
 import { MatchPhase, sameAddress } from '@lms/consensus';
 import type { LobbyInfo, ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
-import { currentScreen, showScreen } from '../ui/chrome.js';
+import { currentScreen, onScreenChange, showScreen } from '../ui/chrome.js';
+import { askToNotify, notifyState } from '../ui/alerts.js';
 import { fillSelect } from '../ui/dom.js';
 import { clock, queuePanel, tierKey } from '../ui/views.js';
 
@@ -18,6 +19,8 @@ export function wireQueueControls(): void {
   dom.joinQueue.onclick = joinQueue;
   dom.leaveQueue.onclick = () => net.send({ type: 'dequeue' });
   dom.queueChip.onclick = goToQueue;
+  onScreenChange(renderChip);
+  dom.notifyMe.onclick = () => void askToNotify().then(renderNotify);
   store.subscribe(['matchmaking', 'queue', 'wallet', 'terms', 'matched', 'lobbies'], renderQueue);
   // The chip's clock.
   setInterval(renderChip, 1_000);
@@ -75,13 +78,27 @@ function renderQueue(): void {
   dom.leaveQueue.classList.toggle('hidden', !panel.leaveVisible);
   dom.queueStatus.textContent = panel.status;
   renderChip();
+  renderNotify();
 }
 
-/** "Queued 0:42", or "Table ready · Stake": shown on every screen but the lobby's own panel. */
+/** The offer to notify: made while queued, until the browser has been asked. */
+function renderNotify(): void {
+  const state = notifyState();
+  dom.notifyMe.classList.toggle('hidden', state === 'unsupported' || state === 'blocked' || (state === 'ask' && !app.queue));
+  dom.notifyMe.disabled = state === 'on';
+  dom.notifyMe.textContent =
+    state === 'on' ? 'Notifications on: you will hear about your table in another tab' : 'Notify me when a table is ready, even in another tab';
+}
+
+/**
+ * "Queued 0:42", or "Table ready · Stake", in the header during a match:
+ * practice included, where the status bar is not shown.
+ */
 function renderChip(): void {
   const ready = readyTable();
   let text: string | null = null;
-  if (ready) text = 'Table ready · Stake';
+  if (currentScreen() !== 'match') text = null;
+  else if (ready) text = 'Table ready · Stake';
   else if (app.queue && app.queuedSince !== null) text = `Queued ${clock(Date.now() - app.queuedSince)}`;
   dom.queueChip.classList.toggle('hidden', text === null);
   dom.queueChip.classList.toggle('ready', ready !== null);

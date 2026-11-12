@@ -1,10 +1,13 @@
+import { decodeFunctionData, formatEther, type Abi, type Hex } from 'viem';
 import {
   PROPOSAL_STATE_NAMES,
   ProposalState,
   describeCall,
+  governableAbi,
   splitDescription,
   type ProposalStateValue,
   type ProposalSummary,
+  type ProtocolParams,
 } from '@lms/contracts';
 import { short } from './format.js';
 import { formatDuration, formatLms } from './staking.js';
@@ -31,6 +34,16 @@ export interface ProposalLive {
   eta: number;
   /** The latest block's timestamp: the clock the governor runs on. */
   chainTime: number;
+  /** How this wallet voted, once it has and the vote could be read: 0 against, 1 for, 2 abstain. */
+  vote?: { support: number; reason: string } | null;
+}
+
+/** One step of a proposal's life, as the card's stepper shows it. */
+export interface LifecycleStep {
+  label: string;
+  /** When it happened or happens, by the chain's clock, or null when there is no date to give. */
+  when: string | null;
+  state: 'done' | 'current' | 'todo' | 'failed';
 }
 
 export type Tone = 'live' | 'good' | 'bad' | 'neutral';
@@ -50,7 +63,9 @@ export interface ProposalCard {
    * become; null otherwise. Shown disabled, so the vote has a visible place.
    */
   voteOpens: string | null;
-  actions: Array<{ target: string; call: string; warning: string | null }>;
+  actions: Array<{ target: string; call: string; warning: string | null; plain: string | null }>;
+  /** Pending, voting, passed, queued, executed: where this proposal is. */
+  steps: LifecycleStep[];
   tally: {
     for: string;
     against: string;
@@ -91,15 +106,22 @@ export function proposalCard(
   live: ProposalLive | null,
   labels: Readonly<Record<string, string>>,
   offline: ProposalOffline | null = null,
+  /** The config's parameters now, to say what a `setParams` changes. */
+  current: ProtocolParams | null = null,
 ): ProposalCard {
   const { title, body } = splitDescription(summary.description);
+  const calldatas = summary.calldatas.map((data) => (data ?? '0x').toLowerCase());
   const actions = summary.targets.map((target, i) => {
-    const call = describeCall(target, BigInt(summary.values[i] ?? '0'), summary.calldatas[i] ?? '0x', labels);
+    const calldata = summary.calldatas[i] ?? '0x';
+    const call = describeCall(target, BigInt(summary.values[i] ?? '0'), calldata, labels);
+    const plain = plainCall(calldata, current);
     const warnings = [
       call.recognised ? null : 'Not a recognised governance call — check the target and data yourself.',
       call.value > 0n ? `Sends ${formatLms(call.value, 6)} ETH.` : null,
+      calldatas.indexOf(calldata.toLowerCase()) !== i ? 'The same call again: it does nothing the first did not.' : null,
+      ...plain.warnings,
     ].filter((warning): warning is string => warning !== null);
-    return { target: call.target, call: call.call, warning: warnings.length ? warnings.join(' ') : null };
+    return { target: call.target, call: call.call, warning: warnings.length ? warnings.join(' ') : null, plain: plain.text };
   });
 
   const base = {
@@ -109,6 +131,7 @@ export function proposalCard(
     byline: `${short(proposalIdHex(summary.id))} · proposed by ${short(summary.proposer)}`,
     timeline: `Voting ${formatWhen(summary.voteStart)} → ${formatWhen(summary.voteEnd)}`,
     actions,
+    steps: lifecycle(summary, live),
   };
 
   if (!live) {
@@ -227,8 +250,15 @@ function formatWhen(seconds: number): string {
   });
 }
 
+const SIDES = ['Against', 'For', 'Abstain'];
+
 function youText(live: ProposalLive): string {
-  if (live.hasVoted) return 'You voted on this proposal.';
+  if (live.hasVoted) {
+    const side = live.vote ? SIDES[live.vote.support] : undefined;
+    if (!side) return 'You voted on this proposal.';
+    const verb = side === 'Abstain' ? 'You abstained' : `You voted ${side}`;
+    return live.vote?.reason ? `${verb}: “${live.vote.reason}”` : `${verb}.`;
+  }
   if (live.state === ProposalState.Pending) {
     return live.power > 0n
       ? `You will vote with the ${formatLms(live.power)} sLMS you hold when voting opens.`
@@ -238,4 +268,114 @@ function youText(live: ProposalLive): string {
   return live.state === ProposalState.Active
     ? `Your voting power: ${formatLms(live.power)} sLMS.`
     : `You had ${formatLms(live.power)} sLMS of voting power and did not vote.`;
+}
+
+// ------------------------------------------------------------- lifecycle
+
+/**
+ * Pending, voting, passed, queued, executed: the current step lit, with the
+ * chain-time dates of the steps that have one. A proposal that stopped
+ * (defeated, canceled, expired) shows where.
+ */
+export function lifecycle(summary: ProposalSummary, live: ProposalLive | null): LifecycleStep[] {
+  const steps: LifecycleStep[] = [
+    { label: 'Pending', when: null, state: 'todo' },
+    { label: 'Voting', when: `${formatWhen(summary.voteStart)} → ${formatWhen(summary.voteEnd)}`, state: 'todo' },
+    { label: 'Passed', when: null, state: 'todo' },
+    { label: 'Queued', when: live && live.eta > 0 ? `executable ${formatWhen(live.eta)}` : null, state: 'todo' },
+    { label: 'Executed', when: null, state: 'todo' },
+  ];
+  if (!live) return steps;
+  const reached: Partial<Record<ProposalStateValue, number>> = {
+    [ProposalState.Pending]: 0,
+    [ProposalState.Active]: 1,
+    [ProposalState.Succeeded]: 2,
+    [ProposalState.Queued]: 3,
+    [ProposalState.Executed]: 4,
+  };
+  const at = reached[live.state];
+  if (at !== undefined) {
+    steps.forEach((step, i) => (step.state = i < at || at === 4 ? 'done' : i === at ? 'current' : 'todo'));
+    return steps;
+  }
+  // Stopped: the step where it stopped is marked, under the state's own name.
+  const stoppedAt =
+    live.state === ProposalState.Defeated ? 2 : live.state === ProposalState.Expired ? 4 : live.chainTime < summary.voteStart ? 0 : 1;
+  steps.forEach((step, i) => (step.state = i < stoppedAt ? 'done' : i === stoppedAt ? 'failed' : 'todo'));
+  steps[stoppedAt]!.label = PROPOSAL_STATE_NAMES[live.state];
+  return steps;
+}
+
+// ------------------------------------------------------- plain language
+
+/**
+ * What a governance call does, in words a voter reads at a glance, and any
+ * risk in it: "Set the protocol fee to 2.5%". A `setParams` is described by
+ * what it changes against the config now, since it rewrites every field.
+ * Null text for a call this does not know.
+ */
+export function plainCall(calldata: string, current: ProtocolParams | null): { text: string | null; warnings: string[] } {
+  let decoded: { functionName: string; args?: readonly unknown[] };
+  try {
+    decoded = decodeFunctionData({ abi: governableAbi as Abi, data: calldata as Hex }) as typeof decoded;
+  } catch {
+    return { text: null, warnings: [] };
+  }
+  const args = decoded.args ?? [];
+  const percent = (bps: unknown) => `${Number(bps) / 100}%`;
+  const days = (seconds: unknown) => `${Number(seconds) / 86_400} days`;
+  const zero = (address: unknown) => /^0x0{40}$/i.test(String(address));
+  switch (decoded.functionName) {
+    case 'setStakerBps':
+      return { text: `Give stakers ${percent(args[0])} of every match fee`, warnings: [] };
+    case 'setTreasury':
+      return { text: `Send the protocol's share of fees to ${short(String(args[0]))}`, warnings: [] };
+    case 'setGuardian':
+      return zero(args[0])
+        ? { text: 'Remove the emergency guardian', warnings: ['This switches the guardian off: nobody can pause the game or veto a result.'] }
+        : { text: `Make ${short(String(args[0]))} the emergency guardian`, warnings: [] };
+    case 'setCooldown':
+      return { text: `Make unstaking take ${days(args[0])}`, warnings: [] };
+    case 'setVotingPeriod':
+      return { text: `Make votes last ${days(args[0])}`, warnings: [] };
+    case 'unpause':
+      return { text: 'Resume play after a pause', warnings: [] };
+    case 'setBridgeReceiver':
+      return {
+        text: zero(args[0]) ? 'Turn off staking from other chains' : `Take stakes from other chains through ${short(String(args[0]))}`,
+        warnings: [],
+      };
+    case 'revokeRole':
+      return { text: `Take away ${short(String(args[1]))}'s power to veto queued proposals`, warnings: [] };
+    case 'setParams':
+      return describeParams(args[0] as ProtocolParams, current);
+    default:
+      return { text: null, warnings: [] };
+  }
+}
+
+function describeParams(next: ProtocolParams, current: ProtocolParams | null): { text: string; warnings: string[] } {
+  const field: Record<keyof ProtocolParams, (p: ProtocolParams) => string> = {
+    feeBps: (p) => `the protocol fee to ${p.feeBps / 100}%`,
+    minSeats: (p) => `the smallest table to ${p.minSeats} seats`,
+    maxSeats: (p) => `the largest table to ${p.maxSeats} seats`,
+    joinWindow: (p) => `the join window to ${Number(p.joinWindow) / 60} minutes`,
+    settleWindow: (p) => `the settle window to ${Number(p.settleWindow) / 60} minutes`,
+    minStake: (p) => `the smallest stake to ${formatEther(p.minStake)} ETH`,
+    maxStake: (p) => `the largest stake to ${formatEther(p.maxStake)} ETH`,
+    treasury: (p) => `the treasury to ${short(p.treasury)}`,
+  };
+  const keys = Object.keys(field) as Array<keyof ProtocolParams>;
+  if (!current) {
+    return {
+      text: `Set ${keys.map((key) => field[key](next)).join(', ')}`,
+      warnings: ['Rewrites every parameter at once: check none undoes another change.'],
+    };
+  }
+  const changed = keys.filter((key) => String(next[key]).toLowerCase() !== String(current[key]).toLowerCase());
+  if (changed.length === 0) return { text: 'Change nothing: every parameter stays as it is now', warnings: [] };
+  return {
+    text: `Set ${changed.map((key) => field[key](next)).join(', ')}`,
+    warnings: ['Also writes every other parameter back to its value when this was proposed.'],
+  };
 }

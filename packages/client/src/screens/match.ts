@@ -19,6 +19,8 @@ import {
   applyDelta,
   withRound,
   errorFirstLine,
+  type LobbyInfo,
+  type MatchmakingTier,
   type PlayStyle,
   type ServerMessage,
 } from '@lms/api';
@@ -29,7 +31,8 @@ import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
-import { alertInBackground, showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { callBack, cue, setSound, soundOn } from '../ui/alerts.js';
 import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
 import { renderWinnings } from '../wallet/payouts.js';
 import { startPractice } from './lobby.js';
@@ -206,11 +209,33 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
     // own back button give way to it.
     dom.movePanel.classList.add('hidden');
     const practice = isPracticeTable(app.match.players);
-    dom.resultAgain.classList.toggle('hidden', !practice || !app.lastPractice);
+    // Practice: the same bots again. Staked: the queue for the same table.
+    const tier = practice ? null : tierOf(app.match.matchId, app.match.players.length);
+    againTier = tier;
+    dom.resultAgain.textContent = practice ? 'Play again' : 'Find another match';
+    dom.resultAgain.classList.toggle('hidden', practice ? !app.lastPractice : tier === null);
     showResultCard();
   }
   offerAnalysis(message.result.matchId);
 }
+
+/** The matchmaking tier "Find another match" queues for, set when a staked match ends. */
+let againTier: MatchmakingTier | null = null;
+
+/**
+ * The matchmaker's tier for a finished staked match: its stake, read from
+ * the directory as it was while the match ran, and its table size. Null
+ * when no tier matches, as for a private lobby's odd stake.
+ */
+function tierOf(matchId: string, seats: number): MatchmakingTier | null {
+  const lobby = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === matchId) ?? tableSeen;
+  if (!lobby || lobby.matchId !== matchId) return null;
+  // The table's size, not the seats filled: a short table of 4 is still the 6-seat tier.
+  return app.matchmaking.find((tier) => tier.stake === lobby.stake && tier.seats === Math.max(seats, lobby.maxSeats)) ?? null;
+}
+
+/** The directory's entry for the match on screen, kept as it was when the match opened. */
+let tableSeen: LobbyInfo | null = null;
 
 /** Brings the result card into view if it is not, and gives it focus for the keyboard. */
 function showResultCard(): void {
@@ -285,7 +310,8 @@ export function onState(
     dom.roundRecap.classList.add('hidden');
     dom.roundAnnounce.textContent = '';
     showMatchScreen();
-    alertInBackground('Match starting');
+    tableSeen = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === state.matchId) ?? null;
+    if (you !== null) callBack('Match starting', 'Your table is open: round 1 is about to begin.');
   }
   const committedRound = switched ? null : app.committedRound;
   store.set({
@@ -670,8 +696,17 @@ export function updateTimer(): void {
   if (warning && warnedFor !== roundKey) {
     warnedFor = roundKey;
     dom.roundAnnounce.textContent = '10 seconds left to lock in a move.';
+    cue('warning');
+  }
+  // A round opens for this seat: one soft note, if the player wants them.
+  if (deciding && openedFor !== roundKey) {
+    openedFor = roundKey;
+    cue('round');
   }
 }
+
+/** The round the "round opens" cue was last played for. */
+let openedFor = '';
 
 /** The round the 10-second warning was last read out for. */
 let warnedFor = '';
@@ -693,6 +728,8 @@ function actionOf(button: HTMLButtonElement): ActionValue {
 export function wireMatchControls(): void {
   dom.holdMoves.checked = readRaw(HOLD_KEY) === '1';
   dom.holdMoves.onchange = () => writeRaw(HOLD_KEY, dom.holdMoves.checked ? '1' : '0');
+  dom.soundCues.checked = soundOn();
+  dom.soundCues.onchange = () => setSound(dom.soundCues.checked);
   for (const button of dom.actionBar.querySelectorAll<HTMLButtonElement>('.action')) {
     button.onclick = () => selectAction(actionOf(button));
   }
@@ -713,8 +750,13 @@ export function wireMatchControls(): void {
   dom.tabAnalysis.classList.toggle('hidden', !app.analyst);
   dom.resultBack.onclick = leaveMatch;
   dom.resultAgain.onclick = () => {
+    if (againTier) {
+      net.send({ type: 'queue', stake: againTier.stake, seats: againTier.seats });
+      leaveMatch();
+      return;
+    }
     const last = app.lastPractice;
-    if (last) startPractice(last.bots, last.difficulty);
+    if (last) void startPractice(last.bots, last.difficulty);
   };
   dom.lockIn.onclick = lockIn;
 

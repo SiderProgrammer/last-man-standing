@@ -126,6 +126,15 @@ export class SeatToken {
     if (!reduced) gsap.to(this.halo, { rotation: Math.PI * 2, duration: 10, repeat: -1, ease: 'none' });
   }
 
+  /**
+   * A crowded ring: the caption under the seat ("locked in" and the like)
+   * gives way, so it never covers the next seat's badge. The ring around the
+   * seat still shows it.
+   */
+  set compact(value: boolean) {
+    this.status.visible = !value;
+  }
+
   /** Whether the player can click this seat to target it right now. */
   set pickable(value: boolean) {
     this.root.cursor = value ? 'pointer' : 'default';

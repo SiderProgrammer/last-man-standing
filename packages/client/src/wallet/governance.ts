@@ -57,7 +57,29 @@ export async function proposalLive(wallet: Wallet, governor: Address, vault: Add
     hasVoted,
     eta: Number(eta),
     chainTime: Number(block.timestamp),
+    vote: hasVoted ? await ownVote(wallet, governor, id, proposal.block) : null,
   };
+}
+
+/**
+ * Which way this wallet voted, and its reason, from its `VoteCast` event.
+ * The governor keeps only whether it voted. Null when the log cannot be
+ * read, as on a node that limits how far back a query may reach.
+ */
+async function ownVote(wallet: Wallet, governor: Address, id: bigint, fromBlock: number): Promise<{ support: number; reason: string } | null> {
+  try {
+    const logs = await wallet.rpc.getContractEvents({
+      address: governor,
+      abi: lmsGovernorAbi,
+      eventName: 'VoteCast',
+      args: { voter: wallet.address },
+      fromBlock: BigInt(fromBlock),
+    });
+    const cast = logs.find((log) => log.args.proposalId === id);
+    return cast?.args.support === undefined ? null : { support: Number(cast.args.support), reason: cast.args.reason ?? '' };
+  } catch {
+    return null;
+  }
 }
 
 /** Votes on a proposal, with a reason recorded on-chain when one is given. */

@@ -67,7 +67,7 @@ async function payTokenJoin(
     const deadline = BigInt(Math.floor(Date.now() / 1000) + ZAP_DEADLINE_SECONDS);
     const hash = await zapCalls.joinWithToken(wallet, zap.address, lobby.matchId, token.path, maxAmountIn, deadline);
     button.textContent = 'Joining…';
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, `Stake in ${token.symbol}`);
     seated(lobby);
   } catch (error) {
     toast(errorFirstLine(error), 'error');

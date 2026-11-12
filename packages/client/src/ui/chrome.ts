@@ -26,6 +26,14 @@ export function showScreen(name: ScreenName): void {
   current = name;
   closeMenu();
   renderNav();
+  for (const listener of screenListeners) listener(name);
+}
+
+const screenListeners: Array<(screen: ScreenName) => void> = [];
+
+/** Runs `listener` after every screen change: for chrome that differs by screen. */
+export function onScreenChange(listener: (screen: ScreenName) => void): void {
+  screenListeners.push(listener);
 }
 
 export function showMatchScreen(): void {
@@ -63,6 +71,11 @@ export function wireChrome(): void {
   dom.topbarNav.addEventListener('click', (event) => {
     if (event.target instanceof HTMLButtonElement) closeMenu();
   });
+  // The status bar sticks just under the header, whatever height it wraps to.
+  const header = document.querySelector<HTMLElement>('.topbar');
+  if (header && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => document.documentElement.style.setProperty('--topbar-h', `${header.offsetHeight}px`)).observe(header);
+  }
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) clearAlert();
   });

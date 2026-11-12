@@ -319,7 +319,7 @@ The page is one column about 2,000 px tall; the account panels sit below the fol
 - [x] **Matchmaking as the main path.** It is the only one that earns LMS but
       gets the same weight as "Staked lobbies". Put "Find a match" first and
       full width; open lobbies and "Open your own lobby" below it.
-- [ ] **Move "Pay with" and "Pay part of the fee in LMS" into the join step.** (Partly: both rows now hide when there is nothing to join.)
+- [x] **Move "Pay with" and "Pay part of the fee in LMS" into the join step.**
       Clicking Stake opens a payment choice, then a quote, then Pay. Global
       settings above an empty list read as clutter.
 - [x] **Matched table state.** The matchmaking panel says "idle" and offers
@@ -345,7 +345,7 @@ The page is one column about 2,000 px tall; the account panels sit below the fol
       needed; it matters mid-match with 60 s on the clock.
 - [x] **Replay label** (bug 8): "Replaying round 10", and no timer until the
       commit window opens.
-- [ ] **8-seat crowding.** At narrow widths the "locked in" captions overlap
+- [x] **8-seat crowding.** At narrow widths the "locked in" captions overlap
       the next seat's badge. Shrink them or hide the text at 8 seats.
 - [x] **Scroll to the top when entering a match.** The lobby's scroll position
       carries over and the arena opens half off-screen.
@@ -362,10 +362,10 @@ The page is one column about 2,000 px tall; the account panels sit below the fol
 - [x] **Proposal form actions.** "Add at least one action" shows while the
       action fields are filled in, because "Add action" must be clicked
       first. Count the filled-in action on Submit.
-- [ ] **Wording:** (Done except "You voted Against": the page does not read the vote yet.) "300,000 of 100,000 sLMS needed" → "You have 300,000 sLMS ·
+- [x] **Wording:** "300,000 of 100,000 sLMS needed" → "You have 300,000 sLMS ·
       100,000 needed to propose"; "You voted" → "You voted Against" (and show
       the reason); "Voting costs gas on L1" → "on Base".
-- [ ] **New proposals and lobbies right away** (Partly: extra refreshes and a status line; no "creating…" placeholder rows. The server waits 3 confirmations, which on an idle anvil means until the next transactions.) (bug 12): show them as
+- [x] **New proposals and lobbies right away** (A new lobby shows as "opening…" at once; a new proposal gets a status line and extra refreshes. The server waits 3 confirmations, which on an idle anvil means until the next transactions.) (bug 12): show them as
       "creating…" until the next poll picks them up.
 
 ### Small polish
@@ -401,7 +401,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
 
 **A. Keep the player oriented**
 
-- [ ] **A "what am I in" bar under the header**, built on load and on
+- [x] **A "what am I in" bar under the header**, built on load and on
       every reconnect: a running match ("Rejoin"), a queue place ("Queued
       0:42 · Leave"), a table waiting for your stake ("Stake 0.001 · 2:10
       left"), a stake in transit, a lobby you can get a refund from
@@ -410,7 +410,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
 - [x] **Queue chip in the header on every screen**, practice included,
       that turns into "Table ready · Stake" when you are matched. Today the
       queue shows only in the Find a match panel.
-- [ ] **Alerts when the tab is in the background.** (Partly: the title flashes "● Table ready" / "● Match starting"; no notifications or sound.) Nothing tells a player
+- [x] **Alerts when the tab is in the background.** (Notifications and sound are opt-in: "Notify me" in the queue panel, "Sound cues" in the move panel.) Nothing tells a player
       who switched tabs: no title change, notification or sound
       (the client has none). Flash the title ("● Table ready"), offer
       browser notifications for "matched" and "match starting", and a soft
@@ -424,7 +424,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
       / error / info differently, keep the important ones (matched, not
       seated, refunded) until dismissed, and give the container
       `role="status"` so screen readers announce them.
-- [ ] **Transaction tray.** Each transaction as a row: waiting for the
+- [x] **Transaction tray.** Each transaction as a row: waiting for the
       wallet → sent → confirmed or failed (with the decoded reason, bug 5),
       linked to Basescan or Arbiscan. A stake from Arbitrum shows "in
       transit · Across" until it is seated or credited back. This is the
@@ -438,7 +438,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
       disabled "Matchmade" rows) and lobbies past their window are noise;
       collapse them under "Other tables". Keep yours on top with "your
       table", "your lobby" and "refund ready" tags.
-- [ ] **Seats as dots.** Show four or eight small seat dots (filled,
+- [x] **Seats as dots.** (Dots, no countdown ring.) Show four or eight small seat dots (filled,
       empty, with a chain badge) and a countdown ring from chain time,
       instead of "0/4 seats · needs 4 more to start · closes in 23d 1h".
 - [x] **Invite link for private lobbies.** A private lobby has no way to
@@ -447,13 +447,13 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
       Stake ready.
 - [x] **Stake range next to Create lobby** ("0.001 – 1 ETH", from the
       config's min and max stake), accepting "0,005" (bug 17).
-- [ ] **Say what the LMS discount buys.** "20000 LMS buys 1 ETH off a fee,
+- [x] **Say what the LMS discount buys.** "20000 LMS buys 1 ETH off a fee,
       up to half of each fee" → "Pay 0.5 LMS to save 0.000025 ETH on this
       join", shown on the join step.
 
 **D. Match screen**
 
-- [ ] **You always at the bottom.** Seats are placed by index from the top
+- [x] **You always at the bottom.** Seats are placed by index from the top
       (`arena/layout.ts:60`), so "YOU" sits at the top in one match and on
       the left in the next. Rotate the ring so your seat is always at the
       bottom, nearest the move buttons.
@@ -462,35 +462,35 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
       are charged". Players read their own outcome first.
 - [x] **Missed-round warning.** "You did not lock in: every strike on you
       hit" after a missed round, and a pulse on the timer at 10 s.
-- [ ] **Play again.** (Partly: practice has "Play again"; staked "Find another match" not done.) At the end of practice, "Play again" with the same
+- [x] **Play again.** At the end of practice, "Play again" with the same
       bots and difficulty; at the end of a staked match, "Find another
       match" in the same tier. Today the only button is Back to lobby.
-- [ ] **List view for 8 seats on a phone** (bug 44): rows with HP bars and
+- [x] **List view for 8 seats on a phone** (Done instead by shrinking a crowded ring and dropping the seat captions; the target buttons stay as the list.) (bug 44): rows with HP bars and
       a Strike button each, instead of the ring.
 
 **E. History and progress**
 
-- [ ] **Money on each history row** ("+0.00095 ETH", "−0.001 ETH") and a
+- [x] **Money on each history row** ("+0.00095 ETH", "−0.001 ETH") and a
       total for the week. Today rows show only place and rounds.
-- [ ] **Filters** (Staked / Practice) and a short stats line: matches,
+- [x] **Filters** (Staked / Practice) and a short stats line: matches,
       wins, average place, most-used move (the Reads data already exists).
 
 **F. First visit**
 
-- [ ] **Guest practice without a wallet** (bug 29), then a guided first
+- [ ] **Guest practice without a wallet** (bug 29; partly: logged out, "Start practice match" now connects first and the lobby list says why it is empty. A walletless guest needs the server to allow it), then a guided first
       round that points at Strike, Guard and Charge and the cooldowns.
-- [ ] **A "before you stake" step** the first time someone stakes: the 5%
+- [x] **A "before you stake" step** the first time someone stakes: the 5%
       fee, the 60/25/15 split, the 1h challenge window and collecting,
       with "don't show again".
-- [ ] **Explain the jargon in place** with small "?" tips: sLMS, epoch,
+- [x] **Explain the jargon in place** with small "?" tips: sLMS, epoch,
       vesting, session key, one-click play, challenge window.
 
 **G. Governance**
 
-- [ ] **Lifecycle stepper on each proposal**: Pending → Active → Succeeded
+- [x] **Lifecycle stepper on each proposal**: Pending → Active → Succeeded
       → Queued → Executed, with the chain-time date under each step and
       the current one highlighted.
-- [ ] **Plain-language actions.** (Partly: duplicate actions and a zero guardian are refused.) "Set the protocol fee to 0%" instead of
+- [x] **Plain-language actions.** "Set the protocol fee to 0%" instead of
       the full `setParams({…})` struct; flag risky ones (zero guardian,
       unpause while not paused, duplicates; bug 38).
 
@@ -498,7 +498,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
 
 - [x] Announce round results and the last 10 s of the timer through an
       `aria-live` region (today only the loader and analysis have one).
-- [ ] Do not rely on colour alone for HP and "charged": add the number and
+- [x] Do not rely on colour alone for HP and "charged": add the number and
       an icon (HP numbers exist; check the charged state).
 
 ## Worked in the second pass

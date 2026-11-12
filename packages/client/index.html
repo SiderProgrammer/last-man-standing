@@ -29,6 +29,8 @@
         <button id="nav-menu" type="button" class="ghost menu-toggle" aria-expanded="false" aria-controls="topbar-nav" aria-label="Menu">☰</button>
       </div>
     </header>
+    <div id="status-bar" class="status-bar hidden" role="status" aria-label="What you are in"></div>
+    <div id="tx-tray" class="tx-tray hidden" aria-label="Transactions"></div>
 
     <main>
       <section id="lobby-screen" class="screen">
@@ -75,22 +77,13 @@
             <button id="leave-queue" class="ghost hidden">Leave queue</button>
           </div>
           <p id="queue-status" class="muted small" role="status">Connect a wallet to queue.</p>
+          <button id="notify-me" type="button" class="link small hidden">Notify me when a table is ready, even in another tab</button>
         </div>
 
         <div class="panel lobbies-panel">
           <div class="panel-head">
             <h2>Staked lobbies</h2>
             <button id="refresh-lobbies" class="ghost">Refresh</button>
-          </div>
-          <div id="discount-row" class="row hidden">
-            <input id="use-discount" type="checkbox" />
-            <label for="use-discount">Pay part of the fee in LMS</label>
-            <span id="discount-status" class="muted small"></span>
-          </div>
-          <div id="pay-with-row" class="row hidden">
-            <label for="pay-with">Pay with</label>
-            <select id="pay-with"></select>
-            <span class="muted small">Swapped to exactly the stake through Uniswap v4 as you join.</span>
           </div>
           <ul id="lobby-list" class="lobby-list"></ul>
           <div class="create-lobby">
@@ -115,7 +108,7 @@
 
         <div id="winnings-panel" class="panel">
           <div class="panel-head">
-            <h2>Winnings</h2>
+            <h2>Winnings <button type="button" class="tip" aria-label="After a match ends its result is proposed on-chain, and anyone may check it during the challenge window. Prizes unlock when the window closes." data-tip="After a match ends its result is proposed on-chain, and anyone may check it during the challenge window. Prizes unlock when the window closes.">?</button></h2>
             <span id="winnings" class="pill">–</span>
           </div>
           <p class="muted small">
@@ -138,6 +131,14 @@
             Every match this wallet has finished, practice included. Open one to replay its
             rounds, check the result in your browser again, or ask for an analysis.
           </p>
+          <div class="row history-tools">
+            <div id="history-filter" class="segmented" role="group" aria-label="Show">
+              <button type="button" data-filter="all" class="active" aria-pressed="true">All</button>
+              <button type="button" data-filter="staked" aria-pressed="false">Staked</button>
+              <button type="button" data-filter="practice" aria-pressed="false">Practice</button>
+            </div>
+            <span id="history-stats" class="muted small"></span>
+          </div>
           <ul id="history-list" class="lobby-list history-list">
             <li class="muted small">Connect a wallet to see your matches.</li>
           </ul>
@@ -161,7 +162,7 @@
 
         <div id="staking-panel" class="panel hidden">
           <div class="panel-head">
-            <h2>Stake LMS</h2>
+            <h2>Stake LMS <button type="button" class="tip" aria-label="sLMS is staked LMS: one sLMS for each LMS you stake. It carries your votes and earns a share of match fees in ETH. Unstaking waits out a cooldown." data-tip="sLMS is staked LMS: one sLMS for each LMS you stake. It carries your votes and earns a share of match fees in ETH. Unstaking waits out a cooldown.">?</button></h2>
             <span id="staking-rewards" class="pill">—</span>
           </div>
           <p class="muted small">
@@ -178,10 +179,12 @@
           </div>
           <div class="row">
             <span id="play-rewards" class="small"></span>
+            <button type="button" class="tip" aria-label="Play-mining: each week (an epoch) a fixed amount of LMS is shared among the players of matchmade staked matches, by the fees they paid." data-tip="Play-mining: each week (an epoch) a fixed amount of LMS is shared among the players of matchmade staked matches, by the fees they paid.">?</button>
             <button id="claim-play-rewards" class="primary hidden">Claim LMS</button>
           </div>
           <div class="row">
             <span id="vesting-status" class="small"></span>
+            <button type="button" class="tip" aria-label="Claimed play-mining LMS vests over six months: it unlocks bit by bit, and Release moves what has unlocked to your wallet." data-tip="Claimed play-mining LMS vests over six months: it unlocks bit by bit, and Release moves what has unlocked to your wallet.">?</button>
             <button id="release-vested" class="primary hidden">Release LMS</button>
           </div>
           <div class="row">
@@ -224,7 +227,7 @@
           <summary>Advanced: session key and one-click play</summary>
         <div class="panel">
           <div class="panel-head">
-            <h2>Session key</h2>
+            <h2>Session key <button type="button" class="tip" aria-label="A key this browser keeps for a day, granted by one wallet signature. It signs your logins and moves so you are not asked every round. It cannot spend." data-tip="A key this browser keeps for a day, granted by one wallet signature. It signs your logins and moves so you are not asked every round. It cannot spend.">?</button></h2>
             <span id="session-state" class="pill">off</span>
           </div>
           <p class="muted small">
@@ -241,7 +244,7 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>One-click play</h2>
+            <h2>One-click play <button type="button" class="tip" aria-label="Lets the session key join lobbies and collect winnings for you, within caps, with the server paying the gas. Your stake still comes from your wallet." data-tip="Lets the session key join lobbies and collect winnings for you, within caps, with the server paying the gas. Your stake still comes from your wallet.">?</button></h2>
             <span id="one-click-state" class="pill">off</span>
           </div>
           <p class="muted small">
@@ -354,6 +357,10 @@
             <label class="muted small check" title="The server learns your move when you lock it in, instead of at the reveal.">
               <input id="hold-moves" type="checkbox" />
               Reveal for me if I disconnect
+            </label>
+            <label class="muted small check" title="A soft tone when a round opens and when 10 seconds are left">
+              <input id="sound-cues" type="checkbox" />
+              Sound cues
             </label>
             <p id="move-status" class="muted small">Pick an action before the timer runs out.</p>
             <button id="move-rules" class="link small">How does a round play out?</button>
@@ -487,6 +494,23 @@
             announced result. Treat it as untrustworthy.
           </p>
         </section>
+      </div>
+    </dialog>
+
+    <dialog id="stake-intro" class="help-dialog" aria-labelledby="stake-intro-title">
+      <div class="help-head">
+        <h2 id="stake-intro-title">Before your first stake</h2>
+      </div>
+      <div class="help-scroll">
+        <div id="stake-intro-body" class="rules-grid"></div>
+        <label class="check small">
+          <input id="stake-intro-skip" type="checkbox" />
+          Don't show this again
+        </label>
+        <div class="row">
+          <button id="stake-intro-go" class="primary">Got it, stake</button>
+          <button id="stake-intro-cancel" class="ghost">Not now</button>
+        </div>
       </div>
     </dialog>
 

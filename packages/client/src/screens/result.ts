@@ -86,7 +86,7 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
   const escrow = app.escrow;
   if (!wallet || !escrow || wallet.chainId !== app.chainId) return;
   try {
-    await wallet.waitFor(message.tx);
+    await wallet.rpc.waitForTransactionReceipt({ hash: message.tx });
     // Proposed now: the prize line can say when it unlocks.
     if (app.match && lastRanking) void renderPrize(app.match, lastRanking);
     await checkChain(wallet, escrow, message.matchId);
@@ -179,7 +179,7 @@ async function disputeResult(): Promise<void> {
   download(`dispute-${bundle.matchId.slice(0, 10)}.json`, json);
   try {
     dom.resultDispute.disabled = true;
-    await wallet.waitFor(await wallet.dispute(escrow, bundle.matchId, hash));
+    await wallet.waitFor(await wallet.dispute(escrow, bundle.matchId, hash), 'Dispute result');
     dom.resultDispute.textContent = 'Disputed';
     toast('Disputed. The payout waits 48 hours more while the guardian looks. Send them the file you just saved.', 'success', { sticky: true });
   } catch (error) {

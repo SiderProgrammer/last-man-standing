@@ -12,6 +12,7 @@ import {
   type ProposalContext,
 } from '../ui/proposalBuilder.js';
 import { formatLms } from '../ui/staking.js';
+import { plainCall } from '../ui/governance.js';
 import * as governorCalls from '../wallet/governance.js';
 
 /**
@@ -166,7 +167,11 @@ function renderDraft(): void {
         draft.splice(index, 1);
         renderDraft();
       };
+      // What voters will read first.
+      const plain = plainCall(action.calldata, context?.params ?? null);
+      if (plain.text) item.append(element('div', 'proposal-plain', plain.text));
       item.append(code, ' ', remove);
+      for (const warning of plain.warnings) item.append(element('div', 'warn', warning));
       if (!described.recognised || action.value > 0n) {
         const warn = element(
           'div',
@@ -213,7 +218,7 @@ async function submit(): Promise<void> {
       draft,
       proposalDescription(dom.proposalTitle.value, dom.proposalBody.value),
     );
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, 'Propose');
     toast('Proposal created. Voting opens after the voting delay.', 'success');
     closeForm();
     onSubmitted();
@@ -222,6 +227,11 @@ async function submit(): Promise<void> {
     dom.proposalStatus.textContent = errorFirstLine(error);
     renderSubmitState();
   }
+}
+
+/** The config's parameters as the form last read them, for describing what a proposal changes. */
+export function currentParams(): ProposalContext['params'] {
+  return context?.params ?? null;
 }
 
 /**

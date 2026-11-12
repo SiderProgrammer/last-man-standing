@@ -27,6 +27,8 @@ import {
   onAnalysisStep,
 } from './screens/analysis.js';
 import { toast, wireChrome } from './ui/chrome.js';
+import { wireTxTray } from './ui/txTray.js';
+import { wireStatusBar } from './screens/statusBar.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
 import { httpOrigin } from './ui/staking.js';
@@ -71,6 +73,8 @@ export function start(): void {
   net.on(onServerMessage);
   net.connect();
   wireChrome();
+  wireTxTray();
+  wireStatusBar();
   wireWalletControls();
   wireOneClickControls();
   wireLobbyControls();

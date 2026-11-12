@@ -1,5 +1,5 @@
 import { formatEther, formatUnits } from 'viem';
-import { type PublicMatchState } from '@lms/consensus';
+import { sameAddress, type PublicMatchState } from '@lms/consensus';
 import {
   DEFAULT_ZAP_SLIPPAGE_BPS,
   MatchStatus,
@@ -50,6 +50,127 @@ export interface QueuePanel {
   joinDisabled: boolean;
   leaveVisible: boolean;
   status: string;
+}
+
+// ---------------------------------------------------------------- history
+
+/**
+ * What a staked match came to for this seat: the prize less the stake, as
+ * the escrow's terms work it out. A cancelled match refunded the stake: 0.
+ * Null while the result is not on-chain yet.
+ */
+export function netResult(payout: { stake: bigint; seatCount: number; feeBps: number; payoutBps: readonly number[]; status: number }, place: number): bigint | null {
+  if (payout.status === MatchStatus.Cancelled) return 0n;
+  if (payout.status !== MatchStatus.Proposed && payout.status !== MatchStatus.Settled) return null;
+  return prizeFor(payout, place - 1) - payout.stake;
+}
+
+/** "+0.00095 ETH", "−0.001 ETH", "±0 ETH". */
+export function formatNet(net: bigint): string {
+  if (net === 0n) return '±0 ETH';
+  return net > 0n ? `+${formatEth(net)} ETH` : `−${formatEth(-net)} ETH`;
+}
+
+/** The line over the history list: how many, how many won, the average place, and the week's money. */
+export function historyStats(
+  matches: ReadonlyArray<{ place: number; staked: boolean; finishedAt: number; matchId: string }>,
+  nets: ReadonlyMap<string, bigint | null>,
+  nowMs: number,
+): string {
+  if (matches.length === 0) return '';
+  const placed = matches.filter((match) => match.place >= 1);
+  const wins = placed.filter((match) => match.place === 1).length;
+  const average = placed.length > 0 ? placed.reduce((sum, match) => sum + match.place, 0) / placed.length : 0;
+  const parts = [
+    `${matches.length} match${matches.length === 1 ? '' : 'es'}`,
+    `${wins} won`,
+    ...(placed.length > 0 ? [`average place ${average.toFixed(1)}`] : []),
+  ];
+  const week = matches.filter((match) => match.staked && nowMs - match.finishedAt < 7 * 24 * 3_600_000);
+  const known = week.map((match) => nets.get(match.matchId.toLowerCase())).filter((net): net is bigint => typeof net === 'bigint');
+  if (known.length > 0) parts.push(`${formatNet(known.reduce((sum, net) => sum + net, 0n))} this week`);
+  return parts.join(' · ');
+}
+
+// ------------------------------------------------------------- status bar
+
+/** One thing the player is in, for the bar under the header. */
+export interface StatusItem {
+  kind: 'match' | 'seeding' | 'waiting' | 'ready' | 'refund' | 'transit' | 'queue';
+  text: string;
+  /** The button's label, or null for an item that needs nothing done. */
+  action: string | null;
+  /** The lobby or match it is about, for items that have one. */
+  matchId: `0x${string}` | null;
+}
+
+export interface StatusInput {
+  wallet: string | null;
+  lobbies: { open: readonly LobbyInfo[]; live: readonly LobbyInfo[] };
+  matched: ReadonlySet<string>;
+  inTransit: ReadonlySet<string>;
+  queue: QueueSpot | null;
+  queuedSince: number | null;
+  /** A running match this page is showing, or null. */
+  watching: `0x${string}` | null;
+  nowMs: number;
+}
+
+/**
+ * What the player is in right now, rebuilt from the directory and the queue
+ * on load and on every reconnect, so a reload does not lose any of it: a
+ * running match, a table waiting for a seed or for players, a table the
+ * queue set for them, a refund to take, a stake on its way, a queue place.
+ */
+export function statusItems(input: StatusInput): StatusItem[] {
+  const now = Math.floor(input.nowMs / 1000);
+  const items: StatusItem[] = [];
+  const seated = (lobby: LobbyInfo) => lobby.players.some((player) => sameAddress(player.address, input.wallet ?? undefined));
+  const eth = (lobby: Pick<LobbyInfo, 'stake'>) => `${formatEther(BigInt(lobby.stake))} ETH`;
+
+  for (const lobby of input.lobbies.live) {
+    if (!seated(lobby)) continue;
+    if (lobby.status === 'pending') {
+      items.push({ kind: 'seeding', text: `Your ${eth(lobby)} table is full and waiting for its random seed`, action: null, matchId: lobby.matchId });
+    } else if (lobby.matchId !== input.watching) {
+      items.push({ kind: 'match', text: `Your ${eth(lobby)} match is being played`, action: 'Rejoin', matchId: lobby.matchId });
+    }
+  }
+  for (const lobby of input.lobbies.open) {
+    const id = lobby.matchId.toLowerCase();
+    if (seated(lobby)) {
+      if (now >= lobby.cancellableAt) {
+        items.push({ kind: 'refund', text: `Your ${eth(lobby)} lobby can no longer start: your stake can be refunded`, action: 'Cancel & refund', matchId: lobby.matchId });
+      } else {
+        const left = lobby.joinDeadline - now;
+        items.push({
+          kind: 'waiting',
+          text: `Seated at ${eth(lobby)} · ${lobby.seatCount}/${lobby.maxSeats} seats${left > 0 ? ` · closes in ${formatDuration(left)}` : ''}`,
+          // A private lobby fills with the people its link reaches; a matchmade one, by itself.
+          action: lobby.matchmade ? null : 'Invite',
+          matchId: lobby.matchId,
+        });
+      }
+    } else if (input.inTransit.has(id)) {
+      items.push({ kind: 'transit', text: `Your ${eth(lobby)} stake is crossing chains`, action: null, matchId: lobby.matchId });
+    } else if (input.matched.has(id) && lobby.joinDeadline > now) {
+      items.push({
+        kind: 'ready',
+        text: `Table ready · stake ${eth(lobby)} · ${clock((lobby.joinDeadline - now) * 1000)} left`,
+        action: 'Stake',
+        matchId: lobby.matchId,
+      });
+    }
+  }
+  if (input.queue && input.queuedSince !== null) {
+    items.push({
+      kind: 'queue',
+      text: `Queued for ${input.queue.seats} seats at ${formatEther(BigInt(input.queue.stake))} ETH · ${clock(input.nowMs - input.queuedSince)}`,
+      action: 'Leave',
+      matchId: null,
+    });
+  }
+  return items;
 }
 
 /** Elapsed time as a clock, "0:42" or "12:05": for waits the player watches tick. */
@@ -498,7 +619,7 @@ export interface DiscountTerms {
  * be ticked at all. Null terms hide the option: the discount is off.
  */
 export function discountStatus(terms: DiscountTerms): { text: string; enabled: boolean } {
-  const rate = `${formatTokenAmount(terms.rate, 18, 0)} LMS buys 1 ETH off a fee, up to half of each fee`;
+  const rate = `Up to half of each fee, at ${formatTokenAmount(terms.rate, 18, 0)} LMS per ETH saved: the price shows on the Stake button`;
   if (terms.balance === 0n) return { text: `${rate} · you hold no LMS`, enabled: false };
   return { text: `${rate} · you hold ${formatTokenAmount(terms.balance, 18, 2)} LMS`, enabled: true };
 }
@@ -507,6 +628,11 @@ export function discountStatus(terms: DiscountTerms): { text: string; enabled: b
 export function discountJoinLabel(stakeWei: string, quote: { discount: bigint; lmsUsed: bigint }): string {
   const eth = formatEther(BigInt(stakeWei) - quote.discount);
   return `Pay ${eth} ETH + ${formatTokenAmount(quote.lmsUsed, 18, 2)} LMS`;
+}
+
+/** What a priced discount buys, in one line: "Pay 0.5 LMS to save 0.000025 ETH on this join." */
+export function discountSavingText(quote: { discount: bigint; lmsUsed: bigint }): string {
+  return `Pay ${formatTokenAmount(quote.lmsUsed, 18, 2)} LMS to save ${formatEth(quote.discount, 8)} ETH on this join.`;
 }
 
 export type CollectHomePlan = { ok: true; label: string; detail: string } | { ok: false; reason: string };

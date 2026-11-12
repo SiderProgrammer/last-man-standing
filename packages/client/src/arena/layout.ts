@@ -61,6 +61,30 @@ export function seatPosition(
   return { x: centre.x + Math.cos(angle) * radius, y: centre.y + Math.sin(angle) * radius };
 }
 
+/**
+ * Where a seat goes on the ring when the player sits at it: the ring turned
+ * so their own seat is at the bottom, nearest the move buttons, in every
+ * match. `yours` is the player's position in the seat list, or -1 for a
+ * spectator, who sees the table as it is, seat #0 at the top.
+ */
+export function ringSlot(position: number, yours: number, count: number): number {
+  if (yours < 0 || count === 0) return position;
+  return (position - yours + count / 2 + count) % count;
+}
+
+/** How wide a seat with its labels is, at full size. */
+const SEAT_SPAN = 120;
+
+/**
+ * How large to draw the seats so neighbours do not cover each other: eight
+ * on a phone-width ring shrink until their labels fit, never below 55%.
+ */
+export function seatScale(count: number, width: number, height: number): number {
+  if (count === 0) return 1;
+  const spacing = (2 * Math.PI * seatRingRadius(width, height, true)) / count;
+  return Math.min(1, Math.max(0.55, spacing / SEAT_SPAN));
+}
+
 export interface StormRing {
   centre: Point;
   radius: number;

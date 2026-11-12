@@ -145,7 +145,7 @@ export async function enableOneClick(): Promise<void> {
     dom.oneClickStatus.textContent = 'Delegating your account…';
     // The on-chain session ends with the key's grant: one key, one lifetime.
     const hash = await wallet.enableOneClick(sessionDelegate, grantKey.address, grantKey.grant.expiresAt, ONE_CLICK_CAPS);
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, 'Turn on one-click play');
     toast('One-click play is on.', 'success');
   } catch (error) {
     toast(errorFirstLine(error), 'error');
@@ -163,7 +163,7 @@ export async function disableOneClick(): Promise<void> {
   if (!wallet || !grantKey) return;
   try {
     dom.disableOneClick.disabled = true;
-    await wallet.waitFor(await wallet.revokeSession(grantKey.address));
+    await wallet.waitFor(await wallet.revokeSession(grantKey.address), 'Turn off one-click play');
     toast('One-click play is off.', 'success');
   } catch (error) {
     toast(errorFirstLine(error), 'error');

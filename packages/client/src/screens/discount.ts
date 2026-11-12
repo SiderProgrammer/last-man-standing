@@ -1,7 +1,7 @@
 import { errorFirstLine, type LobbyInfo } from '@lms/api';
 import { app, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
-import { discountJoinLabel } from '../ui/views.js';
+import { discountJoinLabel, discountSavingText } from '../ui/views.js';
 import * as discountCalls from '../wallet/discount.js';
 import { armQuote, idleDiscountButton, seated } from './lobby.js';
 
@@ -46,6 +46,10 @@ export async function quoteDiscountJoin(button: HTMLButtonElement, lobby: LobbyI
       () => idleDiscountButton(button, lobby),
       () => void payDiscountJoin(button, lobby, discount.token, quote),
     );
+    // What the LMS buys, said on the join it buys it for.
+    const saving = discountSavingText(quote);
+    button.title = saving;
+    toast(`${saving} Click the button again to pay.`, 'info');
   } catch (error) {
     toast(`Could not price the discount: ${errorFirstLine(error)}`, 'error');
     idleDiscountButton(button, lobby);
@@ -68,7 +72,7 @@ async function payDiscountJoin(
     button.textContent = 'Confirm the join…';
     const hash = await discountCalls.joinWithLms(wallet, escrow, token, lobby.matchId, BigInt(lobby.stake), quote);
     button.textContent = 'Joining…';
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, 'Stake with LMS discount');
     seated(lobby);
     void refreshDiscount();
   } catch (error) {

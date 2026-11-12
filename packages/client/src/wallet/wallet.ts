@@ -559,9 +559,39 @@ export class Wallet {
     });
   }
 
-  waitFor(hash: Hex): Promise<TransactionReceipt> {
-    return this.rpc.waitForTransactionReceipt({ hash });
+  /**
+   * Waits for a transaction to be mined, and throws if it reverted: a
+   * receipt is not a success. `label` names it in the transaction tray.
+   */
+  async waitFor(hash: Hex, label = 'Transaction'): Promise<TransactionReceipt> {
+    const chainId = this.current;
+    Wallet.onTransaction?.({ hash, chainId, label, status: 'sent' });
+    let receipt: TransactionReceipt;
+    try {
+      receipt = await this.rpc.waitForTransactionReceipt({ hash });
+    } catch (error) {
+      Wallet.onTransaction?.({ hash, chainId, label, status: 'failed', reason: 'never confirmed' });
+      throw error;
+    }
+    if (receipt.status !== 'success') {
+      Wallet.onTransaction?.({ hash, chainId, label, status: 'failed', reason: 'reverted on-chain' });
+      throw new Error(`${label} failed: the transaction reverted on-chain.`);
+    }
+    Wallet.onTransaction?.({ hash, chainId, label, status: 'confirmed' });
+    return receipt;
   }
+
+  /** Hears every transaction `waitFor` follows: the page's transaction tray. */
+  static onTransaction: ((event: TransactionEvent) => void) | null = null;
+}
+
+/** A transaction as the tray shows it. */
+export interface TransactionEvent {
+  hash: Hex;
+  chainId: number;
+  label: string;
+  status: 'sent' | 'confirmed' | 'failed';
+  reason?: string;
 }
 
 /** True when a wallet refused to switch because it does not know the chain (EIP-3326's 4902). */

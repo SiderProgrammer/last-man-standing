@@ -17,7 +17,7 @@ import { loadAssets, type FxTextures } from '../assets/loader.js';
 import { gsap } from '../motion.js';
 import { choreograph } from './choreography.js';
 import { Effects, prefersReducedMotion, softGlow } from './effects.js';
-import { HP_ARC_RADIUS, centreOf, seatPosition, stormRing, type Point } from './layout.js';
+import { HP_ARC_RADIUS, centreOf, ringSlot, seatPosition, seatScale, stormRing, type Point } from './layout.js';
 import { buildReplay, DEAD_FADE, type Replay, type SeatDisplay } from './replay.js';
 import { HALO_RADIUS, SeatToken, dashedRing } from './seat.js';
 import { Storm } from './storm.js';
@@ -85,6 +85,8 @@ export class Arena {
 
   private state: PublicMatchState | null = null;
   private you: number | null = null;
+  /** Every seat's size before the replay's own scaling: under 1 on a crowded, narrow ring. */
+  private seatBase = 1;
   private aim: Aim | null = null;
   /** Whether your aim is already sealed: it is then drawn quieter. */
   private aimSealed = false;
@@ -293,9 +295,15 @@ export class Arena {
 
     const state = this.state;
     const count = state?.players.length ?? 0;
+    // Your own seat at the bottom, nearest the move buttons, in every match.
+    const yours = state?.players.findIndex((player) => player.index === this.you) ?? -1;
+    // A crowded ring on a narrow screen shrinks its seats rather than stack them.
+    this.seatBase = seatScale(count, width, height);
     state?.players.forEach((player, position) => {
       const seat = this.seats.get(player.index);
-      if (seat) seat.home = seatPosition(position, count, width, height, true);
+      if (!seat) return;
+      seat.home = seatPosition(ringSlot(position, yours, count), count, width, height, true);
+      seat.compact = this.seatBase < 0.8;
     });
     this.paintFloor(centre, Math.max(width, height));
   }
@@ -352,7 +360,7 @@ export class Arena {
       // Scale, fade and offset are tweened on the replay's timeline; both ends
       // of every tween meet the static values, so nothing jumps when the
       // replay hands back to the snapshot.
-      seat.root.scale.set(shown?.scale ?? 1);
+      seat.root.scale.set((shown?.scale ?? 1) * this.seatBase);
       seat.root.alpha = shown ? shown.fade * shown.veil : alive ? 1 : DEAD_FADE;
       seat.root.position.set(seat.home.x + (shown?.dx ?? 0), seat.home.y + (shown?.dy ?? 0));
     }

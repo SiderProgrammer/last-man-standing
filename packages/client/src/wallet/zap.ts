@@ -69,10 +69,10 @@ export async function approveToken(wallet: Wallet, token: Address, spender: Addr
   } catch (error) {
     if ((await tokenAllowance(wallet, token, spender)) === 0n) throw error;
     const reset = await approve(0n);
-    await wallet.waitFor(await wallet.client.writeContract({ ...reset.request, chain }));
+    await wallet.waitFor(await wallet.client.writeContract({ ...reset.request, chain }), 'Reset token allowance');
     simulation = await approve(amount);
   }
-  await wallet.waitFor(await wallet.client.writeContract({ ...simulation.request, chain }));
+  await wallet.waitFor(await wallet.client.writeContract({ ...simulation.request, chain }), 'Approve token');
 }
 
 /** Swaps the route's first token for the stake and takes the seat, in one transaction. */

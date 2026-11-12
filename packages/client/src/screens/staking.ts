@@ -139,7 +139,7 @@ async function act(done: string, pending: Promise<`0x${string}` | null>): Promis
   try {
     const hash = await pending;
     if (hash && app.wallet) {
-      await app.wallet.waitFor(hash);
+      await app.wallet.waitFor(hash, 'Staking');
       toast(done, 'success');
       dom.stakingAmount.value = '';
     }

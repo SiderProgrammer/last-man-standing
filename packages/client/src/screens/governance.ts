@@ -5,7 +5,7 @@ import { toast } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
 import { proposalCard, type ProposalCard, type ProposalLive, type ProposalOffline } from '../ui/governance.js';
 import { switchToHub } from '../wallet/flows.js';
-import { knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
+import { currentParams, knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
 import * as governorCalls from '../wallet/governance.js';
 
 /**
@@ -95,7 +95,7 @@ export async function renderGovernance(): Promise<void> {
         offline = { now, reason: 'Could not read the vote from the chain; try again shortly.' };
       }
     }
-    cards.push(proposalCard(proposal, live, labels, offline));
+    cards.push(proposalCard(proposal, live, labels, offline, currentParams()));
   }
 
   dom.governanceStatus.textContent =
@@ -114,12 +114,14 @@ function cardElement(card: ProposalCard): HTMLLIElement {
   const head = element('div', 'panel-head');
   head.append(element('h3', '', card.title), element('span', `pill proposal-state ${card.state.tone}`, card.state.label));
   li.append(head, element('p', 'muted small', card.byline));
+  li.append(stepper(card));
   if (card.window) li.append(element('p', 'proposal-window', card.window));
-  li.append(element('p', 'muted small', card.timeline));
 
   const actions = element('ol', 'proposal-actions');
   for (const action of card.actions) {
     const item = element('li');
+    // The words first, the exact call under them for anyone checking.
+    if (action.plain) item.append(element('div', 'proposal-plain', action.plain));
     item.append(element('code', '', `${action.target}.${action.call}`));
     if (action.warning) item.append(element('div', 'warn', action.warning));
     actions.append(item);
@@ -171,6 +173,20 @@ function cardElement(card: ProposalCard): HTMLLIElement {
   return li;
 }
 
+/** The proposal's life as a row of steps, the current one lit, dates under them. */
+function stepper(card: ProposalCard): HTMLOListElement {
+  const list = element('ol', 'stepper');
+  list.setAttribute('aria-label', 'Proposal lifecycle');
+  for (const step of card.steps) {
+    const item = element('li', `step ${step.state}`);
+    if (step.state === 'current') item.setAttribute('aria-current', 'step');
+    item.append(element('span', 'step-label', step.label));
+    if (step.when) item.append(element('span', 'step-when', step.when));
+    list.append(item);
+  }
+  return list;
+}
+
 const SUPPORT: Record<string, VoteSupportValue> = {
   for: VoteSupport.For,
   against: VoteSupport.Against,
@@ -193,7 +209,7 @@ async function act(proposal: ProposalSummary, step: string, origin: HTMLButtonEl
         origin.closest('.proposal')?.querySelector<HTMLInputElement>('input[data-reason-for]')?.value ?? '';
       hash = await governorCalls.castVote(wallet, governor, proposal.id, SUPPORT[step]!, reason);
     }
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, step === 'queue' ? 'Queue proposal' : step === 'execute' ? 'Execute proposal' : 'Vote');
     toast(step === 'queue' ? 'Queued in the timelock.' : step === 'execute' ? 'Executed.' : 'Vote cast.', 'success');
   } catch (error) {
     console.error('[governance]', error);

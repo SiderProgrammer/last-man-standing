@@ -32,7 +32,7 @@ function usesBurner(devKey: string | undefined): devKey is string {
   return Boolean(devKey) && !(Wallet.available() && !playerParam());
 }
 
-async function connectWallet(): Promise<void> {
+export async function connectWallet(): Promise<void> {
   try {
     const devKey = import.meta.env.DEV ? devBurnerKey() : undefined;
     const wallet = usesBurner(devKey)
@@ -251,7 +251,7 @@ async function mintAvatar(): Promise<void> {
     dom.mintAvatar.disabled = true;
     dom.avatarStatus.textContent = 'Confirm in your wallet…';
     const hash = await wallet.mintAvatar(collection.address);
-    await wallet.waitFor(hash);
+    await wallet.waitFor(hash, 'Mint avatar');
     toast('Avatar minted. You will wear it in your next match.', 'success');
   } catch (error) {
     toast(errorFirstLine(error), 'error');

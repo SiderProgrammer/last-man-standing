@@ -171,7 +171,7 @@ export async function collectWinnings(): Promise<void> {
     if (!(canRelay() && (await collectByRelay()))) {
       dom.collectStatus.textContent = 'Confirm in your wallet…';
       const hash = await wallet.withdraw(escrow);
-      await wallet.waitFor(hash);
+      await wallet.waitFor(hash, 'Collect winnings');
     }
     toast('Winnings collected.', 'success');
     await renderWinnings();

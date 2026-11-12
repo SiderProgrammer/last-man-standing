@@ -7,7 +7,7 @@ const TERMS: DiscountTerms = { token: `0x${'1c'.repeat(20)}`, rate: 20_000n * E1
 describe('LMS fee discount', () => {
   it('states the rate and what the wallet holds', () => {
     expect(discountStatus(TERMS)).toEqual({
-      text: '20000 LMS buys 1 ETH off a fee, up to half of each fee · you hold 150 LMS',
+      text: 'Up to half of each fee, at 20000 LMS per ETH saved: the price shows on the Stake button · you hold 150 LMS',
       enabled: true,
     });
   });

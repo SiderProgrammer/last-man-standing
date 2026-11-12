@@ -2,7 +2,8 @@ import type { MatchSummary, ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { reviewOf } from '../game/review.js';
 import { element } from '../ui/dom.js';
-import { placeLabel, short } from '../ui/format.js';
+import { placeLabel } from '../ui/format.js';
+import { formatNet, historyStats, netResult } from '../ui/views.js';
 import { txLink } from '../ui/links.js';
 import { showReview } from './match.js';
 import { onSettled } from './result.js';
@@ -18,6 +19,17 @@ import { onSettled } from './result.js';
 /** Every page received since the last refresh, newest first. */
 let shown: MatchSummary[] = [];
 
+type Filter = 'all' | 'staked' | 'practice';
+let filter: Filter = 'all';
+
+/**
+ * What each staked match came to, prize less stake, by lowercased id: read
+ * from the escrow once and kept. Null while its result is not on-chain.
+ */
+const nets = new Map<string, bigint | null>();
+/** Ids being read now, so a redraw does not ask twice. */
+const reading = new Set<string>();
+
 export function wireHistoryControls(): void {
   dom.refreshHistory.onclick = () => requestHistory();
   dom.historyMore.onclick = () => {
@@ -26,6 +38,21 @@ export function wireHistoryControls(): void {
   };
   // A match just played is archived by the time its player is back in the lobby.
   dom.resultBack.addEventListener('click', () => requestHistory());
+  // Reaching the hub is what lets the money on each row be read.
+  store.subscribe(['wallet', 'walletChainId', 'escrow'], () => {
+    if (shown.length > 0) renderHistory();
+  });
+  dom.historyFilter.onclick = (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-filter]');
+    if (!button) return;
+    filter = button.dataset.filter as Filter;
+    for (const option of dom.historyFilter.querySelectorAll<HTMLButtonElement>('button')) {
+      const on = option === button;
+      option.classList.toggle('active', on);
+      option.setAttribute('aria-pressed', String(on));
+    }
+    renderHistory();
+  };
 }
 
 /** The newest page, or the page older than `before`. Queued until the socket is logged in. */
@@ -51,11 +78,45 @@ export function onReview(message: Extract<ServerMessage, { type: 'review' }>): v
 }
 
 function renderHistory(): void {
-  if (shown.length === 0) {
-    dom.historyList.replaceChildren(element('li', 'muted small', 'No finished matches yet. Play one above.'));
+  const list = shown.filter((match) => filter === 'all' || (filter === 'staked') === match.staked);
+  dom.historyStats.textContent = historyStats(list, nets, Date.now());
+  if (list.length === 0) {
+    const empty = shown.length === 0 ? 'No finished matches yet. Play one above.' : `No ${filter} matches among these.`;
+    dom.historyList.replaceChildren(element('li', 'muted small', empty));
     return;
   }
-  dom.historyList.replaceChildren(...shown.map(historyRow));
+  dom.historyList.replaceChildren(...list.map(historyRow));
+  readNets(list);
+}
+
+/**
+ * Reads what the staked matches on screen came to, from the escrow through
+ * the wallet's own node, and redraws once they are in. Only on the hub,
+ * where the escrow is.
+ */
+function readNets(list: readonly MatchSummary[]): void {
+  const { wallet, escrow } = app;
+  if (!wallet || !escrow || wallet.chainId !== app.chainId) return;
+  const wanted = list.filter((match) => {
+    const id = match.matchId.toLowerCase();
+    return match.staked && match.place >= 1 && !reading.has(id) && (!nets.has(id) || nets.get(id) === null);
+  });
+  if (wanted.length === 0) return;
+  for (const match of wanted) reading.add(match.matchId.toLowerCase());
+  void Promise.all(
+    wanted.map(async (match) => {
+      const id = match.matchId.toLowerCase();
+      try {
+        nets.set(id, netResult(await wallet.matchPayout(escrow, match.matchId), match.place));
+      } catch {
+        nets.set(id, null);
+      }
+    }),
+  ).then(() => {
+    for (const match of wanted) reading.delete(match.matchId.toLowerCase());
+    // Only redraw for what is now known, or this would read again forever.
+    if (wanted.some((match) => typeof nets.get(match.matchId.toLowerCase()) === 'bigint')) renderHistory();
+  });
 }
 
 function historyRow(match: MatchSummary): HTMLLIElement {
@@ -70,6 +131,10 @@ function historyRow(match: MatchSummary): HTMLLIElement {
 
   const label = element('span', 'history-label');
   label.append(place, detail);
+  const result = nets.get(match.matchId.toLowerCase());
+  if (match.staked && typeof result === 'bigint') {
+    place.append(' ', element('span', `history-net ${result > 0n ? 'gain' : result < 0n ? 'loss' : ''}`, formatNet(result)));
+  }
 
   const open = element('button', '', 'Open');
   open.onclick = () => net.send({ type: 'review', matchId: match.matchId });
