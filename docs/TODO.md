@@ -86,6 +86,15 @@ Features that have only run against mocks, or once by hand:
 - **Token joins cost two transactions the first time:** `approve`, then
   `joinWithToken`. Permit2, or EIP-2612 `permit` for USDC, would fold the approval into
   one signature. The slippage allowance is fixed at 0.5%, with no control for it.
+- **The queue after a closed tab: check in a normal browser.** In the 11 Nov playtest,
+  P2 was still queued 95 s after their only tab closed and was put on a table's roster.
+  The gateway drops a wallet from the queue when its last socket closes, and scripted
+  sockets were dropped correctly, so the in-app browser may be keeping closed tabs'
+  sockets open.
+- **The 12 Nov playtest fixes (`4df6056`) are not replayed on the fork.** They are
+  covered by unit tests only. Also never played there: one-click play, the LMS fee
+  discount and a successful LMS stake (all blocked by the fork's warped clock), a server
+  restart mid-match, and the analyst (no key on the server).
 
 ---
 
@@ -138,6 +147,10 @@ mainnet. Still open:
 - **No local test of `Deploy` with `SAFE` unset.** The suite shares process-wide env, so
   it always sets one; the case where the Safe is the deployer (the `dev:fork` setup) is
   covered only by an `assert` in `_distribute`.
+- **"Protocol fee per match" resends the whole `setParams` struct** (seats, join window,
+  stakes, treasury) as read when the proposal form was opened. If another proposal
+  changes one of those first, this one quietly sets it back. The form's help says so;
+  only per-field setters in `ProtocolConfig` would stop it.
 
 ### 3.3 Incidents and migration
 
@@ -224,6 +237,13 @@ These are open questions, not bugs:
   wallets with one owner queueing together in a quiet tier can still be matched with
   each other. Candidates still open: flagging seat pairs that never strike each other
   from the public history, and a payout schedule that pays a pact less.
+- **Idle players.** In a staked match one idle seat makes every round run the full 60 s,
+  with no penalty: 4 idle rounds in practice left the idle seat at 100 HP. A missed
+  timer means "no action" and a match ends after 30 rounds, so one idle seat can stretch
+  a staked match to about 30 minutes. Auto-guard, or drop a seat after N missed rounds?
+- **No way out of a lobby that does not fill.** Once staked, a player gets the stake
+  back only through `cancelMatch` after the join window (`GameEscrow.sol:824`). Should
+  players be able to leave an unfilled lobby?
 
 ---
 
