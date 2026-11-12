@@ -246,7 +246,22 @@ export type ServerMessage =
    * committing socket; the player keeps it as evidence.
    */
   | { type: 'receipt'; receipt: CommitReceipt; signature: `0x${string}` }
-  | { type: 'lobbies'; open: LobbyInfo[]; live: LobbyInfo[] }
+  | {
+      type: 'lobbies';
+      open: LobbyInfo[];
+      live: LobbyInfo[];
+      /**
+       * The hub's clock in unix seconds, from its latest block. Every lobby
+       * and governance deadline is the chain's, so pages count down by this
+       * rather than their own clock, which may be off, or on a fork, far off.
+       */
+      chainTime?: number;
+      /**
+       * Set while the guardian or governance has paused the escrow: no lobby
+       * opens or takes a seat, and the queue is closed. Collecting still works.
+       */
+      paused?: boolean;
+    }
   /**
    * The whole match, sent once when a client attaches. Everything after it is
    * a `delta`, and each finished round a `round`.
@@ -266,13 +281,19 @@ export type ServerMessage =
        * clock starts. Empty once it has: everyone came, or the wait ran out.
        */
       waitingFor: number[];
+      /**
+       * Milliseconds left of the hold while clients replay the last round,
+       * when one is running; `msRemaining` counts it too. A page that missed
+       * the `round` (it just attached) holds its controls and clock for it.
+       */
+      holdMs?: number;
     }
   /**
    * What changed since the last `state` or `delta`: everything that can,
    * without the seed, the rules or the history. Fold it in with `applyDelta`,
    * and each `round` with `withRound`. One object for the whole table.
    */
-  | { type: 'delta'; delta: MatchDelta; msRemaining: number; waitingFor: number[] }
+  | { type: 'delta'; delta: MatchDelta; msRemaining: number; waitingFor: number[]; holdMs?: number }
   | {
       type: 'round';
       record: RoundRecord;
@@ -360,6 +381,12 @@ export type ServerMessage =
    * within its join window to take the seat.
    */
   | { type: 'matched'; matchId: `0x${string}`; stake: string; seats: number }
+  /**
+   * The room this socket watched was closed before its match ended: a
+   * practice match replaced by one the same wallet started elsewhere, or one
+   * nobody had been watching for a while. Nothing more will come from it.
+   */
+  | { type: 'closed'; matchId: `0x${string}`; reason: string }
   | { type: 'error'; code: ErrorCode; message: string };
 
 /** One finished match in a player's history, as seen from their seat. */

@@ -137,3 +137,11 @@ describe('proposal text', () => {
     expect(proposalProblem('#1 priority', [action])).toBeNull();
   });
 });
+
+describe('resume play', () => {
+  it('is refused while play is not paused, since it would revert when executed', () => {
+    expect(buildAction('unpause', {}, { ...CONTEXT, paused: false })).toMatchObject({ ok: false });
+    expect(buildAction('unpause', {}, { ...CONTEXT, paused: true })).toMatchObject({ ok: true });
+    expect(buildAction('unpause', {}, CONTEXT)).toMatchObject({ ok: true });
+  });
+});

@@ -3,7 +3,7 @@ import { app, dom, net, store } from '../context.js';
 import { reviewOf } from '../game/review.js';
 import { element } from '../ui/dom.js';
 import { placeLabel } from '../ui/format.js';
-import { formatNet, historyStats, netResult } from '../ui/views.js';
+import { formatNet, historyStats, netResult, outcomeTag } from '../ui/views.js';
 import { txLink } from '../ui/links.js';
 import { showReview } from './match.js';
 import { onSettled } from './result.js';
@@ -27,6 +27,8 @@ let filter: Filter = 'all';
  * from the escrow once and kept. Null while its result is not on-chain.
  */
 const nets = new Map<string, bigint | null>();
+/** What happened to a staked match beyond its place: vetoed, disputed, cancelled. */
+const tags = new Map<string, string | null>();
 /** Ids being read now, so a redraw does not ask twice. */
 const reading = new Set<string>();
 
@@ -103,11 +105,16 @@ function readNets(list: readonly MatchSummary[]): void {
   });
   if (wanted.length === 0) return;
   for (const match of wanted) reading.add(match.matchId.toLowerCase());
+  let changed = false;
   void Promise.all(
     wanted.map(async (match) => {
       const id = match.matchId.toLowerCase();
       try {
-        nets.set(id, netResult(await wallet.matchPayout(escrow, match.matchId), match.place));
+        const payout = await wallet.matchPayout(escrow, match.matchId);
+        nets.set(id, netResult(payout, match.place));
+        const tag = outcomeTag(payout);
+        if ((tags.get(id) ?? null) !== tag) changed = true;
+        tags.set(id, tag);
       } catch {
         nets.set(id, null);
       }
@@ -115,7 +122,7 @@ function readNets(list: readonly MatchSummary[]): void {
   ).then(() => {
     for (const match of wanted) reading.delete(match.matchId.toLowerCase());
     // Only redraw for what is now known, or this would read again forever.
-    if (wanted.some((match) => typeof nets.get(match.matchId.toLowerCase()) === 'bigint')) renderHistory();
+    if (changed || wanted.some((match) => typeof nets.get(match.matchId.toLowerCase()) === 'bigint')) renderHistory();
   });
 }
 
@@ -135,6 +142,9 @@ function historyRow(match: MatchSummary): HTMLLIElement {
   if (match.staked && typeof result === 'bigint') {
     place.append(' ', element('span', `history-net ${result > 0n ? 'gain' : result < 0n ? 'loss' : ''}`, formatNet(result)));
   }
+  // A vetoed match refunded everyone: its place paid nothing.
+  const tag = tags.get(match.matchId.toLowerCase());
+  if (match.staked && tag) place.append(' ', element('span', 'pill lobby-tag', tag));
 
   const open = element('button', '', 'Open');
   open.onclick = () => net.send({ type: 'review', matchId: match.matchId });

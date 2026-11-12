@@ -16,6 +16,14 @@ const SPECTATOR: PhaseContext = {
 
 const SEATED: PhaseContext = { ...SPECTATOR, you: 0 };
 
+describe('the replay hold', () => {
+  it('names the round being replayed, as the round message gave it', () => {
+    expect(phasePlan(at(MatchPhase.Commit, 11), { ...SEATED, replaying: true }).label).toBe('Round 10 — replay');
+    // Whatever round the snapshot is on meanwhile.
+    expect(phasePlan(at(MatchPhase.Commit, 12), { ...SEATED, replaying: true, replayedRound: 10 }).label).toBe('Round 10 — replay');
+  });
+});
+
 describe('commit phase', () => {
   it('opens the actions for a seated player who has not committed', () => {
     expect(phasePlan(at(MatchPhase.Commit), SEATED)).toEqual({

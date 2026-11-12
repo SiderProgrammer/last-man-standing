@@ -1,5 +1,5 @@
 import { formatEther, parseEventLogs, type TransactionReceipt } from 'viem';
-import { sameAddress, type BotDifficulty } from '@lms/consensus';
+import { MatchPhase, sameAddress, type BotDifficulty } from '@lms/consensus';
 import {
   chainCss,
   chainInfo,
@@ -10,7 +10,6 @@ import {
   type BridgeQuote,
 } from '@lms/contracts';
 import {
-  errorFirstLine,
   errorMessage,
   type CrossChainEvent,
   type LobbyInfo,
@@ -19,7 +18,9 @@ import {
   type ZapToken,
 } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
-import { showMatchScreen, toast } from '../ui/chrome.js';
+import { currentScreen, showMatchScreen, showScreen, toast } from '../ui/chrome.js';
+import { showLobbyRow } from './statusBar.js';
+import { leaveMatch } from './match.js';
 import { callBack } from '../ui/alerts.js';
 import { element } from '../ui/dom.js';
 import { short } from '../ui/format.js';
@@ -49,6 +50,8 @@ import { connectWallet, signInToPractise } from '../wallet/flows.js';
 import { confirmFirstStake } from './help.js';
 import { formatDuration } from '../ui/staking.js';
 import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
+import { chainNow } from '../io/chainClock.js';
+import { explainError } from '../ui/errors.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
 
@@ -73,6 +76,9 @@ export function armQuote(button: HTMLButtonElement, label: string, expire: () =>
     pay();
   };
 }
+
+/** Why nothing can be staked while the escrow is paused. */
+const PAUSED_TEXT = 'Staked play is paused by the guardian or governance: no lobby can be opened or joined until it resumes. Collecting winnings still works.';
 
 /** A little over the chain bridge's poll interval: how stale the directory can be. */
 const DIRECTORY_LAG_MS = 5_000;
@@ -116,8 +122,8 @@ export function wireLobbyControls(): void {
   dom.stake.oninput = renderCreateForm;
   dom.seats.onchange = renderCreateForm;
 
-  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
-  store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking', 'terms', 'wallet'], renderLobbies);
+  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId', 'escrowPaused'], renderPayWith);
+  store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking', 'terms', 'wallet', 'escrowPaused'], renderLobbies);
   store.subscribe(['terms', 'matchmaking'], defaultStake);
   store.subscribe(['terms', 'escrow', 'wallet', 'walletChainId', 'spokes'], renderCreateForm);
   store.subscribe(['discount'], renderLobbies);
@@ -201,10 +207,12 @@ function renderCreateForm(): void {
  */
 export function renderPayWith(): void {
   const spoke = currentSpoke();
-  dom.createLobby.disabled = !app.escrow || spoke !== null;
-  dom.createLobby.title = spoke
-    ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
-    : '';
+  dom.createLobby.disabled = !app.escrow || spoke !== null || app.escrowPaused;
+  dom.createLobby.title = app.escrowPaused
+    ? PAUSED_TEXT
+    : spoke
+      ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
+      : '';
   renderCreateForm();
   renderLobbies();
 }
@@ -240,8 +248,10 @@ export function renderLobbies(): void {
       element(
         'li',
         'lobby-empty muted small',
-        !app.wallet
-          ? 'Connect a wallet to see the staked lobbies and take a seat.'
+        app.escrowPaused
+          ? PAUSED_TEXT
+          : !app.wallet
+          ? 'No staked lobbies right now. Connect a wallet to open one, or start a practice match.'
           : app.escrow
           ? app.matchmaking.length > 0
             ? 'No staked lobbies right now. Find a match, or open your own below.'
@@ -255,7 +265,7 @@ export function renderLobbies(): void {
   // Your own tables first, wherever they are; then what you can join; then
   // what is being played. Tables you cannot take a seat at (another queue's,
   // or past their window) fold away under "Other tables".
-  const nowSeconds = Math.floor(Date.now() / 1000);
+  const nowSeconds = chainNow();
   const yours = sortLobbies([...open, ...live].filter(isYours), () => false);
   const joinable: LobbyInfo[] = [];
   const others: LobbyInfo[] = [];
@@ -299,6 +309,8 @@ export function renderLobbies(): void {
       ),
     );
   }
+  // Paused, every stake would revert: said once, above everything.
+  if (app.escrowPaused) rows.unshift(element('li', 'lobby-empty warn-text small', PAUSED_TEXT));
   dom.lobbyList.replaceChildren(...rows);
 
   // An invite link lands here: show the lobby it names, once.
@@ -398,12 +410,7 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
     button.onclick = () => void cancelLobby(button, lobby);
   } else if (action === 'enter' || action === 'watch' || !joinable) {
     button.textContent = action === 'enter' ? 'Enter' : 'Watch';
-    button.onclick = () => {
-      // Opening it again undoes having left it.
-      if (app.leftMatch === lobby.matchId) store.set({ leftMatch: null });
-      net.send({ type: 'watch', matchId: lobby.matchId });
-      showMatchScreen();
-    };
+    button.onclick = () => openTable(lobby.matchId);
   } else if (action === 'closed') {
     disable(button, 'Closed', 'Its join window has closed.');
   } else if (action === 'matchmade') {
@@ -431,6 +438,42 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
   buttons.append(button);
   li.append(label, buttons);
   return li;
+}
+
+/**
+ * Opens a table's room. The match screen comes up when the server sends its
+ * state; a table still filling or waiting for its seed has no room yet, and
+ * the server says `waiting` instead, which `onWaiting` explains here rather
+ * than leave the player in an empty arena.
+ */
+function openTable(matchId: `0x${string}`): void {
+  // Opening it again undoes having left it.
+  if (app.leftMatch === matchId) store.set({ leftMatch: null });
+  // Already on screen, as a running match left for the lobby: straight back.
+  if (app.match?.matchId === matchId && app.match.phase !== MatchPhase.Finished) showMatchScreen();
+  entering = matchId.toLowerCase();
+  net.send({ type: 'watch', matchId });
+}
+
+/** The table the player last asked to open, until the server answers. */
+let entering: string | null = null;
+
+/**
+ * The server holds the watch for a table with no room yet. Says what it is
+ * waiting for; the match screen opens by itself once the room does.
+ */
+export function onWaiting(message: Extract<ServerMessage, { type: 'waiting' }>): void {
+  const id = message.matchId.toLowerCase();
+  if (entering !== id) return;
+  entering = null;
+  const lobby = [...app.lobbies.open, ...app.lobbies.live].find((entry) => entry.matchId.toLowerCase() === id);
+  const missing = lobby ? lobby.maxSeats - lobby.seatCount : 0;
+  toast(
+    lobby?.status === 'open' && missing > 0
+      ? `Waiting for ${missing} more player${missing === 1 ? '' : 's'}. The match opens here by itself once the table is full and seeded.`
+      : 'The table is full and waiting for its random seed. The match opens here by itself once it arrives.',
+    'info',
+  );
 }
 
 /** Copies a link that opens the lobby page on `matchId`. */
@@ -498,7 +541,7 @@ function countdownRing(lobby: LobbyInfo): SVGSVGElement {
   arc.setAttribute('transform', 'rotate(-90 8 8)');
   const title = document.createElementNS(SVG, 'title');
   svg.append(title, track, arc);
-  drawRing(svg, Math.floor(Date.now() / 1000));
+  drawRing(svg, chainNow());
   return svg;
 }
 
@@ -517,7 +560,7 @@ function drawRing(svg: SVGSVGElement, nowSeconds: number): void {
 
 /** Moves every countdown ring on the page along. */
 function tickCountdowns(): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = chainNow();
   for (const svg of document.querySelectorAll<SVGSVGElement>('svg.countdown-ring')) drawRing(svg, now);
 }
 
@@ -571,7 +614,7 @@ async function createLobby(): Promise<void> {
     if (app.wallet) opening.set(matchId.toLowerCase(), { ...lobby, seatCount: 1, players: [{ address: app.wallet.address, chainId: app.chainId }] });
     renderLobbies();
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     dom.createLobby.disabled = false;
     renderCreateForm();
@@ -612,25 +655,36 @@ async function joinLobby(lobby: LobbyInfo, done?: string): Promise<void> {
       }
     }
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
-    await wallet.waitFor(hash, 'Stake');
-    seated(lobby, done);
+    seated(lobby, done, seatTaken(await wallet.waitFor(hash, 'Stake')));
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   }
 }
 
 /** The queue put this wallet at a table: its lobby is now one it can stake into. */
 export function onMatched(message: Extract<ServerMessage, { type: 'matched' }>): void {
-  store.set({ matched: new Set([...app.matched, message.matchId.toLowerCase()]) });
+  const id = message.matchId.toLowerCase();
+  // Sent again on every login while the table waits: told once per page.
+  const known = app.matched.has(id);
+  store.set({ matched: new Set([...app.matched, id]) });
+  if (known) return;
   // Kept until dismissed: it is the one message that needs an answer, and a
-  // later toast must not bury it.
+  // later toast must not bury it. From a match (practice while queued), its
+  // button is the way to the row: the match screen has no lobby link.
   toast(
     `Matched: a ${message.seats}-seat table is ready. Stake in its row under "Yours" (${short(message.matchId)}) to take your seat.`,
     'success',
-    { sticky: true },
+    { sticky: true, action: { label: 'Go to the table', run: () => goToTable(message.matchId) } },
   );
   callBack('Table ready', `A ${message.seats}-seat table is waiting for your stake.`);
   refreshDirectorySoon();
+}
+
+/** To a table's row in the lobby, leaving whatever match is on screen. */
+function goToTable(matchId: string): void {
+  if (currentScreen() === 'match') leaveMatch();
+  else showScreen('lobby');
+  showLobbyRow(matchId);
 }
 
 /** Cancels a lobby the player sits in that can no longer start; the refund is then theirs to withdraw. */
@@ -645,13 +699,22 @@ async function cancelLobby(button: HTMLButtonElement, lobby: LobbyInfo): Promise
     void renderWinnings();
     net.send({ type: 'lobbies' });
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
     button.disabled = false;
     button.textContent = 'Cancel & refund';
   }
 }
 
-export function seated(lobby: LobbyInfo, done?: string): void {
+/**
+ * How many seats are taken once a join lands, from its receipt: the escrow's
+ * `PlayerJoined` names the seat it took, from 0. Null when it names none.
+ */
+export function seatTaken(receipt: TransactionReceipt): number | null {
+  const [event] = parseEventLogs({ abi: gameEscrowAbi, eventName: 'PlayerJoined', logs: receipt.logs });
+  return event ? Number(event.args.seat) + 1 : null;
+}
+
+export function seated(lobby: LobbyInfo, done?: string, seat: number | null = null): void {
   refreshDirectorySoon();
   // The server opens the room once the lobby locks and the oracle seeds it.
   // A lobby its bridge has not picked up yet (one just opened) would answer
@@ -659,12 +722,15 @@ export function seated(lobby: LobbyInfo, done?: string): void {
   const known = [...app.lobbies.open, ...app.lobbies.live].some((entry) => entry.matchId === lobby.matchId);
   if (known) net.send({ type: 'watch', matchId: lobby.matchId });
   else watchWhenListed.add(lobby.matchId.toLowerCase());
-  const filled = lobby.seatCount + 1 >= lobby.maxSeats;
+  // The receipt's seat number when there is one: the row may be a poll behind,
+  // and a stake that filled the table must not say it waits for more.
+  const taken = seat ?? lobby.seatCount + 1;
+  const filled = taken >= lobby.maxSeats;
   toast(
     done ??
       (filled
         ? 'Seat taken, and the table is full. The match opens as soon as its seed arrives.'
-        : `Seat taken. The match starts when the lobby fills: ${lobby.maxSeats - lobby.seatCount - 1} more to go.`),
+        : `Seat taken. The match starts when the lobby fills: ${lobby.maxSeats - taken} more to go.`),
     'success',
   );
 }
@@ -703,10 +769,11 @@ function idleStakeButton(button: HTMLButtonElement, lobby: LobbyInfo): void {
   button.classList.remove('primary');
   button.disabled = false;
   button.title = '';
-  // A guest holds nothing to stake: the button is the way to a wallet.
-  if (app.wallet?.isGuest) {
+  if (app.escrowPaused) return disable(button, 'Paused', PAUSED_TEXT);
+  // Logged out, or a guest, who holds nothing to stake: the button is the way to a wallet.
+  if (!app.wallet || app.wallet.isGuest) {
     button.textContent = 'Connect to stake';
-    button.title = 'Guests play practice only. Connect a wallet to stake.';
+    button.title = app.wallet ? 'Guests play practice only. Connect a wallet to stake.' : 'Connect a wallet to take a seat.';
     button.onclick = () => void connectWallet();
     return;
   }
@@ -798,6 +865,7 @@ function idleSpokeButton(button: HTMLButtonElement, lobby: LobbyInfo, spoke: Spo
   button.textContent = spokeStakeLabel(lobby.stake, spoke.chainId);
   button.classList.remove('primary');
   button.disabled = false;
+  if (app.escrowPaused) return disable(button, 'Paused', PAUSED_TEXT);
   button.title = `Staked on ${chainInfo(spoke.chainId).name}, carried to ${chainInfo(app.chainId).name} for the match.`;
   button.onclick = async () => {
     if (await confirmFirstStake()) void quoteSpokeJoin(button, lobby, spoke);
@@ -865,7 +933,7 @@ async function paySpokeJoin(
         'relayer fills it, usually within a minute; you will be told when it is seated.',
     );
   } catch (error) {
-    toast(spokeQuoteError(errorFirstLine(error), spoke.chainId), 'error');
+    toast(spokeQuoteError(explainError(error), spoke.chainId), 'error');
     idleSpokeButton(button, lobby, spoke);
   }
 }

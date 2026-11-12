@@ -1,6 +1,6 @@
 import { formatEther, parseEther } from 'viem';
 import { MatchStatus, chainInfo } from '@lms/contracts';
-import { errorFirstLine, type ServerMessage, type SpokeInfo } from '@lms/api';
+import { type ServerMessage, type SpokeInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { showScreen, toast } from '../ui/chrome.js';
 import { formatDuration } from '../ui/staking.js';
@@ -14,6 +14,7 @@ import {
   type PendingPrize,
 } from '../ui/views.js';
 import { RelayError, canRelay, relayCollect } from './oneClick.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * Collecting winnings.
@@ -50,7 +51,8 @@ export async function renderWinnings(): Promise<void> {
     if (draw !== winningsDraw) return;
     dom.winnings.textContent = pill;
     dom.collect.disabled = !open;
-    dom.resultCollect.classList.toggle('hidden', !open);
+    // A spectator's result panel is not about their money.
+    dom.resultCollect.classList.toggle('hidden', !open || app.you === null);
     dom.collectStatus.textContent = status;
     for (const button of buttons) {
       button.textContent = label;
@@ -78,7 +80,7 @@ export async function renderWinnings(): Promise<void> {
     try {
       balance = await requestBalance();
     } catch (error) {
-      return disable(`Could not read your balance on ${hub}: ${errorFirstLine(error)}`);
+      return disable(`Could not read your balance on ${hub}: ${explainError(error)}`);
     }
     const amount = BigInt(balance.amount);
     const plan = collectHomePlan(amount, BigInt(balance.minimum), amount, spoke.chainId, app.chainId);
@@ -97,7 +99,7 @@ export async function renderWinnings(): Promise<void> {
   try {
     owed = await wallet.withdrawableEth(escrow);
   } catch (error) {
-    return disable(`Could not read the escrow: ${errorFirstLine(error)}`);
+    return disable(`Could not read the escrow: ${explainError(error)}`);
   }
   void renderPending(draw);
 
@@ -177,7 +179,7 @@ export async function collectWinnings(): Promise<void> {
     toast('Winnings collected.', 'success');
     await renderWinnings();
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
     await renderWinnings();
   } finally {
     dom.resultCollect.disabled = false;

@@ -214,13 +214,15 @@ export class Effects {
       banner.position.set(centre.x, centre.y);
       banner.alpha = 0;
       this.layer.addChild(banner);
+      // Its usual size, or smaller on a narrow canvas, so a phone shows it whole.
+      const fit = Math.min(0.62, (this.options.app.screen.width * 0.9) / Math.max(1, banner.width));
       gsap.to(banner, { alpha: 1, duration: 0.4 });
       gsap.fromTo(
         banner.scale,
-        { x: this.reduced ? 0.62 : 1, y: this.reduced ? 0.62 : 1 },
+        { x: this.reduced ? fit : fit / 0.62, y: this.reduced ? fit : fit / 0.62 },
         {
-          x: 0.62,
-          y: 0.62,
+          x: fit,
+          y: fit,
           duration: 0.5,
           ease: 'back.out(2)',
         },

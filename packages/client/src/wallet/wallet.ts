@@ -22,6 +22,7 @@ import { DEV_RPC_URL } from '../csp.js';
 import { WrongChainError, viemChain } from './chains.js';
 import { ZERO_ADDRESS, grantTypedData, type SessionGrant } from '@lms/consensus';
 import {
+  MatchStatus,
   isDelegatedTo,
   gameEscrowAbi,
   playerAvatarsAbi,
@@ -60,6 +61,10 @@ export interface MatchPayout {
   /** Deadline of the current phase: the challenge window's while a result is proposed. */
   deadline: number;
   chainTime: number;
+  /** A seat disputed the proposed result and the guardian has not dismissed it. */
+  disputed: boolean;
+  /** Cancelled after a result was proposed: the guardian or governance vetoed it. */
+  vetoed: boolean;
 }
 
 /** What `Wallet.spokeRoute` reads from a `SpokeRouter`. */
@@ -406,6 +411,10 @@ export class Wallet {
       status: info.status,
       deadline: info.deadline,
       chainTime: Number(block.timestamp),
+      disputed: info.disputed,
+      // A refund leaves the proposed ranking's hash in place: only a vetoed
+      // result was cancelled with one.
+      vetoed: info.status === MatchStatus.Cancelled && !/^0x0*$/.test(info.rankingHash),
     };
   }
 

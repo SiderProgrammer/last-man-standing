@@ -58,6 +58,12 @@ export class Matchmaker {
   private readonly opening = new Set<string>();
   /** Of those, the ones that asked to leave meanwhile. */
   private readonly left = new Set<string>();
+  /**
+   * Tables opened, newest last, kept for `TABLE_MEMORY_MS`: a player who
+   * reloads, opens a second tab or reconnects is told again which table is
+   * theirs, since the page keeps it only in memory.
+   */
+  private readonly tables: Array<{ matchId: `0x${string}`; stake: string; seats: number; roster: Set<string>; at: number }> = [];
 
   constructor(private readonly options: MatchmakerOptions) {
     this.queues = options.tiers.map(() => []);
@@ -93,6 +99,23 @@ export class Matchmaker {
     return true;
   }
 
+  /** Where `player` is queued, with how many are in that tier now; null when it is not. */
+  spotOf(player: Address): { stake: string; seats: number; waiting: number } | null {
+    const tier = this.tierOf.get(addressKey(player));
+    if (tier === undefined) return null;
+    const { stake, seats } = this.options.tiers[tier] as MatchmakingTier;
+    return { stake, seats, waiting: this.queues[tier]?.length ?? 0 };
+  }
+
+  /** The tables this matchmaker put `player` at recently, newest first, as `matched` announced them. */
+  tablesOf(player: Address, now = this.now()): Array<{ matchId: `0x${string}`; stake: string; seats: number }> {
+    const key = addressKey(player);
+    return this.tables
+      .filter((table) => table.roster.has(key) && now - table.at < TABLE_MEMORY_MS)
+      .reverse()
+      .map(({ matchId, stake, seats }) => ({ matchId, stake, seats }));
+  }
+
   /** Wallets queued in a tier now. */
   waiting(stake: string, seats: number): number {
     const tier = this.tierFor(stake, seats);
@@ -126,8 +149,12 @@ export class Matchmaker {
     }
   }
 
-  private async open(tier: number, stake: bigint, seats: number, table: Waiting[]): Promise<void> {
+  private async open(tier: number, stake: bigint, tierSeats: number, table: Waiting[]): Promise<void> {
     const roster = table.map((entry) => entry.player);
+    // A short table has as many seats as players: the escrow locks a lobby
+    // once it is full or its window is over, and seats only its roster can
+    // take would hold everyone for the whole window.
+    const seats = Math.min(tierSeats, roster.length);
     let matchId: `0x${string}`;
     try {
       matchId = await this.options.port.create(stake, seats, roster);
@@ -146,6 +173,9 @@ export class Matchmaker {
       }
     }
     console.log(`[matchmaker] opened ${matchId} for ${roster.length} players`);
+    const now = this.now();
+    while (this.tables.length > 0 && now - (this.tables[0]?.at ?? now) >= TABLE_MEMORY_MS) this.tables.shift();
+    this.tables.push({ matchId, stake: stake.toString(), seats, roster: new Set(roster.map(addressKey)), at: now });
     const message = { type: 'matched', matchId, stake: stake.toString(), seats } as const;
     for (const player of roster) this.options.notify(player, message);
     this.tell(this.queues[tier] as Waiting[], tier);
@@ -167,6 +197,9 @@ export class Matchmaker {
     return this.options.now?.() ?? Date.now();
   }
 }
+
+/** How long a table is remembered for its roster: longer than any join window and lock grace. */
+const TABLE_MEMORY_MS = 2 * 3_600_000;
 
 /**
  * The tiers `MATCHMAKING_TIERS` names, as JSON:

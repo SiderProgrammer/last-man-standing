@@ -2,14 +2,16 @@ import { MatchPhase } from '@lms/consensus';
 import { DEFAULT_SERVER_PORT, type ServerMessage } from '@lms/api';
 import { app, dom, initContext, net, store } from './context.js';
 import { Net } from './io/net.js';
+import { syncChainClock } from './io/chainClock.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
-import { onCrossChain, onLobbies, onMatched, wireLobbyControls } from './screens/lobby.js';
+import { onCrossChain, onLobbies, onMatched, onWaiting, wireLobbyControls } from './screens/lobby.js';
 import { onDequeued, onQueued, wireQueueControls } from './screens/queue.js';
 import { refreshStaking, wireStakingPanel } from './screens/stakingPanel.js';
 import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
   onAvatars,
   onDossier,
+  onRoomClosed,
   onFinished,
   onReceipt,
   onRound,
@@ -121,15 +123,24 @@ const HANDLERS: Handlers = {
       net.send({ type: 'watch', matchId: app.match.matchId });
     }
   },
-  lobbies: (message) => onLobbies(message.open, message.live),
-  state: (message) => onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor),
+  lobbies: (message) => {
+    if (message.chainTime !== undefined) syncChainClock(message.chainTime);
+    if (app.escrowPaused !== (message.paused === true)) store.set({ escrowPaused: message.paused === true });
+    onLobbies(message.open, message.live);
+  },
+  state: (message) => onState(message.state, message.you, Date.now() + message.msRemaining, message.waitingFor, message.holdMs),
   delta: onDelta,
   // A match this wallet sits in has its room now: go to the table.
+  // Also on login, for a match still running from before a reload. Not one
+  // the player chose to leave for the lobby.
   live: (message) => {
-    if (app.match?.matchId !== message.matchId) net.send({ type: 'watch', matchId: message.matchId });
+    if (app.match?.matchId !== message.matchId && app.leftMatch !== message.matchId) {
+      net.send({ type: 'watch', matchId: message.matchId });
+    }
   },
+  closed: onRoomClosed,
   // The watch is held until the room opens; `state` follows then.
-  waiting: () => undefined,
+  waiting: onWaiting,
   avatars: onAvatars,
   dossier: onDossier,
   round: onRound,
@@ -186,6 +197,8 @@ function onHello(message: Extract<ServerMessage, { type: 'hello' }>): void {
     queue: null,
     queuedSince: null,
   });
+  // Public: a visitor sees the lobbies before connecting anything.
+  net.send({ type: 'lobbies' });
   // The tab was reloaded with a live grant in this browser: log straight back in.
   void resumeSession();
 }

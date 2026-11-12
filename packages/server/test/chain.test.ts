@@ -295,6 +295,26 @@ describe('chain bridge locking', () => {
     expect(reader.locked).toEqual([]);
   });
 
+  it("measures the join window by the chain's clock, not this machine's", async () => {
+    // The machine says 1,000 s; the chain, moved weeks ahead as on a fork, says 2,000,000.
+    const reader = Object.assign(new FakeEscrow(), { blockTime: async () => 2_000_000 });
+    openLobby(reader, { seatCount: 4, maxSeats: 8, minSeats: 4, joinDeadline: 1_999_800n });
+    const { bridge } = bridgeOver(reader, () => 1_000_000);
+    await bridge.poll();
+
+    expect(reader.locked).toEqual([id]);
+    expect(bridge.chainTime()).toBe(2_000_000);
+  });
+
+  it('says whether the escrow is paused', async () => {
+    const reader = Object.assign(new FakeEscrow(), { paused: async () => true });
+    const { bridge } = bridgeOver(reader);
+    expect(bridge.paused()).toBe(false);
+    await bridge.poll();
+    expect(bridge.paused()).toBe(true);
+    expect(bridgeOver(new FakeEscrow()).bridge.chainTime()).toBeNull();
+  });
+
   it('keeps going when the lock loses a race', async () => {
     const reader = new FakeEscrow();
     reader.lockSucceeds = false;

@@ -1,5 +1,5 @@
 import { chainInfo } from '@lms/contracts';
-import { errorFirstLine, type AvatarCollectionInfo, type ServerMessage } from '@lms/api';
+import { type AvatarCollectionInfo, type ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { showScreen, toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
@@ -10,6 +10,7 @@ import { readRaw, writeRaw } from '../io/storage.js';
 import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * Everything the player does with their wallet: connecting, logging in with
@@ -24,7 +25,7 @@ export function wireWalletControls(): void {
   dom.guestPlay.onclick = () => void playAsGuest();
   dom.accountConnect.onclick = () => void connectWallet().then(() => showScreen('lobby'));
   dom.mintAvatar.onclick = () => void mintAvatar();
-  dom.forgetSession.onclick = forgetGrant;
+  dom.forgetSession.onclick = () => void forgetGrant();
 
   store.subscribe(['chainId', 'wallet', 'walletChainId', 'escrow', 'spokes'], renderHubLabel);
   store.subscribe(['wallet', 'grantKey'], renderSessionPanel);
@@ -48,7 +49,7 @@ export async function connectWallet(): Promise<void> {
     await useWallet(wallet);
   } catch (error) {
     console.error('[wallet]', error);
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   }
 }
 
@@ -133,14 +134,15 @@ export async function playAsGuest(announce = true): Promise<void> {
     if (announce) toast('Playing as a guest. Connect a wallet any time to play for stakes.', 'info');
   } catch (error) {
     console.error('[guest]', error);
-    toast(`Could not start as a guest: ${errorFirstLine(error)}`, 'error');
+    toast(`Could not start as a guest: ${explainError(error)}`, 'error');
   }
 }
 
 function renderAccountAddress(): void {
   const wallet = app.wallet;
   dom.accountGuest.classList.toggle('hidden', !wallet?.isGuest);
-  dom.guestPlay.classList.toggle('hidden', Boolean(wallet));
+  // The whole line, not just its button: "No wallet? :" alone reads as a glitch.
+  (dom.guestPlay.parentElement ?? dom.guestPlay).classList.toggle('hidden', Boolean(wallet));
   if (wallet?.isGuest) {
     dom.accountAddress.textContent = `Guest ${wallet.address.slice(0, 6)}… · practice only`;
     return;
@@ -199,7 +201,7 @@ export async function authenticate(): Promise<void> {
     net.send({ type: 'auth', address: wallet.address, signature, grant: key.signed });
   } catch (error) {
     console.error('[auth]', error);
-    toast(`Login signature failed: ${errorFirstLine(error)}`, 'error');
+    toast(`Login signature failed: ${explainError(error)}`, 'error');
   }
 }
 
@@ -250,7 +252,7 @@ export async function switchToHub(): Promise<void> {
   try {
     await wallet.onHub();
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   }
   // Also after a refusal: the wallet may have moved anyway, or not at all.
   store.set({ walletChainId: wallet.chainId });
@@ -284,7 +286,7 @@ export async function renderAvatarPanel(): Promise<void> {
     } catch (error) {
       // Almost always a wallet pointed at a chain the collection is not on.
       dom.mintAvatar.disabled = true;
-      dom.avatarStatus.textContent = `Could not read the collection: ${errorFirstLine(error)}`;
+      dom.avatarStatus.textContent = `Could not read the collection: ${explainError(error)}`;
       return;
     }
   }
@@ -336,7 +338,7 @@ async function mintAvatar(): Promise<void> {
     await wallet.waitFor(hash, 'Mint avatar');
     toast('Avatar minted. You will wear it in your next match.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     await renderAvatarPanel();
   }
@@ -368,9 +370,14 @@ export function renderSessionPanel(): void {
  * Drops the key from this browser. The grant itself cannot be revoked, only
  * outlived: a copy of the key elsewhere stays usable until it expires.
  */
-function forgetGrant(): void {
+async function forgetGrant(): Promise<void> {
   const wallet = app.wallet;
-  if (wallet) void GrantedKey.forget(wallet.address, app.chainId);
+  if (wallet) await GrantedKey.forget(wallet.address, app.chainId);
   store.set({ grantKey: null });
-  toast('Session key forgotten. Your next login asks your wallet for a new one.');
+  toast('Session key forgotten. Your wallet is asked for a new one now.');
+  // The socket was logged in under the old key, and nothing could sign a
+  // move from here: log it out, and back in under a new grant, which asks
+  // the wallet once. A seat in a running match is re-attached on login.
+  net.close();
+  net.connect();
 }

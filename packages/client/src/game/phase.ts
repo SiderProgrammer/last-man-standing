@@ -32,6 +32,11 @@ export interface PhaseContext {
    * commit clock for exactly this long, so nobody loses decision time to it.
    */
   replaying?: boolean;
+  /**
+   * The round the replay is of, from the `round` message that started it.
+   * The snapshot's own round can be either side of it while the hold runs.
+   */
+  replayedRound?: number | null;
 }
 
 /**
@@ -50,7 +55,7 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
 
   // The replay is of the round that just resolved; the snapshot has already
   // moved on to the next one, whose commit window the replay holds closed.
-  const replayed = Math.max(1, state.round - 1);
+  const replayed = context.replayedRound ?? Math.max(1, state.round - 1);
 
   if (eliminated && (state.phase === MatchPhase.Commit || state.phase === MatchPhase.Reveal)) {
     const replaying = context.replaying && state.phase === MatchPhase.Commit;

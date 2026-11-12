@@ -113,7 +113,10 @@ export interface StatusInput {
   queuedSince: number | null;
   /** A running match this page is showing, or null. */
   watching: `0x${string}` | null;
+  /** This browser's clock, which `queuedSince` was taken by. */
   nowMs: number;
+  /** The chain's clock, which lobby deadlines are counted by; the browser's when omitted. */
+  chainNowMs?: number;
 }
 
 /**
@@ -123,14 +126,17 @@ export interface StatusInput {
  * queue set for them, a refund to take, a stake on its way, a queue place.
  */
 export function statusItems(input: StatusInput): StatusItem[] {
-  const now = Math.floor(input.nowMs / 1000);
+  const now = Math.floor((input.chainNowMs ?? input.nowMs) / 1000);
   const items: StatusItem[] = [];
   const seated = (lobby: LobbyInfo) => lobby.players.some((player) => sameAddress(player.address, input.wallet ?? undefined));
   const eth = (lobby: Pick<LobbyInfo, 'stake'>) => `${formatEther(BigInt(lobby.stake))} ETH`;
 
   for (const lobby of input.lobbies.live) {
     if (!seated(lobby)) continue;
-    if (lobby.status === 'pending') {
+    // A seed that never came, or a result never sent in time: only a refund is left.
+    if (now >= lobby.cancellableAt) {
+      items.push({ kind: 'refund', text: `Your ${eth(lobby)} table can no longer be played: your stake can be refunded`, action: 'Cancel & refund', matchId: lobby.matchId });
+    } else if (lobby.status === 'pending') {
       items.push({ kind: 'seeding', text: `Your ${eth(lobby)} table is full and waiting for its random seed`, action: null, matchId: lobby.matchId });
     } else if (lobby.matchId !== input.watching) {
       items.push({ kind: 'match', text: `Your ${eth(lobby)} match is being played`, action: 'Rejoin', matchId: lobby.matchId });
@@ -446,15 +452,22 @@ export function prizeFor(
  */
 export function prizeLine(
   prize: bigint,
-  match: { status: number; deadline: number; chainTime: number },
+  match: OnChainOutcome,
   formatWait: (seconds: number) => string,
+  /** What the escrow holds for this wallet now, when known: zero means the prize was collected. */
+  owed: bigint | null = null,
 ): string | null {
   if (prize === 0n) return null;
   const won = `You won ${formatEther(prize)} ETH`;
   switch (match.status) {
     case MatchStatus.Settled:
-      return `${won}. It is in your balance: collect it below or from the lobby.`;
+      return owed === 0n
+        ? `${won}. It was paid out and you have collected it.`
+        : `${won}. It is in your balance: collect it below or from the lobby.`;
     case MatchStatus.Proposed:
+      if (match.disputed) {
+        return `${won}, but the result is disputed. If the guardian lets it stand, it is collectable in ${formatWait(Math.max(0, match.deadline - match.chainTime))}; if they veto it, every stake is refunded instead.`;
+      }
       return match.chainTime >= match.deadline
         ? `${won}. The challenge window is over: it is yours to collect as soon as the result is finalised.`
         : `${won}. Collectable once the challenge window closes, in ${formatWait(match.deadline - match.chainTime)}.`;
@@ -463,6 +476,48 @@ export function prizeLine(
     default:
       return `${won}. Collectable once the result is settled on-chain and its challenge window closes.`;
   }
+}
+
+/** Where a staked match's result stands on-chain, as `Wallet.matchPayout` reads it. */
+export interface OnChainOutcome {
+  status: number;
+  deadline: number;
+  chainTime: number;
+  /** A seat disputed the proposed result and the guardian has not dismissed it. */
+  disputed?: boolean;
+  /** Cancelled because its proposed result was vetoed, not for a missed deadline. */
+  vetoed?: boolean;
+}
+
+/**
+ * The result panel's line about the chain: proposed, disputed, settled,
+ * vetoed or cancelled. Follows the escrow, not the moment the result was
+ * sent, so a match reopened from the history says where it stands now.
+ */
+export function settleText(match: OnChainOutcome, formatWait: (seconds: number) => string): string {
+  const left = Math.max(0, match.deadline - match.chainTime);
+  switch (match.status) {
+    case MatchStatus.Proposed:
+      if (match.disputed) return `Disputed: the guardian is reviewing the result. It pays out in ${formatWait(left)} unless they veto it`;
+      return left > 0
+        ? `Proposed on-chain: winnings unlock once the challenge window closes, in ${formatWait(left)}`
+        : 'Proposed on-chain: the challenge window is over, and the result pays out once it is finalised';
+    case MatchStatus.Settled:
+      return 'Settled on-chain: prizes are paid into the winners’ balances';
+    case MatchStatus.Cancelled:
+      return match.vetoed
+        ? 'Vetoed: the result was thrown out and every stake refunded'
+        : 'Cancelled on-chain: every stake refunded';
+    default:
+      return 'Sent on-chain, not proposed yet';
+  }
+}
+
+/** A short tag for a staked match in the history: what happened to it beyond its place. */
+export function outcomeTag(match: Pick<OnChainOutcome, 'status' | 'disputed' | 'vetoed'>): string | null {
+  if (match.status === MatchStatus.Cancelled) return match.vetoed ? 'vetoed · refunded' : 'cancelled · refunded';
+  if (match.status === MatchStatus.Proposed && match.disputed) return 'disputed';
+  return null;
 }
 
 // ------------------------------------------------------------ money clarity

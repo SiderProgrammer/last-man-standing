@@ -25,6 +25,10 @@ import {
 } from '@lms/api';
 import type { Link } from './link.js';
 
+/** How often, and how many times, a bot asks again for a staked table the server does not know yet: two minutes in all. */
+const WATCH_RETRY_MS = 5_000;
+const WATCH_RETRIES = 24;
+
 /**
  * A headless player that speaks the real wire protocol.
  *
@@ -150,6 +154,8 @@ export class BotClient {
   /** The match as the last `state`, every `delta` and every `round` since have it. */
   private state: PublicMatchState | null = null;
   private you: number | null = null;
+  /** Times the watch of a table the server did not know yet has been asked again. */
+  private watchRetries = 0;
   /** Round a commit is already scheduled for, so repeated `state` frames do not stack timers. */
   private thinkingFor: string | null = null;
   private readonly options: Required<Omit<BotClientOptions, 'onEvent' | 'reconnect' | 'table' | 'signer' | 'queue' | 'onMatched'>> &
@@ -270,9 +276,11 @@ export class BotClient {
         return;
       }
       case 'waiting':
+        this.watchRetries = 0;
         this.emit({ type: 'waiting', matchId: message.matchId });
         return;
       case 'state':
+        this.watchRetries = 0;
         this.state = message.state;
         this.you = message.you;
         this.onState(message.state, message.you);
@@ -300,12 +308,38 @@ export class BotClient {
         return;
       case 'error':
         this.emit({ type: 'error', message: message.message });
-        // A match lost to a server restart can never be re-joined: move on.
-        if (/unknown match|cancelled after a server restart/.test(message.message)) this.abandonMatch();
+        // A match that will not be played, as after a server restart: move on.
+        if (message.code === 'MATCH_ABANDONED') this.abandonMatch();
+        // Unknown: a staked table the server's bridge has not picked up yet
+        // (the queue's, just opened) is asked for again before giving up.
+        else if (message.code === 'NOT_FOUND' && /unknown match/.test(message.message)) this.retryWatch();
+        return;
+      case 'closed':
+        // A practice room closed under it: on to the next game.
+        if (message.matchId === this.matchId) this.abandonMatch();
         return;
       default:
         return;
     }
+  }
+
+  /**
+   * Asks to watch the bot's staked table again in a few seconds, for up to
+   * `WATCH_RETRIES` tries: the server learns of a lobby from the chain, a
+   * poll or two after it opens. Past that, or for practice, it is given up.
+   */
+  private retryWatch(): void {
+    const matchId = this.matchId;
+    const staked = Boolean(this.table || this.options.queue);
+    if (!matchId || !staked || this.watchRetries >= WATCH_RETRIES) {
+      this.watchRetries = 0;
+      this.abandonMatch();
+      return;
+    }
+    this.watchRetries += 1;
+    this.options.schedule(() => {
+      if (!this.done && this.matchId === matchId) this.send({ type: 'watch', matchId });
+    }, WATCH_RETRY_MS);
   }
 
   private nextGame(): void {

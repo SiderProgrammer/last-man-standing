@@ -1,6 +1,6 @@
 import { formatUnits } from 'viem';
 import { chainInfo } from '@lms/contracts';
-import { errorFirstLine } from '@lms/api';
+
 import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import {
@@ -16,6 +16,8 @@ import {
 import * as stakingCalls from '../wallet/staking.js';
 import { switchToHub } from '../wallet/flows.js';
 import type { Wallet } from '../wallet/wallet.js';
+import { chainNow } from '../io/chainClock.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * The staking panel: stake, unstake, withdraw, claim the ETH that staking
@@ -77,7 +79,7 @@ export async function renderStakingPanel(): Promise<void> {
     } catch (err) {
       position = null;
       // Almost always a wallet pointed at a chain the vault is not on.
-      error = `Could not read your stake: ${errorFirstLine(err)}`;
+      error = `Could not read your stake: ${explainError(err)}`;
     }
   } else {
     position = null;
@@ -107,7 +109,7 @@ export async function renderStakingPanel(): Promise<void> {
     position,
     playRewards,
     vesting,
-    nowSeconds: Math.floor(Date.now() / 1000),
+    nowSeconds: chainNow(),
     error,
     hubName: hub,
   });
@@ -150,7 +152,7 @@ async function act(done: string, pending: Promise<`0x${string}` | null>): Promis
     }
   } catch (error) {
     console.error('[staking]', error);
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     busy = false;
     void renderStakingPanel();
@@ -169,7 +171,7 @@ async function stake(): Promise<`0x${string}` | null> {
   if (!at) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to stake.');
-  if (position && amount > position.lmsBalance) throw new Error(`You hold ${formatLms(position.lmsBalance)} LMS.`);
+  if (position && amount > position.lmsBalance) throw new Error(`You hold ${formatLms(position.lmsBalance, 2, 'down')} LMS.`);
   return stakingCalls.stake(at.wallet, at.vault, amount);
 }
 
@@ -178,7 +180,7 @@ async function unstake(): Promise<`0x${string}` | null> {
   if (!at || !position) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
-  if (amount > position.staked) throw new Error(`You have ${formatLms(position.staked)} LMS staked.`);
+  if (amount > position.staked) throw new Error(`You have ${formatLms(position.staked, 2, 'down')} LMS staked.`);
   // A new request joins the one already unlocking and starts its clock again.
   const warning = cooldownRestartWarning(position);
   if (warning && !window.confirm(`${warning} Unstake anyway?`)) return null;

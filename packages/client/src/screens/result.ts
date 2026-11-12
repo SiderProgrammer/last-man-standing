@@ -1,7 +1,7 @@
 import { canonicalJson, type MatchResult, type PublicMatchState } from '@lms/consensus';
-import { chainInfo, isPracticeTable } from '@lms/contracts';
-import { errorFirstLine, type ServerMessage } from '@lms/api';
-import { app, dom } from '../context.js';
+import { MatchStatus, chainInfo, isPracticeTable } from '@lms/contracts';
+import { type ServerMessage } from '@lms/api';
+import { app, dom, store } from '../context.js';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain, type EvidenceBundle, type Verification } from '../game/verify.js';
 import { forgetMatch, recallMatch } from '../game/salts.js';
 import { writeRaw } from '../io/storage.js';
@@ -10,9 +10,10 @@ import { element } from '../ui/dom.js';
 import { ordinal, short } from '../ui/format.js';
 import { txLink } from '../ui/links.js';
 import { formatDuration } from '../ui/staking.js';
-import { prizeFor, prizeLine } from '../ui/views.js';
-import type { Wallet } from '../wallet/wallet.js';
+import { prizeFor, prizeLine, settleText } from '../ui/views.js';
+import type { MatchPayout, Wallet } from '../wallet/wallet.js';
 import { renderWinnings } from '../wallet/payouts.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * The result panel: the final ranking, whether this browser could reproduce
@@ -74,20 +75,17 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
       'Settlement could not be submitted. The escrow refunds every stake after its deadline.';
     return;
   }
-  // A proposal, not a payout: the guardian may still veto the result during
-  // the challenge window, and the winnings unlock when it closes.
-  dom.resultSettle.replaceChildren(
-    'Proposed on-chain · ',
-    txLink(message.tx, app.chainId),
-    ' · winnings unlock once the challenge window closes',
-  );
+  // What the escrow says follows once it is read: proposed, disputed,
+  // settled or vetoed. A review of an old match is past the proposal.
+  settleTx = message.tx;
+  dom.resultSettle.replaceChildren('Result sent on-chain · ', txLink(message.tx, app.chainId));
 
   const wallet = app.wallet;
   const escrow = app.escrow;
   if (!wallet || !escrow || wallet.chainId !== app.chainId) return;
   try {
     await wallet.rpc.waitForTransactionReceipt({ hash: message.tx });
-    // Proposed now: the prize line can say when it unlocks.
+    // On-chain now: the prize and settle lines can say where it stands.
     if (app.match && lastRanking) void renderPrize(app.match, lastRanking);
     await checkChain(wallet, escrow, message.matchId);
   } catch {
@@ -98,10 +96,15 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
 
 /** The ranking of the result on screen, for redrawing the prize once it settles. */
 let lastRanking: readonly number[] | null = null;
+/** The transaction that put the result on screen on-chain, once the server names it. */
+let settleTx: `0x${string}` | null = null;
+/** The escrow's record of the match on screen and this seat's place, kept to redraw the prize when the balance changes. */
+let lastPayout: { payout: MatchPayout; place: number } | null = null;
 
 /**
  * What this wallet won, read from the escrow's terms for the match, and when
- * it can be collected. Staked matches only, and only for a place that pays.
+ * it can be collected; and, for every seat, where the result stands on-chain:
+ * proposed, disputed, settled or vetoed. Staked matches only.
  */
 async function renderPrize(state: PublicMatchState, ranking: readonly number[]): Promise<void> {
   lastRanking = ranking;
@@ -111,7 +114,7 @@ async function renderPrize(state: PublicMatchState, ranking: readonly number[]):
   };
   const place = app.you === null ? -1 : ranking.indexOf(app.you);
   const { wallet, escrow } = app;
-  if (place < 0 || isPracticeTable(state.players) || !wallet || !escrow) return show(null);
+  if (isPracticeTable(state.players) || !wallet || !escrow) return show(null);
   if (wallet.chainId !== app.chainId) {
     return show(
       place === 0
@@ -122,9 +125,30 @@ async function renderPrize(state: PublicMatchState, ranking: readonly number[]):
   try {
     const payout = await wallet.matchPayout(escrow, state.matchId);
     if (shownFor !== state.matchId) return;
-    show(prizeLine(prizeFor(payout, place), payout, formatDuration));
+    lastPayout = { payout, place };
+    drawOutcome();
   } catch (error) {
     console.warn('[result] could not read the prize', error);
+  }
+}
+
+/** The prize, settle and headline lines from the last read of the escrow, and the balance as it is now. */
+function drawOutcome(): void {
+  if (!lastPayout) return;
+  const { payout, place } = lastPayout;
+  const prize = place < 0 ? null : prizeLine(prizeFor(payout, place), payout, formatDuration, app.owed);
+  dom.resultPrize.textContent = prize ?? '';
+  dom.resultPrize.classList.toggle('hidden', prize === null);
+  // Only once the result is on-chain: before that the escrow still says Live.
+  if (settleTx && payout.status >= MatchStatus.Proposed) {
+    dom.resultSettle.replaceChildren(`${settleText(payout, formatDuration)} · `, txLink(settleTx, app.chainId));
+  }
+  if (payout.status === MatchStatus.Cancelled) {
+    dom.resultHeadline.className = 'result-headline';
+    dom.resultHeadline.replaceChildren(
+      element('strong', '', payout.vetoed ? 'Result vetoed' : 'Match cancelled'),
+      element('span', '', 'Every stake was refunded: the places below do not pay'),
+    );
   }
 }
 
@@ -184,7 +208,7 @@ async function disputeResult(): Promise<void> {
     toast('Disputed. The payout waits 48 hours more while the guardian looks. Send them the file you just saved.', 'success', { sticky: true });
   } catch (error) {
     dom.resultDispute.disabled = false;
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   }
 }
 
@@ -214,6 +238,8 @@ function renderHeadline(ranking: readonly number[], rounds: number): void {
 export function hideResult(): void {
   shownFor = null;
   lastRanking = null;
+  lastPayout = null;
+  settleTx = null;
   verification = null;
   dom.resultPanel.classList.add('hidden');
 }
@@ -221,6 +247,8 @@ export function hideResult(): void {
 export function wireResultControls(origin: string): void {
   serverOrigin = origin;
   dom.resultDispute.onclick = () => void disputeResult();
+  // Collected from here or the lobby: the prize line stops saying it is in the balance.
+  store.subscribe(['owed'], drawOutcome);
   // `resultBack` is wired in `match.ts`, which also tears the arena down.
 }
 

@@ -85,6 +85,8 @@ const DEFAULT_SETTLE_BACKOFF_MS = [2_000, 10_000, 30_000, 60_000];
 const DEFAULT_SETTLE_RETRY_FOR_MS = 60 * 60 * 1000;
 
 const DEFAULT_MAX_PRACTICE_ROOMS = 200;
+/** How long a practice room runs with nobody watching it before it is closed. */
+const PRACTICE_IDLE_MS = 60_000;
 
 /**
  * Registry of live rooms.
@@ -100,6 +102,10 @@ export class Lobby {
   private readonly abandoned = new Map<string, string>();
   /** The one practice room each wallet may hold, keyed by address. */
   private readonly practiceOf = new Map<string, string>();
+  /** Practice rooms with no client attached, by key: since when. */
+  private readonly unwatchedSince = new Map<string, number>();
+  /** Practice rooms a client has detached from: only these can be abandoned. */
+  private readonly leftPractice = new Set<string>();
   /**
    * Finished matches still being archived or settled, by lower-cased id: the
    * retry queue. A match is in it once, however often its room reports it.
@@ -182,10 +188,13 @@ export class Lobby {
     opponents: number,
     now: number = Date.now(),
     difficulty: BotDifficulty = 'normal',
+    /** The socket asking, which needs no telling that its last match ended. */
+    asking?: Client,
   ): Room {
     const owner = human.toLowerCase();
     const previous = this.practiceOf.get(owner);
-    if (previous) this.close(previous);
+    // Any other tab still on it is told, rather than left frozen on a dead clock.
+    if (previous) this.close(previous, 'you started another practice match', asking);
     const ceiling = this.options.maxPracticeRooms ?? DEFAULT_MAX_PRACTICE_ROOMS;
     if (this.practiceOf.size >= ceiling) {
       throw new RequestError('BUSY', 'the server is at its practice-room limit; try again shortly');
@@ -312,7 +321,30 @@ export class Lobby {
       // Finished rooms stay reachable for one sweep so late clients can read
       // the final state, then they are dropped.
       if (room.finished && now > room.deadline + 60_000) this.close(key);
+      else if (this.abandonedPractice(key, room, now)) this.close(key);
     }
+  }
+
+  /**
+   * A practice room nobody has watched for `PRACTICE_IDLE_MS`: its player
+   * closed the tab and did not come back. Closed, so it does not hold one of
+   * the server's practice slots for the rest of its match. A reload comes back
+   * well within the grace, and is taken back to it on login.
+   */
+  private abandonedPractice(key: string, room: Room, now: number): boolean {
+    // Only once a player has left it: a room nobody has attached to yet is
+    // one its creator is still on the way to.
+    if (room.staked || room.finished || !this.leftPractice.has(key)) return false;
+    if (room.attached.size > 0) {
+      this.unwatchedSince.delete(key);
+      return false;
+    }
+    const since = this.unwatchedSince.get(key);
+    if (since === undefined) {
+      this.unwatchedSince.set(key, now);
+      return false;
+    }
+    return now - since >= PRACTICE_IDLE_MS;
   }
 
   /**
@@ -346,17 +378,26 @@ export class Lobby {
     const key = this.watching.get(client);
     if (key === undefined) return;
     this.watching.delete(client);
-    this.rooms.get(key)?.detach(client);
+    const room = this.rooms.get(key);
+    room?.detach(client);
+    if (room && !room.staked) this.leftPractice.add(key);
     const held = this.waiting.get(key);
     held?.delete(client);
     if (held?.size === 0) this.waiting.delete(key);
   }
 
   /** Forgets a room and every index entry pointing at it. */
-  private close(key: string): void {
+  private close(key: string, reason?: string, except?: Client): void {
     const room = this.rooms.get(key);
     this.rooms.delete(key);
+    this.unwatchedSince.delete(key);
+    this.leftPractice.delete(key);
     if (!room) return;
+    if (reason && !room.finished) {
+      for (const client of room.attached) {
+        if (client !== except && this.watching.get(client) === key) client.send({ type: 'closed', matchId: room.matchId, reason });
+      }
+    }
     for (const seat of room.match.seats) {
       const rooms = this.seatsOf.get(seat.address.toLowerCase());
       rooms?.delete(key);

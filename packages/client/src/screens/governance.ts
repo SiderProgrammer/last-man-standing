@@ -1,5 +1,5 @@
 import { VoteSupport, chainInfo, type ProposalSummary, type VoteSupportValue } from '@lms/contracts';
-import { errorFirstLine } from '@lms/api';
+
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
@@ -7,6 +7,8 @@ import { proposalCard, type ProposalCard, type ProposalLive, type ProposalOfflin
 import { switchToHub } from '../wallet/flows.js';
 import { currentParams, knownContracts, loadProposalContext, renderNewProposalButton, wireProposalForm } from './proposalForm.js';
 import * as governorCalls from '../wallet/governance.js';
+import { chainNow } from '../io/chainClock.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * The governance screen: every proposal, its result so far, and the vote.
@@ -26,16 +28,12 @@ let busy = false;
 
 export function wireGovernanceControls(origin: string): void {
   serverOrigin = origin;
-  // A new proposal reaches the list once the server's index polls for it,
-  // every fifteen seconds: refresh now, and again once it surely has.
+  // The server's index is asked to catch up with the chain first, so the
+  // new proposal is listed now rather than at its next poll; once more
+  // shortly, for an index that waits for confirmations.
   wireProposalForm(() => {
-    dom.governanceStatus.textContent = 'Your proposal is on-chain and appears in the list below within about 15 seconds.';
-    void renderGovernance();
-    setTimeout(() => void renderGovernance(), 6_000);
-    setTimeout(() => {
-      dom.governanceStatus.textContent = '';
-      void renderGovernance();
-    }, 16_000);
+    void renderGovernance(true);
+    setTimeout(() => void renderGovernance(true), 5_000);
   });
   dom.governanceSwitch.onclick = () => void switchToHub();
   // One listener for every card's buttons, which are rebuilt on each render.
@@ -47,16 +45,16 @@ export function wireGovernanceControls(origin: string): void {
   };
 }
 
-export async function renderGovernance(): Promise<void> {
+export async function renderGovernance(fresh = false): Promise<void> {
   const governor = app.staking?.governor;
   const vault = app.staking?.vault;
   if (!governor || !vault) return;
 
   try {
-    const response = await fetch(`${serverOrigin}/proposals`);
+    const response = await fetch(`${serverOrigin}/proposals${fresh ? '?fresh=1' : ''}`);
     proposals = response.ok ? ((await response.json()) as ProposalSummary[]) : [];
   } catch (error) {
-    dom.governanceStatus.textContent = `Could not load proposals: ${errorFirstLine(error)}`;
+    dom.governanceStatus.textContent = `Could not load proposals: ${explainError(error)}`;
     return;
   }
 
@@ -79,7 +77,7 @@ export async function renderGovernance(): Promise<void> {
   renderNewProposalButton();
   if (onHub) await loadProposalContext().catch(() => null);
   const labels = knownContracts();
-  const now = Math.floor(Date.now() / 1000);
+  const now = chainNow();
   const cards: ProposalCard[] = [];
   let readError: string | null = null;
   for (const proposal of proposals) {
@@ -91,7 +89,7 @@ export async function renderGovernance(): Promise<void> {
       try {
         live = await governorCalls.proposalLive(wallet, governor, vault, proposal);
       } catch (error) {
-        readError = `Could not read results: ${errorFirstLine(error)}`;
+        readError = `Could not read results: ${explainError(error)}`;
         offline = { now, reason: 'Could not read the vote from the chain; try again shortly.' };
       }
     }
@@ -213,7 +211,7 @@ async function act(proposal: ProposalSummary, step: string, origin: HTMLButtonEl
     toast(step === 'queue' ? 'Queued in the timelock.' : step === 'execute' ? 'Executed.' : 'Vote cast.', 'success');
   } catch (error) {
     console.error('[governance]', error);
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     busy = false;
     void renderGovernance();

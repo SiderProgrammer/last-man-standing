@@ -28,7 +28,7 @@ import { ResultIndex } from './chain/results.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
-import { ProposalIndex, proposalsResponse } from './chain/proposals.js';
+import { ProposalIndex, proposalsResponse, wantsFresh } from './chain/proposals.js';
 import { AnalystWorker } from './analyst/remote.js';
 import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
 import { DEFAULT_RULES } from '@lms/consensus';
@@ -223,6 +223,8 @@ async function main(): Promise<void> {
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
     directory,
+    chainTime: () => bridge?.chainTime() ?? null,
+    paused: () => bridge?.paused() ?? false,
     avatarCollections: avatarCollections.map(({ chainId, address }) => ({ chainId, address })),
     verify: layeredVerifier(verifyPool.verify, rpc ? (args) => rpc.verifyMessage(args) : undefined),
     // A contract wallet's grant can only be checked by asking the wallet.
@@ -418,7 +420,11 @@ function httpServer(options: { proposals: ProposalIndex | null; archive: MatchAr
       response.end(route.body);
     };
     const route = proposalsResponse(options.proposals, url);
-    if (route) {
+    if (route && options.proposals && wantsFresh(url)) {
+      // Just proposed: caught up with the chain first, so it is listed.
+      const index = options.proposals;
+      void index.freshen().then(() => answer(proposalsResponse(index, url) ?? route));
+    } else if (route) {
       answer(route);
     } else if (url.startsWith('/transcripts/')) {
       transcriptResponse(options.archive, url).then(

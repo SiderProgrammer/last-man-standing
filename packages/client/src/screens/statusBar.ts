@@ -3,6 +3,7 @@ import { app, dom, net, store } from '../context.js';
 import { currentScreen, onScreenChange, showScreen } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
 import { statusItems, type StatusItem } from '../ui/views.js';
+import { chainNowMs } from '../io/chainClock.js';
 
 /**
  * The bar under the header that says what the player is in: a running
@@ -34,6 +35,7 @@ function renderStatusBar(): void {
         queuedSince: app.queuedSince,
         watching: running,
         nowMs: Date.now(),
+        chainNowMs: chainNowMs(),
       })
     : [];
   const hidden = items.length === 0 || currentScreen() === 'match';

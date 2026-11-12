@@ -54,6 +54,20 @@ export class ProposalIndex {
     this.stopTimer = null;
   }
 
+  /** When the last poll on request started, for `freshen`'s floor. */
+  private freshenedAt = 0;
+
+  /**
+   * Polls now, unless a request did within the last two seconds: for the
+   * page that has just proposed, which would otherwise wait out the poll
+   * interval before its own proposal is listed. Never rejects.
+   */
+  async freshen(now = Date.now()): Promise<void> {
+    if (now - this.freshenedAt < FRESHEN_FLOOR_MS) return;
+    this.freshenedAt = now;
+    await this.poll();
+  }
+
   /** Newest first. */
   list(): ProposalSummary[] {
     return [...this.proposals.values()].sort((a, b) => b.block - a.block || (BigInt(b.id) > BigInt(a.id) ? 1 : -1));
@@ -108,6 +122,14 @@ export function viemProposalReader(options: { rpcUrl: string; chainId: number; g
       );
     },
   };
+}
+
+/** How often a request may make the index poll ahead of its timer. */
+const FRESHEN_FLOOR_MS = 2_000;
+
+/** Whether `GET /proposals` asked for the index to catch up first (`?fresh=1`). */
+export function wantsFresh(path: string): boolean {
+  return /[?&]fresh=1(&|$)/.test(path);
 }
 
 /** Answers `GET /proposals`, or returns null for any other path. */

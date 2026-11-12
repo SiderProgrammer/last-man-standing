@@ -1,7 +1,7 @@
 # Playtest findings — 11 Nov 2026
 
 Played on the local rehearsal fork (`npm run fork:base`) at commit `80333aa`,
-in browser tabs as P2–P5 with `npm run play` bots. Ticked UX proposals are implemented (12 Nov); the bugs are not fixed yet.
+in browser tabs as P2–P5 with `npm run play` bots. Ticked UX proposals are implemented (12 Nov). Bugs: see "Where the bugs stand" below.
 
 Covered: practice (3 and 7 bots), a private staked lobby, matchmaking, the
 staked result and verification, Collect on Base and Collect to Arbitrum,
@@ -38,6 +38,7 @@ them back, how disputes are offered, and the match, result and governance
 screens at phone width (375 px) with 8 seats.
 
 Not covered:
+
 - **Blocked by the fork's warped clock:** one-click play turned on, the LMS
   fee discount, a successful LMS stake.
 - **Not attempted:** a server restart mid-match (it needs a server source
@@ -54,6 +55,65 @@ After the fifth pass: chain time moved 61 min more; `0x1a9a…63cf` (P2, P5,
 P6, P7) stuck in "seeding" until its randomness timeout, then cancellable;
 a matchmade table `0x8932…37f6` (P2 and three throwaway wallets, nobody
 staked) that will expire; lobby `0xb7c5…9bf4` cancelled and refunded.
+
+## Where the bugs stand (12 Nov)
+
+Not replayed on the fork yet: these are fixed in code and covered by unit
+tests, and the practice flows (reload, second tab, 8 seats at 375 px) were
+checked in a browser against a local server.
+
+- **Fixed by the UX work:** 1, 3, 4, 9, 16, 17, 31, 40, most of 44 (seats
+  no longer overlap at 375 px; the end banner now fits the canvas too).
+- **Fixed:**
+  - 2, 14, 15, 36: the result panel reads the escrow: proposed (with the
+    challenge countdown), disputed, settled, vetoed or cancelled; a collected
+    prize says so; history rows are tagged "vetoed · refunded" or "disputed".
+  - 5: reverts from any of our contracts decode to plain words
+    (`contractErrorsAbi`, generated with the ABIs); a wallet cancel says so.
+  - 6, 7, 39 (the clock part), 42: the server's bridge and the page count
+    every deadline by the hub's block time, which the directory now carries.
+    The permit and swap deadlines come from the latest block. A seeding table
+    past its timeout offers "Cancel & refund".
+  - 8: the replay label names the round being replayed; a page that attaches
+    mid-hold gets `holdMs` and holds its clock instead of showing ~62 s.
+  - 10: "Seat taken" counts seats from the join's own receipt.
+  - 11, 43: bots retry a table the server does not know yet for two
+    minutes; `play.mjs` stops waiting when a spoke stake is credited; the
+    fork's Across relayer fills one deposit at a time, with retries.
+  - 12: the proposal list asks the server's index to catch up
+    (`/proposals?fresh=1`) right after proposing.
+  - 13, 21: "Enter" on a table with no room stays in the lobby and says
+    what it waits for; the match opens by itself when the room does.
+  - 18: the escrow's pause is shown in the lobby, and blocks create, stake
+    and the queue.
+  - 19: a short matchmade table is opened with as many seats as players, so
+    it locks the moment the last one stakes.
+  - 20: the fork's VRF responder reads logs with its own cursor and times
+    out a stuck send instead of stopping for good.
+  - 22, 33: LMS amounts round to the nearest; dust reads "<0.01".
+  - 23, 24, 27, 41: on every login the server re-sends the wallet's queue
+    place, the table the queue put it at, and the match it is seated in
+    (practice too); the queue belongs to the wallet, not to the socket that
+    joined it.
+  - 25: at most 6 practice matches per IP, and a practice room nobody has
+    watched for a minute after its player left is closed.
+  - 26: a practice match replaced from another tab tells that tab, which
+    goes back to the lobby.
+  - 28: the "Matched" toast has a "Go to the table" button.
+  - 29: logged-out visitors get the lobby list; Stake reads "Connect to stake".
+  - 30, 34: a spectator has no hold checkbox and no Collect; a table opened
+    after it ended shows its history and winner.
+  - 35: "Forget key" logs the socket out and asks the wallet for a new grant.
+  - 37: the history no longer promises a replay.
+  - 38: "Resume play" is refused while play is not paused (duplicates and a
+    zero guardian were already refused).
+- **Open, needs a decision:** 32 (an idle seat: auto-guard, or drop it after
+  N missed rounds?) and 39 (should a player be able to leave an unfilled
+  lobby?). Also 38's last point: "Protocol fee" still resends the whole
+  `setParams` struct; only per-field setters in `ProtocolConfig` would stop
+  one proposal undoing another.
+- **Still to check:** 41's closed-tab case in a normal browser (the in-app
+  browser may keep closed tabs' sockets open).
 
 ## Bugs
 
@@ -121,10 +181,9 @@ staked) that will expire; lobby `0xb7c5…9bf4` cancelled and refunded.
     prize.** "You won 0.00095 ETH" sits right above "Collect 0.0095 ETH" (an
     older balance). Label it "Collect your balance (0.0095 ETH)" or show it
     only when this match's prize is in it.
-17. **Create-lobby validation leaks library errors.** Empty → "Value `` is
-    not a valid decimal number"; "-1" → "Number -1000000000000000000 is not
-    in safe 128-bit unsigned integer range"; 0, 0.0005 and 100000 → a bare
-    `createMatch reverted` with no allowed range shown. "0,001" (Polish
+17. **Create-lobby validation leaks library errors.** Empty → "Value ``is
+not a valid decimal number"; "-1" → "Number -1000000000000000000 is not
+in safe 128-bit unsigned integer range"; 0, 0.0005 and 100000 → a bare`createMatch reverted` with no allowed range shown. "0,001" (Polish
     decimal comma) is rejected.
 18. **Pause is invisible.** With the escrow paused the page does not say
     so; "Create lobby" fails with `createMatch reverted`, and matchmaking
@@ -296,211 +355,6 @@ staked) that will expire; lobby `0xb7c5…9bf4` cancelled and refunded.
     "LAST ONE STANDING · SEAT #6" is cut off at both edges, and the page is
     510 px wide (bug 9). Governance fits at this width.
 
-## UX proposals
-
-Recommended order: group 1, then the end-of-match card and the reload login
-from group 3, then the lobby layout (group 2, the biggest change).
-
-### 1. Money clarity
-
-- [x] **Show what you can win before you stake.** Lobby rows and matchmaking
-      tables show only the stake. Add the pot and the top prize, e.g.
-      "Pot 0.004 · 1st 0.00228" (same math as `prizeFor`).
-- [x] **Winnings badge in the header**, e.g. "0.00095 ETH to collect", next to
-      the wallet button; it opens Winnings. Pairs with bug 3.
-- [x] **Pending prizes in Winnings** (bug 4), e.g. "0.00095 ETH unlocking in 42m".
-- [x] **"Stakes & payouts" section in How to play.** It covers no fee, no
-      60/25/15 split, no challenge window and nothing on collecting.
-
-### 2. Lobby layout ("find a match / staked lobbies should have better UI")
-
-The page is one column about 2,000 px tall; the account panels sit below the fold.
-
-- [x] **Matchmaking as the main path.** It is the only one that earns LMS but
-      gets the same weight as "Staked lobbies". Put "Find a match" first and
-      full width; open lobbies and "Open your own lobby" below it.
-- [x] **Move "Pay with" and "Pay part of the fee in LMS" into the join step.**
-      Clicking Stake opens a payment choice, then a quote, then Pay. Global
-      settings above an empty list read as clutter.
-- [x] **Matched table state.** The matchmaking panel says "idle" and offers
-      "Find a match" again while a matched table waits for your stake. Show
-      "Table ready, stake to take your seat" and highlight that row.
-- [x] **Create and stake in one click** ("Create & stake 0.001"). Today a new
-      lobby opens at 0/4 and needs a second click.
-- [x] **Default the stake box to the cheapest table** (0.001, not 0.01).
-- [x] **Account screen.** Move staking, session key, one-click play and avatar
-      off the play page, reached from the wallet button. Session key and
-      one-click go under "Advanced".
-- [x] **Phone header** (bug 9): fold the nav into a menu below ~600 px.
-
-### 3. Match and result
-
-- [x] **One clear end-of-match card.** The result sits below the arena, half
-      off-screen. Show an overlay (or scroll to a card) with place, prize,
-      "Collect" and "Back to lobby". Removes the duplicate back button and the
-      leftover `--` timer.
-- [x] **"Leave to lobby" once eliminated.** Today you can only spectate until
-      the match ends; the header has no Lobby button during a match.
-- [x] **Log back in on reload** when a stored session key exists. No prompt is
-      needed; it matters mid-match with 60 s on the clock.
-- [x] **Replay label** (bug 8): "Replaying round 10", and no timer until the
-      commit window opens.
-- [x] **8-seat crowding.** At narrow widths the "locked in" captions overlap
-      the next seat's badge. Shrink them or hide the text at 8 seats.
-- [x] **Scroll to the top when entering a match.** The lobby's scroll position
-      carries over and the arena opens half off-screen.
-- [x] **Damage in History**, e.g. "#0 → struck #1 (−25)". The feed lists only moves.
-
-### 4. Staking and governance
-
-- [x] **Warn before unstaking restarts the cooldown.** Unstaking 1 more LMS
-      reset 50,000 LMS already unlocking from 9d 22h back to 10d, silently.
-      "This restarts the 10-day cooldown for the 50,000 LMS already unlocking."
-- [x] **Claim ETH on dust.** The pill rounds to "0 ETH earned" while the
-      button stays visible and sends a transaction. Hide it below a threshold
-      or show "<0.000001 ETH".
-- [x] **Proposal form actions.** "Add at least one action" shows while the
-      action fields are filled in, because "Add action" must be clicked
-      first. Count the filled-in action on Submit.
-- [x] **Wording:** "300,000 of 100,000 sLMS needed" → "You have 300,000 sLMS ·
-      100,000 needed to propose"; "You voted" → "You voted Against" (and show
-      the reason); "Voting costs gas on L1" → "on Base".
-- [x] **New proposals and lobbies right away** (A new lobby shows as "opening…" at once; a new proposal gets a status line and extra refreshes. The server waits 3 confirmations, which on an idle anvil means until the next transactions.) (bug 12): show them as
-      "creating…" until the next poll picks them up.
-
-### Small polish
-
-- [x] Success toasts use the red error border.
-- [x] "Pay 0.001" needs a unit: "Pay 0.001 ETH".
-- [x] Practice bots show as random addresses; show "Bot (Hard)".
-- [x] Hide the Analysis tab when the server has no analyst.
-- [x] The LMS discount checkbox's accessible name is "on".
-- [x] "Create lobby" is disabled on Arbitrum with no reason given.
-- [x] "Staked lobbies escrow a real testnet stake" also shows on mainnet.
-- [x] "Switch to Base" on a dev burner bound to Arbitrum can only fail; hide it there.
-- [x] History is lost when the server restarts with the in-memory archive
-      (match #0 vanished from "Your matches"); rebuild it from on-chain events.
-- [x] The avatar panel says "Wearing #1" but never shows the picture.
-- [x] A defeated proposal says "quorum was not reached, or more voted
-      against than for"; the page knows which one.
-- [x] Proposal ids are shown in decimal (`#582156…`) while the CLI uses hex
-      (`0x80b4…`).
-- [x] Your own new lobby is not marked as yours until you stake into it.
-- [x] The page stays dark under a light system theme (fine if intended). (Follows the system now, with a choice on the Account screen; the arena stays dark.)
-- [x] Dates follow the browser's locale inside an English page ("20 lis,
-      01:01", "11 lis 2026"). Pick one language.
-- [x] A wallet holding delegated votes is not told: P2 read "You vote with
-      your own stake" with 549,999 votes, 300,000 of them P8's. The
-      delegator's line shows the delegate as a full 42-character address.
-
-### 5. Second review (12 Nov): ideas not covered above
-
-Recommended first: the "what am I in" bar and the background alerts (A),
-then toasts and the transaction tray (B). Together they cover most of the
-state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
-
-**A. Keep the player oriented**
-
-- [x] **A "what am I in" bar under the header**, built on load and on
-      every reconnect: a running match ("Rejoin"), a queue place ("Queued
-      0:42 · Leave"), a table waiting for your stake ("Stake 0.001 · 2:10
-      left"), a stake in transit, a lobby you can get a refund from
-      ("Cancel & refund"). Today each of these is lost or buried after a
-      reload.
-- [x] **Queue chip in the header on every screen**, practice included,
-      that turns into "Table ready · Stake" when you are matched. Today the
-      queue shows only in the Find a match panel.
-- [x] **Alerts when the tab is in the background.** (Notifications and sound are opt-in: "Notify me" in the queue panel, "Sound cues" in the move panel.) Nothing tells a player
-      who switched tabs: no title change, notification or sound
-      (the client has none). Flash the title ("● Table ready"), offer
-      browser notifications for "matched" and "match starting", and a soft
-      sound when a round opens or 10 s are left.
-
-**B. Feedback you can trust**
-
-- [x] **Toast queue with kinds.** There is one toast slot
-      (`ui/chrome.ts:15`): a new message replaces the last after 5 s, so
-      "Matched…" can vanish under the next one. Stack them, colour success
-      / error / info differently, keep the important ones (matched, not
-      seated, refunded) until dismissed, and give the container
-      `role="status"` so screen readers announce them.
-- [x] **Transaction tray.** Each transaction as a row: waiting for the
-      wallet → sent → confirmed or failed (with the decoded reason, bug 5),
-      linked to Basescan or Arbiscan. A stake from Arbitrum shows "in
-      transit · Across" until it is seated or credited back. This is the
-      natural home for the bug 40 fix.
-- [x] **Clickable transaction hashes.** "tx 0x34bc…8f8b" in history and
-      results is plain text; link it to the chain's explorer.
-
-**C. Lobby list**
-
-- [x] **Hide what you cannot join.** Other players' matchmade tables (the
-      disabled "Matchmade" rows) and lobbies past their window are noise;
-      collapse them under "Other tables". Keep yours on top with "your
-      table", "your lobby" and "refund ready" tags.
-- [x] **Seats as dots.** Show four or eight small seat dots (filled,
-      empty, with a chain badge) and a countdown ring from chain time,
-      instead of "0/4 seats · needs 4 more to start · closes in 23d 1h".
-- [x] **Invite link for private lobbies.** A private lobby has no way to
-      bring friends; there is no lobby URL (the page reads only `?player`
-      and `?chain`). "Copy invite link" → `?lobby=0x…` opens the lobby with
-      Stake ready.
-- [x] **Stake range next to Create lobby** ("0.001 – 1 ETH", from the
-      config's min and max stake), accepting "0,005" (bug 17).
-- [x] **Say what the LMS discount buys.** "20000 LMS buys 1 ETH off a fee,
-      up to half of each fee" → "Pay 0.5 LMS to save 0.000025 ETH on this
-      join", shown on the join step.
-
-**D. Match screen**
-
-- [x] **You always at the bottom.** Seats are placed by index from the top
-      (`arena/layout.ts:60`), so "YOU" sits at the top in one match and on
-      the left in the next. Rotate the ring so your seat is always at the
-      bottom, nearest the move buttons.
-- [x] **A personal round recap.** One line under the timer after each
-      round: "You took 25 from #3 · your guard reflected 34 to #1 · you
-      are charged". Players read their own outcome first.
-- [x] **Missed-round warning.** "You did not lock in: every strike on you
-      hit" after a missed round, and a pulse on the timer at 10 s.
-- [x] **Play again.** At the end of practice, "Play again" with the same
-      bots and difficulty; at the end of a staked match, "Find another
-      match" in the same tier. Today the only button is Back to lobby.
-- [x] **List view for 8 seats on a phone** (Done instead by shrinking a crowded ring and dropping the seat captions; the target buttons stay as the list.) (bug 44): rows with HP bars and
-      a Strike button each, instead of the ring.
-
-**E. History and progress**
-
-- [x] **Money on each history row** ("+0.00095 ETH", "−0.001 ETH") and a
-      total for the week. Today rows show only place and rounds.
-- [x] **Filters** (Staked / Practice) and a short stats line: matches,
-      wins, average place, most-used move (the Reads data already exists).
-
-**F. First visit**
-
-- [x] **Guest practice without a wallet** (bug 29), then a guided first
-      round that points at Strike, Guard and Charge and the cooldowns.
-- [x] **A "before you stake" step** the first time someone stakes: the 5%
-      fee, the 60/25/15 split, the 1h challenge window and collecting,
-      with "don't show again".
-- [x] **Explain the jargon in place** with small "?" tips: sLMS, epoch,
-      vesting, session key, one-click play, challenge window.
-
-**G. Governance**
-
-- [x] **Lifecycle stepper on each proposal**: Pending → Active → Succeeded
-      → Queued → Executed, with the chain-time date under each step and
-      the current one highlighted.
-- [x] **Plain-language actions.** "Set the protocol fee to 0%" instead of
-      the full `setParams({…})` struct; flag risky ones (zero guardian,
-      unpause while not paused, duplicates; bug 38).
-
-**H. Accessibility**
-
-- [x] Announce round results and the last 10 s of the timer through an
-      `aria-live` region (today only the loader and analysis have one).
-- [x] Do not rely on colour alone for HP and "charged": add the number and
-      an icon (HP numbers exist; check the charged state).
-
 ## Worked in the second pass
 
 - A held move ("Reveal for me if I disconnect") counted after its tab closed.
@@ -560,13 +414,3 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
 - Disputes are offered only when the in-browser check against the chain
   fails (not exercised: it needs a faked failure, and it downloads an
   evidence file).
-
-## Confirmed fixed from TODO_FIX.md
-
-- A matched lobby shows up without Refresh.
-- A clear "← Back to lobby" button at the end of a match.
-- The result screen says what you won and when it can be collected.
-- The Governance button comes back after a match.
-- Vote buttons show on proposals, with voting dates and a countdown.
-- On Arbitrum, Collect with an empty balance is disabled with a message.
-- On Arbitrum, the staking panel says to switch to Base.

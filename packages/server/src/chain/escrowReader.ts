@@ -60,6 +60,13 @@ export interface PlayerJoinedLog {
  */
 export interface EscrowReader {
   blockNumber(): Promise<bigint>;
+  /**
+   * The latest block's timestamp, in unix seconds: the clock the escrow
+   * measures every deadline by. Optional for fakes, which keep the wall clock.
+   */
+  blockTime?(): Promise<number>;
+  /** Whether the escrow is paused: no lobby opens, locks or takes a seat. Optional for fakes. */
+  paused?(): Promise<boolean>;
   matchCreatedLogs(from: bigint, to: bigint): Promise<MatchCreatedLog[]>;
   playerJoinedLogs(from: bigint, to: bigint): Promise<PlayerJoinedLog[]>;
   /** Every match in `ids`, with its seats, in order: one multicall where the chain has one. */
@@ -132,6 +139,8 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
 
   return {
     blockNumber: () => client.getBlockNumber(),
+    blockTime: async () => Number((await client.getBlock()).timestamp),
+    paused: () => client.readContract({ address: escrow, abi: gameEscrowAbi, functionName: 'paused' }),
 
     async matchCreatedLogs(from, to) {
       const logs = await client.getContractEvents({

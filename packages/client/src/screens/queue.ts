@@ -5,6 +5,7 @@ import { currentScreen, onScreenChange, showScreen } from '../ui/chrome.js';
 import { askToNotify, notifyState } from '../ui/alerts.js';
 import { fillSelect } from '../ui/dom.js';
 import { clock, queuePanel, tierKey } from '../ui/views.js';
+import { chainNow } from '../io/chainClock.js';
 
 /**
  * The matchmaking queue: pick a tier, wait, and get `matched` with a lobby
@@ -21,7 +22,7 @@ export function wireQueueControls(): void {
   dom.queueChip.onclick = goToQueue;
   onScreenChange(renderChip);
   dom.notifyMe.onclick = () => void askToNotify().then(renderNotify);
-  store.subscribe(['matchmaking', 'queue', 'wallet', 'terms', 'matched', 'lobbies'], renderQueue);
+  store.subscribe(['matchmaking', 'queue', 'wallet', 'terms', 'matched', 'lobbies', 'escrowPaused'], renderQueue);
   // The chip's clock.
   setInterval(renderChip, 1_000);
 }
@@ -50,7 +51,7 @@ export function onDequeued(): void {
  * open, its window not over, and no seat of this wallet's in it yet.
  */
 function readyTable(): LobbyInfo | null {
-  const now = Math.floor(Date.now() / 1000);
+  const now = chainNow();
   return (
     app.lobbies.open.find(
       (lobby) =>
@@ -64,7 +65,7 @@ function readyTable(): LobbyInfo | null {
 function renderQueue(): void {
   const table = readyTable();
   const ready = table
-    ? { stake: table.stake, seats: table.maxSeats, closesIn: table.joinDeadline - Math.floor(Date.now() / 1000) }
+    ? { stake: table.stake, seats: table.maxSeats, closesIn: table.joinDeadline - chainNow() }
     : null;
   // A guest cannot stake, so it is not put at a table it could not take.
   const panel = queuePanel(app.matchmaking, Boolean(app.wallet && !app.wallet.isGuest), app.queue, app.terms, ready);
@@ -75,9 +76,10 @@ function renderQueue(): void {
   dom.queueState.textContent = panel.pill;
   dom.queueState.classList.toggle('chain-chip', app.queue !== null || ready !== null);
   dom.joinQueue.classList.toggle('hidden', !panel.joinVisible);
-  dom.joinQueue.disabled = panel.joinDisabled;
+  dom.joinQueue.disabled = panel.joinDisabled || app.escrowPaused;
   dom.leaveQueue.classList.toggle('hidden', !panel.leaveVisible);
-  dom.queueStatus.textContent = panel.status;
+  // Paused, a table could not be opened for anyone queued.
+  dom.queueStatus.textContent = app.escrowPaused && panel.joinVisible ? 'Staked play is paused: the queue reopens when it resumes.' : panel.status;
   renderChip();
   renderNotify();
 }

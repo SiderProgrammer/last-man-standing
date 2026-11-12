@@ -1,5 +1,5 @@
 import { describeCall } from '@lms/contracts';
-import { errorFirstLine } from '@lms/api';
+
 import { app, dom } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';
@@ -14,6 +14,7 @@ import {
 import { formatLms } from '../ui/staking.js';
 import { plainCall } from '../ui/governance.js';
 import * as governorCalls from '../wallet/governance.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * The "New proposal" form on the governance screen.
@@ -84,7 +85,7 @@ async function openForm(): Promise<void> {
     context = null;
     canPropose = false;
     dom.proposerPower.textContent = '—';
-    dom.proposalStatus.textContent = `Could not read the governor: ${errorFirstLine(error)}`;
+    dom.proposalStatus.textContent = `Could not read the governor: ${explainError(error)}`;
   }
   renderDraft();
 }
@@ -224,7 +225,7 @@ async function submit(): Promise<void> {
     onSubmitted();
   } catch (error) {
     console.error('[governance]', error);
-    dom.proposalStatus.textContent = errorFirstLine(error);
+    dom.proposalStatus.textContent = explainError(error);
     renderSubmitState();
   }
 }

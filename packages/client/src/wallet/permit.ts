@@ -21,7 +21,10 @@ export async function signLmsPermit(wallet: Wallet, lms: Address, spender: Addre
     wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'name' }),
     wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'nonces', args: [wallet.address] }),
   ]);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_SECONDS);
+  // By the chain's clock, which the token checks it against: a browser
+  // clock that is off, or a fork's moved one, would sign a permit already
+  // expired on arrival.
+  const deadline = BigInt((await wallet.chainTime()) + PERMIT_SECONDS);
   const signature = await wallet.client.signTypedData({
     account: wallet.signer,
     domain: { name, version: '1', chainId: wallet.chainId, verifyingContract: lms },

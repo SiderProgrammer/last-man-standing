@@ -144,6 +144,12 @@ export interface GatewayLimits {
   strikeRate: number;
   strikeBurst: number;
   /**
+   * Practice matches running at once for wallets that started them from one
+   * IP. Wallets are free, so the server's own ceiling alone lets one script
+   * of throwaway logins hold every practice slot.
+   */
+  maxPracticeRoomsPerIp: number;
+  /**
    * Bytes queued on a socket the client is not reading. Past it the client
    * is closed rather than letting its backlog grow in server memory.
    */
@@ -166,6 +172,7 @@ export const DEFAULT_GATEWAY_LIMITS: GatewayLimits = {
   moveBurst: 12,
   strikeRate: 0.1,
   strikeBurst: 20,
+  maxPracticeRoomsPerIp: 6,
   maxBufferedBytes: 1024 * 1024,
 };
 

@@ -75,7 +75,8 @@ describe('stakingPanel', () => {
     expect(nothing.claimRewardsVisible).toBe(false);
 
     const some = stakingPanel(input({ position: position({ earned: 1_234_567_000_000_000n }) }));
-    expect(some.rewards).toBe('0.001234 ETH earned');
+    // Rounded to the nearest, not cut.
+    expect(some.rewards).toBe('0.001235 ETH earned');
     expect(some.claimRewardsVisible).toBe(true);
   });
 
@@ -204,8 +205,12 @@ describe('formatting', () => {
   it('formats LMS with separators and at most the requested decimals', () => {
     expect(formatLms(1_234_567n * E18)).toBe('1,234,567');
     expect(formatLms(1_500_000_000_000_000_000n)).toBe('1.5');
-    expect(formatLms(1_234_567_890_000_000_000n, 4)).toBe('1.2345');
-    expect(formatLms(1n)).toBe('0');
+    expect(formatLms(1_234_567_890_000_000_000n, 4)).toBe('1.2346');
+    expect(formatLms(1_234_567_890_000_000_000n, 4, 'down')).toBe('1.2345');
+    // Rounded, not cut: 0.99999 is 1, and dust says it is there.
+    expect(formatLms(999_990_000_000_000_000n)).toBe('1');
+    expect(formatLms(5_800_000_000_000n)).toBe('<0.01');
+    expect(formatLms(0n)).toBe('0');
   });
 
   it('formats a countdown in its two largest units', () => {

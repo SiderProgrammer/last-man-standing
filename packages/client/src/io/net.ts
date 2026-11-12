@@ -88,7 +88,8 @@ export class Net {
   }
 
   send(message: ClientMessage): void {
-    if (this.socket?.readyState === WebSocket.OPEN && (this.ready || message.type === 'auth')) {
+    // A login, and the public directory, need no login first.
+    if (this.socket?.readyState === WebSocket.OPEN && (this.ready || message.type === 'auth' || message.type === 'lobbies')) {
       this.socket.send(JSON.stringify(message));
       return;
     }

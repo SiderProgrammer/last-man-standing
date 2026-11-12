@@ -129,6 +129,7 @@ interface Extras {
   matchmaker: Matchmaker;
   results: NonNullable<GatewayOptions['results']>;
   avatars: NonNullable<GatewayOptions['avatars']>;
+  chainTime: () => number | null;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -156,6 +157,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.matchmaker ? { matchmaker: extras.matchmaker } : {}),
     ...(extras.results ? { results: extras.results } : {}),
     ...(extras.avatars ? { avatars: extras.avatars } : {}),
+    ...(extras.chainTime ? { chainTime: extras.chainTime } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -254,7 +256,14 @@ describe('gateway', () => {
     expect(socket.last('lobbies')?.live).toEqual([]);
   });
 
-  it('pushes the directory to logged-in sockets when it changes, and only then', async () => {
+  it('serves the directory before a login, stamped with the chain clock', async () => {
+    const info = openLobby();
+    const { socket } = harness({ escrow: ESCROW, directory: () => ({ open: [info], live: [] }), chainTime: () => 1_800_000_000 });
+    await socket.deliver({ type: 'lobbies' });
+    expect(socket.last('lobbies')).toEqual({ type: 'lobbies', open: [info], live: [], chainTime: 1_800_000_000 });
+  });
+
+  it('pushes the directory to every socket when it changes, and only then', async () => {
     let open: LobbyInfo[] = [];
     const { gateway, socket } = harness({ escrow: ESCROW, directory: () => ({ open, live: [] }) });
     const anonymous = new FakeSocket();
@@ -268,8 +277,8 @@ describe('gateway', () => {
 
     const pushed = socket.sent.filter((message) => message.type === 'lobbies');
     expect(pushed.map((message) => message.type === 'lobbies' && message.open.length)).toEqual([0, 1]);
-    // Nobody to push to before a login: the directory is for players.
-    expect(anonymous.last('lobbies')).toBeUndefined();
+    // A visitor who has not logged in sees what is on offer too.
+    expect(anonymous.last('lobbies')?.open).toHaveLength(1);
   });
 
   it('serves an empty directory when the server runs without a chain', async () => {
@@ -898,5 +907,115 @@ describe('gateway: avatars and history from the chain', () => {
     await login(socket);
     await socket.deliver({ type: 'history' });
     expect(socket.last('history')?.matches).toEqual([fromChain]);
+  });
+});
+
+describe('gateway: what a page kept in memory, told again on login', () => {
+  const STAKE = '1000000000000000';
+  const TABLE = `0x${'12'.repeat(32)}` as const;
+  // Not 1: the harness's own account is 0x1111….
+  const others = [4, 5, 6].map((n) => privateKeyToAccount(`0x${String(n).repeat(64)}`));
+
+  async function loginAs(socket: FakeSocket, who: typeof account): Promise<void> {
+    const signature = await who.signMessage({ message: `${AUTH_PREFIX}${socket.last('hello')?.nonce}` });
+    await socket.deliver({ type: 'auth', address: who.address, signature });
+  }
+
+  function queueing(open: LobbyInfo[] = []) {
+    const matchmaker = new Matchmaker({
+      port: { create: async () => TABLE },
+      tiers: [{ stake: STAKE, seats: 4 }],
+      minSeats: 4,
+      notify: (player, message) => gateway.notify(player, message),
+    });
+    const { socket, gateway, lobby } = harness({ matchmaker, directory: () => ({ open, live: [] }) });
+    const second = () => {
+      const tab = new FakeSocket();
+      gateway.accept(tab);
+      return tab;
+    };
+    return { socket, gateway, lobby, matchmaker, second };
+  }
+
+  it('tells a second tab where the wallet is queued, and keeps it queued until its last socket closes', async () => {
+    const { socket, matchmaker, second } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+
+    const tab = second();
+    await login(tab);
+    expect(tab.last('queued')).toEqual({ type: 'queued', stake: STAKE, seats: 4, waiting: 1 });
+
+    // The tab that queued closes first: the other still holds the place...
+    socket.close();
+    expect(matchmaker.waiting(STAKE, 4)).toBe(1);
+    // ...until it closes too, though it never sent `queue` itself.
+    tab.close();
+    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+  });
+
+  it('tells a wallet again about the table the queue put it at, until it has staked', async () => {
+    const lobby: LobbyInfo = { ...openLobby(), matchId: TABLE, players: [], seatCount: 0, matchmade: true };
+    const open = [lobby];
+    const { socket, matchmaker, second } = queueing(open);
+    await login(socket);
+    for (const other of others) matchmaker.join(other.address, STAKE, 4);
+    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    await matchmaker.tick();
+    expect(socket.last('matched')?.matchId).toBe(TABLE);
+
+    // A reload: the page forgot, the server tells it again.
+    const reloaded = second();
+    await login(reloaded);
+    expect(reloaded.last('matched')).toEqual({ type: 'matched', matchId: TABLE, stake: STAKE, seats: 4 });
+
+    // Seated: nothing left to say about it.
+    open[0] = { ...lobby, seatCount: 1, players: [{ address: account.address, chainId: 11155111 }] };
+    const later = second();
+    await login(later);
+    expect(later.last('matched')).toBeUndefined();
+  });
+
+  it('takes a reloaded page back to the practice match it was playing', async () => {
+    const { socket, second } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'practice', bots: 3 });
+    const matchId = viewOf(socket.sent)?.state.matchId;
+
+    const reloaded = second();
+    await login(reloaded);
+    expect(reloaded.last('live')?.matchId).toBe(matchId);
+  });
+
+  it('tells another tab when its practice match is replaced, and not the tab that replaced it', async () => {
+    const { socket, second } = queueing();
+    await login(socket);
+    await socket.deliver({ type: 'practice', bots: 3 });
+    const first = viewOf(socket.sent)?.state.matchId;
+
+    const tab = second();
+    await login(tab);
+    await tab.deliver({ type: 'practice', bots: 3 });
+    expect(socket.last('closed')).toMatchObject({ type: 'closed', matchId: first });
+    expect(socket.last('closed')?.reason).toMatch(/another practice match/);
+    expect(tab.last('closed')).toBeUndefined();
+  });
+
+  it('caps the practice matches started from one address', async () => {
+    const { gateway } = queueing();
+    const wallets = Array.from({ length: 7 }, (_, n) => privateKeyToAccount(`0x${(n + 0xa0).toString(16).padStart(64, '0')}`));
+    const sockets: FakeSocket[] = [];
+    for (const wallet of wallets) {
+      const tab = new FakeSocket();
+      gateway.accept(tab, { ip: '203.0.113.9' });
+      await loginAs(tab, wallet);
+      await tab.deliver({ type: 'practice', bots: 3 });
+      sockets.push(tab);
+    }
+    expect(sockets.slice(0, 6).every((tab) => tab.last('error') === undefined)).toBe(true);
+    expect(sockets[6]?.last('error')).toMatchObject({ code: 'BUSY' });
+    // A wallet replacing its own match is not a new one.
+    await sockets[0]?.deliver({ type: 'practice', bots: 3 });
+    expect(sockets[0]?.last('error')).toBeUndefined();
   });
 });

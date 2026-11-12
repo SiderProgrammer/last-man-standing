@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseEther } from 'viem';
 import { MatchStatus } from '@lms/contracts';
-import { lobbySeatsText, prizeFor, prizeLine, sortLobbies } from '../src/ui/views.js';
+import { lobbySeatsText, outcomeTag, prizeFor, prizeLine, settleText, sortLobbies, type OnChainOutcome } from '../src/ui/views.js';
 import { formatDuration } from '../src/ui/staking.js';
 
 const NOW = 1_700_000_000;
@@ -40,6 +40,35 @@ describe('prizeLine', () => {
 
   it('sends a settled prize to the collect button', () => {
     expect(prizeLine(parseEther('0.01'), at(MatchStatus.Settled), formatDuration)).toMatch(/in your balance/);
+  });
+});
+
+describe('where a staked result stands on-chain', () => {
+  const at = (status: number, extra: Partial<OnChainOutcome> = {}): OnChainOutcome => ({ status, deadline: NOW + 3_600, chainTime: NOW, ...extra });
+
+  it('stops saying a collected prize is in the balance', () => {
+    expect(prizeLine(parseEther('0.01'), at(MatchStatus.Settled), formatDuration, parseEther('0.01'))).toMatch(/in your balance/);
+    expect(prizeLine(parseEther('0.01'), at(MatchStatus.Settled), formatDuration, 0n)).toMatch(/you have collected it/);
+  });
+
+  it('says a disputed result is disputed, and what a veto would mean', () => {
+    const line = prizeLine(parseEther('0.01'), at(MatchStatus.Proposed, { disputed: true }), formatDuration);
+    expect(line).toMatch(/disputed/);
+    expect(line).toMatch(/refunded/);
+    expect(settleText(at(MatchStatus.Proposed, { disputed: true }), formatDuration)).toMatch(/^Disputed: the guardian is reviewing/);
+  });
+
+  it('follows the escrow: proposed, settled, vetoed or cancelled', () => {
+    expect(settleText(at(MatchStatus.Proposed), formatDuration)).toBe('Proposed on-chain: winnings unlock once the challenge window closes, in 1h');
+    expect(settleText(at(MatchStatus.Settled), formatDuration)).toMatch(/^Settled on-chain/);
+    expect(settleText(at(MatchStatus.Cancelled, { vetoed: true }), formatDuration)).toMatch(/^Vetoed/);
+    expect(settleText(at(MatchStatus.Cancelled), formatDuration)).toMatch(/^Cancelled on-chain/);
+  });
+
+  it('tags a history row with what happened beyond its place', () => {
+    expect(outcomeTag({ status: MatchStatus.Cancelled, vetoed: true })).toBe('vetoed · refunded');
+    expect(outcomeTag({ status: MatchStatus.Proposed, disputed: true })).toBe('disputed');
+    expect(outcomeTag({ status: MatchStatus.Settled })).toBeNull();
   });
 });
 

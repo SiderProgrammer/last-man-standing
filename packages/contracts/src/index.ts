@@ -10,3 +10,4 @@ export * from './zap.js';
 export * from './spokes.js';
 export * from './governance.js';
 export * from './proposals.js';
+export { contractErrorsAbi } from './contractErrors.js';

@@ -135,6 +135,8 @@ const WS_URL = `ws://localhost:${SERVER_PORT}`;
 // Chainlink VRF v2.5 on Base: the same coordinator `Deploy.s.sol` defaults to.
 const VRF_COORDINATOR = '0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634';
 const VRF_CONFIRMATIONS = 3n;
+/** Fills of one deposit the fork's Across relayer tries before giving up on it. */
+const FILL_ATTEMPTS = 3;
 // Uniswap v4 on Base.
 const POOL_MANAGER = '0x498581fF718922c3f8e6A244956aF099B2652b2b';
 const V4_QUOTER = '0x0d5e0f971ed27fbff6c2837bf31316121532048d';
@@ -536,49 +538,67 @@ async function addVrfConsumer(subId, adapter) {
  * it — a call to the adapter's `rawFulfillRandomWords` from the coordinator's
  * address — once `VRF_CONFIRMATIONS` blocks have passed.
  */
-function runVrfNode(adapter) {
+function runVrfNode(adapter, from) {
+  // Read with our own cursor rather than a node-side filter, which anvil can
+  // drop without a word (the responder then hears nothing new, forever).
   const pending = new Map();
-  hub.watchContractEvent({
-    address: adapter,
-    abi: adapterAbi,
-    eventName: 'RandomnessRequested',
-    pollingInterval: 1_000,
-    onLogs: (logs) => {
-      for (const { args, blockNumber } of logs) {
-        if (!pending.has(args.vrfId)) pending.set(args.vrfId, { due: blockNumber + VRF_CONFIRMATIONS, context: args.context, sent: false });
-      }
-    },
-    onError: (error) => log('vrf', `watch failed: ${reason(error)}`),
-  });
+  let next = from;
   let busy = false;
   setInterval(async () => {
-    if (busy || pending.size === 0) return;
+    if (busy) return;
     busy = true;
     try {
       const head = await hub.getBlockNumber();
+      if (head >= next) {
+        const logs = await hub.getContractEvents({ address: adapter, abi: adapterAbi, eventName: 'RandomnessRequested', fromBlock: next, toBlock: head });
+        for (const { args, blockNumber } of logs) {
+          if (!pending.has(args.vrfId)) pending.set(args.vrfId, { due: blockNumber + VRF_CONFIRMATIONS, context: args.context });
+        }
+        next = head + 1n;
+      }
       for (const [vrfId, request] of pending) {
-        if (request.sent || head < request.due) continue;
-        request.sent = true;
+        if (head < request.due) continue;
         try {
-          await asImpersonated(HUB_RPC, VRF_COORDINATOR, (coordinator) =>
-            sendAndWait(hub, coordinator, {
-              address: adapter,
-              abi: adapterAbi,
-              functionName: 'rawFulfillRandomWords',
-              args: [vrfId, [BigInt(toHex(randomBytes(32)))]],
-            }),
+          // Bounded: a send that never confirms must not hold every later request.
+          await withTimeout(
+            asImpersonated(HUB_RPC, VRF_COORDINATOR, (coordinator) =>
+              sendAndWait(hub, coordinator, {
+                address: adapter,
+                abi: adapterAbi,
+                functionName: 'rawFulfillRandomWords',
+                args: [vrfId, [BigInt(toHex(randomBytes(32)))]],
+              }),
+            ),
+            SEND_TIMEOUT_MS,
           );
           log('vrf', `seeded match ${request.context.slice(0, 10)}…`);
           pending.delete(vrfId);
         } catch (error) {
-          request.sent = false;
+          // Already seeded (by hand, or a send that did land) or cancelled: done with it.
+          if (/WrongStatus|NotOracle|reverted/.test(reason(error))) pending.delete(vrfId);
           log('vrf', `could not seed ${request.context.slice(0, 10)}…: ${reason(error)}`);
         }
       }
+    } catch (error) {
+      log('vrf', `could not read requests: ${reason(error)}`);
     } finally {
       busy = false;
     }
   }, 1_000).unref();
+}
+
+/** How long a keeper send on the fork may take before it is given up and tried again. */
+const SEND_TIMEOUT_MS = 60_000;
+
+/** `promise`, or a rejection once `ms` have passed without it settling. */
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer after ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 const b32 = (address) => pad(address, { size: 32 });
@@ -628,7 +648,7 @@ function relay(source, destination) {
       next = head + 1n;
       for (const { args } of logs) {
         log('across', `${source.name}: deposit ${args.depositId} of ${formatEther(args.inputAmount)} ETH, filling ${formatEther(args.outputAmount)} in ${FILL_DELAY_MS / 1000}s…`);
-        setTimeout(() => void fill(args), FILL_DELAY_MS);
+        setTimeout(() => queueFill(args), FILL_DELAY_MS);
       }
     } catch (error) {
       log('across', `${source.name}: could not read deposits: ${reason(error)}`);
@@ -637,9 +657,16 @@ function relay(source, destination) {
     }
   }, 1_500).unref();
 
-  const fill = async (deposit) => {
+  // One fill at a time: two sent at once from the relayer's one account
+  // take the same nonce, and one of them is dropped.
+  let fills = Promise.resolve();
+  const queueFill = (deposit, attempt = 1) => {
+    fills = fills.then(() => fill(deposit, attempt));
+  };
+
+  const fill = async (deposit, attempt) => {
     try {
-      await sendAndWait(destination.client, wallet, {
+      await withTimeout(sendAndWait(destination.client, wallet, {
         address: destination.pool,
         abi: fillAbi,
         functionName: 'fillRelay',
@@ -661,10 +688,12 @@ function relay(source, destination) {
           BigInt(destination.chainId),
           b32(roles.acrossRelayer.address),
         ],
-      });
+      }), SEND_TIMEOUT_MS);
       log('across', `${source.name}: deposit ${deposit.depositId} filled`);
     } catch (error) {
-      log('across', `${source.name}: deposit ${deposit.depositId} could not be filled: ${reason(error)}`);
+      log('across', `${source.name}: deposit ${deposit.depositId} could not be filled (try ${attempt}): ${reason(error)}`);
+      // A real relayer tries again; one that never fills leaves the stake to the deposit's expiry.
+      if (attempt < FILL_ATTEMPTS) setTimeout(() => queueFill(deposit, attempt + 1), FILL_DELAY_MS);
     }
   };
 }
@@ -804,7 +833,7 @@ async function main() {
   await seedGovernance(c);
 
   const [hubHead, spokeHead] = await Promise.all([hub.getBlockNumber(), spoke.getBlockNumber()]);
-  runVrfNode(c.randomnessOracle);
+  runVrfNode(c.randomnessOracle, hubHead + 1n);
   runAcrossRelayer(hubHead + 1n, spokeHead + 1n);
   await startIntervalMining();
 

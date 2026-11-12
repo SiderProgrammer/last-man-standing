@@ -127,16 +127,19 @@ export async function proposalContext(
       ? wallet.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'config' })
       : Promise.resolve(null),
   ]);
-  const [power, params] = await Promise.all([
+  const [power, params, paused] = await Promise.all([
     clock > 0
       ? wallet.rpc.readContract({ ...at, functionName: 'getVotes', args: [wallet.address, BigInt(clock - 1)] })
       : Promise.resolve(0n),
     config
       ? wallet.rpc.readContract({ address: config, abi: protocolConfigAbi, functionName: 'getParams' })
       : Promise.resolve(null),
+    known.escrow
+      ? wallet.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'paused' })
+      : Promise.resolve(undefined),
   ]);
   return {
-    context: { governor, timelock, config, params: params as ProtocolParams | null, ...known },
+    context: { governor, timelock, config, params: params as ProtocolParams | null, ...known, ...(paused !== undefined ? { paused } : {}) },
     power,
     threshold,
   };

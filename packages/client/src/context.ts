@@ -71,6 +71,8 @@ export interface AppState {
   withdrawToChain: boolean;
   /** The staked-lobby directory, as the server last sent it. */
   lobbies: { open: readonly LobbyInfo[]; live: readonly LobbyInfo[] };
+  /** True while the escrow is paused: nothing can be staked, collecting still works. */
+  escrowPaused: boolean;
   /**
    * Lobbies this browser has staked into from a spoke whose stake has not yet
    * landed on the hub, by lowercased match id. Cleared by the server's
@@ -158,6 +160,7 @@ export const store = createStore<AppState>({
   discount: null,
   withdrawToChain: false,
   lobbies: { open: [], live: [] },
+  escrowPaused: false,
   inTransit: new Set(),
   matchmaking: [],
   queue: null,

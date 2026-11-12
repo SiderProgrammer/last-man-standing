@@ -116,13 +116,29 @@ const MAX_TOASTS = 4;
  * refunded) waits to be dismissed. The stack is a `role="status"` region,
  * so screen readers announce each one.
  */
-export function toast(message: string, kind: ToastKind = 'info', options: { sticky?: boolean } = {}): void {
+export function toast(
+  message: string,
+  kind: ToastKind = 'info',
+  options: { sticky?: boolean; action?: { label: string; run: () => void } } = {},
+): void {
   const item = element('div', `toast ${kind}`);
   const close = element('button', 'toast-close', '×');
   close.type = 'button';
   close.setAttribute('aria-label', 'Dismiss');
   close.onclick = () => item.remove();
-  item.append(element('span', 'toast-text', message), close);
+  item.append(element('span', 'toast-text', message));
+  // The one thing to do about it, where the text alone would leave the player stuck.
+  if (options.action) {
+    const { label, run } = options.action;
+    const act = element('button', 'toast-action', label);
+    act.type = 'button';
+    act.onclick = () => {
+      item.remove();
+      run();
+    };
+    item.append(act);
+  }
+  item.append(close);
   dom.toast.append(item);
   while (dom.toast.children.length > MAX_TOASTS) dom.toast.firstElementChild?.remove();
   if (!options.sticky) setTimeout(() => item.remove(), TOAST_MS[kind]);

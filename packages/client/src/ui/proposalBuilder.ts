@@ -22,6 +22,8 @@ export interface ProposalContext {
   config: Address | null;
   /** The config's current parameters, which `setParams` must resend in full. */
   params: ProtocolParams | null;
+  /** Whether the escrow is paused now; unknown when omitted. */
+  paused?: boolean;
 }
 
 export interface TemplateField {
@@ -190,6 +192,8 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       return call(context.governor, 'No governor.', encode('setVotingPeriod', [days * DAY]));
     }
     case 'unpause':
+      // Executed against an escrow that is not paused, the whole proposal reverts.
+      if (context.paused === false) return { ok: false, error: 'Play is not paused right now, so this would fail when executed.' };
       return call(context.escrow, 'This deployment has no escrow.', encode('unpause', []));
     case 'removeVeto': {
       const account = field('account');

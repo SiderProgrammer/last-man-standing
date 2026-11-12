@@ -6,7 +6,6 @@ import {
   type BridgeQuote,
 } from '@lms/contracts';
 import {
-  errorFirstLine,
   quoteToWire,
   withdrawalToWire,
   type SpokeInfo,
@@ -16,6 +15,7 @@ import { toast } from '../ui/chrome.js';
 import { collectHomePlan } from '../ui/views.js';
 import { RelayError, sendRelayed } from './oneClick.js';
 import { collectWinnings, renderWinnings, requestBalance } from './payouts.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * Collecting winnings to the spoke the wallet is on.
@@ -101,7 +101,7 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
       };
     }
   } catch (error) {
-    toast(`Could not price bringing your winnings to ${name}: ${errorFirstLine(error)}`, 'error');
+    toast(`Could not price bringing your winnings to ${name}: ${explainError(error)}`, 'error');
     await renderWinnings();
   }
 }
@@ -128,7 +128,7 @@ async function collectHome(
     }));
     toast(`On its way to ${name}: it arrives once a relayer fills it, usually within a minute.`, 'success');
   } catch (error) {
-    toast(error instanceof RelayError ? `Withdrawal refused: ${error.message}` : errorFirstLine(error), 'error');
+    toast(error instanceof RelayError ? `Withdrawal refused: ${error.message}` : explainError(error), 'error');
   } finally {
     for (const button of buttons()) button.onclick = () => void collectWinnings();
     await renderWinnings();

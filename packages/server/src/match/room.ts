@@ -550,11 +550,18 @@ export class Room {
       delta: matchDelta(this.match.publicState()),
       msRemaining: this.remaining(),
       waitingFor: this.absent(),
+      ...this.hold(),
     });
   }
 
   private remaining(): number {
     return Math.max(0, this.deadlineAt - this.clock);
+  }
+
+  /** What is left of the replay hold, when one is running: `msRemaining` includes it. */
+  private hold(): { holdMs?: number } {
+    const left = this.replayUntil - this.clock;
+    return left > 0 ? { holdMs: left } : {};
   }
 
   private avatarsMessage(): ServerMessage {
@@ -569,6 +576,7 @@ export class Room {
       you: client.address ? this.seatOf(client.address) : null,
       msRemaining: this.remaining(),
       waitingFor: this.absent(),
+      ...this.hold(),
     });
   }
 }

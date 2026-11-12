@@ -1,10 +1,11 @@
 import { ZAP_DEADLINE_SECONDS } from '@lms/contracts';
-import { errorFirstLine, type LobbyInfo, type ZapToken } from '@lms/api';
+import { type LobbyInfo, type ZapToken } from '@lms/api';
 import { app } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import { planTokenJoin } from '../ui/views.js';
 import * as zapCalls from '../wallet/zap.js';
-import { armQuote, idleTokenButton, seated } from './lobby.js';
+import { armQuote, idleTokenButton, seatTaken, seated } from './lobby.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * Paying a stake in a token, through `ZapJoin`: the second and third clicks
@@ -38,7 +39,7 @@ export async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo
     );
   } catch (error) {
     // Almost always a route with no pool behind it, or a wallet on another chain.
-    toast(`Could not price ${token.symbol}: ${errorFirstLine(error)}`, 'error');
+    toast(`Could not price ${token.symbol}: ${explainError(error)}`, 'error');
     idleTokenButton(button, lobby, token);
   } finally {
     button.disabled = false;
@@ -64,13 +65,13 @@ async function payTokenJoin(
     }
 
     button.textContent = 'Confirm the join…';
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + ZAP_DEADLINE_SECONDS);
+    // The chain's clock, which the swap's deadline is checked against.
+    const deadline = BigInt((await wallet.chainTime()) + ZAP_DEADLINE_SECONDS);
     const hash = await zapCalls.joinWithToken(wallet, zap.address, lobby.matchId, token.path, maxAmountIn, deadline);
     button.textContent = 'Joining…';
-    await wallet.waitFor(hash, `Stake in ${token.symbol}`);
-    seated(lobby);
+    seated(lobby, undefined, seatTaken(await wallet.waitFor(hash, `Stake in ${token.symbol}`)));
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
     idleTokenButton(button, lobby, token);
   } finally {
     button.disabled = false;

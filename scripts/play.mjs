@@ -344,10 +344,18 @@ async function joinFromSpoke(id, p, stake) {
     : localQuote(stake, now);
   await send('spoke', p.key, { address: router, abi: spokeRouterAbi, functionName: 'join', args: [id, zeroAddress, quote], value: inputAmount }, `P${p.n} stakes from ${profile.spoke.name} (${formatEther(inputAmount)} ETH incl. ${formatEther(inputAmount - stake)} Across fee)`);
   process.stdout.write(`  P${p.n} in transit…`);
+  // A stake that lands in a lobby already full is credited instead of
+  // seated: the balance growing is how that shows.
+  const owedBefore = await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [p.address] });
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     if (await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'hasSeat', args: [id, p.address] })) {
       console.log(' seated on the hub');
+      return;
+    }
+    const owed = await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [p.address] });
+    if (owed > owedBefore) {
+      console.log(` not seated: the lobby could not take it, so ${formatEther(owed - owedBefore)} ETH was credited on the hub. Collect it with \`withdraw\`.`);
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 3_000));

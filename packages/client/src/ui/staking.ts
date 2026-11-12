@@ -254,9 +254,18 @@ export function parseDelegatee(text: string): { ok: true; address: Address } | {
   return { ok: true, address: getAddress(trimmed) };
 }
 
-/** An 18-decimal amount (LMS or ETH), readable: thousands separators, at most `decimals` places, no trailing zeros. */
-export function formatLms(wei: bigint, decimals = 2): string {
-  const [whole = '0', fraction = ''] = formatUnits(wei, 18).split('.');
+/**
+ * An 18-decimal amount (LMS or ETH), readable: thousands separators, at most
+ * `decimals` places, no trailing zeros. Rounded to the nearest, so 0.99999
+ * reads as 1, and a dust amount as "<0.01" rather than a 0 that still has a
+ * button next to it. `down` rounds down instead, for a limit the player must
+ * stay within ("you hold …").
+ */
+export function formatLms(wei: bigint, decimals = 2, rounding: 'nearest' | 'down' = 'nearest'): string {
+  const step = 10n ** BigInt(18 - decimals);
+  const rounded = rounding === 'down' ? (wei / step) * step : ((wei + step / 2n) / step) * step;
+  if (rounded === 0n && wei > 0n) return `<0.${'0'.repeat(decimals - 1)}1`;
+  const [whole = '0', fraction = ''] = formatUnits(rounded, 18).split('.');
   const grouped = BigInt(whole).toLocaleString('en-US');
   const trimmed = fraction.slice(0, decimals).replace(/0+$/, '');
   return trimmed ? `${grouped}.${trimmed}` : grouped;

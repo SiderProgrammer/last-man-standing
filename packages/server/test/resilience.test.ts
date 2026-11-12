@@ -112,6 +112,35 @@ describe('archive first', () => {
   });
 });
 
+describe('practice rooms nobody watches', () => {
+  function lobbyWithPractice() {
+    const lobby = new Lobby({ archive: new MemoryArchive(), relayer: nullRelayer, commitMs: COMMIT_MS, revealMs: REVEAL_MS });
+    const client = new FakeClient(HUMAN);
+    const room = lobby.createPractice(HUMAN, 3, 0);
+    lobby.attach(room.matchId, client, 0);
+    return { lobby, client, room };
+  }
+
+  it('closes one a minute after its player left, freeing its slot', () => {
+    const { lobby, client, room } = lobbyWithPractice();
+    lobby.detach(client);
+    lobby.tick(1_000);
+    expect(lobby.get(room.matchId)).not.toBeNull();
+    lobby.tick(62_000);
+    expect(lobby.get(room.matchId)).toBeNull();
+  });
+
+  it('keeps it for a player who comes back, as after a reload', () => {
+    const { lobby, client, room } = lobbyWithPractice();
+    lobby.detach(client);
+    lobby.tick(1_000);
+    lobby.attach(room.matchId, new FakeClient(HUMAN), 5_000);
+    lobby.tick(5_000);
+    lobby.tick(90_000);
+    expect(lobby.get(room.matchId)).not.toBeNull();
+  });
+});
+
 describe('practice and the chain', () => {
   it('archives a practice match, and never hands it to the relayer', async () => {
     const calls: string[] = [];
@@ -221,7 +250,8 @@ describe('gateway limits', () => {
 
     clock.now += 5_000;
     const errors = socket.sent.filter((message) => message.type === 'error').length;
-    await socket.deliver({ type: 'lobbies' });
+    // The directory is public now; history is not.
+    await socket.deliver({ type: 'history' });
     expect(socket.sent.filter((message) => message.type === 'error').length).toBe(errors + 1);
     // ...that one failed only because the socket never logged in, not the limit.
     expect(lastOfType(socket.sent, 'error')?.message).toMatch(/authenticate/);

@@ -60,6 +60,10 @@ const files = new Map(
 );
 const barrel = Object.entries(CONTRACTS).map(([contract, name]) => `export { ${name} } from './abis/${contract}.js';`);
 files.set('abis.ts', `${HEADER}\n${barrel.join('\n')}\n`);
+files.set(
+  'contractErrors.ts',
+  errorsModule(Object.keys(CONTRACTS).map((contract) => JSON.parse(readFileSync(artifactPath(OUT, contract), 'utf8')).abi)),
+);
 
 if (process.argv.includes('--check')) {
   const stale = [...files].filter(([file, source]) => {
@@ -78,6 +82,25 @@ if (process.argv.includes('--check')) {
   mkdirSync(join(CHAIN, 'abis'), { recursive: true });
   for (const [file, source] of files) writeFileSync(join(CHAIN, file), source);
   console.log(`Wrote ${Object.keys(CONTRACTS).length} ABIs to packages/contracts/src/abis/.`);
+}
+
+/**
+ * Every custom error of every contract above, once each: small enough for
+ * the main bundle, so a revert from any of them decodes to its name without
+ * loading the contract's whole ABI.
+ */
+export function errorsModule(abis) {
+  const errors = new Map();
+  for (const abi of abis) {
+    for (const entry of abi) {
+      if (entry.type === 'error') errors.set(`${entry.name}(${signature(entry)})`, entry);
+    }
+  }
+  const entries = [...errors.values()].sort(byKindAndName).map((entry) => `  ${JSON.stringify(entry)},`);
+  return (
+    `${HEADER}\n/** Every custom error the generated contracts can revert with, once each, to decode a revert from any of them. */\n` +
+    `export const contractErrorsAbi = [\n${entries.join('\n')}\n] as const;\n`
+  );
 }
 
 function byKindAndName(a, b) {

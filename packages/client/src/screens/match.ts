@@ -18,7 +18,6 @@ import { isPracticeTable } from '@lms/contracts';
 import {
   applyDelta,
   withRound,
-  errorFirstLine,
   type LobbyInfo,
   type MatchmakingTier,
   type PlayStyle,
@@ -31,7 +30,7 @@ import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
-import { showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { showLobbyScreen, showMatchScreen, toast } from '../ui/chrome.js';
 import { callBack, cue, setSound, soundOn } from '../ui/alerts.js';
 import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
 import { renderWinnings } from '../wallet/payouts.js';
@@ -45,6 +44,7 @@ import { offerAnalysis, resetAnalysis, wireAnalysisControls } from './analysis.j
 import { stateBeforeRound } from '../game/rewind.js';
 import type { Review } from '../game/review.js';
 import type { GrantedKey } from '../wallet/grant.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * The match screen: the commit-reveal handshake, the panels around the arena,
@@ -80,6 +80,10 @@ function disposeArena(): void {
 /** Ends the current replay hold. Owned here, not by the renderer, so the
  *  controls still unlock if the canvas never managed to mount. */
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
+/** True while a review opens a finished match, which shows its own result. */
+let reviewing = false;
+/** The round the replay hold is showing, for the phase label. */
+let replayedRound: number | null = null;
 /** Whether the move buttons are open right now, as the phase plan last said. */
 let controlsOpen = false;
 /** Phase label last drawn, so the heading is only rebuilt when it changes. */
@@ -94,6 +98,7 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
   // No match on screen: the player left this table for the lobby.
   if (!app.match) return;
   // The history grows here: deltas never carry it.
+  replayedRound = message.record.round;
   store.set({ match: withRound(app.match, message.record) });
   appendRound(roundLines(message.record), message.record.round, message.record.eliminated);
   renderRecap(message.record);
@@ -222,6 +227,24 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   offerAnalysis(message.result.matchId);
 }
 
+/**
+ * A table opened after its match ended, as a spectator who missed the
+ * `finished`: the winner, from who is left standing, and the controls shut,
+ * with the button back to the lobby. A review goes through `showFinished`.
+ */
+function showEnded(state: PublicMatchState): void {
+  const standing = state.players.filter((player) => player.alive);
+  const winner = standing.length === 1 ? standing[0]?.index : undefined;
+  appendLine(winner === undefined ? 'This match has ended.' : `Match over — seat #${winner} took it after ${state.round} rounds.`, 'round-head');
+  if (winner !== undefined) {
+    if (arena) arena.showWinner(winner);
+    else void mounting?.then((mounted) => mounted.showWinner(winner));
+  }
+  lockControls('This match has ended.');
+  dom.lockIn.disabled = false;
+  dom.lockIn.textContent = lockInLabel(true, false, null);
+}
+
 /** The matchmaking tier "Find another match" queues for, set when a staked match ends. */
 let againTier: MatchmakingTier | null = null;
 
@@ -233,8 +256,11 @@ let againTier: MatchmakingTier | null = null;
 function tierOf(matchId: string, seats: number): MatchmakingTier | null {
   const lobby = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === matchId) ?? tableSeen;
   if (!lobby || lobby.matchId !== matchId) return null;
-  // The table's size, not the seats filled: a short table of 4 is still the 6-seat tier.
-  return app.matchmaking.find((tier) => tier.stake === lobby.stake && tier.seats === Math.max(seats, lobby.maxSeats)) ?? null;
+  // A short matchmade table has as many seats as players: it belongs to the
+  // smallest tier at its stake that seats it.
+  const size = Math.max(seats, lobby.maxSeats);
+  const fits = app.matchmaking.filter((tier) => tier.stake === lobby.stake && tier.seats >= size).sort((a, b) => a.seats - b.seats);
+  return fits[0] ?? null;
 }
 
 /** The directory's entry for the match on screen, kept as it was when the match opened. */
@@ -255,9 +281,12 @@ function showResultCard(): void {
 export function showReview(review: Review, result: MatchResult): void {
   // Forgotten first, so reopening the match already on screen starts clean too.
   store.set({ match: null, leftMatch: null });
-  onState(review.state, review.you, 0);
-  for (const record of review.state.history) {
-    appendRound(roundLines(record), record.round, record.eliminated);
+  // The feed is filled from the history as the table opens.
+  reviewing = true;
+  try {
+    onState(review.state, review.you, 0);
+  } finally {
+    reviewing = false;
   }
   showFinished({ type: 'finished', result, ranking: review.ranking });
 }
@@ -276,10 +305,26 @@ export function replayRound(round: number): void {
   arena.rewindTo(before, record);
 }
 
+/**
+ * The room on screen was closed before its match ended: a practice match
+ * replaced by one started in another tab, or one left unwatched. Back to the
+ * lobby, saying why, rather than a clock frozen at zero.
+ */
+export function onRoomClosed(message: Extract<ServerMessage, { type: 'closed' }>): void {
+  if (app.match?.matchId !== message.matchId) return;
+  if (replayTimer) clearTimeout(replayTimer);
+  replayTimer = null;
+  store.set({ match: null, you: null, replaying: false, pendingFinish: null });
+  disposeArena();
+  hideResult();
+  showLobbyScreen();
+  toast(`That match was closed: ${message.reason}.`, 'info');
+}
+
 /** Folds what changed into the match on screen, and redraws it. A delta for another match is stale and dropped. */
 export function onDelta(message: Extract<ServerMessage, { type: 'delta' }>): void {
   if (!app.match || app.match.matchId !== message.delta.matchId) return;
-  onState(applyDelta(app.match, message.delta), app.you, Date.now() + message.msRemaining, message.waitingFor);
+  onState(applyDelta(app.match, message.delta), app.you, Date.now() + message.msRemaining, message.waitingFor, message.holdMs);
 }
 
 /** What belongs to one match alone: cleared when another takes its place. Shared, so never mutated. */
@@ -297,6 +342,8 @@ export function onState(
   you: number | null,
   deadline: number,
   waitingFor: readonly number[] = [],
+  /** What is left of the server's replay hold, for a page that missed the `round` that began it. */
+  holdMs = 0,
 ): void {
   // A table the player walked away from: what it does next is not shown.
   if (state.matchId === app.leftMatch) return;
@@ -305,6 +352,7 @@ export function onState(
     // A replay from the previous match must not close this one's controls.
     if (replayTimer) clearTimeout(replayTimer);
     replayTimer = null;
+    replayedRound = null;
     disposeArena();
     dom.feed.replaceChildren();
     hideResult();
@@ -313,6 +361,9 @@ export function onState(
     dom.roundRecap.classList.add('hidden');
     dom.roundAnnounce.textContent = '';
     showMatchScreen();
+    // The rounds already played, so a table opened mid-match, or just after
+    // it ended, has its history and not an empty feed.
+    for (const record of state.history) appendRound(roundLines(record), record.round, record.eliminated);
     tableSeen = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === state.matchId) ?? null;
     if (you !== null) callBack('Match starting', 'Your table is open: round 1 is about to begin.');
   }
@@ -325,6 +376,11 @@ export function onState(
     waitingFor: [...waitingFor],
     draft: keptDraft(state, you, switched ? null : app.draft, committedRound),
   });
+  // Opened after it ended: no `finished` is coming, so say who won from the table.
+  if (switched && state.phase === MatchPhase.Finished && !reviewing) showEnded(state);
+  // Attached mid-hold: the clock the server sent counts the hold and the
+  // commit window together, so hold the controls and clock for the rest of it.
+  if (holdMs > 0 && !app.replaying && state.phase === MatchPhase.Commit) startReplay(holdMs);
   revealIfDue();
 }
 
@@ -360,6 +416,7 @@ function currentPlan(state: PublicMatchState): PhasePlan {
     revealedRound: app.revealedRound,
     draft: app.draft,
     replaying: app.replaying,
+    replayedRound,
   });
 }
 
@@ -433,7 +490,7 @@ async function sendCommit(key: GrantedKey, place: MovePlace, sealed: SealedMove,
     // Held, the server reveals it: as far as the transcript goes, it was revealed.
     if (held) updateMove(place.matchId, place.round, { revealed: true });
   } catch (error) {
-    dom.moveStatus.textContent = `Could not sign your move: ${errorFirstLine(error)}`;
+    dom.moveStatus.textContent = `Could not sign your move: ${explainError(error)}`;
   }
 }
 
@@ -471,7 +528,7 @@ async function sendReveal(key: GrantedKey, place: MovePlace, move: SealedMove): 
     });
     updateMove(place.matchId, place.round, { revealed: true });
   } catch (error) {
-    dom.moveStatus.textContent = `Could not sign your reveal: ${errorFirstLine(error)}`;
+    dom.moveStatus.textContent = `Could not sign your reveal: ${explainError(error)}`;
   }
 }
 
@@ -580,6 +637,8 @@ function renderMove(): void {
   }
 
   const watching = !finished && state !== null && app.you === null;
+  // Only a seat has a move to hold.
+  dom.holdMoves.closest('label')?.classList.toggle('hidden', app.you === null);
   dom.lockIn.textContent = out ? 'Eliminated · leave to lobby' : watching ? 'Stop watching' : lockInLabel(finished, sealed, draft);
   dom.lockIn.title = out ? 'You are out of this match. Leave, or stay and watch the rest.' : '';
   if (watching) dom.lockIn.disabled = false;
@@ -818,7 +877,7 @@ export function wireMatchControls(): void {
  * match still running is forgotten here, so its next rounds do not pull the
  * page back to it. Its row in the lobby opens it again.
  */
-function leaveMatch(): void {
+export function leaveMatch(): void {
   const state = app.match;
   if (state && state.phase !== MatchPhase.Finished && dom.resultPanel.classList.contains('hidden')) {
     if (replayTimer) clearTimeout(replayTimer);

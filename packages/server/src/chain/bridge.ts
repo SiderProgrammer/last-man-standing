@@ -122,6 +122,17 @@ export class ChainBridge {
    * bridge does nothing at all: no lock, no cancel, no room.
    */
   private liveAtBoot: Set<string> | null = null;
+  /**
+   * The chain's clock less this machine's, in milliseconds, from the last
+   * block read. Deadlines are the escrow's, so they are measured by the
+   * chain: a fork whose clock was moved, or a host whose clock is off,
+   * otherwise locks, cancels and finalises at the wrong moment.
+   */
+  private offsetMs = 0;
+  /** Whether `offsetMs` has been read from a block yet. */
+  private clockKnown = false;
+  /** The escrow's pause, as the last poll read it. */
+  private pausedNow = false;
 
   constructor(private readonly deps: ChainBridgeDeps) {
     this.reader = deps.reader;
@@ -185,6 +196,7 @@ export class ChainBridge {
    */
   readonly poll: () => Promise<void> = exclusive(async () => {
     try {
+      await this.syncClock();
       await this.discover();
       this.liveAtBoot ??= await this.snapshot();
       await this.refresh(this.liveAtBoot);
@@ -192,6 +204,33 @@ export class ChainBridge {
       console.error('[chain] poll failed:', errorMessage(error));
     }
   });
+
+  /** Reads the latest block's time, so deadlines are measured by the chain's clock. */
+  private async syncClock(): Promise<void> {
+    const paused = await this.reader.paused?.().catch(() => null);
+    if (typeof paused === 'boolean') this.pausedNow = paused;
+    const at = await this.reader.blockTime?.().catch(() => null);
+    if (at === undefined || at === null) return;
+    this.offsetMs = at * 1000 - this.now();
+    this.clockKnown = true;
+  }
+
+  /**
+   * The chain's time now, in unix seconds, as the escrow counts it; null
+   * before the first block has been read. Sent with the directory, so pages
+   * count lobby and governance deadlines by it rather than their own clock.
+   */
+  chainTime(): number | null {
+    return this.clockKnown ? this.seconds() : null;
+  }
+
+  /**
+   * Whether the guardian or governance has paused the escrow. Sent with the
+   * directory, so a page says so instead of letting every stake revert.
+   */
+  paused(): boolean {
+    return this.pausedNow;
+  }
 
   private async discover(): Promise<void> {
     const latest = confirmedHead(await this.reader.blockNumber(), this.deps.confirmations ?? 0);
@@ -426,9 +465,9 @@ export class ChainBridge {
     return chainId;
   }
 
-  /** The clock in unix seconds, as the escrow counts its deadlines. */
+  /** The clock in unix seconds, as the escrow counts its deadlines: the chain's. */
   private seconds(): number {
-    return Math.floor(this.now() / 1000);
+    return Math.floor((this.now() + this.offsetMs) / 1000);
   }
 
   private adopt(matchId: `0x${string}`, seed: `0x${string}`, lobbySeats: readonly LobbySeat[]): void {

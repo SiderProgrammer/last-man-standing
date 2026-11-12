@@ -152,6 +152,13 @@ export interface GatewayOptions {
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   /**
+   * The hub's clock, in unix seconds, as its latest block has it; null when
+   * unknown. Sent with the directory so pages count deadlines by the chain.
+   */
+  chainTime?: () => number | null;
+  /** Whether the escrow is paused. Sent with the directory, and the queue is closed while it is. */
+  paused?: () => boolean;
+  /**
    * How login signatures are checked. Defaults to offline `ecrecover`, which
    * accepts EOAs only; supply an RPC-backed verifier to also accept contract
    * wallets through ERC-1271.
@@ -209,6 +216,8 @@ export class Gateway {
   private readonly sessions = new Map<Socket, Session>();
   private readonly limits: GatewayLimits;
   private readonly perIp = new Map<string, number>();
+  /** Practice rooms started from each IP, by match id; pruned as they end. */
+  private readonly practiceByIp = new Map<string, Set<`0x${string}`>>();
   private readonly connectsByIp: KeyedLimiter;
   private readonly loginsByIp: KeyedLimiter;
   /**
@@ -320,14 +329,27 @@ export class Gateway {
    */
   publishLobbies(): void {
     const directory = this.options.directory();
-    const key = JSON.stringify(directory);
+    const key = JSON.stringify([directory, this.options.paused?.() ?? false]);
     if (key === this.publishedDirectory) return;
     this.publishedDirectory = key;
-    // One object for every socket, so it is serialised once.
-    const message: ServerMessage = { type: 'lobbies', open: directory.open, live: directory.live };
-    for (const session of this.sessions.values()) {
-      if (session.address !== null) session.send(message);
-    }
+    // One object for every socket, so it is serialised once. Logged out
+    // too: the directory is the chain's, public, and a visitor deciding
+    // whether to connect a wallet should see what is on offer.
+    const message = this.lobbiesMessage(directory);
+    for (const session of this.sessions.values()) session.send(message);
+  }
+
+  /** The directory as sent, stamped with the chain's clock when it is known. */
+  private lobbiesMessage(directory: { open: LobbyInfo[]; live: LobbyInfo[] }): ServerMessage {
+    const chainTime = this.options.chainTime?.() ?? null;
+    const paused = this.options.paused?.() ?? false;
+    return {
+      type: 'lobbies',
+      open: directory.open,
+      live: directory.live,
+      ...(chainTime !== null ? { chainTime } : {}),
+      ...(paused ? { paused } : {}),
+    };
   }
 
   /** Why a new socket is refused, or null to admit it. Checked cheapest first. */
@@ -388,18 +410,22 @@ export class Gateway {
       await this.login(session, message);
       return;
     }
+    // Public: what the chain already shows anyone.
+    if (message.type === 'lobbies') {
+      session.send(this.lobbiesMessage(this.options.directory?.() ?? { open: [], live: [] }));
+      return;
+    }
 
     const address = session.address;
     if (!address) throw new RequestError('NOT_AUTHENTICATED', 'authenticate before acting');
 
     switch (message.type) {
-      case 'lobbies': {
-        const directory = this.options.directory?.() ?? { open: [], live: [] };
-        session.send({ type: 'lobbies', open: directory.open, live: directory.live });
-        return;
-      }
       case 'practice': {
-        const room = this.options.lobby.createPractice(address, message.bots ?? 3, now, message.difficulty);
+        this.checkPracticeQuota(session.ip, address);
+        const room = this.options.lobby.createPractice(address, message.bots ?? 3, now, message.difficulty, session);
+        let rooms = this.practiceByIp.get(session.ip);
+        if (!rooms) this.practiceByIp.set(session.ip, (rooms = new Set()));
+        rooms.add(room.matchId);
         this.options.lobby.attach(room.matchId, session, now);
         return;
       }
@@ -448,6 +474,7 @@ export class Gateway {
       case 'queue': {
         const matchmaker = this.options.matchmaker;
         if (!matchmaker) throw new RequestError('UNAVAILABLE', 'this server runs no matchmaking');
+        if (this.options.paused?.()) throw new RequestError('UNAVAILABLE', 'staked play is paused right now; the queue reopens when it resumes');
         // `queued` goes to every socket of the wallet, this one included.
         matchmaker.join(address, message.stake, message.seats);
         session.queued = true;
@@ -572,6 +599,34 @@ export class Gateway {
     session.address = message.address;
     session.grant = grant;
     session.send({ type: 'authed', address: message.address });
+    this.resume(session, message.address);
+  }
+
+  /**
+   * What a page kept only in memory, told again on every login: after a
+   * reload, in a second tab, or on a reconnect. Its place in the queue; a
+   * table the queue put it at that still waits for its stake; and a match
+   * it is seated in that is being played, practice included, to go back to.
+   */
+  private resume(session: Session, address: `0x${string}`): void {
+    const matchmaker = this.options.matchmaker;
+    const spot = matchmaker?.spotOf(address) ?? null;
+    if (spot) {
+      session.queued = true;
+      session.send({ type: 'queued', ...spot });
+    }
+    if (matchmaker) {
+      const key = addressKey(address);
+      const open = this.options.directory?.().open ?? [];
+      for (const table of matchmaker.tablesOf(address, this.now())) {
+        const lobby = open.find((entry) => addressKey(entry.matchId) === addressKey(table.matchId));
+        // Gone, or already staked into: nothing left to do about it.
+        if (!lobby || lobby.players.some((player) => addressKey(player.address) === key)) continue;
+        session.send({ type: 'matched', ...table });
+      }
+    }
+    const room = this.options.lobby.roomFor(address);
+    if (room) session.send({ type: 'live', matchId: room.matchId });
   }
 
   /** Throws unless `signed` is a usable grant from `wallet`. */
@@ -752,13 +807,38 @@ export class Gateway {
     session.analysis?.abort();
     this.options.lobby.detach(session);
     this.sessions.delete(session.socket);
-    // Nobody left to tell when its table is ready: out of the queue.
-    if (session.queued && session.address && !this.connected(session.address)) {
+    // Nobody left to tell when its table is ready: out of the queue. The
+    // wallet's place, whichever of its sockets queued it: a tab that logged
+    // in after the queueing one must not keep it queued once it closes too.
+    if (session.address && !this.connected(session.address)) {
       this.options.matchmaker?.leave(session.address);
     }
     const count = (this.perIp.get(session.ip) ?? 1) - 1;
     if (count > 0) this.perIp.set(session.ip, count);
     else this.perIp.delete(session.ip);
+  }
+
+  /**
+   * Throws once `ip` already runs `maxPracticeRoomsPerIp` practice matches,
+   * not counting the one `address` would replace by starting another.
+   */
+  private checkPracticeQuota(ip: string, address: `0x${string}`): void {
+    const rooms = this.practiceByIp.get(ip);
+    if (!rooms) return;
+    let running = 0;
+    for (const matchId of rooms) {
+      const room = this.options.lobby.get(matchId);
+      if (!room || room.finished) {
+        rooms.delete(matchId);
+        continue;
+      }
+      // Seat 0 is the human at a practice table: its own room is replaced, not added to.
+      if (addressKey(room.match.seats[0]?.address ?? '') !== addressKey(address)) running += 1;
+    }
+    if (rooms.size === 0) this.practiceByIp.delete(ip);
+    if (running >= this.limits.maxPracticeRoomsPerIp) {
+      throw new RequestError('BUSY', 'too many practice matches are running from your network; finish one first');
+    }
   }
 
   /** Whether any open socket is logged in as `address`. */

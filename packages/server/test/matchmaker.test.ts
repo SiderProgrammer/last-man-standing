@@ -66,7 +66,8 @@ describe('matchmaker', () => {
     advance(30_000);
     await matchmaker.tick();
     expect(opened[0]?.roster).toHaveLength(5);
-    expect(opened[0]?.seats).toBe(8);
+    // As many seats as players, so it locks the moment the last one stakes.
+    expect(opened[0]?.seats).toBe(5);
   });
 
   it('never opens a table short of the fewest seats a match starts with', async () => {
@@ -119,5 +120,22 @@ describe('matchmaking tiers', () => {
     ]);
     expect(parseTiers('')).toEqual([]);
     expect(parseTiers('not json')).toEqual([]);
+  });
+});
+
+describe('matchmaker memory', () => {
+  it('says where a wallet is queued, and which tables it was put at', async () => {
+    const { matchmaker, advance } = harness();
+    matchmaker.join(wallet(9), STAKE, 8);
+    expect(matchmaker.spotOf(wallet(9))).toEqual({ stake: STAKE, seats: 8, waiting: 1 });
+    expect(matchmaker.spotOf(wallet(8))).toBeNull();
+
+    for (let i = 0; i < 4; i += 1) matchmaker.join(wallet(i), STAKE, 4);
+    await matchmaker.tick();
+    expect(matchmaker.tablesOf(wallet(0))).toEqual([{ matchId: `0x${'1'.padStart(64, '0')}`, stake: STAKE, seats: 4 }]);
+    expect(matchmaker.tablesOf(wallet(9))).toEqual([]);
+    // Forgotten long after any join window.
+    advance(3 * 3_600_000);
+    expect(matchmaker.tablesOf(wallet(0))).toEqual([]);
   });
 });

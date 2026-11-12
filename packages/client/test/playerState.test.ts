@@ -47,6 +47,14 @@ describe('the status bar', () => {
     expect(statusItems(input({ lobbies: { open: [], live: [live] }, watching: live.matchId }))).toEqual([]);
   });
 
+
+  it('offers the refund for a table whose seed never came, by the chain clock', () => {
+    const stuck = lobby('7', { status: 'pending', players: [{ address: ME, chainId: 1 }], cancellableAt: NOW + 3_600 });
+    expect(statusItems(input({ lobbies: { open: [], live: [stuck] } }))[0]?.kind).toBe('seeding');
+    // The browser's clock says an hour to go; the chain's is past it.
+    const late = input({ lobbies: { open: [], live: [stuck] }, chainNowMs: (NOW + 3_601) * 1000 });
+    expect(statusItems(late)[0]).toMatchObject({ kind: 'refund', action: 'Cancel & refund' });
+  });
   it('says a full table waits for its seed', () => {
     const pending = lobby('2', { status: 'pending', players: [{ address: ME, chainId: 1 }] });
     expect(statusItems(input({ lobbies: { open: [], live: [pending] } }))[0]?.kind).toBe('seeding');

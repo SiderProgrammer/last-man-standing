@@ -1,7 +1,6 @@
 import { type SessionCallParams } from '@lms/consensus';
 import { ONE_CLICK_CAPS, joinCall, withdrawForCall } from '@lms/contracts';
 import {
-  errorFirstLine,
   type ClientMessage,
   type ErrorCode,
   type ServerMessage,
@@ -9,6 +8,7 @@ import {
 import { formatEther, type Hex } from 'viem';
 import { app, dom, net, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
+import { explainError } from '../ui/errors.js';
 
 /**
  * One-click play: joins and collecting winnings with no wallet prompt and no
@@ -149,7 +149,7 @@ export async function enableOneClick(): Promise<void> {
     await wallet.waitFor(hash, 'Turn on one-click play');
     toast('One-click play is on.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     await refreshOneClick();
     // A failure leaves `oneClick` false, as it was, so the store notifies
@@ -167,7 +167,7 @@ export async function disableOneClick(): Promise<void> {
     await wallet.waitFor(await wallet.revokeSession(grantKey.address), 'Turn off one-click play');
     toast('One-click play is off.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error), 'error');
+    toast(explainError(error), 'error');
   } finally {
     dom.disableOneClick.disabled = false;
     await refreshOneClick();
