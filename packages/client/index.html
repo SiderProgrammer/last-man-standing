@@ -56,6 +56,10 @@
             </select>
             <button id="practice" class="primary">Start practice match</button>
           </div>
+          <p class="muted small">
+            No wallet? <button id="guest-play" type="button" class="link inline">Play as a guest</button>:
+            practice and history work without one.
+          </p>
         </div>
 
         <h3 class="section-label">Play for stakes</h3>
@@ -154,6 +158,10 @@
             <button id="account-back" class="ghost">Back to lobby</button>
           </div>
           <p id="account-address" class="account-address"></p>
+          <div id="account-guest" class="notice hidden">
+            <span>You are playing as a guest: practice only. Connect a wallet to play for stakes; the guest's history stays in this browser.</span>
+            <button id="account-connect" class="primary">Connect a wallet</button>
+          </div>
           <p class="muted small">
             Your stake in the protocol, your avatar, and how this browser signs for you.
             Winnings and your match history are on the lobby.
@@ -218,8 +226,23 @@
             wallet, and it follows you into the arena.
           </p>
           <div class="row">
+            <img id="avatar-image" class="avatar-image hidden" alt="Your avatar" width="56" height="56" />
             <button id="mint-avatar" disabled>Mint avatar</button>
             <span id="avatar-status" class="muted small">Connect a wallet to check.</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Appearance</h2>
+          </div>
+          <div class="row">
+            <label for="theme">Theme</label>
+            <select id="theme">
+              <option value="auto">Match my system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
           </div>
         </div>
 
@@ -326,6 +349,7 @@
               <span id="timer" class="timer">--</span>
             </div>
             <div class="timer-track"><div id="timer-bar" class="timer-bar"></div></div>
+            <p id="coach" class="coach small hidden"></p>
             <p id="round-recap" class="round-recap small hidden"></p>
             <p id="round-announce" class="visually-hidden" aria-live="polite"></p>
             <div id="action-bar" class="actions">

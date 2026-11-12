@@ -24,6 +24,7 @@ import { viemTxSender, type TxSender } from './chain/txSender.js';
 import { AttestorProcess } from './attestor/remote.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
+import { ResultIndex } from './chain/results.js';
 import { parseZapTokens, zapInfo } from './chain/zap.js';
 import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossChain.js';
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
@@ -124,6 +125,16 @@ async function main(): Promise<void> {
         abort: (matchId) => relayer.abort(matchId),
       })
     : null;
+  // Staked results from the chain, so history outlives an in-memory archive.
+  const results = config.onChain
+    ? ResultIndex.start({
+        rpcUrl: config.rpcUrl,
+        chainId: config.chainId,
+        escrow: config.escrow,
+        fromBlock: config.escrowFromBlock ?? 0n,
+        confirmations: config.confirmations,
+      })
+    : null;
   // Empty when there is no chain to list lobbies from.
   const directory = () => bridge?.directory() ?? { open: [], live: [] };
 
@@ -207,6 +218,8 @@ async function main(): Promise<void> {
   const gateway = new Gateway({
     lobby,
     archive,
+    ...(results ? { results } : {}),
+    ...(avatars.empty ? {} : { avatars }),
     chainId: config.chainId,
     escrow: config.onChain ? config.escrow : null,
     directory,

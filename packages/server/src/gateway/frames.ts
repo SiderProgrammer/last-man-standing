@@ -112,6 +112,7 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
   queue: z.object({ type: z.literal('queue'), stake: wei, seats: integer(2, 256) }),
   dequeue: z.object({ type: z.literal('dequeue') }),
   balance: z.object({ type: z.literal('balance') }),
+  avatar: z.object({ type: z.literal('avatar'), chainId: integer(1, Number.MAX_SAFE_INTEGER) }),
   withdrawToChain: z.object({
     type: z.literal('withdrawToChain'),
     id: relayId,

@@ -140,6 +140,13 @@ export interface GatewayOptions {
   staking?: StakingInfo | null;
   /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
   archive?: MatchArchive;
+  /**
+   * Staked results read from the chain: they fill in "Your matches" for any
+   * the archive no longer holds, as an in-memory one after a restart.
+   */
+  results?: { forPlayer(address: `0x${string}`, limit: number, before?: number): MatchSummary[] };
+  /** Resolves the avatar a wallet wears on a chain, for `avatar`. Omitted, every wallet wears none. */
+  avatars?: { resolve(subjects: ReadonlyArray<{ index: number; address: `0x${string}`; chainId: number }>): Promise<Array<{ tokenId: string; image: string | null }>> };
   /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
   analyst?: MatchAnalyst;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
@@ -421,6 +428,15 @@ export class Gateway {
         await this.balance(session, address);
         return;
       }
+      case 'avatar': {
+        const [found] = (await this.options.avatars?.resolve([{ index: 0, address, chainId: message.chainId }])) ?? [];
+        session.send({
+          type: 'avatar',
+          chainId: message.chainId,
+          avatar: found ? { tokenId: found.tokenId, image: found.image } : null,
+        });
+        return;
+      }
       case 'withdrawToChain': {
         const withdrawals = this.options.withdrawals;
         const submit = withdrawals
@@ -505,12 +521,17 @@ export class Gateway {
 
   /** A page of the wallet's own finished matches: there is no field to ask for anyone else's. */
   private async history(session: Session, address: `0x${string}`, before: number | undefined): Promise<void> {
-    const found = await this.requireArchive().forPlayer(address, HISTORY_PAGE + 1, before);
+    const results = this.options.results;
+    if (!this.options.archive && !results) this.requireArchive();
+    const archived = this.options.archive
+      ? (await this.options.archive.forPlayer(address, HISTORY_PAGE + 1, before)).map((match) => summarise(match, address))
+      : [];
+    const matches = mergeHistory(archived, results?.forPlayer(address, HISTORY_PAGE + 1, before) ?? []);
     session.send({
       type: 'history',
-      matches: found.slice(0, HISTORY_PAGE).map((match) => summarise(match, address)),
+      matches: matches.slice(0, HISTORY_PAGE),
       before: before ?? null,
-      more: found.length > HISTORY_PAGE,
+      more: matches.length > HISTORY_PAGE,
     });
   }
 
@@ -760,6 +781,17 @@ export class Gateway {
 
 function aimOf(message: MoveAim): MoveAim {
   return { matchId: message.matchId, round: message.round };
+}
+
+/**
+ * The archive's matches, plus the chain's for any staked match the archive
+ * does not hold, newest first. The archive's row wins: it can be replayed.
+ */
+export function mergeHistory(archived: readonly MatchSummary[], fromChain: readonly MatchSummary[]): MatchSummary[] {
+  const known = new Set(archived.map((match) => match.matchId.toLowerCase()));
+  return [...archived, ...fromChain.filter((match) => !known.has(match.matchId.toLowerCase()))].sort(
+    (a, b) => b.finishedAt - a.finishedAt,
+  );
 }
 
 /** One archived match as its player sees it in their history. */

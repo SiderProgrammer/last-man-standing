@@ -35,6 +35,7 @@ import { httpOrigin } from './ui/staking.js';
 import {
   authenticate,
   onAuthed,
+  onAvatar,
   onLoginRejected,
   resumeSession,
   wireWalletControls,
@@ -105,7 +106,7 @@ const HANDLERS: Handlers = {
   authed: (message) => {
     onAuthed();
     // From here the wallet button opens the account screen.
-    dom.connect.textContent = `${short(message.address)} ▾`;
+    dom.connect.textContent = app.wallet?.isGuest ? 'Guest ▾' : `${short(message.address)} ▾`;
     dom.connect.title = 'Your account: staking, avatar and session key';
     dom.connect.classList.remove('primary');
     net.flush();
@@ -153,6 +154,7 @@ const HANDLERS: Handlers = {
   'analysis.error': onAnalysisError,
   relayed: onRelayed,
   balance: onBalance,
+  avatar: onAvatar,
   'relay.error': onRelayError,
   error: onError,
 };

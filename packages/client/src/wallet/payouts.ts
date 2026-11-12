@@ -64,6 +64,7 @@ export async function renderWinnings(): Promise<void> {
   const disable = (status: string, pill = '–', owed: bigint | null = null) => show(pill, status, false, 'Collect', owed);
 
   if (!wallet) return disable('Connect a wallet to check.');
+  if (wallet.isGuest) return disable('Guests play practice only. Connect a wallet to play for stakes and collect.');
   if (!escrow) return disable('This server runs practice only; there is nothing to collect.');
   if (wallet.chainId !== app.chainId) {
     const spoke = homeSpoke();

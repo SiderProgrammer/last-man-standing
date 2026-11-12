@@ -203,6 +203,9 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   dom.lockIn.disabled = false;
   dom.lockIn.textContent = lockInLabel(true, false, null);
   dom.roundRecap.classList.add('hidden');
+  dom.coach.classList.add('hidden');
+  // The first practice match has been walked through: not again.
+  if (app.match && isPracticeTable(app.match.players) && app.you !== null) writeRaw(COACHED_KEY, '1');
   if (app.match?.matchId === message.result.matchId) {
     showResult(app.match, message);
     // One card for the end of the match: the move panel, its timer and its
@@ -508,10 +511,42 @@ async function mountArena(): Promise<Arena> {
   return Arena.mount(dom.arena);
 }
 
+const COACHED_KEY = 'lms:coached';
+
+/**
+ * A first practice match walks through the moves, one round at a time:
+ * Strike and aiming, then Guard, then Charge and the cooldowns. Shown
+ * once per browser; the end of that match ends it.
+ */
+function renderCoach(state: PublicMatchState): void {
+  const text =
+    readRaw(COACHED_KEY) !== '1' && app.you !== null && isPracticeTable(state.players) && state.phase === MatchPhase.Commit
+      ? coachLine(state.round)
+      : null;
+  dom.coach.textContent = text ?? '';
+  dom.coach.classList.toggle('hidden', text === null);
+}
+
+function coachLine(round: number): string | null {
+  switch (round) {
+    case 1:
+      return 'Your first match. Pick Strike (key 1), click a seat in the arena to aim at it, then Lock in before the timer runs out.';
+    case 2:
+      return 'Guard (2) blocks one strike aimed at you and hits that striker back. You cannot Guard two rounds in a row.';
+    case 3:
+      return 'Charge (3) loads your next Strike to hit much harder, but strikes on you hurt more while you charge, and everyone can see it.';
+    case 4:
+      return 'Everyone moves at once, so read the table: the Reads tab shows each seat’s habits. Last one standing wins.';
+    default:
+      return null;
+  }
+}
+
 /** The phase heading, the move buttons, the lock-in button and the status line. */
 function renderControls(): void {
   const state = app.match;
   if (!state) return;
+  renderCoach(state);
   const plan = currentPlan(state);
   renderPhaseLabel(plan.label);
   setActionsEnabled(plan.actionsEnabled);

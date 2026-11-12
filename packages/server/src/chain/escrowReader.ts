@@ -31,6 +31,8 @@ export interface EscrowMatch {
   /** The fee and payout schedule fixed when the match opened, in basis points. */
   feeBps?: number;
   payoutBps?: readonly number[];
+  /** Seconds the lobby takes joins for. */
+  joinWindow?: number;
 }
 
 /** A match and who sits in it, as one batched read returns them. */
@@ -175,6 +177,7 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
           rulesHash: `0x${string}`;
           feeBps: number;
           payoutBps: readonly number[];
+          joinWindow: bigint | number;
         };
         return {
           match: {
@@ -191,6 +194,7 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
             matchmade: info.matchmade,
             feeBps: terms.feeBps,
             payoutBps: [...terms.payoutBps],
+            joinWindow: Number(terms.joinWindow),
           },
           seats: results[i * 3 + 2] as readonly Address[],
         };

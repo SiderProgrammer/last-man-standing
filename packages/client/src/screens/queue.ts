@@ -66,7 +66,8 @@ function renderQueue(): void {
   const ready = table
     ? { stake: table.stake, seats: table.maxSeats, closesIn: table.joinDeadline - Math.floor(Date.now() / 1000) }
     : null;
-  const panel = queuePanel(app.matchmaking, Boolean(app.wallet), app.queue, app.terms, ready);
+  // A guest cannot stake, so it is not put at a table it could not take.
+  const panel = queuePanel(app.matchmaking, Boolean(app.wallet && !app.wallet.isGuest), app.queue, app.terms, ready);
   dom.queuePanel.classList.toggle('hidden', !panel.visible);
   dom.queuePanel.classList.toggle('ready', ready !== null);
   fillSelect(dom.queueTier, panel.tiers);

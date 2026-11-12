@@ -30,6 +30,7 @@ export {
 export {
   Gateway,
   HISTORY_PAGE,
+  mergeHistory,
   summarise,
   type GatewayOptions,
   type Peer,
@@ -148,6 +149,7 @@ export {
   viemProposalReader,
   type ProposalReader,
 } from './chain/proposals.js';
+export { ResultIndex, viemResultReader, type ProposedResult, type ResultReader } from './chain/results.js';
 export { ConfigError, config, loadConfig, readDeployment, type Deployment, type ServerConfig } from './config.js';
 export {
   Analyst,

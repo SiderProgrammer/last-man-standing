@@ -156,6 +156,12 @@ export type ClientMessage =
    */
   | { type: 'balance' }
   /**
+   * Asks which avatar the authenticated wallet wears on `chainId`, answered
+   * with `avatar`: its token and picture, resolved by the server so the page
+   * fetches no metadata itself.
+   */
+  | { type: 'avatar'; chainId: number }
+  /**
    * The wallet's signed withdrawal of its whole hub balance to a spoke, for
    * the server to submit to `BridgeJoinReceiver.withdrawToChainFor`, paying
    * the hub gas. Answered with `relayed` or `relay.error` carrying the same
@@ -330,6 +336,8 @@ export type ServerMessage =
   | { type: 'relay.error'; id: string; code: ErrorCode; message: string }
   /** A page of the wallet's matches. `before` echoes the request, so the client knows whether to append. */
   | { type: 'history'; matches: MatchSummary[]; before: number | null; more: boolean }
+  /** The authenticated wallet's avatar on `chainId`, or null when it wears none. */
+  | { type: 'avatar'; chainId: number; avatar: { tokenId: string; image: string | null } | null }
   | { type: 'review'; match: ReviewedMatch }
   /**
    * A staked match this wallet sits in has gone live and its room is open.
@@ -367,6 +375,12 @@ export interface MatchSummary {
   place: number;
   staked: boolean;
   settledTx: `0x${string}` | null;
+  /**
+   * Known from the chain alone: the server no longer holds the full match
+   * (an in-memory archive lost it on a restart), so it lists the result but
+   * cannot replay it.
+   */
+  chainOnly?: boolean;
 }
 
 /** A finished match as archived, complete enough to replay and verify in the browser. */
@@ -434,6 +448,8 @@ export interface LobbyInfo {
    */
   feeBps?: number;
   payoutBps?: number[];
+  /** Seconds the lobby takes joins for, from when it opened: what its countdown runs down from. */
+  joinWindow?: number;
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

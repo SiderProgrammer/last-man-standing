@@ -308,6 +308,7 @@ export class ChainBridge {
         cancellableAt: cancellableAt ?? Number(raw.deadline),
         matchmade: raw.matchmade,
         ...(raw.feeBps !== undefined && raw.payoutBps ? { feeBps: raw.feeBps, payoutBps: [...raw.payoutBps] } : {}),
+        ...(raw.joinWindow !== undefined ? { joinWindow: raw.joinWindow } : {}),
       };
 
       // A match that can only be cancelled now is cancelled: an Open lobby

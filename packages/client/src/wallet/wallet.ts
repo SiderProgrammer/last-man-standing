@@ -105,6 +105,8 @@ export class Wallet {
     readonly client: WalletClient,
     /** Reads, through the wallet's own node. */
     readonly rpc: PublicClient,
+    /** A practice-only guest key: see `Wallet.guest`. */
+    readonly isGuest = false,
   ) {}
 
   /** The chain the wallet is on. */
@@ -194,6 +196,19 @@ export class Wallet {
     }
 
     return new Wallet(account.address, chainId, account, createWalletClient({ account, transport }), rpc);
+  }
+
+  /**
+   * A guest: a throwaway key made in this browser, for practice with no
+   * wallet at all. It holds nothing and talks to no node: it signs its own
+   * session grant and its logins, and the server treats it as any other
+   * address. Staking needs a real wallet.
+   */
+  static guest(privateKey: Hex): Wallet {
+    const account = privateKeyToAccount(privateKey);
+    // No node behind it: every read would fail, so none is wired to a real one.
+    const transport = http('http://127.0.0.1:1', { retryCount: 0, timeout: 1 });
+    return new Wallet(account.address, 0, account, createWalletClient({ account, transport }), createPublicClient({ transport }), true);
   }
 
   /**

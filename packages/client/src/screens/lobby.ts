@@ -25,6 +25,7 @@ import { element } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import {
   crossChainNotice,
+  windowLeft,
   discountStatus,
   chainChips,
   lobbyAction,
@@ -44,8 +45,9 @@ import {
 import { renderWinnings } from '../wallet/payouts.js';
 import type { SpokeRoute } from '../wallet/wallet.js';
 import { protocolTerms } from '../wallet/terms.js';
-import { connectWallet } from '../wallet/flows.js';
+import { connectWallet, signInToPractise } from '../wallet/flows.js';
 import { confirmFirstStake } from './help.js';
+import { formatDuration } from '../ui/staking.js';
 import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
@@ -77,10 +79,10 @@ const DIRECTORY_LAG_MS = 5_000;
 
 /** Starts a practice match: against `bots` house bots at `difficulty`. */
 export async function startPractice(bots: number, difficulty: string): Promise<void> {
-  // Logged out, the button connects first rather than doing nothing.
+  // Logged out, the button signs in first rather than doing nothing: with
+  // the wallet there is, or as a guest when there is none.
   if (!app.wallet) {
-    toast('Practice is free: your wallet only signs a login, never a transaction.', 'info');
-    await connectWallet();
+    await signInToPractise();
     if (!app.wallet) return;
   }
   store.set({ lastPractice: { bots, difficulty }, leftMatch: null });
@@ -109,6 +111,7 @@ export function wireLobbyControls(): void {
   dom.practice.onclick = () => void startPractice(Number(dom.botCount.value), dom.botDifficulty.value);
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
+  setInterval(tickCountdowns, 5_000);
   dom.createLobby.onclick = () => void createLobby();
   dom.stake.oninput = renderCreateForm;
   dom.seats.onchange = renderCreateForm;
@@ -165,6 +168,12 @@ function defaultStake(): void {
 function renderCreateForm(): void {
   if (document.activeElement === dom.stake) dom.stake.dataset.touched = '1';
   const spoke = currentSpoke();
+  if (app.wallet?.isGuest) {
+    dom.stakeRange.textContent = 'Guests play practice only. Connect a wallet to open a lobby.';
+    dom.stakeRange.classList.remove('warn-text');
+    dom.createLobby.textContent = 'Connect a wallet';
+    return;
+  }
   if (spoke) {
     dom.stakeRange.textContent = `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`;
     dom.stakeRange.classList.remove('warn-text');
@@ -365,6 +374,7 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
   }
 
   const meta = element('div', 'lobby-meta muted small');
+  if (lobby.status === 'open') meta.append(countdownRing(lobby));
   meta.append(seatDots(lobby), element('span', '', lobbySeatsText(lobby, nowSeconds)), element('span', 'lobby-id', short(lobby.matchId)));
   meta.title = lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status);
   label.append(top, meta);
@@ -458,6 +468,59 @@ function seatDots(lobby: LobbyInfo): HTMLElement {
   return dots;
 }
 
+const SVG = 'http://www.w3.org/2000/svg';
+/** The ring's circumference: radius 6. */
+const RING = 2 * Math.PI * 6;
+
+/**
+ * A small ring that empties as the lobby's join window runs out, by the
+ * chain's window length. Kept current by `tickCountdowns` without redrawing
+ * the row, so an open payment choice or a priced button survives it.
+ */
+function countdownRing(lobby: LobbyInfo): SVGSVGElement {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('class', 'countdown-ring');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '16');
+  svg.setAttribute('height', '16');
+  svg.setAttribute('role', 'img');
+  svg.dataset.deadline = String(lobby.joinDeadline);
+  svg.dataset.window = String(lobby.joinWindow ?? app.terms?.joinWindow ?? 0);
+  const track = document.createElementNS(SVG, 'circle');
+  const arc = document.createElementNS(SVG, 'circle');
+  for (const circle of [track, arc]) {
+    circle.setAttribute('cx', '8');
+    circle.setAttribute('cy', '8');
+    circle.setAttribute('r', '6');
+  }
+  track.setAttribute('class', 'ring-track');
+  arc.setAttribute('class', 'ring-arc');
+  arc.setAttribute('transform', 'rotate(-90 8 8)');
+  const title = document.createElementNS(SVG, 'title');
+  svg.append(title, track, arc);
+  drawRing(svg, Math.floor(Date.now() / 1000));
+  return svg;
+}
+
+function drawRing(svg: SVGSVGElement, nowSeconds: number): void {
+  const deadline = Number(svg.dataset.deadline);
+  const left = windowLeft(deadline, Number(svg.dataset.window), nowSeconds);
+  const arc = svg.querySelector('.ring-arc');
+  const title = svg.querySelector('title');
+  const seconds = deadline - nowSeconds;
+  if (title) title.textContent = seconds > 0 ? `Closes in ${formatDuration(seconds)}` : 'Join window closed';
+  svg.setAttribute('aria-label', title?.textContent ?? '');
+  svg.classList.toggle('hidden', left === null);
+  svg.classList.toggle('low', left !== null && left < 0.2);
+  arc?.setAttribute('stroke-dasharray', `${((left ?? 0) * RING).toFixed(2)} ${RING.toFixed(2)}`);
+}
+
+/** Moves every countdown ring on the page along. */
+function tickCountdowns(): void {
+  const now = Math.floor(Date.now() / 1000);
+  for (const svg of document.querySelectorAll<SVGSVGElement>('svg.countdown-ring')) drawRing(svg, now);
+}
+
 /** Whether the connected wallet holds a seat in `lobby`. */
 function isSeatedIn(lobby: LobbyInfo): boolean {
   return lobby.players.some((player) => sameAddress(player.address, app.wallet?.address));
@@ -474,6 +537,7 @@ async function createLobby(): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.', 'error');
   if (currentSpoke()) return toast(dom.createLobby.title, 'error');
+  if (wallet.isGuest) return void connectWallet();
   const stake = parseStakeInput(dom.stake.value, app.terms);
   if (!stake.ok) return toast(stake.error, 'error');
   if (!(await confirmFirstStake())) return;
@@ -639,6 +703,13 @@ function idleStakeButton(button: HTMLButtonElement, lobby: LobbyInfo): void {
   button.classList.remove('primary');
   button.disabled = false;
   button.title = '';
+  // A guest holds nothing to stake: the button is the way to a wallet.
+  if (app.wallet?.isGuest) {
+    button.textContent = 'Connect to stake';
+    button.title = 'Guests play practice only. Connect a wallet to stake.';
+    button.onclick = () => void connectWallet();
+    return;
+  }
   const choices = paymentChoices();
   button.onclick = async () => {
     if (!(await confirmFirstStake())) return;

@@ -1,9 +1,12 @@
 import { chainInfo } from '@lms/contracts';
-import { errorFirstLine, type AvatarCollectionInfo } from '@lms/api';
+import { errorFirstLine, type AvatarCollectionInfo, type ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { showScreen, toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
 import { useMoveStoreFor } from '../game/salts.js';
+import { generatePrivateKey } from 'viem/accounts';
+import { KeyStore } from '../io/keystore.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
@@ -18,6 +21,8 @@ export function wireWalletControls(): void {
   // Before a login it connects; after, it is the way to the account screen.
   dom.connect.onclick = () => (app.wallet ? showScreen('account') : void connectWallet());
   dom.accountBack.onclick = () => showScreen('lobby');
+  dom.guestPlay.onclick = () => void playAsGuest();
+  dom.accountConnect.onclick = () => void connectWallet().then(() => showScreen('lobby'));
   dom.mintAvatar.onclick = () => void mintAvatar();
   dom.forgetSession.onclick = forgetGrant;
 
@@ -38,6 +43,8 @@ export async function connectWallet(): Promise<void> {
     const wallet = usesBurner(devKey)
       ? await Wallet.burner(devKey as `0x${string}`, burnerRpc())
       : await Wallet.connect((chainId) => store.set({ walletChainId: chainId }));
+    // A real wallet from here on: no guest after the next reload.
+    writeRaw(GUEST_FLAG, '0');
     await useWallet(wallet);
   } catch (error) {
     console.error('[wallet]', error);
@@ -74,8 +81,12 @@ export async function resumeSession(): Promise<void> {
       wallet = await Wallet.burner(devKey as `0x${string}`, burnerRpc());
       if (!(await GrantedKey.load(wallet.address, app.chainId))) return;
     } else {
-      const address = await Wallet.sharedAddress();
-      if (!address || !(await GrantedKey.load(address, app.chainId))) return;
+      const address = await Wallet.sharedAddress().catch(() => null);
+      if (!address || !(await GrantedKey.load(address, app.chainId))) {
+        // Last time this browser played as a guest: it still is one.
+        if (readRaw(GUEST_FLAG) === '1') await playAsGuest(false);
+        return;
+      }
       wallet = await Wallet.connect((chainId) => store.set({ walletChainId: chainId }));
     }
     await useWallet(wallet);
@@ -85,8 +96,55 @@ export async function resumeSession(): Promise<void> {
   }
 }
 
+/**
+ * Signs in for a practice match: with the wallet this browser has, whose
+ * only prompt is a login signature, or as a guest when it has none.
+ */
+export async function signInToPractise(): Promise<void> {
+  const devKey = import.meta.env.DEV ? devBurnerKey() : undefined;
+  if (Wallet.available() || devKey) {
+    toast('Practice is free: your wallet only signs a login, never a transaction.', 'info');
+    await connectWallet();
+  } else {
+    await playAsGuest();
+  }
+}
+
+/** Whether this browser played as a guest last, so a reload picks the guest back up. */
+const GUEST_FLAG = 'lms:guest';
+/** The guest's key, sealed like a session key. The same guest every visit, so its history stays. */
+const GUEST_KEY = 'guest-key';
+
+/**
+ * Plays as a guest: a key made in and kept by this browser, which needs no
+ * wallet and no prompt. It can practise, keep a history and do everything
+ * that is free; staking needs a real wallet, which can be connected any time.
+ */
+export async function playAsGuest(announce = true): Promise<void> {
+  try {
+    const keys = KeyStore.open();
+    let key = await keys.read(GUEST_KEY);
+    if (!key || !/^0x[0-9a-f]{64}$/i.test(key)) {
+      key = generatePrivateKey();
+      await keys.write(GUEST_KEY, key);
+    }
+    writeRaw(GUEST_FLAG, '1');
+    await useWallet(Wallet.guest(key as `0x${string}`));
+    if (announce) toast('Playing as a guest. Connect a wallet any time to play for stakes.', 'info');
+  } catch (error) {
+    console.error('[guest]', error);
+    toast(`Could not start as a guest: ${errorFirstLine(error)}`, 'error');
+  }
+}
+
 function renderAccountAddress(): void {
   const wallet = app.wallet;
+  dom.accountGuest.classList.toggle('hidden', !wallet?.isGuest);
+  dom.guestPlay.classList.toggle('hidden', Boolean(wallet));
+  if (wallet?.isGuest) {
+    dom.accountAddress.textContent = `Guest ${wallet.address.slice(0, 6)}… · practice only`;
+    return;
+  }
   // A wallet with no node behind it (the dev burner offline) is on no chain worth naming.
   const where = wallet && wallet.chainId !== 0 ? ` · on ${chainInfo(wallet.chainId).name}` : '';
   dom.accountAddress.textContent = wallet ? `${wallet.address}${where}` : 'No wallet connected.';
@@ -232,7 +290,7 @@ export async function renderAvatarPanel(): Promise<void> {
   }
 
   const panel = avatarPanel(
-    Boolean(wallet),
+    Boolean(wallet && !wallet.isGuest),
     collection,
     wallet?.chainId ?? 0,
     app.avatarCollections.length,
@@ -240,6 +298,30 @@ export async function renderAvatarPanel(): Promise<void> {
   );
   dom.mintAvatar.disabled = panel.mintDisabled;
   dom.avatarStatus.textContent = panel.status;
+  // Wearing one: ask the server for its picture, which it resolves from the
+  // token's metadata. The page fetches none itself.
+  if (wallet && status && status.equipped > 0n) net.send({ type: 'avatar', chainId: wallet.chainId });
+  else showAvatarImage(null);
+}
+
+/** The server's answer to `avatar`: the picture of the avatar this wallet wears. */
+export function onAvatar(message: Extract<ServerMessage, { type: 'avatar' }>): void {
+  if (message.chainId !== app.wallet?.chainId) return;
+  showAvatarImage(message.avatar?.image ?? null);
+}
+
+function showAvatarImage(url: string | null): void {
+  const image = dom.avatarImage;
+  if (!url) {
+    image.classList.add('hidden');
+    image.removeAttribute('src');
+    return;
+  }
+  // A gateway that does not answer, or one the page's policy does not
+  // allow, leaves the status line alone rather than a broken picture.
+  image.onerror = () => image.classList.add('hidden');
+  image.onload = () => image.classList.remove('hidden');
+  image.src = url;
 }
 
 async function mintAvatar(): Promise<void> {

@@ -378,15 +378,15 @@ The page is one column about 2,000 px tall; the account panels sit below the fol
 - [x] "Create lobby" is disabled on Arbitrum with no reason given.
 - [x] "Staked lobbies escrow a real testnet stake" also shows on mainnet.
 - [x] "Switch to Base" on a dev burner bound to Arbitrum can only fail; hide it there.
-- [ ] History is lost when the server restarts with the in-memory archive
+- [x] History is lost when the server restarts with the in-memory archive
       (match #0 vanished from "Your matches"); rebuild it from on-chain events.
-- [ ] The avatar panel says "Wearing #1" but never shows the picture.
+- [x] The avatar panel says "Wearing #1" but never shows the picture.
 - [x] A defeated proposal says "quorum was not reached, or more voted
       against than for"; the page knows which one.
 - [x] Proposal ids are shown in decimal (`#582156…`) while the CLI uses hex
       (`0x80b4…`).
 - [x] Your own new lobby is not marked as yours until you stake into it.
-- [ ] The page stays dark under a light system theme (fine if intended).
+- [x] The page stays dark under a light system theme (fine if intended). (Follows the system now, with a choice on the Account screen; the arena stays dark.)
 - [x] Dates follow the browser's locale inside an English page ("20 lis,
       01:01", "11 lis 2026"). Pick one language.
 - [x] A wallet holding delegated votes is not told: P2 read "You vote with
@@ -438,7 +438,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
       disabled "Matchmade" rows) and lobbies past their window are noise;
       collapse them under "Other tables". Keep yours on top with "your
       table", "your lobby" and "refund ready" tags.
-- [x] **Seats as dots.** (Dots, no countdown ring.) Show four or eight small seat dots (filled,
+- [x] **Seats as dots.** Show four or eight small seat dots (filled,
       empty, with a chain badge) and a countdown ring from chain time,
       instead of "0/4 seats · needs 4 more to start · closes in 23d 1h".
 - [x] **Invite link for private lobbies.** A private lobby has no way to
@@ -477,7 +477,7 @@ state bugs (23, 24, 27, 28, 40, 41, 42) from the player's side.
 
 **F. First visit**
 
-- [ ] **Guest practice without a wallet** (bug 29; partly: logged out, "Start practice match" now connects first and the lobby list says why it is empty. A walletless guest needs the server to allow it), then a guided first
+- [x] **Guest practice without a wallet** (bug 29), then a guided first
       round that points at Strike, Guard and Charge and the cooldowns.
 - [x] **A "before you stake" step** the first time someone stakes: the 5%
       fee, the 60/25/15 split, the 1h challenge window and collecting,

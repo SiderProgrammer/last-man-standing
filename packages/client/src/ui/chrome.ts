@@ -1,5 +1,6 @@
 import { app, dom } from '../context.js';
 import { element } from './dom.js';
+import { readRaw, writeRaw } from '../io/storage.js';
 
 /** Page chrome shared by more than one screen: which screen is up, the header, toasts. */
 
@@ -60,7 +61,25 @@ function closeMenu(): void {
   dom.navMenu.setAttribute('aria-expanded', 'false');
 }
 
+const THEME_KEY = 'lms:theme';
+
+/**
+ * Light or dark: the system's choice unless the player picked one. The
+ * stylesheet follows `prefers-color-scheme`; a pick pins it on the root.
+ */
+function applyTheme(theme: string): void {
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+
 export function wireChrome(): void {
+  const theme = readRaw(THEME_KEY) ?? 'auto';
+  dom.theme.value = ['light', 'dark'].includes(theme) ? theme : 'auto';
+  applyTheme(dom.theme.value);
+  dom.theme.onchange = () => {
+    writeRaw(THEME_KEY, dom.theme.value);
+    applyTheme(dom.theme.value);
+  };
   dom.navMenu.onclick = () => {
     const open = !document.body.classList.contains('menu-open');
     document.body.classList.toggle('menu-open', open);

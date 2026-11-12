@@ -475,6 +475,17 @@ export interface ProtocolTerms {
   maxStake: bigint;
   /** Seconds a proposed result waits before it pays out. */
   challengeWindow: number;
+  /** Seconds a new lobby takes joins for. */
+  joinWindow: number;
+}
+
+/**
+ * How much of a lobby's join window is left, from 1 (just opened) to 0
+ * (closed), for its countdown ring. Null without a window to measure by.
+ */
+export function windowLeft(joinDeadline: number, joinWindow: number | undefined, nowSeconds: number): number | null {
+  if (!joinWindow || joinWindow <= 0) return null;
+  return Math.min(1, Math.max(0, (joinDeadline - nowSeconds) / joinWindow));
 }
 
 /**

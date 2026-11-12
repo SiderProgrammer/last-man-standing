@@ -138,6 +138,13 @@ function historyRow(match: MatchSummary): HTMLLIElement {
 
   const open = element('button', '', 'Open');
   open.onclick = () => net.send({ type: 'review', matchId: match.matchId });
+  // Read back from the chain after the server lost its copy: the result and
+  // its transaction are there, the moves to replay are not.
+  if (match.chainOnly) {
+    open.disabled = true;
+    open.textContent = 'From chain';
+    open.title = 'The server no longer keeps the moves of this match, so it cannot be replayed. Its result is on-chain.';
+  }
 
   li.append(label, open);
   return li;

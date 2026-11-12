@@ -122,6 +122,7 @@ export function renderOneClickPanel(): void {
   };
   if (!wallet) return status('Connect a wallet to set up.');
   if (!sessionDelegate) return status('This server relays no calls; every join is your own transaction.');
+  if (wallet.isGuest) return status('Guests play practice only: connect a wallet to use one-click play.');
   if (!wallet.canDelegate) {
     return status('Your wallet signs its own joins. One-click play is for burner and embedded wallets.');
   }

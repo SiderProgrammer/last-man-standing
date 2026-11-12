@@ -1,3 +1,4 @@
+import type { GatewayOptions } from '@lms/server';
 import { describe, expect, it } from 'vitest';
 import { verifyTypedData } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -126,6 +127,8 @@ interface Extras {
   receipts: ReceiptSigner;
   practiceReceipts: ReceiptSigner;
   matchmaker: Matchmaker;
+  results: NonNullable<GatewayOptions['results']>;
+  avatars: NonNullable<GatewayOptions['avatars']>;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -151,6 +154,8 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.receipts ? { receipts: extras.receipts } : {}),
     ...(extras.practiceReceipts ? { practiceReceipts: extras.practiceReceipts } : {}),
     ...(extras.matchmaker ? { matchmaker: extras.matchmaker } : {}),
+    ...(extras.results ? { results: extras.results } : {}),
+    ...(extras.avatars ? { avatars: extras.avatars } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -853,4 +858,45 @@ describe('gateway session grants and signed moves', () => {
     if (!state) throw new Error('no match state');
     return { matchId: state.matchId, round: state.round, seat: 0 };
   }
+});
+
+describe('gateway: avatars and history from the chain', () => {
+  it('answers which avatar the wallet wears, and none without a registry', async () => {
+    const asked: unknown[] = [];
+    const { socket } = harness({
+      avatars: {
+        resolve: async (subjects) => {
+          asked.push(...subjects);
+          return [{ tokenId: '7', image: 'https://gateway.example/7.png' }];
+        },
+      },
+    });
+    await login(socket);
+    await socket.deliver({ type: 'avatar', chainId: 84532 });
+    expect(asked).toEqual([{ index: 0, address: account.address, chainId: 84532 }]);
+    expect(socket.last('avatar')).toEqual({ type: 'avatar', chainId: 84532, avatar: { tokenId: '7', image: 'https://gateway.example/7.png' } });
+
+    const bare = harness();
+    await login(bare.socket);
+    await bare.socket.deliver({ type: 'avatar', chainId: 84532 });
+    expect(bare.socket.last('avatar')?.avatar).toBeNull();
+  });
+
+  it('lists staked matches only the chain still knows, after an archive lost them', async () => {
+    const fromChain = {
+      matchId: `0x${'0e'.repeat(32)}` as const,
+      finishedAt: 5_000,
+      rounds: 9,
+      players: 4,
+      seat: 1,
+      place: 2,
+      staked: true,
+      settledTx: null,
+      chainOnly: true,
+    };
+    const { socket } = harness({ archive: new MemoryArchive(), results: { forPlayer: () => [fromChain] } });
+    await login(socket);
+    await socket.deliver({ type: 'history' });
+    expect(socket.last('history')?.matches).toEqual([fromChain]);
+  });
 });

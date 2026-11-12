@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseEther } from 'viem';
 import { MatchStatus } from '@lms/contracts';
 import type { LobbyInfo } from '@lms/api';
-import { clock, discountSavingText, formatNet, historyStats, netResult, statusItems, type StatusInput } from '../src/ui/views.js';
+import { clock, discountSavingText, formatNet, historyStats, netResult, statusItems, windowLeft, type StatusInput } from '../src/ui/views.js';
 import { ringSlot, seatScale } from '../src/arena/layout.js';
 
 const ME = `0x${'aa'.repeat(20)}` as const;
@@ -141,5 +141,14 @@ describe('the seat ring', () => {
     expect(seatScale(4, 1200, 800)).toBe(1);
     expect(seatScale(8, 375, 340)).toBeLessThan(0.8);
     expect(seatScale(8, 200, 200)).toBe(0.55);
+  });
+});
+
+describe('the lobby countdown ring', () => {
+  it('empties as the join window runs out', () => {
+    expect(windowLeft(NOW + 600, 600, NOW)).toBe(1);
+    expect(windowLeft(NOW + 150, 600, NOW)).toBe(0.25);
+    expect(windowLeft(NOW - 5, 600, NOW)).toBe(0);
+    expect(windowLeft(NOW + 600, undefined, NOW)).toBeNull();
   });
 });

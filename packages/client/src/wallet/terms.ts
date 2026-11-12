@@ -23,5 +23,6 @@ export async function protocolTerms(wallet: Wallet, escrow: Address): Promise<Pr
     minStake: params.minStake,
     maxStake: params.maxStake,
     challengeWindow: Number(challengeWindow),
+    joinWindow: Number(params.joinWindow),
   };
 }

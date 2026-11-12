@@ -52,7 +52,9 @@ export async function renderStakingPanel(): Promise<void> {
   const info = app.staking;
   let error: string | null = null;
 
-  const wrongChain = Boolean(wallet && info && wallet.chainId !== app.chainId);
+  // A guest has no LMS and no chain: nothing to read, and no network to switch.
+  const guest = Boolean(wallet?.isGuest);
+  const wrongChain = !guest && Boolean(wallet && info && wallet.chainId !== app.chainId);
   const hub = chainInfo(app.chainId).name;
   dom.stakingWrongChain.classList.toggle('hidden', !wrongChain);
   if (wrongChain && wallet) {
@@ -66,6 +68,9 @@ export async function renderStakingPanel(): Promise<void> {
       : `Your wallet is on ${chainInfo(wallet.chainId).name} and signs there only. LMS is staked, claimed and voted with on ${hub}.`;
     dom.stakingSwitch.textContent = `Switch to ${hub}`;
     dom.stakingSwitch.classList.toggle('hidden', !wallet.canSwitchChain);
+  } else if (guest) {
+    position = null;
+    error = 'Connect a wallet to stake LMS.';
   } else if (wallet && info) {
     try {
       position = await stakingCalls.stakingPosition(wallet, info.vault);
@@ -80,7 +85,7 @@ export async function renderStakingPanel(): Promise<void> {
 
   playRewards = null;
   vesting = null;
-  if (wallet && info?.rewards && !error) {
+  if (wallet && !guest && info?.rewards && !error) {
     const distributor = info.rewards;
     // The stake read fine, so a failure here is the distributor's or the
     // vesting contract's alone: show the rest.
