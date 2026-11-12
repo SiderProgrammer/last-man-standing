@@ -8,6 +8,7 @@ import { writeRaw } from '../io/storage.js';
 import { toast } from '../ui/chrome.js';
 import { element } from '../ui/dom.js';
 import { ordinal, short } from '../ui/format.js';
+import { txLink } from '../ui/links.js';
 import { formatDuration } from '../ui/staking.js';
 import { prizeFor, prizeLine } from '../ui/views.js';
 import type { Wallet } from '../wallet/wallet.js';
@@ -33,14 +34,17 @@ export function showResult(
   dom.resultPanel.classList.remove('hidden');
   dom.resultSettle.textContent = '';
 
+  // At a practice table every seat but yours is a house bot: say so rather
+  // than show an address nobody owns.
+  const practiceTable = isPracticeTable(state.players);
+  const difficulty = app.lastPractice?.difficulty;
+  const bot = difficulty ? `Bot (${difficulty.charAt(0).toUpperCase()}${difficulty.slice(1)})` : 'Bot';
   dom.resultRanking.replaceChildren(
     ...message.ranking.map((seat, place) => {
       const item = element('li');
       const address = state.players[seat]?.address ?? '0x?';
-      item.append(
-        element('span', 'medal', MEDALS[place] ?? String(place + 1)),
-        element('span', '', `#${seat} ${short(address)}${seat === app.you ? ' (you)' : ''}`),
-      );
+      const who = seat === app.you ? `${short(address)} (you)` : practiceTable ? bot : short(address);
+      item.append(element('span', 'medal', MEDALS[place] ?? String(place + 1)), element('span', '', `#${seat} ${who}`));
       if (place === 0) item.classList.add('winner');
       if (seat === app.you) item.classList.add('you');
       return item;
@@ -72,8 +76,11 @@ export async function onSettled(message: Extract<ServerMessage, { type: 'settled
   }
   // A proposal, not a payout: the guardian may still veto the result during
   // the challenge window, and the winnings unlock when it closes.
-  dom.resultSettle.textContent =
-    `Proposed on-chain · ${short(message.tx)} · winnings unlock once the challenge window closes`;
+  dom.resultSettle.replaceChildren(
+    'Proposed on-chain · ',
+    txLink(message.tx, app.chainId),
+    ' · winnings unlock once the challenge window closes',
+  );
 
   const wallet = app.wallet;
   const escrow = app.escrow;
@@ -174,10 +181,10 @@ async function disputeResult(): Promise<void> {
     dom.resultDispute.disabled = true;
     await wallet.waitFor(await wallet.dispute(escrow, bundle.matchId, hash));
     dom.resultDispute.textContent = 'Disputed';
-    toast('Disputed. The payout waits 48 hours more while the guardian looks. Send them the file you just saved.');
+    toast('Disputed. The payout waits 48 hours more while the guardian looks. Send them the file you just saved.', 'success', { sticky: true });
   } catch (error) {
     dom.resultDispute.disabled = false;
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   }
 }
 

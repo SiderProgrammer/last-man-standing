@@ -29,7 +29,7 @@ export async function refreshDiscount(): Promise<void> {
 
 export async function quoteDiscountJoin(button: HTMLButtonElement, lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow, discount } = app;
-  if (!wallet || !escrow || !discount) return toast('Connect a wallet first.');
+  if (!wallet || !escrow || !discount) return toast('Connect a wallet first.', 'error');
 
   button.disabled = true;
   button.textContent = 'Quoting…';
@@ -47,7 +47,7 @@ export async function quoteDiscountJoin(button: HTMLButtonElement, lobby: LobbyI
       () => void payDiscountJoin(button, lobby, discount.token, quote),
     );
   } catch (error) {
-    toast(`Could not price the discount: ${errorFirstLine(error)}`);
+    toast(`Could not price the discount: ${errorFirstLine(error)}`, 'error');
     idleDiscountButton(button, lobby);
   } finally {
     button.disabled = false;
@@ -72,7 +72,7 @@ async function payDiscountJoin(
     seated(lobby);
     void refreshDiscount();
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
     idleDiscountButton(button, lobby);
   } finally {
     button.disabled = false;

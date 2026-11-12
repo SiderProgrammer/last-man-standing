@@ -1,7 +1,7 @@
 import { chainInfo } from '@lms/contracts';
 import { errorFirstLine, type AvatarCollectionInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
-import { toast } from '../ui/chrome.js';
+import { showScreen, toast } from '../ui/chrome.js';
 import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
 import { useMoveStoreFor } from '../game/salts.js';
 import { GrantedKey } from './grant.js';
@@ -15,33 +15,81 @@ import { Wallet } from './wallet.js';
  */
 
 export function wireWalletControls(): void {
-  dom.connect.onclick = () => void connectWallet();
+  // Before a login it connects; after, it is the way to the account screen.
+  dom.connect.onclick = () => (app.wallet ? showScreen('account') : void connectWallet());
+  dom.accountBack.onclick = () => showScreen('lobby');
   dom.mintAvatar.onclick = () => void mintAvatar();
   dom.forgetSession.onclick = forgetGrant;
 
   store.subscribe(['chainId', 'wallet', 'walletChainId', 'escrow', 'spokes'], renderHubLabel);
   store.subscribe(['wallet', 'grantKey'], renderSessionPanel);
   store.subscribe(['wallet', 'walletChainId', 'avatarCollections'], () => void renderAvatarPanel());
+  store.subscribe(['wallet', 'walletChainId'], renderAccountAddress);
+}
+
+/** Whether the dev burner, rather than an injected wallet, is this tab's wallet. */
+function usesBurner(devKey: string | undefined): devKey is string {
+  return Boolean(devKey) && !(Wallet.available() && !playerParam());
 }
 
 async function connectWallet(): Promise<void> {
   try {
     const devKey = import.meta.env.DEV ? devBurnerKey() : undefined;
-    const wallet =
-      (Wallet.available() && !playerParam()) || !devKey
-        ? await Wallet.connect((chainId) => store.set({ walletChainId: chainId }))
-        : await Wallet.burner(devKey as `0x${string}`, burnerRpc());
-    wallet.hubChainId = app.chainId;
-    // Each wallet keeps its own sealed moves, so two players in two tabs of
-    // one browser never overwrite each other's salts.
-    useMoveStoreFor(wallet.address);
-    if (import.meta.env.DEV && playerParam()) document.title = `P${playerParam()} · ${wallet.address.slice(0, 6)} · Last Man Standing`;
-    store.set({ wallet, walletChainId: wallet.chainId, grantKey: null });
-    await authenticate();
+    const wallet = usesBurner(devKey)
+      ? await Wallet.burner(devKey as `0x${string}`, burnerRpc())
+      : await Wallet.connect((chainId) => store.set({ walletChainId: chainId }));
+    await useWallet(wallet);
   } catch (error) {
     console.error('[wallet]', error);
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   }
+}
+
+/** Makes `wallet` this page's wallet, and logs in with it. */
+async function useWallet(wallet: Wallet): Promise<void> {
+  wallet.hubChainId = app.chainId;
+  // Each wallet keeps its own sealed moves, so two players in two tabs of
+  // one browser never overwrite each other's salts.
+  useMoveStoreFor(wallet.address);
+  if (import.meta.env.DEV && playerParam()) document.title = `P${playerParam()} · ${wallet.address.slice(0, 6)} · Last Man Standing`;
+  store.set({ wallet, walletChainId: wallet.chainId, grantKey: null });
+  await authenticate();
+}
+
+let resumeTried = false;
+
+/**
+ * After a reload: logs straight back in, with no prompt at all, when the
+ * wallet already shares an account with this page and this browser still
+ * holds a live grant for it. It matters most mid-match, with the clock
+ * running. Anything less stays logged out until the player connects.
+ */
+export async function resumeSession(): Promise<void> {
+  if (resumeTried || app.wallet || !app.chainId) return;
+  resumeTried = true;
+  try {
+    const devKey = import.meta.env.DEV ? devBurnerKey() : undefined;
+    let wallet: Wallet;
+    if (usesBurner(devKey)) {
+      wallet = await Wallet.burner(devKey as `0x${string}`, burnerRpc());
+      if (!(await GrantedKey.load(wallet.address, app.chainId))) return;
+    } else {
+      const address = await Wallet.sharedAddress();
+      if (!address || !(await GrantedKey.load(address, app.chainId))) return;
+      wallet = await Wallet.connect((chainId) => store.set({ walletChainId: chainId }));
+    }
+    await useWallet(wallet);
+  } catch (error) {
+    // The player can still connect by hand.
+    console.warn('[wallet] could not log back in', error);
+  }
+}
+
+function renderAccountAddress(): void {
+  const wallet = app.wallet;
+  // A wallet with no node behind it (the dev burner offline) is on no chain worth naming.
+  const where = wallet && wallet.chainId !== 0 ? ` · on ${chainInfo(wallet.chainId).name}` : '';
+  dom.accountAddress.textContent = wallet ? `${wallet.address}${where}` : 'No wallet connected.';
 }
 
 /** True from sending a login under a stored grant until the server answers it. */
@@ -93,7 +141,7 @@ export async function authenticate(): Promise<void> {
     net.send({ type: 'auth', address: wallet.address, signature, grant: key.signed });
   } catch (error) {
     console.error('[auth]', error);
-    toast(`Login signature failed: ${errorFirstLine(error)}`);
+    toast(`Login signature failed: ${errorFirstLine(error)}`, 'error');
   }
 }
 
@@ -140,11 +188,11 @@ export function renderHubLabel(): void {
  */
 export async function switchToHub(): Promise<void> {
   const wallet = app.wallet;
-  if (!wallet) return toast('Connect a wallet first.');
+  if (!wallet) return toast('Connect a wallet first.', 'error');
   try {
     await wallet.onHub();
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   }
   // Also after a refusal: the wallet may have moved anyway, or not at all.
   store.set({ walletChainId: wallet.chainId });
@@ -204,9 +252,9 @@ async function mintAvatar(): Promise<void> {
     dom.avatarStatus.textContent = 'Confirm in your wallet…';
     const hash = await wallet.mintAvatar(collection.address);
     await wallet.waitFor(hash);
-    toast('Avatar minted. You will wear it in your next match.');
+    toast('Avatar minted. You will wear it in your next match.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     await renderAvatarPanel();
   }

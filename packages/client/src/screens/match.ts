@@ -11,6 +11,7 @@ import {
   type MatchResult,
   type MovePlace,
   type PublicMatchState,
+  type RoundRecord,
   type SealedMove,
 } from '@lms/consensus';
 import { isPracticeTable } from '@lms/contracts';
@@ -22,15 +23,16 @@ import {
   type ServerMessage,
 } from '@lms/api';
 import { verifyTypedData } from 'viem';
-import { describeRound } from '@lms/engine';
 import type { Arena } from '../arena/arena.js';
 import { app, dom, net, store, type AppState } from '../context.js';
 import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
-import { showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { alertInBackground, showLobbyScreen, showMatchScreen } from '../ui/chrome.js';
+import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
 import { renderWinnings } from '../wallet/payouts.js';
+import { startPractice } from './lobby.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { gsap } from '../motion.js';
@@ -86,16 +88,38 @@ let timerTotal = 1;
 // ---------------------------------------------------------------- server feed
 
 export function onRound(message: Extract<ServerMessage, { type: 'round' }>): void {
+  // No match on screen: the player left this table for the lobby.
+  if (!app.match) return;
   // The history grows here: deltas never carry it.
-  if (app.match) store.set({ match: withRound(app.match, message.record) });
-  appendRound(message.lines, message.record.round, message.record.eliminated);
+  store.set({ match: withRound(app.match, message.record) });
+  appendRound(roundLines(message.record), message.record.round, message.record.eliminated);
+  renderRecap(message.record);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
   arena?.showRound(message.record, message.replayMs);
   startReplay(message.replayMs);
 }
 
+/**
+ * The round from the player's own seat, under the timer, and read out to a
+ * screen reader. A round they sat out says so, in the warning colour.
+ */
+function renderRecap(record: RoundRecord): void {
+  const recap = roundRecap(record, app.you);
+  dom.roundRecap.textContent = recap ?? '';
+  dom.roundRecap.classList.toggle('hidden', recap === null);
+  dom.roundRecap.classList.toggle('missed', missedRound(record, app.you));
+  const out = record.eliminated.length > 0 ? ` Eliminated: ${record.eliminated.map((seat) => `#${seat}`).join(', ')}.` : '';
+  dom.roundAnnounce.textContent = `Round ${record.round}. ${recap ?? ''}${out}`;
+}
+
 export function onFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
+  // A table the player left: nothing to show, but it belongs in their history now.
+  // The server archives it just after announcing it, hence the short wait.
+  if (message.result.matchId === app.leftMatch) {
+    setTimeout(() => net.send({ type: 'history' }), 2_000);
+    return;
+  }
   if (app.replaying) store.set({ pendingFinish: message });
   else showFinished(message);
 }
@@ -175,8 +199,24 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
   // The one button left open: back to the lobby.
   dom.lockIn.disabled = false;
   dom.lockIn.textContent = lockInLabel(true, false, null);
-  if (app.match?.matchId === message.result.matchId) showResult(app.match, message);
+  dom.roundRecap.classList.add('hidden');
+  if (app.match?.matchId === message.result.matchId) {
+    showResult(app.match, message);
+    // One card for the end of the match: the move panel, its timer and its
+    // own back button give way to it.
+    dom.movePanel.classList.add('hidden');
+    const practice = isPracticeTable(app.match.players);
+    dom.resultAgain.classList.toggle('hidden', !practice || !app.lastPractice);
+    showResultCard();
+  }
   offerAnalysis(message.result.matchId);
+}
+
+/** Brings the result card into view if it is not, and gives it focus for the keyboard. */
+function showResultCard(): void {
+  const box = dom.resultPanel.getBoundingClientRect();
+  if (box.top < 0 || box.bottom > window.innerHeight) dom.resultPanel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  dom.resultPanel.focus({ preventScroll: true });
 }
 
 /**
@@ -186,10 +226,10 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
  */
 export function showReview(review: Review, result: MatchResult): void {
   // Forgotten first, so reopening the match already on screen starts clean too.
-  store.set({ match: null });
+  store.set({ match: null, leftMatch: null });
   onState(review.state, review.you, 0);
   for (const record of review.state.history) {
-    appendRound(describeRound(record), record.round, record.eliminated);
+    appendRound(roundLines(record), record.round, record.eliminated);
   }
   showFinished({ type: 'finished', result, ranking: review.ranking });
 }
@@ -230,6 +270,8 @@ export function onState(
   deadline: number,
   waitingFor: readonly number[] = [],
 ): void {
+  // A table the player walked away from: what it does next is not shown.
+  if (state.matchId === app.leftMatch) return;
   const switched = app.match?.matchId !== state.matchId;
   if (switched) {
     // A replay from the previous match must not close this one's controls.
@@ -239,7 +281,11 @@ export function onState(
     dom.feed.replaceChildren();
     hideResult();
     resetAnalysis();
+    dom.movePanel.classList.remove('hidden');
+    dom.roundRecap.classList.add('hidden');
+    dom.roundAnnounce.textContent = '';
     showMatchScreen();
+    alertInBackground('Match starting');
   }
   const committedRound = switched ? null : app.committedRound;
   store.set({
@@ -305,7 +351,7 @@ function matchOver(): boolean {
 }
 
 function lockIn(): void {
-  if (matchOver()) {
+  if (matchOver() || eliminated() || (app.match !== null && app.you === null)) {
     leaveMatch();
     return;
   }
@@ -443,8 +489,9 @@ function renderControls(): void {
   const plan = currentPlan(state);
   renderPhaseLabel(plan.label);
   setActionsEnabled(plan.actionsEnabled);
-  // Once the match is over the lock-in button is the way back to the lobby.
-  dom.lockIn.disabled = matchOver() ? false : plan.lockInDisabled;
+  // Once the match is over, or the player is out of it, the lock-in button
+  // is the way back to the lobby.
+  dom.lockIn.disabled = matchOver() || eliminated() ? false : plan.lockInDisabled;
   if (plan.statusText !== null) dom.moveStatus.textContent = plan.statusText;
   renderMove();
 }
@@ -471,7 +518,10 @@ function renderMove(): void {
     button.classList.toggle('selected', chosen);
   }
 
-  dom.lockIn.textContent = out ? 'Eliminated · spectating' : lockInLabel(finished, sealed, draft);
+  const watching = !finished && state !== null && app.you === null;
+  dom.lockIn.textContent = out ? 'Eliminated · leave to lobby' : watching ? 'Stop watching' : lockInLabel(finished, sealed, draft);
+  dom.lockIn.title = out ? 'You are out of this match. Leave, or stay and watch the rest.' : '';
+  if (watching) dom.lockIn.disabled = false;
 
   const hp = new Map(state?.players.map((player) => [player.index, player.hp]) ?? []);
   const options = [...dom.target.options].map((option) => Number(option.value));
@@ -581,7 +631,7 @@ function lineKind(text: string): string {
   if (text.includes('guarded')) return 'act-guard';
   if (text.endsWith('charged')) return 'act-charge';
   if (text.includes('eliminated')) return 'kill';
-  if (text.includes('did not reveal')) return 'act-none';
+  if (text.endsWith('no move')) return 'act-none';
   return '';
 }
 
@@ -594,7 +644,9 @@ export function updateTimer(): void {
   const now = Date.now();
   const state = app.match;
   const phase = state?.phase ?? null;
-  dom.timer.textContent = formatCountdown(phase, app.deadline, now, app.waitingFor.length);
+  // While the last round replays, the clock holds the next one closed: no
+  // countdown until the commit window really opens.
+  dom.timer.textContent = app.replaying ? '' : formatCountdown(phase, app.deadline, now, app.waitingFor.length);
 
   const key = `${app.deadline}|${app.replaying}`;
   if (key !== timerKey) {
@@ -609,10 +661,20 @@ export function updateTimer(): void {
   dom.timerBar.classList.toggle('reveal', phase === MatchPhase.Reveal);
 
   const sealed = state !== null && app.committedRound === state.round;
-  const urgent =
-    phase === MatchPhase.Commit && !app.replaying && !sealed && app.you !== null && left < 5_000;
-  dom.movePanel.classList.toggle('urgent', urgent);
+  const deciding = phase === MatchPhase.Commit && !app.replaying && !sealed && app.you !== null && !eliminated();
+  dom.movePanel.classList.toggle('urgent', deciding && left < 5_000);
+  // Ten seconds out the timer pulses, and a screen reader hears it once.
+  const warning = deciding && left < 10_000 && left > 0;
+  dom.timer.classList.toggle('warning', warning);
+  const roundKey = `${state?.matchId}:${state?.round}`;
+  if (warning && warnedFor !== roundKey) {
+    warnedFor = roundKey;
+    dom.roundAnnounce.textContent = '10 seconds left to lock in a move.';
+  }
 }
+
+/** The round the 10-second warning was last read out for. */
+let warnedFor = '';
 
 // ------------------------------------------------------------------- controls
 
@@ -643,7 +705,17 @@ export function wireMatchControls(): void {
   store.subscribe(['match', 'you', 'dossier'], renderReads);
   store.subscribe(['match', 'you', 'draft', 'committedRound', 'revealedRound', 'replaying'], renderControls);
   store.subscribe(['avatars'], () => arena?.setAvatars(app.avatars));
+  // No analyst on the server: no tab that can only say so.
+  store.subscribe(['analyst'], () => {
+    dom.tabAnalysis.classList.toggle('hidden', !app.analyst);
+    if (!app.analyst && dom.tabAnalysis.classList.contains('active')) switchTab('feed');
+  });
+  dom.tabAnalysis.classList.toggle('hidden', !app.analyst);
   dom.resultBack.onclick = leaveMatch;
+  dom.resultAgain.onclick = () => {
+    const last = app.lastPractice;
+    if (last) startPractice(last.bots, last.difficulty);
+  };
   dom.lockIn.onclick = lockIn;
 
   dom.tabFeed.onclick = () => switchTab('feed');
@@ -659,19 +731,34 @@ export function wireMatchControls(): void {
     else if (event.key === '2') clickAction(Action.Guard);
     else if (event.key === '3') clickAction(Action.Charge);
     // Enter only ever seals a move: leaving the table takes a click.
-    else if (event.key === 'Enter' && !dom.lockIn.disabled && !matchOver()) lockIn();
+    else if (event.key === 'Enter' && !dom.lockIn.disabled && !matchOver() && !eliminated()) lockIn();
   });
 }
 
 /**
- * Back to the lobby from a finished match. Nothing on its table is needed
- * again, so the arena goes with it.
+ * Back to the lobby from a finished match, or from one the player is out
+ * of. Nothing on its table is needed again, so the arena goes with it; a
+ * match still running is forgotten here, so its next rounds do not pull the
+ * page back to it. Its row in the lobby opens it again.
  */
 function leaveMatch(): void {
+  const state = app.match;
+  if (state && state.phase !== MatchPhase.Finished && dom.resultPanel.classList.contains('hidden')) {
+    if (replayTimer) clearTimeout(replayTimer);
+    replayTimer = null;
+    store.set({ leftMatch: state.matchId, match: null, you: null, replaying: false, pendingFinish: null });
+  }
   disposeArena();
   hideResult();
   showLobbyScreen();
   void renderWinnings();
+  // A practice match is archived by now: "Your matches" lists it.
+  net.send({ type: 'history' });
+}
+
+/** True while the player's seat is out of a match that is still running. */
+function eliminated(): boolean {
+  return !matchOver() && yourSeat(app.match)?.alive === false;
 }
 
 /** Picks a move: a strike on `seat`, or on whoever the target picker shows. */

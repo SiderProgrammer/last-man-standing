@@ -48,9 +48,14 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
   const seated = context.you !== null && !eliminated;
   const committed = context.committedRound === state.round;
 
+  // The replay is of the round that just resolved; the snapshot has already
+  // moved on to the next one, whose commit window the replay holds closed.
+  const replayed = Math.max(1, state.round - 1);
+
   if (eliminated && (state.phase === MatchPhase.Commit || state.phase === MatchPhase.Reveal)) {
+    const replaying = context.replaying && state.phase === MatchPhase.Commit;
     return {
-      label: `Round ${state.round} — ${context.replaying && state.phase === MatchPhase.Commit ? 'replay' : 'spectating'}`,
+      label: replaying ? `Round ${replayed} — replay` : `Round ${state.round} — spectating`,
       actionsEnabled: false,
       lockInDisabled: true,
       statusText: 'You were eliminated. Watching the rest of the match.',
@@ -60,7 +65,7 @@ export function phasePlan(state: PublicMatchState, context: PhaseContext): Phase
 
   if (state.phase === MatchPhase.Commit && context.replaying) {
     return {
-      label: `Round ${state.round} — replay`,
+      label: `Round ${replayed} — replay`,
       actionsEnabled: false,
       lockInDisabled: true,
       statusText: 'Watching the last round…',

@@ -3,6 +3,7 @@ import { getAddress } from 'viem';
 import { claimableEpochRange } from '@lms/contracts';
 import { type StakingInfo } from '@lms/api';
 import {
+  cooldownRestartWarning,
   formatDuration,
   formatLms,
   httpOrigin,
@@ -88,7 +89,7 @@ describe('stakingPanel', () => {
 
     it('names the delegate and offers the votes back', () => {
       const view = stakingPanel(input({ position: position({ delegate: DELEGATE, votes: 0n }) }));
-      expect(view.delegation).toBe(`Your votes go to ${DELEGATE}. You keep the stake and its rewards.`);
+      expect(view.delegation).toBe(`Your votes go to ${DELEGATE.slice(0, 6)}…${DELEGATE.slice(-4)}. You keep the stake and its rewards.`);
       expect(view.undelegateVisible).toBe(true);
     });
 
@@ -259,5 +260,35 @@ describe('claimableEpochRange', () => {
 
   it('stops at the end of the program', () => {
     expect(claimableEpochRange(10n, WEEK, 208n, 900n * WEEK)).toEqual({ from: 10n, to: 217n });
+  });
+});
+
+describe('staking wording', () => {
+  it('warns that a new unstake restarts the cooldown of one already unlocking', () => {
+    const unlocking = position({ pending: { assets: 50_000n * E18, unlockAt: NOW + 86_400 } });
+    expect(cooldownRestartWarning(unlocking)).toBe(
+      'This restarts the 7d cooldown for the 50,000 LMS already unlocking (1d left).',
+    );
+    expect(cooldownRestartWarning(position())).toBeNull();
+    expect(cooldownRestartWarning(position({ pending: { assets: E18, unlockAt: NOW } }))).toBeNull();
+  });
+
+  it('hides Claim ETH for dust, and says it is dust rather than 0', () => {
+    const dust = stakingPanel(input({ position: position({ earned: 1_000n }) }));
+    expect(dust.claimRewardsVisible).toBe(false);
+    expect(dust.rewards).toBe('<0.000001 ETH earned');
+    expect(stakingPanel(input({ position: position({ earned: E18 / 1000n }) })).claimRewardsVisible).toBe(true);
+  });
+
+  it('names the chain votes cost gas on, and the votes others handed this wallet', () => {
+    const view = stakingPanel(input({ hubName: 'Base', position: position({ votes: 1_300n * E18 }) }));
+    expect(view.delegation).toBe(
+      'You vote with your own stake. Voting costs gas on Base: you can hand your votes to a delegate instead. ' +
+        'You also vote with 300 sLMS others delegated to you.',
+    );
+  });
+
+  it('takes a decimal comma in an LMS amount', () => {
+    expect(parseLms('0,5')).toBe(E18 / 2n);
   });
 });

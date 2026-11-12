@@ -5,6 +5,7 @@ import type {
   AvatarEntry,
   LobbyInfo,
   MatchmakingTier,
+  MatchSummary,
   ServerMessage,
   SpokeInfo,
   StakingInfo,
@@ -13,7 +14,7 @@ import type {
 import type { Net } from './io/net.js';
 import { createStore } from './store.js';
 import type { Dom } from './ui/dom.js';
-import type { DiscountTerms, QueueSpot } from './ui/views.js';
+import type { DiscountTerms, PendingPrize, ProtocolTerms, QueueSpot } from './ui/views.js';
 import type { GrantedKey } from './wallet/grant.js';
 import type { Wallet } from './wallet/wallet.js';
 
@@ -80,6 +81,8 @@ export interface AppState {
   matchmaking: readonly MatchmakingTier[];
   /** This wallet's place in the matchmaking queue, or null when it is not in it. */
   queue: QueueSpot | null;
+  /** When this wallet joined the queue, in browser milliseconds, for the clocks that show it. */
+  queuedSince: number | null;
   /**
    * Matchmade lobbies the server's queue put this wallet in, by lowercased
    * match id: the only matchmade lobbies it can take a seat in.
@@ -87,6 +90,21 @@ export interface AppState {
   matched: ReadonlySet<string>;
   /** The staking vault and governor, or null when the server offers neither. */
   staking: StakingInfo | null;
+  /** What a new lobby opens on, read from the config once a wallet is on the hub. */
+  terms: ProtocolTerms | null;
+  /** What the escrow holds for this wallet, in wei, or null before it is read. */
+  owed: bigint | null;
+  /** Prizes this wallet won whose challenge window is still open. */
+  pendingPrizes: readonly PendingPrize[];
+  /** This wallet's finished matches, newest first, as far as the history panel has paged. */
+  history: readonly MatchSummary[];
+  /**
+   * A running match the player left for the lobby (out of it, or only
+   * watching): its updates are dropped until they open it again.
+   */
+  leftMatch: string | null;
+  /** The last practice match started here, so "Play again" can start the same one. */
+  lastPractice: { bots: number; difficulty: string } | null;
   /** True when the server can write match analyses. */
   analyst: boolean;
   match: PublicMatchState | null;
@@ -143,8 +161,15 @@ export const store = createStore<AppState>({
   inTransit: new Set(),
   matchmaking: [],
   queue: null,
+  queuedSince: null,
   matched: new Set(),
   staking: null,
+  terms: null,
+  owed: null,
+  pendingPrizes: [],
+  history: [],
+  leftMatch: null,
+  lastPractice: null,
   analyst: false,
   match: null,
   avatars: [],

@@ -14,7 +14,7 @@ import { armQuote, idleTokenButton, seated } from './lobby.js';
 
 export async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo, token: ZapToken): Promise<void> {
   const { wallet, zap } = app;
-  if (!wallet || !zap) return toast('Connect a wallet first.');
+  if (!wallet || !zap) return toast('Connect a wallet first.', 'error');
 
   button.disabled = true;
   button.textContent = 'Quoting…';
@@ -25,7 +25,7 @@ export async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo
     ]);
     const plan = planTokenJoin(token, quote, balance);
     if (!plan.ok) {
-      toast(plan.reason);
+      toast(plan.reason, 'error');
       idleTokenButton(button, lobby, token);
       return;
     }
@@ -38,7 +38,7 @@ export async function quoteTokenJoin(button: HTMLButtonElement, lobby: LobbyInfo
     );
   } catch (error) {
     // Almost always a route with no pool behind it, or a wallet on another chain.
-    toast(`Could not price ${token.symbol}: ${errorFirstLine(error)}`);
+    toast(`Could not price ${token.symbol}: ${errorFirstLine(error)}`, 'error');
     idleTokenButton(button, lobby, token);
   } finally {
     button.disabled = false;
@@ -70,7 +70,7 @@ async function payTokenJoin(
     await wallet.waitFor(hash);
     seated(lobby);
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
     idleTokenButton(button, lobby, token);
   } finally {
     button.disabled = false;

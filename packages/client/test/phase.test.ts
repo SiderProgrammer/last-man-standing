@@ -87,7 +87,8 @@ describe('replay hold', () => {
       replaying: true,
     });
     expect(plan).toEqual({
-      label: 'Round 3 — replay',
+      // The snapshot is already on round 3; the replay is of round 2, as the arena says.
+      label: 'Round 2 — replay',
       actionsEnabled: false,
       lockInDisabled: true,
       statusText: 'Watching the last round…',

@@ -12,6 +12,7 @@ import {
   type Hex,
   type LocalAccount,
   type PublicClient,
+  type TransactionReceipt,
   type TypedDataDefinition,
   type WalletClient,
 } from 'viem';
@@ -113,6 +114,23 @@ export class Wallet {
 
   static available(): boolean {
     return typeof window !== 'undefined' && Boolean(window.ethereum);
+  }
+
+  /**
+   * The account the injected wallet already shares with this page, asked
+   * with `eth_accounts`, which never prompts. Null when it shares none.
+   */
+  static async sharedAddress(): Promise<Address | null> {
+    const provider = window.ethereum;
+    if (!provider) return null;
+    const accounts = (await provider.request({ method: 'eth_accounts' })) as string[] | undefined;
+    const first = accounts?.[0];
+    return first && /^0x[0-9a-fA-F]{40}$/.test(first) ? (first as Address) : null;
+  }
+
+  /** Whether the wallet can be asked to move to another network: only an injected one can. */
+  get canSwitchChain(): boolean {
+    return typeof this.signer === 'string';
   }
 
   /**
@@ -541,7 +559,7 @@ export class Wallet {
     });
   }
 
-  waitFor(hash: Hex): Promise<unknown> {
+  waitFor(hash: Hex): Promise<TransactionReceipt> {
     return this.rpc.waitForTransactionReceipt({ hash });
   }
 }

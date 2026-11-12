@@ -169,6 +169,12 @@ export function buildAction(templateId: string, values: Record<string, string>, 
     case 'guardian': {
       const to = field('to');
       if (!isAddress(to)) return { ok: false, error: 'Enter a valid address.' };
+      if (templateId === 'guardian' && /^0x0{40}$/i.test(to)) {
+        return {
+          ok: false,
+          error: 'The zero address would switch the guardian off: no pause and no veto. Use a custom call if that is really the intent.',
+        };
+      }
       return templateId === 'treasury'
         ? call(context.feeRouter, NO_FEE_ROUTER, encode('setTreasury', [to]))
         : call(context.config, NO_CONFIG, encode('setGuardian', [to]));

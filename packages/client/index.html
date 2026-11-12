@@ -17,10 +17,16 @@
         <span>Last&nbsp;Man&nbsp;Standing</span>
       </h1>
       <div class="topbar-right">
-        <button id="nav-rules" class="ghost">How to play</button>
-        <button id="nav-governance" class="ghost hidden">Governance</button>
-        <span id="chain-label" class="pill">offline</span>
+        <nav id="topbar-nav" class="topbar-nav" aria-label="Main">
+          <button id="nav-lobby" class="ghost hidden">Lobby</button>
+          <button id="nav-rules" class="ghost">How to play</button>
+          <button id="nav-governance" class="ghost hidden">Governance</button>
+          <span id="chain-label" class="pill">offline</span>
+        </nav>
+        <button id="queue-chip" type="button" class="pill queue-chip hidden"></button>
+        <button id="winnings-badge" type="button" class="pill winnings-badge hidden" title="Open Winnings"></button>
         <button id="connect" class="primary">Connect wallet</button>
+        <button id="nav-menu" type="button" class="ghost menu-toggle" aria-expanded="false" aria-controls="topbar-nav" aria-label="Menu">☰</button>
       </div>
     </header>
 
@@ -29,9 +35,9 @@
         <div class="panel hero">
           <h2>Play now</h2>
           <p class="hero-title">Up to eight seats. Strike, guard or charge. One survivor.</p>
-          <p class="muted">
-            Practice runs entirely off-chain against house bots. Staked lobbies escrow a
-            real testnet stake and settle on-chain when the match ends.
+          <p id="hero-note" class="muted">
+            Practice runs entirely off-chain against house bots. Staked matches escrow a
+            real stake and settle on-chain when the match ends.
           </p>
           <div class="row">
             <label for="bot-count">Opponents</label>
@@ -51,58 +57,63 @@
         </div>
 
         <h3 class="section-label">Play for stakes</h3>
-        <div class="play-grid">
-          <div id="queue-panel" class="panel queue-panel hidden">
-            <div class="panel-head">
-              <h2>Find a match</h2>
-              <span id="queue-state" class="pill">idle</span>
-            </div>
-            <p class="muted small">
-              The matchmaker seats strangers at a table and opens a lobby only they can join.
-              These are the only matches that earn LMS.
-            </p>
+        <div id="queue-panel" class="panel queue-panel hidden">
+          <div class="panel-head">
+            <h2>Find a match</h2>
+            <span id="queue-state" class="pill">idle</span>
+          </div>
+          <p class="muted small">
+            The matchmaker seats strangers at a table and opens a lobby only they can join.
+            These are the only matches that earn LMS.
+          </p>
+          <div class="queue-controls">
             <div class="field">
               <label for="queue-tier">Table</label>
               <select id="queue-tier"></select>
             </div>
-            <button id="join-queue" class="primary wide" disabled>Find a match</button>
-            <button id="leave-queue" class="ghost wide hidden">Leave queue</button>
-            <p id="queue-status" class="muted small">Connect a wallet to queue.</p>
+            <button id="join-queue" class="primary" disabled>Find a match</button>
+            <button id="leave-queue" class="ghost hidden">Leave queue</button>
           </div>
+          <p id="queue-status" class="muted small" role="status">Connect a wallet to queue.</p>
+        </div>
 
-          <div class="panel lobbies-panel">
-            <div class="panel-head">
-              <h2>Staked lobbies</h2>
-              <button id="refresh-lobbies" class="ghost">Refresh</button>
+        <div class="panel lobbies-panel">
+          <div class="panel-head">
+            <h2>Staked lobbies</h2>
+            <button id="refresh-lobbies" class="ghost">Refresh</button>
+          </div>
+          <div id="discount-row" class="row hidden">
+            <input id="use-discount" type="checkbox" />
+            <label for="use-discount">Pay part of the fee in LMS</label>
+            <span id="discount-status" class="muted small"></span>
+          </div>
+          <div id="pay-with-row" class="row hidden">
+            <label for="pay-with">Pay with</label>
+            <select id="pay-with"></select>
+            <span class="muted small">Swapped to exactly the stake through Uniswap v4 as you join.</span>
+          </div>
+          <ul id="lobby-list" class="lobby-list"></ul>
+          <div class="create-lobby">
+            <h3>Open your own lobby</h3>
+            <p class="muted small">
+              A lobby of your own is private: share its invite link, and anyone with it can take a seat.
+            </p>
+            <div class="row">
+              <label for="stake">Stake (ETH)</label>
+              <input id="stake" type="text" inputmode="decimal" value="0.001" size="8" aria-describedby="stake-range" />
+              <label for="seats">Seats</label>
+              <select id="seats">
+                <option value="4" selected>4</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+              </select>
+              <button id="create-lobby" class="primary">Create &amp; stake</button>
             </div>
-            <div id="discount-row" class="row hidden">
-              <label><input id="use-discount" type="checkbox" /> Pay part of the fee in LMS</label>
-              <span id="discount-status" class="muted small"></span>
-            </div>
-            <div id="pay-with-row" class="row hidden">
-              <label for="pay-with">Pay with</label>
-              <select id="pay-with"></select>
-              <span class="muted small">Swapped to exactly the stake through Uniswap v4 as you join.</span>
-            </div>
-            <ul id="lobby-list" class="lobby-list"></ul>
-            <div class="create-lobby">
-              <h3>Open your own lobby</h3>
-              <div class="row">
-                <label for="stake">Stake (ETH)</label>
-                <input id="stake" type="text" value="0.01" size="8" />
-                <label for="seats">Seats</label>
-                <select id="seats">
-                  <option value="4" selected>4</option>
-                  <option value="6">6</option>
-                  <option value="8">8</option>
-                </select>
-                <button id="create-lobby">Create lobby</button>
-              </div>
-            </div>
+            <p id="stake-range" class="muted small"></p>
           </div>
         </div>
 
-        <div class="panel">
+        <div id="winnings-panel" class="panel">
           <div class="panel-head">
             <h2>Winnings</h2>
             <span id="winnings" class="pill">–</span>
@@ -111,6 +122,7 @@
             Payouts and refunds wait in the escrow until you collect them. Collecting always
             pays your own address.
           </p>
+          <p id="pending-prizes" class="small pending-prizes hidden"></p>
           <div class="row">
             <button id="collect" class="primary" disabled>Collect</button>
             <span id="collect-status" class="muted small">Connect a wallet to check.</span>
@@ -132,7 +144,21 @@
           <button id="history-more" class="ghost hidden">Show older</button>
         </div>
 
-        <h3 class="section-label">Account</h3>
+      </section>
+
+      <section id="account-screen" class="screen hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Account</h2>
+            <button id="account-back" class="ghost">Back to lobby</button>
+          </div>
+          <p id="account-address" class="account-address"></p>
+          <p class="muted small">
+            Your stake in the protocol, your avatar, and how this browser signs for you.
+            Winnings and your match history are on the lobby.
+          </p>
+        </div>
+
         <div id="staking-panel" class="panel hidden">
           <div class="panel-head">
             <h2>Stake LMS</h2>
@@ -181,6 +207,23 @@
 
         <div class="panel">
           <div class="panel-head">
+            <h2>Your avatar</h2>
+            <span id="avatar-chain" class="pill">no collection</span>
+          </div>
+          <p class="muted small">
+            Avatars are cosmetic NFTs, minted on whichever chain you play from. One per
+            wallet, and it follows you into the arena.
+          </p>
+          <div class="row">
+            <button id="mint-avatar" disabled>Mint avatar</button>
+            <span id="avatar-status" class="muted small">Connect a wallet to check.</span>
+          </div>
+        </div>
+
+        <details class="panel advanced">
+          <summary>Advanced: session key and one-click play</summary>
+        <div class="panel">
+          <div class="panel-head">
             <h2>Session key</h2>
             <span id="session-state" class="pill">off</span>
           </div>
@@ -212,21 +255,7 @@
             <span id="one-click-status" class="muted small">Connect a wallet to set up.</span>
           </div>
         </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Your avatar</h2>
-            <span id="avatar-chain" class="pill">no collection</span>
-          </div>
-          <p class="muted small">
-            Avatars are cosmetic NFTs, minted on whichever chain you play from. One per
-            wallet, and it follows you into the arena.
-          </p>
-          <div class="row">
-            <button id="mint-avatar" disabled>Mint avatar</button>
-            <span id="avatar-status" class="muted small">Connect a wallet to check.</span>
-          </div>
-        </div>
+        </details>
       </section>
 
       <section id="governance-screen" class="screen hidden">
@@ -294,6 +323,8 @@
               <span id="timer" class="timer">--</span>
             </div>
             <div class="timer-track"><div id="timer-bar" class="timer-bar"></div></div>
+            <p id="round-recap" class="round-recap small hidden"></p>
+            <p id="round-announce" class="visually-hidden" aria-live="polite"></p>
             <div id="action-bar" class="actions">
               <button data-action="1" class="action strike" title="Strike (1)">
                 <span class="action-icon" aria-hidden="true">⚔️</span>
@@ -328,7 +359,7 @@
             <button id="move-rules" class="link small">How does a round play out?</button>
           </div>
 
-          <div id="result-panel" class="panel hidden">
+          <div id="result-panel" class="panel result-card hidden" tabindex="-1">
             <div class="panel-head">
               <h2>Result</h2>
               <button id="result-verify" type="button" class="pill verify-pill" title="Once the match ends, this browser replays it to check the result. Click to learn more.">checking…</button>
@@ -342,6 +373,7 @@
             <div class="row">
               <button id="result-dispute" class="danger hidden" title="Holds back the payout 48 hours while the guardian checks your evidence">Dispute result</button>
               <button id="result-collect" class="primary hidden">Collect winnings</button>
+              <button id="result-again" class="primary hidden">Play again</button>
               <button id="result-analyse" class="hidden">Analyse match</button>
               <button id="result-back">← Back to lobby</button>
             </div>
@@ -382,6 +414,11 @@
         <section id="help-rules" class="help-section">
           <h3 id="help-rules-title">How to play</h3>
           <div id="help-rules-body" class="rules-grid"></div>
+        </section>
+
+        <section id="help-stakes" class="help-section">
+          <h3>Stakes &amp; payouts</h3>
+          <div id="help-stakes-body" class="rules-grid"></div>
         </section>
 
         <section id="help-verify" class="help-section">
@@ -453,7 +490,7 @@
       </div>
     </dialog>
 
-    <div id="toast" class="toast hidden"></div>
+    <div id="toast" class="toasts" role="status" aria-live="polite"></div>
 
     <div id="loader" class="loader" role="status" aria-live="polite">
       <div class="loader-card">

@@ -106,7 +106,7 @@ export function proposalCard(
     id: summary.id,
     title,
     body,
-    byline: `#${short(summary.id)} · proposed by ${short(summary.proposer)}`,
+    byline: `${short(proposalIdHex(summary.id))} · proposed by ${short(summary.proposer)}`,
     timeline: `Voting ${formatWhen(summary.voteStart)} → ${formatWhen(summary.voteEnd)}`,
     actions,
   };
@@ -174,8 +174,15 @@ function windowText(summary: ProposalSummary, live: ProposalLive): string {
       return now >= live.eta
         ? 'The timelock delay is over: anyone can execute it.'
         : `In the timelock: executable in ${formatDuration(live.eta - now)}. The Safe can still veto it.`;
-    case ProposalState.Defeated:
-      return 'Did not pass: quorum was not reached, or more voted against than for.';
+    case ProposalState.Defeated: {
+      // `GovernorCountingSimple`: quorum counts For and Abstain; passing needs For over Against.
+      const counted = live.votes.for + live.votes.abstain;
+      const noQuorum = live.quorum !== null && counted < live.quorum;
+      const outvoted = live.votes.for <= live.votes.against;
+      if (noQuorum && outvoted) return 'Did not pass: quorum was not reached, and no more voted for than against.';
+      if (noQuorum) return `Did not pass: quorum was not reached (${formatLms(counted)} of ${formatLms(live.quorum!)} sLMS).`;
+      return 'Did not pass: no more voted for than against.';
+    }
     case ProposalState.Canceled:
       return 'Canceled.';
     case ProposalState.Expired:
@@ -195,9 +202,24 @@ function clockWindow(summary: ProposalSummary, now: number): string {
   return 'Voting has closed.';
 }
 
-/** A vote boundary as a local date and time: "Nov 12, 14:00". */
+/**
+ * A proposal id as the CLI and block explorers show it: hex. The governor
+ * hands it over as a decimal uint256.
+ */
+export function proposalIdHex(id: string): string {
+  try {
+    return `0x${BigInt(id).toString(16)}`;
+  } catch {
+    return id;
+  }
+}
+
+/**
+ * A vote boundary as a local date and time: "12 Nov, 14:00". In English
+ * whatever the browser's locale, as the rest of the page is.
+ */
 function formatWhen(seconds: number): string {
-  return new Date(seconds * 1000).toLocaleString(undefined, {
+  return new Date(seconds * 1000).toLocaleString('en-GB', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

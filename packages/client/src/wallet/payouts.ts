@@ -1,9 +1,18 @@
-import { formatEther } from 'viem';
-import { chainInfo } from '@lms/contracts';
+import { formatEther, parseEther } from 'viem';
+import { MatchStatus, chainInfo } from '@lms/contracts';
 import { errorFirstLine, type ServerMessage, type SpokeInfo } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
-import { toast } from '../ui/chrome.js';
-import { collectHomePlan, spokeFor } from '../ui/views.js';
+import { showScreen, toast } from '../ui/chrome.js';
+import { formatDuration } from '../ui/staking.js';
+import {
+  collectHomePlan,
+  formatEth,
+  pendingPrizesText,
+  prizeFor,
+  spokeFor,
+  winningsBadge,
+  type PendingPrize,
+} from '../ui/views.js';
 import { RelayError, canRelay, relayCollect } from './oneClick.js';
 
 /**
@@ -37,7 +46,7 @@ export async function renderWinnings(): Promise<void> {
   const buttons = [dom.collect, dom.resultCollect];
 
   /** The balance pill, the status line, what the buttons say, and whether there is anything to collect. */
-  const show = (pill: string, status: string, open: boolean, label = 'Collect') => {
+  const show = (pill: string, status: string, open: boolean, label = 'Collect', owed: bigint | null = null) => {
     if (draw !== winningsDraw) return;
     dom.winnings.textContent = pill;
     dom.collect.disabled = !open;
@@ -47,8 +56,12 @@ export async function renderWinnings(): Promise<void> {
       button.textContent = label;
       button.onclick = () => void collectWinnings();
     }
+    // On the result panel the balance sits under one match's prize, and is
+    // not that prize: an older balance would read as this match's winnings.
+    if (open && owed !== null) dom.resultCollect.textContent = `Collect your balance (${formatEth(owed)} ETH)`;
+    if (app.owed !== owed) store.set({ owed });
   };
-  const disable = (status: string, pill = '–') => show(pill, status, false);
+  const disable = (status: string, pill = '–', owed: bigint | null = null) => show(pill, status, false, 'Collect', owed);
 
   if (!wallet) return disable('Connect a wallet to check.');
   if (!escrow) return disable('This server runs practice only; there is nothing to collect.');
@@ -68,13 +81,14 @@ export async function renderWinnings(): Promise<void> {
     }
     const amount = BigInt(balance.amount);
     const plan = collectHomePlan(amount, BigInt(balance.minimum), amount, spoke.chainId, app.chainId);
-    if (!plan.ok) return disable(plan.reason, `${formatEther(amount)} ETH`);
+    if (!plan.ok) return disable(plan.reason, `${formatEther(amount)} ETH`, amount);
     return show(
       `${formatEther(amount)} ETH`,
       `${formatEther(amount)} ETH waits for you on ${hub}. Collecting brings all of it to ${name} through Across: ` +
         `the bridge fee comes out of it, and the server pays the ${hub} gas.`,
       true,
       `Collect ${formatEther(amount)} ETH to ${name}`,
+      amount,
     );
   }
 
@@ -84,15 +98,59 @@ export async function renderWinnings(): Promise<void> {
   } catch (error) {
     return disable(`Could not read the escrow: ${errorFirstLine(error)}`);
   }
+  void renderPending(draw);
 
-  if (Number(owed) === 0) return disable('Nothing waiting for you.', '0 ETH');
+  const wei = parseEther(owed);
+  if (wei === 0n) return disable('Nothing waiting for you.', '0 ETH', 0n);
 
   show(
     `${owed} ETH`,
     canRelay() ? 'One click: the server pays the gas.' : 'Your wallet will ask you to confirm.',
     true,
     `Collect ${owed} ETH`,
+    wei,
   );
+}
+
+/**
+ * Prizes this wallet won that are still in their challenge window: not in
+ * the balance yet, but coming. Read from the escrow for its recent staked
+ * matches, as the history lists them.
+ */
+async function renderPending(draw: number): Promise<void> {
+  const { wallet, escrow } = app;
+  if (!wallet || !escrow) return;
+  const cutoff = Date.now() - PENDING_LOOKBACK_MS;
+  const recent = app.history.filter((match) => match.staked && match.place >= 1 && match.finishedAt >= cutoff).slice(0, 10);
+  const reads = await Promise.all(
+    recent.map(async (match): Promise<PendingPrize | null> => {
+      try {
+        const payout = await wallet.matchPayout(escrow, match.matchId);
+        if (payout.status !== MatchStatus.Proposed) return null;
+        const amount = prizeFor(payout, match.place - 1);
+        return amount > 0n ? { matchId: match.matchId, amount, unlocksIn: Math.max(0, payout.deadline - payout.chainTime) } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  if (draw !== winningsDraw) return;
+  const pending = reads.filter((prize): prize is PendingPrize => prize !== null);
+  store.set({ pendingPrizes: pending });
+  const text = pendingPrizesText(pending, formatDuration);
+  dom.pendingPrizes.textContent = text;
+  dom.pendingPrizes.classList.toggle('hidden', text === '');
+}
+
+/** How far back a prize can still be in its challenge window, with a dispute's 48 hours on top. */
+const PENDING_LOOKBACK_MS = 7 * 24 * 3_600_000;
+
+/** The header badge: what is waiting to be collected, or on its way; a click opens Winnings. */
+function renderBadge(): void {
+  const text = app.wallet && app.owed !== null ? winningsBadge(app.owed, app.pendingPrizes) : null;
+  dom.winningsBadge.classList.toggle('hidden', text === null);
+  dom.winningsBadge.classList.toggle('ready', (app.owed ?? 0n) > 0n);
+  if (text) dom.winningsBadge.textContent = text;
 }
 
 export async function collectWinnings(): Promise<void> {
@@ -115,10 +173,10 @@ export async function collectWinnings(): Promise<void> {
       const hash = await wallet.withdraw(escrow);
       await wallet.waitFor(hash);
     }
-    toast('Winnings collected.');
+    toast('Winnings collected.', 'success');
     await renderWinnings();
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
     await renderWinnings();
   } finally {
     dom.resultCollect.disabled = false;
@@ -169,7 +227,12 @@ export function onBalance(message: HubBalance): void {
 
 export function wirePayoutControls(): void {
   store.subscribe(
-    ['wallet', 'walletChainId', 'chainId', 'escrow', 'oneClick', 'withdrawToChain', 'spokes'],
+    ['wallet', 'walletChainId', 'chainId', 'escrow', 'oneClick', 'withdrawToChain', 'spokes', 'history'],
     () => void renderWinnings(),
   );
+  store.subscribe(['wallet', 'owed', 'pendingPrizes'], renderBadge);
+  dom.winningsBadge.onclick = () => {
+    showScreen('lobby');
+    dom.winningsPanel.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
 }

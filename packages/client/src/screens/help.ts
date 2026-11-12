@@ -1,20 +1,21 @@
 import { DEFAULT_RULES } from '@lms/consensus';
 import { app, dom } from '../context.js';
 import { element } from '../ui/dom.js';
-import { rulesSheet } from '../ui/rules.js';
+import { rulesSheet, stakesSheet, type RulesSection } from '../ui/rules.js';
+import { formatDuration } from '../ui/staking.js';
 
 /**
  * The help dialog: how a round plays out, and what "verified in your browser"
  * on the result panel does and does not promise.
  */
 
-export type HelpTopic = 'rules' | 'verify';
+export type HelpTopic = 'rules' | 'verify' | 'stakes';
 
 export function openHelp(topic: HelpTopic = 'rules'): void {
   // The match's own rules when there is one: a lobby may run a different set.
   renderRules();
   if (!dom.helpDialog.open) dom.helpDialog.showModal();
-  const target = topic === 'verify' ? dom.helpVerify : dom.helpRules;
+  const target = topic === 'verify' ? dom.helpVerify : topic === 'stakes' ? dom.helpStakes : dom.helpRules;
   target.scrollIntoView({ block: 'start' });
 }
 
@@ -31,8 +32,12 @@ export function wireHelpControls(): void {
 }
 
 function renderRules(): void {
-  const sections = rulesSheet(app.match?.rules ?? DEFAULT_RULES);
-  dom.helpRulesBody.replaceChildren(
+  fill(dom.helpRulesBody, rulesSheet(app.match?.rules ?? DEFAULT_RULES));
+  fill(dom.helpStakesBody, stakesSheet(app.terms, formatDuration));
+}
+
+function fill(body: HTMLElement, sections: RulesSection[]): void {
+  body.replaceChildren(
     ...sections.map((section) => {
       const block = element('div', `rule${section.tone ? ` ${section.tone}` : ''}`);
       block.append(element('h4', '', section.title), ...section.lines.map((line) => element('p', '', line)));

@@ -51,7 +51,7 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
     // price an amount it would refuse.
     const unpriced = collectHomePlan(amount, BigInt(balance.minimum), amount, spoke.chainId, app.chainId);
     if (!unpriced.ok) {
-      toast(unpriced.reason);
+      toast(unpriced.reason, 'error');
       await renderWinnings();
       return;
     }
@@ -73,7 +73,7 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
 
     const plan = collectHomePlan(amount, BigInt(balance.minimum), priced.outputAmount, spoke.chainId, app.chainId);
     if (!plan.ok) {
-      toast(plan.reason);
+      toast(plan.reason, 'error');
       await renderWinnings();
       return;
     }
@@ -101,7 +101,7 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
       };
     }
   } catch (error) {
-    toast(`Could not price bringing your winnings to ${name}: ${errorFirstLine(error)}`);
+    toast(`Could not price bringing your winnings to ${name}: ${errorFirstLine(error)}`, 'error');
     await renderWinnings();
   }
 }
@@ -126,9 +126,9 @@ async function collectHome(
       quote: quoteToWire(quote),
       signature,
     }));
-    toast(`On its way to ${name}: it arrives once a relayer fills it, usually within a minute.`);
+    toast(`On its way to ${name}: it arrives once a relayer fills it, usually within a minute.`, 'success');
   } catch (error) {
-    toast(error instanceof RelayError ? `Withdrawal refused: ${error.message}` : errorFirstLine(error));
+    toast(error instanceof RelayError ? `Withdrawal refused: ${error.message}` : errorFirstLine(error), 'error');
   } finally {
     for (const button of buttons()) button.onclick = () => void collectWinnings();
     await renderWinnings();

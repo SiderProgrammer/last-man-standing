@@ -4,6 +4,8 @@ import { errorFirstLine } from '@lms/api';
 import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import {
+  cooldownRestartWarning,
+  formatLms,
   parseDelegatee,
   parseLms,
   stakingPanel,
@@ -59,9 +61,11 @@ export async function renderStakingPanel(): Promise<void> {
     // one button that fixes it, rather than leave every control greyed out.
     position = null;
     error = `Switch to ${hub} to stake.`;
-    dom.stakingWrongChainText.textContent =
-      `Your wallet is on ${chainInfo(wallet.chainId).name}. LMS is staked, claimed and voted with on ${hub}.`;
+    dom.stakingWrongChainText.textContent = wallet.canSwitchChain
+      ? `Your wallet is on ${chainInfo(wallet.chainId).name}. LMS is staked, claimed and voted with on ${hub}.`
+      : `Your wallet is on ${chainInfo(wallet.chainId).name} and signs there only. LMS is staked, claimed and voted with on ${hub}.`;
     dom.stakingSwitch.textContent = `Switch to ${hub}`;
+    dom.stakingSwitch.classList.toggle('hidden', !wallet.canSwitchChain);
   } else if (wallet && info) {
     try {
       position = await stakingCalls.stakingPosition(wallet, info.vault);
@@ -100,6 +104,7 @@ export async function renderStakingPanel(): Promise<void> {
     vesting,
     nowSeconds: Math.floor(Date.now() / 1000),
     error,
+    hubName: hub,
   });
   dom.stakingPanel.classList.toggle('hidden', !view.visible);
   dom.stakingRewards.textContent = wrongChain ? `on ${hub}` : view.rewards;
@@ -135,12 +140,12 @@ async function act(done: string, pending: Promise<`0x${string}` | null>): Promis
     const hash = await pending;
     if (hash && app.wallet) {
       await app.wallet.waitFor(hash);
-      toast(done);
+      toast(done, 'success');
       dom.stakingAmount.value = '';
     }
   } catch (error) {
     console.error('[staking]', error);
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     busy = false;
     void renderStakingPanel();
@@ -159,6 +164,7 @@ async function stake(): Promise<`0x${string}` | null> {
   if (!at) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to stake.');
+  if (position && amount > position.lmsBalance) throw new Error(`You hold ${formatLms(position.lmsBalance)} LMS.`);
   return stakingCalls.stake(at.wallet, at.vault, amount);
 }
 
@@ -167,8 +173,11 @@ async function unstake(): Promise<`0x${string}` | null> {
   if (!at || !position) return null;
   const amount = parseLms(dom.stakingAmount.value);
   if (amount === null) throw new Error('Enter how much LMS to unstake.');
-  // One sLMS is one LMS; more than the position unstakes all of it.
-  return stakingCalls.requestUnstake(at.wallet, at.vault, amount < position.staked ? amount : position.staked);
+  if (amount > position.staked) throw new Error(`You have ${formatLms(position.staked)} LMS staked.`);
+  // A new request joins the one already unlocking and starts its clock again.
+  const warning = cooldownRestartWarning(position);
+  if (warning && !window.confirm(`${warning} Unstake anyway?`)) return null;
+  return stakingCalls.requestUnstake(at.wallet, at.vault, amount);
 }
 
 async function claimRewards(): Promise<`0x${string}` | null> {

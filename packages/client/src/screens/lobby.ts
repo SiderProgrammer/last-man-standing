@@ -1,7 +1,8 @@
-import { formatEther } from 'viem';
+import { formatEther, parseEventLogs, type TransactionReceipt } from 'viem';
 import { sameAddress, type BotDifficulty } from '@lms/consensus';
 import {
   chainInfo,
+  gameEscrowAbi,
   joinMessage,
   localQuote,
   quoteAcross,
@@ -17,7 +18,7 @@ import {
   type ZapToken,
 } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
-import { showMatchScreen, toast } from '../ui/chrome.js';
+import { alertInBackground, showMatchScreen, toast } from '../ui/chrome.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import { readRaw, writeRaw } from '../io/storage.js';
@@ -28,7 +29,11 @@ import {
   lobbyAction,
   lobbySeatsText,
   lobbySummary,
+  parseStakeInput,
+  prizeBreakdown,
+  prizeSummary,
   sortLobbies,
+  stakeRangeText,
   payWithOptions,
   spokeFor,
   spokeQuoteError,
@@ -38,6 +43,7 @@ import {
 } from '../ui/views.js';
 import { renderWinnings } from '../wallet/payouts.js';
 import type { SpokeRoute } from '../wallet/wallet.js';
+import { protocolTerms } from '../wallet/terms.js';
 import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
 
 /** The lobby screen: practice, the staked-lobby directory, create and join. */
@@ -67,17 +73,30 @@ export function armQuote(button: HTMLButtonElement, label: string, expire: () =>
 /** A little over the chain bridge's poll interval: how stale the directory can be. */
 const DIRECTORY_LAG_MS = 5_000;
 
+/** Starts a practice match: against `bots` house bots at `difficulty`. */
+export function startPractice(bots: number, difficulty: string): void {
+  store.set({ lastPractice: { bots, difficulty }, leftMatch: null });
+  net.send({ type: 'practice', bots, difficulty: difficulty as BotDifficulty });
+}
+
+/** The lobby an invite link (`?lobby=0x…`) points at, if the page was opened from one. */
+const invited: string | null = new URLSearchParams(location.search).get('lobby')?.toLowerCase() ?? null;
+/** Whether the invited lobby has been scrolled into view: once is enough. */
+let invitedShown = false;
+
+/** Lobbies this browser opened, by lowercased id: "your lobby" before anyone has a seat in it. */
+const created = new Set<string>();
+
+/** Lobbies taken a seat in before the server listed them: watched once it does. */
+const watchWhenListed = new Set<string>();
+
 export function wireLobbyControls(): void {
-  dom.practice.onclick = () => {
-    net.send({
-      type: 'practice',
-      bots: Number(dom.botCount.value),
-      difficulty: dom.botDifficulty.value as BotDifficulty,
-    });
-  };
+  dom.practice.onclick = () => startPractice(Number(dom.botCount.value), dom.botDifficulty.value);
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
   dom.createLobby.onclick = () => void createLobby();
+  dom.stake.oninput = renderCreateForm;
+  dom.seats.onchange = renderCreateForm;
   dom.payWith.onchange = renderLobbies;
   dom.useDiscount.checked = readRaw(DISCOUNT_KEY) === '1';
   dom.useDiscount.onchange = () => {
@@ -86,15 +105,76 @@ export function wireLobbyControls(): void {
   };
 
   store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId'], renderPayWith);
-  store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking'], renderLobbies);
+  store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking', 'terms', 'wallet'], renderLobbies);
+  store.subscribe(['terms', 'matchmaking'], defaultStake);
+  store.subscribe(['terms', 'escrow', 'wallet', 'walletChainId', 'spokes'], renderCreateForm);
   store.subscribe(['discount'], renderDiscount);
+  store.subscribe(['chainId', 'escrow'], renderHeroNote);
   // The discount is read on the hub, where the escrow is; its module loads
   // the first time a wallet is there.
   store.subscribe(['wallet', 'walletChainId', 'escrow', 'chainId'], () => {
-    const onHub = app.wallet && app.escrow && app.wallet.chainId === app.chainId;
+    const { wallet, escrow } = app;
+    const onHub = wallet && escrow && wallet.chainId === app.chainId;
     if (onHub) void import('./discount.js').then((discount) => discount.refreshDiscount());
     else store.set({ discount: null });
+    // What a table pays, and the stakes a new lobby takes. Kept once read:
+    // they only change by a governance vote.
+    if (onHub && !app.terms) {
+      void protocolTerms(wallet, escrow)
+        .then((terms) => store.set({ terms }))
+        .catch((error: unknown) => console.warn('[lobby] could not read the protocol terms', error));
+    }
   });
+}
+
+/** The hero's line about staked play, which says "testnet" only on one. */
+function renderHeroNote(): void {
+  const chain = chainInfo(app.chainId);
+  dom.heroNote.textContent = app.escrow
+    ? `Practice runs entirely off-chain against house bots. Staked matches escrow a real ${chain.testnet ? 'testnet ' : ''}stake on ${chain.name} and settle on-chain when the match ends.`
+    : 'Practice runs entirely off-chain against house bots. This server runs practice only.';
+}
+
+/**
+ * The create form's stake box starts at the cheapest table: the config's
+ * minimum stake, or the cheapest tier the matchmaker runs. Only while the
+ * player has not typed in it.
+ */
+function defaultStake(): void {
+  if (dom.stake.dataset.touched) return;
+  const cheapest =
+    app.terms?.minStake ??
+    app.matchmaking.reduce<bigint | null>((low, tier) => (low === null || BigInt(tier.stake) < low ? BigInt(tier.stake) : low), null);
+  if (cheapest !== null && cheapest > 0n) dom.stake.value = formatEther(cheapest);
+  renderCreateForm();
+}
+
+/**
+ * The line under the create form: the stakes allowed and what a full table
+ * would pay, or why the stake typed is not one. The button says what it does.
+ */
+function renderCreateForm(): void {
+  if (document.activeElement === dom.stake) dom.stake.dataset.touched = '1';
+  const spoke = currentSpoke();
+  if (spoke) {
+    dom.stakeRange.textContent = `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`;
+    dom.stakeRange.classList.remove('warn-text');
+    dom.createLobby.textContent = 'Create & stake';
+    return;
+  }
+  const parsed = parseStakeInput(dom.stake.value, app.terms);
+  const range = app.terms ? `Stakes ${stakeRangeText(app.terms)}.` : '';
+  if (!parsed.ok) {
+    dom.stakeRange.textContent = dom.stake.value.trim() === '' ? range : `${parsed.error}`;
+    dom.stakeRange.classList.toggle('warn-text', dom.stake.value.trim() !== '');
+    dom.createLobby.textContent = 'Create & stake';
+    return;
+  }
+  const seats = Number(dom.seats.value);
+  const prize = prizeSummary(parsed.wei, seats, app.terms);
+  dom.stakeRange.textContent = [range, prize ? `A full table: ${prize} ETH.` : ''].filter(Boolean).join(' ');
+  dom.stakeRange.classList.remove('warn-text');
+  dom.createLobby.textContent = `Create & stake ${formatEther(parsed.wei)} ETH`;
 }
 
 const DISCOUNT_KEY = 'lms:pay-fee-in-lms';
@@ -130,6 +210,7 @@ export function renderPayWith(): void {
   dom.createLobby.title = spoke
     ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
     : '';
+  renderCreateForm();
   renderLobbies();
 }
 
@@ -153,6 +234,9 @@ export function onLobbies(open: LobbyInfo[], live: LobbyInfo[]): void {
       .map((lobby) => lobby.matchId.toLowerCase()),
   );
   const inTransit = [...app.inTransit].filter((id) => !landed.has(id));
+  for (const lobby of [...open, ...live]) {
+    if (watchWhenListed.delete(lobby.matchId.toLowerCase())) net.send({ type: 'watch', matchId: lobby.matchId });
+  }
   store.set({
     lobbies: { open, live },
     ...(inTransit.length !== app.inTransit.size ? { inTransit: new Set(inTransit) } : {}),
@@ -173,18 +257,73 @@ export function renderLobbies(): void {
           : 'Server is running without an escrow: practice only.',
       ),
     );
+    dom.payWithRow.classList.add('hidden');
+    dom.discountRow.classList.add('hidden');
     return;
   }
 
+  // Your own tables first, wherever they are; then what you can join; then
+  // what is being played. Tables you cannot take a seat at (another queue's,
+  // or past their window) fold away under "Other tables".
   const nowSeconds = Math.floor(Date.now() / 1000);
+  const yours = sortLobbies([...open, ...live].filter(isYours), () => false);
+  const joinable: LobbyInfo[] = [];
+  const others: LobbyInfo[] = [];
+  for (const lobby of open) {
+    if (isYours(lobby)) continue;
+    const action = lobbyAction(lobby, false, nowSeconds, false);
+    (action === 'join' ? joinable : others).push(lobby);
+  }
+  const playing = live.filter((lobby) => !isYours(lobby));
+
   const rows: HTMLLIElement[] = [];
-  const ordered = sortLobbies(open, (lobby) => isSeatedIn(lobby) || app.matched.has(lobby.matchId.toLowerCase()));
-  if (ordered.length > 0) rows.push(groupHead(`Open · ${ordered.length}`), ...ordered.map((lobby) => lobbyRow(lobby, true, nowSeconds)));
-  if (live.length > 0) {
-    const yoursFirst = sortLobbies(live, isSeatedIn);
-    rows.push(groupHead(`In play · ${live.length}`), ...yoursFirst.map((lobby) => lobbyRow(lobby, false, nowSeconds)));
+  const group = (title: string, lobbies: readonly LobbyInfo[], canJoin: boolean) => {
+    if (lobbies.length > 0) rows.push(groupHead(`${title} · ${lobbies.length}`), ...lobbies.map((lobby) => lobbyRow(lobby, canJoin, nowSeconds)));
+  };
+  group('Yours', yours, true);
+  group('Open', sortLobbies(joinable, () => false), true);
+  group('In play', playing, false);
+  if (others.length > 0) {
+    const holder = element('li', 'lobby-others');
+    const details = element('details');
+    const list = element('ul', 'lobby-list');
+    list.append(...others.map((lobby) => lobbyRow(lobby, true, nowSeconds)));
+    details.append(element('summary', 'muted small', `Other tables · ${others.length} · matchmade for other players, or closed`), list);
+    holder.append(details);
+    rows.push(holder);
+  }
+  if (yours.length === 0 && joinable.length === 0) {
+    rows.unshift(
+      element(
+        'li',
+        'lobby-empty muted small',
+        app.matchmaking.length > 0
+          ? 'No lobbies to join right now. Find a match above, or open your own below.'
+          : 'No lobbies to join right now. Open your own below.',
+      ),
+    );
   }
   dom.lobbyList.replaceChildren(...rows);
+
+  // How you pay only matters when there is something to pay for.
+  const anyJoin = yours.some((lobby) => !isSeatedIn(lobby) && lobby.status === 'open') || joinable.length > 0;
+  dom.payWithRow.classList.toggle('hidden', !anyJoin || !app.zap || currentSpoke() !== null);
+  dom.discountRow.classList.toggle('hidden', !anyJoin || !app.discount);
+
+  // An invite link lands here: show the lobby it names, once.
+  if (invited && !invitedShown) {
+    const row = [...dom.lobbyList.querySelectorAll<HTMLElement>('[data-match]')].find((node) => node.dataset.match === invited);
+    if (row) {
+      invitedShown = true;
+      row.scrollIntoView({ block: 'center' });
+    }
+  }
+}
+
+/** Whether this lobby is the player's own: a seat in it, the queue's table for them, or one they opened. */
+function isYours(lobby: LobbyInfo): boolean {
+  const id = lobby.matchId.toLowerCase();
+  return isSeatedIn(lobby) || app.matched.has(id) || (created.has(id) && lobby.status === 'open');
 }
 
 function groupHead(text: string): HTMLLIElement {
@@ -193,18 +332,25 @@ function groupHead(text: string): HTMLLIElement {
 
 function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTMLLIElement {
   const seated = isSeatedIn(lobby);
-  const matched = app.matched.has(lobby.matchId.toLowerCase());
-  const li = element('li', `lobby-row${seated || matched ? ' yours' : ''}`);
+  const id = lobby.matchId.toLowerCase();
+  const matched = app.matched.has(id);
+  const mine = created.has(id);
+  const li = element('li', `lobby-row${seated || matched || mine ? ' yours' : ''}${id === invited ? ' invited' : ''}`);
+  li.dataset.match = id;
   const label = element('div', 'lobby-info');
+  const action = lobbyAction(lobby, seated, nowSeconds, matched);
 
   const top = element('div', 'lobby-top');
   top.append(
     element('strong', 'lobby-stake', `${formatEther(BigInt(lobby.stake))} ETH`),
     element('span', `pill lobby-status ${lobby.status}`, lobby.status === 'open' ? 'open' : lobby.status === 'pending' ? 'seeding' : 'live'),
   );
-  if (seated) top.append(element('span', 'pill lobby-tag', 'your seat'));
+  if (action === 'cancel') top.append(element('span', 'pill lobby-tag', 'refund ready'));
+  else if (seated) top.append(element('span', 'pill lobby-tag', 'your seat'));
   else if (matched) top.append(element('span', 'pill lobby-tag', 'your table'));
+  else if (mine) top.append(element('span', 'pill lobby-tag', 'your lobby'));
   else if (lobby.matchmade) top.append(element('span', 'pill', 'matchmade'));
+  else if (id === invited) top.append(element('span', 'pill lobby-tag', 'invited'));
   const chips = chainChips(lobby.players).map((chip) => {
     const node = element('span', 'chain-chip', chip.label);
     node.title = chip.title;
@@ -226,8 +372,17 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
   meta.title = lobbySummary(lobby.stake, lobby.seatCount, lobby.maxSeats, lobby.status);
   label.append(top, meta);
 
+  // What a seat can win, before staking: the lobby's own terms, or the
+  // config's when the server did not send them.
+  const terms = lobby.feeBps !== undefined && lobby.payoutBps ? { feeBps: lobby.feeBps, payoutBps: lobby.payoutBps } : app.terms;
+  const prize = prizeSummary(lobby.stake, lobby.maxSeats, terms);
+  if (prize && terms) {
+    const line = element('div', 'lobby-prize small', `${prize} ETH`);
+    line.title = prizeBreakdown(lobby.stake, lobby.maxSeats, terms);
+    label.append(line);
+  }
+
   const button = element('button');
-  const action = lobbyAction(lobby, seated, nowSeconds, matched);
   const spoke = currentSpoke();
 
   if (action === 'cancel') {
@@ -237,6 +392,8 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
   } else if (action === 'enter' || action === 'watch' || !joinable) {
     button.textContent = action === 'enter' ? 'Enter' : 'Watch';
     button.onclick = () => {
+      // Opening it again undoes having left it.
+      if (app.leftMatch === lobby.matchId) store.set({ leftMatch: null });
       net.send({ type: 'watch', matchId: lobby.matchId });
       showMatchScreen();
     };
@@ -262,9 +419,32 @@ function lobbyRow(lobby: LobbyInfo, joinable: boolean, nowSeconds: number): HTML
 
   // A seat of yours is the one row that wants a click now. A join stays plain
   // until it is priced: there, `primary` means "this is the offer, click to pay".
-  if (action === 'enter' || action === 'cancel') button.classList.add('primary');
-  li.append(label, button);
+  if (action === 'enter' || action === 'cancel' || (matched && action === 'join')) button.classList.add('primary');
+  const buttons = element('div', 'lobby-buttons');
+  // A private lobby fills with the people its link is sent to.
+  if (lobby.status === 'open' && !lobby.matchmade && (seated || mine) && action !== 'cancel') {
+    const invite = element('button', 'ghost', 'Copy invite');
+    invite.type = 'button';
+    invite.title = 'A link that opens this lobby, ready to stake into';
+    invite.onclick = () => void copyInvite(lobby.matchId);
+    buttons.append(invite);
+  }
+  buttons.append(button);
+  li.append(label, buttons);
   return li;
+}
+
+/** Copies a link that opens the lobby page on `matchId`. */
+async function copyInvite(matchId: string): Promise<void> {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('lobby', matchId);
+  try {
+    await navigator.clipboard.writeText(url.toString());
+    toast('Invite link copied. Anyone who opens it can stake into this lobby.', 'success');
+  } catch {
+    toast(`Send this link to invite players: ${url.toString()}`, 'info', { sticky: true });
+  }
 }
 
 /** Whether the connected wallet holds a seat in `lobby`. */
@@ -281,76 +461,132 @@ function disable(button: HTMLButtonElement, label: string, why: string): void {
 
 async function createLobby(): Promise<void> {
   const { wallet, escrow } = app;
-  if (!wallet || !escrow) return toast('Connect a wallet first.');
-  if (currentSpoke()) return toast(dom.createLobby.title);
+  if (!wallet || !escrow) return toast('Connect a wallet first.', 'error');
+  if (currentSpoke()) return toast(dom.createLobby.title, 'error');
+  const stake = parseStakeInput(dom.stake.value, app.terms);
+  if (!stake.ok) return toast(stake.error, 'error');
+  const seats = Number(dom.seats.value);
   try {
     dom.createLobby.disabled = true;
-    const hash = await wallet.createMatch(escrow, dom.stake.value, Number(dom.seats.value));
-    await wallet.waitFor(hash);
-    // Creating does not seat you: join explicitly so the stake is escrowed.
-    net.send({ type: 'lobbies' });
-    toast('Lobby created. Stake into it to take a seat.');
+    dom.createLobby.textContent = 'Confirm the new lobby…';
+    const hash = await wallet.createMatch(escrow, formatEther(stake.wei), seats);
+    dom.createLobby.textContent = 'Opening…';
+    const matchId = createdMatchId(await wallet.waitFor(hash));
+    created.add(matchId.toLowerCase());
+    // Creating does not seat you: the stake goes in with a join of its own,
+    // asked for straight away so it is one click for the player.
+    const lobby: LobbyInfo = {
+      matchId,
+      stake: stake.wei.toString(),
+      seatCount: 0,
+      maxSeats: seats,
+      minSeats: seats,
+      joinDeadline: 0,
+      status: 'open',
+      players: [],
+      cancellableAt: 0,
+      matchmade: false,
+    };
+    refreshDirectorySoon();
+    dom.createLobby.textContent = 'Confirm your stake…';
+    await joinLobby(lobby, 'Lobby open and your seat taken. Copy its invite link to bring players in.');
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     dom.createLobby.disabled = false;
+    renderCreateForm();
   }
 }
 
-async function joinLobby(lobby: LobbyInfo): Promise<void> {
+/** The id of the lobby a `createMatch` receipt opened. */
+function createdMatchId(receipt: TransactionReceipt): `0x${string}` {
+  const [event] = parseEventLogs({ abi: gameEscrowAbi, eventName: 'MatchCreated', logs: receipt.logs });
+  if (!event?.args.matchId) throw new Error('The lobby was not created: the transaction did not open one.');
+  return event.args.matchId;
+}
+
+/**
+ * Asks for the directory now and twice more as the server's bridge catches
+ * up with the chain, so a lobby just opened or joined shows without Refresh.
+ */
+function refreshDirectorySoon(): void {
+  net.send({ type: 'lobbies' });
+  setTimeout(() => net.send({ type: 'lobbies' }), DIRECTORY_LAG_MS);
+  setTimeout(() => net.send({ type: 'lobbies' }), DIRECTORY_LAG_MS * 3);
+}
+
+async function joinLobby(lobby: LobbyInfo, done?: string): Promise<void> {
   const { wallet, escrow } = app;
-  if (!wallet || !escrow) return toast('Connect a wallet first.');
+  if (!wallet || !escrow) return toast('Connect a wallet first.', 'error');
 
   try {
     if (canRelay()) {
       try {
         await relayJoin(lobby.matchId, BigInt(lobby.stake));
-        return seated(lobby);
+        return seated(lobby, done);
       } catch (error) {
         // Over the caps, out of today's quota, or a lobby that just filled:
         // say why, and let the wallet try it as an ordinary transaction.
         if (!(error instanceof RelayError)) throw error;
-        toast(`One-click join refused: ${error.message}. Using your wallet.`);
+        toast(`One-click join refused: ${error.message}. Using your wallet.`, 'info');
       }
     }
     const hash = await wallet.join(escrow, lobby.matchId, BigInt(lobby.stake));
     await wallet.waitFor(hash);
-    seated(lobby);
+    seated(lobby, done);
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   }
 }
 
 /** The queue put this wallet at a table: its lobby is now one it can stake into. */
 export function onMatched(message: Extract<ServerMessage, { type: 'matched' }>): void {
   store.set({ matched: new Set([...app.matched, message.matchId.toLowerCase()]) });
-  toast(`Matched: a ${message.seats}-seat table is ready. Stake into ${short(message.matchId)} to take your seat.`);
-  net.send({ type: 'lobbies' });
+  // Kept until dismissed: it is the one message that needs an answer, and a
+  // later toast must not bury it.
+  toast(
+    `Matched: a ${message.seats}-seat table is ready. Stake in its row under "Yours" (${short(message.matchId)}) to take your seat.`,
+    'success',
+    { sticky: true },
+  );
+  alertInBackground('Table ready');
+  refreshDirectorySoon();
 }
 
 /** Cancels a lobby the player sits in that can no longer start; the refund is then theirs to withdraw. */
 async function cancelLobby(button: HTMLButtonElement, lobby: LobbyInfo): Promise<void> {
   const { wallet, escrow } = app;
-  if (!wallet || !escrow) return toast('Connect a wallet first.');
+  if (!wallet || !escrow) return toast('Connect a wallet first.', 'error');
   button.disabled = true;
   button.textContent = 'Cancelling…';
   try {
     await wallet.waitFor(await wallet.cancelMatch(escrow, lobby.matchId));
-    toast('Cancelled. Your stake is back in your balance, ready to withdraw.');
+    toast('Cancelled. Your stake is back in your balance, ready to withdraw.', 'success', { sticky: true });
     void renderWinnings();
     net.send({ type: 'lobbies' });
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
     button.disabled = false;
     button.textContent = 'Cancel & refund';
   }
 }
 
-export function seated(lobby: LobbyInfo): void {
-  net.send({ type: 'lobbies' });
+export function seated(lobby: LobbyInfo, done?: string): void {
+  refreshDirectorySoon();
   // The server opens the room once the lobby locks and the oracle seeds it.
-  net.send({ type: 'watch', matchId: lobby.matchId });
-  toast('Seat taken. The match starts when the lobby fills.');
+  // A lobby its bridge has not picked up yet (one just opened) would answer
+  // "unknown match": ask once it is in the directory.
+  const known = [...app.lobbies.open, ...app.lobbies.live].some((entry) => entry.matchId === lobby.matchId);
+  if (known) net.send({ type: 'watch', matchId: lobby.matchId });
+  else watchWhenListed.add(lobby.matchId.toLowerCase());
+  const filled = lobby.seatCount + 1 >= lobby.maxSeats;
+  toast(
+    done ??
+      (filled
+        ? 'Seat taken, and the table is full. The match opens as soon as its seed arrives.'
+        : `Seat taken. The match starts when the lobby fills: ${lobby.maxSeats - lobby.seatCount - 1} more to go.`),
+    'success',
+  );
 }
 
 // ------------------------------------------------------------ token payment
@@ -404,7 +640,7 @@ function idleSpokeButton(button: HTMLButtonElement, lobby: LobbyInfo, spoke: Spo
 
 async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke: SpokeInfo): Promise<void> {
   const { wallet } = app;
-  if (!wallet) return toast('Connect a wallet first.');
+  if (!wallet) return toast('Connect a wallet first.', 'error');
 
   const stake = BigInt(lobby.stake);
   button.disabled = true;
@@ -436,7 +672,7 @@ async function quoteSpokeJoin(button: HTMLButtonElement, lobby: LobbyInfo, spoke
     );
     button.disabled = false;
   } catch (error) {
-    toast(spokeQuoteError(errorMessage(error), spoke.chainId));
+    toast(spokeQuoteError(errorMessage(error), spoke.chainId), 'error');
     idleSpokeButton(button, lobby, spoke);
   }
 }
@@ -463,14 +699,15 @@ async function paySpokeJoin(
         'relayer fills it, usually within a minute; you will be told when it is seated.',
     );
   } catch (error) {
-    toast(spokeQuoteError(errorFirstLine(error), spoke.chainId));
+    toast(spokeQuoteError(errorFirstLine(error), spoke.chainId), 'error');
     idleSpokeButton(button, lobby, spoke);
   }
 }
 
 /** The server's report of how one of this player's spoke joins landed on the hub. */
 export function onCrossChain(event: CrossChainEvent): void {
-  toast(crossChainNotice(event, app.chainId));
+  // A stake that did not seat anyone is money to go and collect: kept up.
+  toast(crossChainNotice(event, app.chainId), event.kind === 'seated' ? 'success' : 'error', { sticky: event.kind === 'refunded' });
   if (event.kind === 'seated') {
     // The row stays locked until the seat shows in the directory, which can
     // lag this report by one of the bridge's polls; otherwise it would offer

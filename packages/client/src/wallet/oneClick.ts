@@ -146,9 +146,9 @@ export async function enableOneClick(): Promise<void> {
     // The on-chain session ends with the key's grant: one key, one lifetime.
     const hash = await wallet.enableOneClick(sessionDelegate, grantKey.address, grantKey.grant.expiresAt, ONE_CLICK_CAPS);
     await wallet.waitFor(hash);
-    toast('One-click play is on.');
+    toast('One-click play is on.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     await refreshOneClick();
     // A failure leaves `oneClick` false, as it was, so the store notifies
@@ -164,9 +164,9 @@ export async function disableOneClick(): Promise<void> {
   try {
     dom.disableOneClick.disabled = true;
     await wallet.waitFor(await wallet.revokeSession(grantKey.address));
-    toast('One-click play is off.');
+    toast('One-click play is off.', 'success');
   } catch (error) {
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     dom.disableOneClick.disabled = false;
     await refreshOneClick();

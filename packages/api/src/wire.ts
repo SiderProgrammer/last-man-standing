@@ -427,6 +427,13 @@ export interface LobbyInfo {
    * to anyone with its id, and earns no play-mining.
    */
   matchmade: boolean;
+  /**
+   * The fee and payout schedule the escrow fixed when the lobby opened, in
+   * basis points: what a seat can win. Absent from a server that does not
+   * read them.
+   */
+  feeBps?: number;
+  payoutBps?: number[];
 }
 
 export const AUTH_PREFIX = 'Last Man Standing login\nnonce:';

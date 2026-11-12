@@ -1,8 +1,9 @@
 import type { MatchSummary, ServerMessage } from '@lms/api';
-import { app, dom, net } from '../context.js';
+import { app, dom, net, store } from '../context.js';
 import { reviewOf } from '../game/review.js';
 import { element } from '../ui/dom.js';
 import { placeLabel, short } from '../ui/format.js';
+import { txLink } from '../ui/links.js';
 import { showReview } from './match.js';
 import { onSettled } from './result.js';
 
@@ -35,6 +36,8 @@ export function requestHistory(before?: number): void {
 
 export function onHistory(message: Extract<ServerMessage, { type: 'history' }>): void {
   shown = message.before === null ? message.matches : [...shown, ...message.matches];
+  // Winnings reads the recent staked ones for prizes still on their way.
+  store.set({ history: shown });
   dom.historyMore.classList.toggle('hidden', !message.more);
   dom.historyMore.disabled = false;
   renderHistory();
@@ -61,15 +64,9 @@ function historyRow(match: MatchSummary): HTMLLIElement {
   const detail = element(
     'span',
     'muted small',
-    [
-      match.staked ? 'Staked' : 'Practice',
-      `${match.rounds} rounds`,
-      formatWhen(match.finishedAt),
-      match.settledTx ? `tx ${short(match.settledTx)}` : null,
-    ]
-      .filter((part) => part !== null)
-      .join(' · '),
+    [match.staked ? 'Staked' : 'Practice', `${match.rounds} rounds`, formatWhen(match.finishedAt)].join(' · '),
   );
+  if (match.settledTx) detail.append(' · ', txLink(match.settledTx, app.chainId));
 
   const label = element('span', 'history-label');
   label.append(place, detail);
@@ -81,6 +78,7 @@ function historyRow(match: MatchSummary): HTMLLIElement {
   return li;
 }
 
+/** In English whatever the browser's locale, as the rest of the page is. */
 function formatWhen(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
 }

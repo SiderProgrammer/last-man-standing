@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData, getAddress } from 'viem';
 import { ProposalState, governableAbi, type ProposalSummary } from '@lms/contracts';
-import { proposalCard, type ProposalLive } from '../src/ui/governance.js';
+import { proposalCard, proposalIdHex, type ProposalLive } from '../src/ui/governance.js';
 
 const E18 = 10n ** 18n;
 const NOW = 1_700_000_000;
@@ -114,6 +114,27 @@ describe('proposalCard', () => {
 
     expect(card.actions[0]?.warning).toBe(
       'Not a recognised governance call — check the target and data yourself. Sends 1 ETH.',
+    );
+  });
+});
+
+describe('proposal wording', () => {
+  it('shows the id in hex, as the CLI and explorers do', () => {
+    expect(proposalIdHex('255')).toBe('0xff');
+    expect(proposalCard(SUMMARY, null, {}).byline).toMatch(/^0x18ee…/);
+  });
+
+  it('says which way a defeated proposal failed', () => {
+    const defeated = (votes: ProposalLive['votes']) =>
+      proposalCard(SUMMARY, live({ state: ProposalState.Defeated, votes }), {}).window;
+    expect(defeated({ for: 1_000n * E18, against: 0n, abstain: 0n })).toBe(
+      'Did not pass: quorum was not reached (1,000 of 8,000 sLMS).',
+    );
+    expect(defeated({ for: 9_000n * E18, against: 9_000n * E18, abstain: 0n })).toBe(
+      'Did not pass: no more voted for than against.',
+    );
+    expect(defeated({ for: 0n, against: 1n * E18, abstain: 0n })).toBe(
+      'Did not pass: quorum was not reached, and no more voted for than against.',
     );
   });
 });

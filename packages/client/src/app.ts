@@ -26,7 +26,7 @@ import {
   onAnalysisError,
   onAnalysisStep,
 } from './screens/analysis.js';
-import { toast } from './ui/chrome.js';
+import { toast, wireChrome } from './ui/chrome.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
 import { httpOrigin } from './ui/staking.js';
@@ -34,6 +34,7 @@ import {
   authenticate,
   onAuthed,
   onLoginRejected,
+  resumeSession,
   wireWalletControls,
 } from './wallet/flows.js';
 import { onBalance, renderWinnings, wirePayoutControls } from './wallet/payouts.js';
@@ -69,6 +70,7 @@ export function start(): void {
 
   net.on(onServerMessage);
   net.connect();
+  wireChrome();
   wireWalletControls();
   wireOneClickControls();
   wireLobbyControls();
@@ -81,10 +83,13 @@ export function start(): void {
   wireStakingPanel();
   wireGovernanceNav(httpOrigin(SERVER_URL));
   setInterval(updateTimer, 200);
-  // Keeps the unstake countdown and the share price current while the page is open.
+  // Keeps the unstake countdown, the share price and the winnings current
+  // while the page is open: a match settling or a lobby cancelled shows up
+  // without a reload.
   setInterval(() => {
     refreshStaking();
     refreshGovernance();
+    if (app.wallet) void renderWinnings();
   }, 30_000);
 }
 
@@ -95,8 +100,10 @@ const HANDLERS: Handlers = {
   hello: onHello,
   authed: (message) => {
     onAuthed();
-    dom.connect.textContent = short(message.address);
-    dom.connect.disabled = true;
+    // From here the wallet button opens the account screen.
+    dom.connect.textContent = `${short(message.address)} ▾`;
+    dom.connect.title = 'Your account: staking, avatar and session key';
+    dom.connect.classList.remove('primary');
     net.flush();
     net.send({ type: 'lobbies' });
     requestHistory();
@@ -171,16 +178,19 @@ function onHello(message: Extract<ServerMessage, { type: 'hello' }>): void {
     withdrawToChain: message.withdrawToChain,
     // A new connection: the server let the old one's place in the queue go.
     queue: null,
+    queuedSince: null,
   });
+  // The tab was reloaded with a live grant in this browser: log straight back in.
+  void resumeSession();
 }
 
 function onError(message: Extract<ServerMessage, { type: 'error' }>): void {
   switch (message.code) {
     case 'BAD_SIGNATURE':
     case 'BAD_GRANT':
-      if (!onLoginRejected()) toast(message.message);
+      if (!onLoginRejected()) toast(message.message, 'error');
       return;
     default:
-      toast(message.message);
+      toast(message.message, 'error');
   }
 }

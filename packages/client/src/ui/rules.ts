@@ -78,6 +78,59 @@ export function rulesSheet(rules: Rules): RulesSection[] {
   ];
 }
 
+/** The terms the stakes section is written from: see `ProtocolTerms`. */
+export interface StakeTerms {
+  feeBps: number;
+  payoutBps: readonly number[];
+  challengeWindow: number;
+}
+
+/**
+ * How staked play pays: the fee, the split, the challenge window and
+ * collecting. From the config's terms when the page has read them, in
+ * general words before.
+ */
+export function stakesSheet(terms: StakeTerms | null, formatWait: (seconds: number) => string): RulesSection[] {
+  const places = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+  const split = terms
+    ? terms.payoutBps.map((bps, place) => `${places[place] ?? `#${place + 1}`} ${percent(bps)}`).join(' · ')
+    : null;
+  return [
+    {
+      title: 'The pot',
+      lines: [
+        'Every seat stakes the same amount. The pot is every stake together.',
+        terms
+          ? `The protocol keeps ${percent(terms.feeBps)} of it as a fee; the rest is paid out by finishing place: ${split}.`
+          : 'The protocol keeps a small fee; the rest is paid out to the top finishing places.',
+        'Each lobby shows its pot and its top prize before you stake.',
+      ],
+    },
+    {
+      title: 'The challenge window',
+      lines: [
+        'When a match ends, the server proposes its result on-chain, and anyone can check it.',
+        terms
+          ? `Winnings unlock once the ${formatWait(terms.challengeWindow)} challenge window closes. A disputed result waits 48 hours more for the guardian.`
+          : 'Winnings unlock once the challenge window closes. A disputed result waits 48 hours more for the guardian.',
+      ],
+    },
+    {
+      title: 'Collecting',
+      lines: [
+        'Prizes and refunds wait in the escrow under your address until you collect them, and only ever pay you.',
+        'Collect from Winnings in the lobby, or the badge in the header. Staked from another chain? You can collect back to it.',
+      ],
+    },
+    {
+      title: 'Refunds',
+      lines: [
+        'A lobby still short of seats when its join window closes, one whose random seed never arrives, and a match never settled in time are cancelled, and every stake is refunded to the escrow.',
+      ],
+    },
+  ];
+}
+
 function percent(bps: number): string {
   return `${Math.round((bps * 100) / BPS_DENOMINATOR)}%`;
 }

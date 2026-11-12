@@ -1,4 +1,5 @@
-import { app, dom, store } from '../context.js';
+import { dom, store } from '../context.js';
+import { renderNav, showScreen } from '../ui/chrome.js';
 
 /**
  * The way into the governance screen, which is not part of the main bundle:
@@ -21,34 +22,18 @@ function load(): Promise<Screen> {
 
 export function wireGovernanceNav(origin: string): void {
   serverOrigin = origin;
-  dom.navGovernance.onclick = () => showGovernance(true);
-  dom.governanceBack.onclick = () => showGovernance(false);
-  store.subscribe(['staking'], renderGovernanceNav);
+  dom.navGovernance.onclick = () => {
+    showScreen('governance');
+    refreshGovernance();
+  };
+  dom.governanceBack.onclick = () => showScreen('lobby');
+  // The entry point is only offered when the server indexes a governor.
+  store.subscribe(['staking'], renderNav);
   // A login, or a switch to or from the hub, changes what the screen can read.
   store.subscribe(['wallet', 'walletChainId'], refreshGovernance);
-}
-
-/** The nav as the lobby shows it: "Governance", opening the screen. */
-export function resetGovernanceNav(): void {
-  dom.navGovernance.textContent = 'Governance';
-  dom.navGovernance.onclick = () => showGovernance(true);
-  renderGovernanceNav();
-}
-
-/** The entry point is only offered when the server indexes a governor. */
-export function renderGovernanceNav(): void {
-  dom.navGovernance.classList.toggle('hidden', !app.staking?.governor || !dom.matchScreen.classList.contains('hidden'));
 }
 
 /** Redraws the screen if it is open; a closed one is drawn when it opens. */
 export function refreshGovernance(): void {
   if (!dom.governanceScreen.classList.contains('hidden')) void load().then((module) => module.renderGovernance());
-}
-
-function showGovernance(show: boolean): void {
-  dom.governanceScreen.classList.toggle('hidden', !show);
-  dom.lobbyScreen.classList.toggle('hidden', show);
-  dom.navGovernance.textContent = show ? 'Lobby' : 'Governance';
-  dom.navGovernance.onclick = () => showGovernance(!show);
-  refreshGovernance();
 }

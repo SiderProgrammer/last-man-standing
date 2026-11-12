@@ -117,9 +117,9 @@ describe('spoke joins', () => {
   });
 
   it('labels the button with the stake, then the stake and the fee', () => {
-    expect(spokeStakeLabel('10000000000000000', BASE_SEPOLIA)).toBe('Stake 0.01 from BASE');
-    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n + 5n * 10n ** 14n)).toBe('Pay 0.01 + 0.0005 fee');
-    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n)).toBe('Pay 0.01');
+    expect(spokeStakeLabel('10000000000000000', BASE_SEPOLIA)).toBe('Stake 0.01 ETH from BASE');
+    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n + 5n * 10n ** 14n)).toBe('Pay 0.01 + 0.0005 ETH fee');
+    expect(spokeQuoteLabel(10n ** 16n, 10n ** 16n)).toBe('Pay 0.01 ETH');
   });
 
   it('explains a contract wallet, a stake too small to bridge, and anything else', () => {
@@ -257,7 +257,7 @@ describe('token payment', () => {
   });
 
   it('labels the stake in ETH either way, naming the token paid with', () => {
-    expect(stakeButtonLabel('1000000000000000', null)).toBe('Stake 0.001');
+    expect(stakeButtonLabel('1000000000000000', null)).toBe('Stake 0.001 ETH');
     expect(stakeButtonLabel('1000000000000000', usdc)).toBe('Stake 0.001 ETH in USDC');
   });
 

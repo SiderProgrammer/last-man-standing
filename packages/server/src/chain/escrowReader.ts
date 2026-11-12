@@ -28,6 +28,9 @@ export interface EscrowMatch {
   rankingHash: `0x${string}`;
   /** Opened by the matchmaker: only its roster can join. */
   matchmade: boolean;
+  /** The fee and payout schedule fixed when the match opened, in basis points. */
+  feeBps?: number;
+  payoutBps?: readonly number[];
 }
 
 /** A match and who sits in it, as one batched read returns them. */
@@ -167,7 +170,12 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
         : await Promise.all(calls.map((call) => client.readContract(call as Parameters<typeof client.readContract>[0])));
       return ids.map((_, i) => {
         const info = results[i * 3] as MatchInfoRead;
-        const terms = results[i * 3 + 1] as { minSeats: number; rulesHash: `0x${string}` };
+        const terms = results[i * 3 + 1] as {
+          minSeats: number;
+          rulesHash: `0x${string}`;
+          feeBps: number;
+          payoutBps: readonly number[];
+        };
         return {
           match: {
             stake: info.stake,
@@ -181,6 +189,8 @@ export function viemEscrowReader(options: ViemEscrowReaderOptions): EscrowReader
             deadline: BigInt(info.deadline),
             rankingHash: info.rankingHash,
             matchmade: info.matchmade,
+            feeBps: terms.feeBps,
+            payoutBps: [...terms.payoutBps],
           },
           seats: results[i * 3 + 2] as readonly Address[],
         };

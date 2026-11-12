@@ -52,6 +52,12 @@ export interface QueuePanel {
   status: string;
 }
 
+/** Elapsed time as a clock, "0:42" or "12:05": for waits the player watches tick. */
+export function clock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 /** The tier a queue option stands for. */
 export function tierKey(tier: MatchmakingTier): string {
   return `${tier.stake}:${tier.seats}`;
@@ -62,12 +68,30 @@ export function tierKey(tier: MatchmakingTier): string {
  * are the only tables that earn play-mining, and the queue is the only way
  * into them.
  */
-export function queuePanel(tiers: readonly MatchmakingTier[], connected: boolean, spot: QueueSpot | null): QueuePanel {
-  const options: Option[] = tiers.map((tier) => [
-    tierKey(tier),
-    `${formatEther(BigInt(tier.stake))} ETH · ${tier.seats} seats`,
-  ]);
+export function queuePanel(
+  tiers: readonly MatchmakingTier[],
+  connected: boolean,
+  spot: QueueSpot | null,
+  terms: Pick<ProtocolTerms, 'feeBps' | 'payoutBps'> | null = null,
+  /** A table the queue put this wallet at that still waits for its stake. */
+  ready: { stake: string; seats: number; closesIn: number | null } | null = null,
+): QueuePanel {
+  const options: Option[] = tiers.map((tier) => {
+    const prize = prizeSummary(tier.stake, tier.seats, terms);
+    return [tierKey(tier), `${formatEther(BigInt(tier.stake))} ETH · ${tier.seats} seats${prize ? ` · ${prize}` : ''}`];
+  });
   const base = { visible: tiers.length > 0, tiers: options };
+  if (ready) {
+    const left = ready.closesIn !== null && ready.closesIn > 0 ? ` · ${formatDuration(ready.closesIn)} left` : '';
+    return {
+      ...base,
+      pill: 'table ready',
+      joinVisible: false,
+      joinDisabled: true,
+      leaveVisible: false,
+      status: `Your ${ready.seats}-seat table is ready. Stake ${formatEther(BigInt(ready.stake))} ETH in its row below to take your seat${left}.`,
+    };
+  }
   if (spot) {
     const others = spot.waiting - 1;
     return {
@@ -320,6 +344,138 @@ export function prizeLine(
   }
 }
 
+// ------------------------------------------------------------ money clarity
+
+/** What a new lobby opens on, as `ProtocolConfig` has it now: see `wallet/terms.ts`. */
+export interface ProtocolTerms {
+  feeBps: number;
+  payoutBps: readonly number[];
+  minStake: bigint;
+  maxStake: bigint;
+  /** Seconds a proposed result waits before it pays out. */
+  challengeWindow: number;
+}
+
+/**
+ * An ETH amount rounded to `digits` decimals, half up, without trailing
+ * zeros. Rounded rather than cut: 0.99999 reads as 1, not 0.99, and a dust
+ * amount reads as "<0.000001" rather than a 0 that still has a button.
+ */
+export function formatEth(wei: bigint, digits = 6): string {
+  if (wei === 0n) return '0';
+  const negative = wei < 0n;
+  const abs = negative ? -wei : wei;
+  const step = 10n ** BigInt(18 - digits);
+  const rounded = ((abs + step / 2n) / step) * step;
+  if (rounded === 0n) return `${negative ? '>-' : '<'}0.${'0'.repeat(digits - 1)}1`;
+  return `${negative ? '-' : ''}${formatEther(rounded)}`;
+}
+
+/**
+ * What a full table pays: the pot and the top prize, as `prizeFor` works
+ * them out. "Pot 0.004 · 1st 0.00228". Null without terms to work from.
+ */
+export function prizeSummary(
+  stakeWei: string | bigint,
+  seats: number,
+  terms: { feeBps: number; payoutBps: readonly number[] } | null | undefined,
+): string | null {
+  if (!terms || terms.payoutBps.length === 0) return null;
+  const stake = BigInt(stakeWei);
+  const pot = stake * BigInt(seats);
+  const first = prizeFor({ stake, seatCount: seats, feeBps: terms.feeBps, payoutBps: terms.payoutBps }, 0);
+  return `Pot ${formatEth(pot)} · 1st ${formatEth(first)}`;
+}
+
+/** The longer form, for a tooltip: every paying place and the fee. */
+export function prizeBreakdown(
+  stakeWei: string | bigint,
+  seats: number,
+  terms: { feeBps: number; payoutBps: readonly number[] },
+): string {
+  const stake = BigInt(stakeWei);
+  const places = terms.payoutBps
+    .map((_, place) => prizeFor({ stake, seatCount: seats, feeBps: terms.feeBps, payoutBps: terms.payoutBps }, place))
+    .map((prize, place) => `${ordinalPlace(place + 1)} ${formatEth(prize)} ETH`);
+  return `With all ${seats} seats taken: ${places.join(' · ')} · ${terms.feeBps / 100}% fee`;
+}
+
+function ordinalPlace(value: number): string {
+  return value === 1 ? '1st' : value === 2 ? '2nd' : value === 3 ? '3rd' : `${value}th`;
+}
+
+/** The stakes the create form accepts: "0.001 – 1 ETH". */
+export function stakeRangeText(terms: Pick<ProtocolTerms, 'minStake' | 'maxStake'>): string {
+  return `${formatEther(terms.minStake)} – ${formatEther(terms.maxStake)} ETH`;
+}
+
+export type StakeInput = { ok: true; wei: bigint } | { ok: false; error: string };
+
+/**
+ * A stake typed into the create form, or why it is not one. Takes a decimal
+ * comma ("0,005") as readily as a point, and checks the range the config
+ * allows before the wallet is asked anything.
+ */
+export function parseStakeInput(text: string, terms: Pick<ProtocolTerms, 'minStake' | 'maxStake'> | null): StakeInput {
+  const normalised = text.trim().replace(',', '.');
+  if (normalised === '') return { ok: false, error: 'Enter a stake in ETH, e.g. 0.001.' };
+  if (!/^\d*\.?\d+$|^\d+\.$/.test(normalised)) return { ok: false, error: `"${text.trim()}" is not an amount of ETH.` };
+  const [whole = '0', fraction = ''] = normalised.split('.');
+  if (fraction.length > 18) return { ok: false, error: 'At most 18 decimals.' };
+  const wei = BigInt(whole || '0') * 10n ** 18n + BigInt((fraction || '0').padEnd(18, '0'));
+  if (wei === 0n) return { ok: false, error: 'The stake must be more than 0.' };
+  if (terms && (wei < terms.minStake || wei > terms.maxStake)) {
+    return { ok: false, error: `Stakes run from ${stakeRangeText(terms)}.` };
+  }
+  return { ok: true, wei };
+}
+
+/** A prize this wallet has won that is not in its balance yet. */
+export interface PendingPrize {
+  matchId: `0x${string}`;
+  amount: bigint;
+  /** Seconds until the challenge window closes; zero once it has. */
+  unlocksIn: number;
+}
+
+/** The Winnings line for prizes still in their challenge window. */
+export function pendingPrizesText(pending: readonly PendingPrize[], formatWait: (seconds: number) => string): string {
+  if (pending.length === 0) return '';
+  const total = pending.reduce((sum, prize) => sum + prize.amount, 0n);
+  const soonest = Math.min(...pending.map((prize) => prize.unlocksIn));
+  const when = soonest > 0 ? `unlocking in ${formatWait(soonest)}` : 'paying out once it is finalised';
+  return pending.length === 1
+    ? `${formatEth(total)} ETH on its way, ${when}.`
+    : `${formatEth(total)} ETH on its way from ${pending.length} matches, the first ${when}.`;
+}
+
+/**
+ * The header's winnings badge: what is waiting to be collected, or on its
+ * way. Null hides it.
+ */
+export function winningsBadge(owed: bigint, pending: readonly PendingPrize[]): string | null {
+  if (owed > 0n) return `${formatEth(owed)} ETH to collect`;
+  const coming = pending.reduce((sum, prize) => sum + prize.amount, 0n);
+  return coming > 0n ? `${formatEth(coming)} ETH unlocking` : null;
+}
+
+/** A block explorer page for a transaction, or null on a chain without a public one. */
+export function explorerTxUrl(chainId: number, hash: string): string | null {
+  const base = EXPLORERS[chainId];
+  return base ? `${base}/tx/${hash}` : null;
+}
+
+const EXPLORERS: Record<number, string> = {
+  1: 'https://etherscan.io',
+  10: 'https://optimistic.etherscan.io',
+  8453: 'https://basescan.org',
+  42161: 'https://arbiscan.io',
+  11155111: 'https://sepolia.etherscan.io',
+  84532: 'https://sepolia.basescan.org',
+  421614: 'https://sepolia.arbiscan.io',
+  11155420: 'https://sepolia-optimism.etherscan.io',
+};
+
 // ------------------------------------------------------------ token payment
 
 /** The "Pay with" picker: ETH first, then every token the server routes to ETH. */
@@ -385,7 +541,7 @@ export function collectHomePlan(
 /** An open lobby's join button before anything has been quoted. */
 export function stakeButtonLabel(stakeWei: string, token: ZapToken | null): string {
   const stake = formatEther(BigInt(stakeWei));
-  return token ? `Stake ${stake} ETH in ${token.symbol}` : `Stake ${stake}`;
+  return token ? `Stake ${stake} ETH in ${token.symbol}` : `Stake ${stake} ETH`;
 }
 
 /**
@@ -435,7 +591,7 @@ export function spokeFor(spokes: readonly SpokeInfo[], walletChainId: number): S
 
 /** An open lobby's join button on a spoke, before the bridge fee is known. */
 export function spokeStakeLabel(stakeWei: string, spokeChainId: number): string {
-  return `Stake ${formatEther(BigInt(stakeWei))} from ${chainInfo(spokeChainId).short}`;
+  return `Stake ${formatEther(BigInt(stakeWei))} ETH from ${chainInfo(spokeChainId).short}`;
 }
 
 /**
@@ -444,7 +600,9 @@ export function spokeStakeLabel(stakeWei: string, spokeChainId: number): string 
  */
 export function spokeQuoteLabel(stakeWei: bigint, total: bigint): string {
   const fee = total > stakeWei ? total - stakeWei : 0n;
-  return fee === 0n ? `Pay ${formatEther(stakeWei)}` : `Pay ${formatEther(stakeWei)} + ${formatEther(fee)} fee`;
+  return fee === 0n
+    ? `Pay ${formatEther(stakeWei)} ETH`
+    : `Pay ${formatEther(stakeWei)} + ${formatEther(fee)} ETH fee`;
 }
 
 /**

@@ -37,9 +37,11 @@ export function wireProposalForm(afterSubmit: () => void): void {
   dom.actionTemplate.onchange = renderTemplateFields;
   dom.newProposal.onclick = () => void openForm();
   dom.cancelProposal.onclick = closeForm;
-  dom.addAction.onclick = addAction;
+  dom.addAction.onclick = () => void addAction();
   dom.submitProposal.onclick = () => void submit();
   dom.proposalTitle.oninput = renderSubmitState;
+  // An action typed in but not added yet still counts towards Submit.
+  dom.actionFields.oninput = renderSubmitState;
   renderTemplateFields();
 }
 
@@ -72,7 +74,7 @@ async function openForm(): Promise<void> {
     const result = await loadProposalContext();
     if (!result) throw new Error('Connect a wallet first.');
     canPropose = result.power >= result.threshold;
-    dom.proposerPower.textContent = `${formatLms(result.power)} of ${formatLms(result.threshold)} sLMS needed`;
+    dom.proposerPower.textContent = `You have ${formatLms(result.power)} sLMS · ${formatLms(result.threshold)} needed to propose`;
     dom.proposerPower.classList.toggle('warn-text', !canPropose);
     dom.proposalStatus.textContent = canPropose
       ? ''
@@ -112,24 +114,44 @@ function renderTemplateFields(): void {
   );
 }
 
-function addAction(): void {
+function addAction(): boolean {
   if (!context) {
     dom.actionError.textContent = 'Connect a wallet on the hub chain first.';
-    return;
+    return false;
   }
+  const result = buildAction(dom.actionTemplate.value, fieldValues(), context);
+  if (!result.ok) {
+    dom.actionError.textContent = result.error;
+    return false;
+  }
+  const adding = [result.action, ...(result.also ?? [])];
+  // The same call twice does nothing the first did not, and voters read it as a mistake.
+  if (adding.some((action) => draft.some((other) => sameAction(action, other)))) {
+    dom.actionError.textContent = 'That action is already in the proposal.';
+    return false;
+  }
+  draft.push(...adding);
+  dom.actionError.textContent = '';
+  for (const input of dom.actionFields.querySelectorAll<HTMLInputElement>('input')) input.value = '';
+  renderDraft();
+  return true;
+}
+
+function fieldValues(): Record<string, string> {
   const values: Record<string, string> = {};
   for (const input of dom.actionFields.querySelectorAll<HTMLInputElement>('input[data-field]')) {
     values[input.dataset.field!] = input.value;
   }
-  const result = buildAction(dom.actionTemplate.value, values, context);
-  if (!result.ok) {
-    dom.actionError.textContent = result.error;
-    return;
-  }
-  draft.push(result.action, ...(result.also ?? []));
-  dom.actionError.textContent = '';
-  for (const input of dom.actionFields.querySelectorAll<HTMLInputElement>('input')) input.value = '';
-  renderDraft();
+  return values;
+}
+
+/** Whether the template's fields hold something: an action the proposer means but has not added. */
+function pendingFields(): boolean {
+  return [...dom.actionFields.querySelectorAll<HTMLInputElement>('input[data-field]')].some((input) => input.value.trim() !== '');
+}
+
+function sameAction(a: ProposalAction, b: ProposalAction): boolean {
+  return a.target.toLowerCase() === b.target.toLowerCase() && a.value === b.value && a.calldata.toLowerCase() === b.calldata.toLowerCase();
 }
 
 function renderDraft(): void {
@@ -165,15 +187,24 @@ function renderDraft(): void {
 }
 
 function renderSubmitState(): void {
-  const problem = proposalProblem(dom.proposalTitle.value, draft);
+  // Filled-in fields count as the action they describe: Submit adds it first.
+  const pending = draft.length === 0 && pendingFields();
+  const problem = proposalProblem(dom.proposalTitle.value, pending ? [PENDING_ACTION] : draft);
   dom.submitProposal.disabled = !canPropose || problem !== null;
-  if (canPropose) dom.proposalStatus.textContent = problem ?? 'Ready to submit.';
+  if (canPropose) {
+    dom.proposalStatus.textContent = problem ?? (pending ? 'Ready to submit, with the action filled in above.' : 'Ready to submit.');
+  }
 }
+
+/** Stands in for an action whose fields are filled in but not yet added, for `proposalProblem`. */
+const PENDING_ACTION: ProposalAction = { target: '0x0000000000000000000000000000000000000000', value: 0n, calldata: '0x' };
 
 async function submit(): Promise<void> {
   const wallet = app.wallet;
   const governor = app.staking?.governor;
-  if (!wallet || !governor || draft.length === 0) return;
+  if (!wallet || !governor) return;
+  if (pendingFields() && !addAction()) return;
+  if (draft.length === 0) return;
 
   dom.submitProposal.disabled = true;
   dom.proposalStatus.textContent = 'Submitting…';
@@ -183,7 +214,7 @@ async function submit(): Promise<void> {
       proposalDescription(dom.proposalTitle.value, dom.proposalBody.value),
     );
     await wallet.waitFor(hash);
-    toast('Proposal created. Voting opens after the voting delay.');
+    toast('Proposal created. Voting opens after the voting delay.', 'success');
     closeForm();
     onSubmitted();
   } catch (error) {

@@ -29,8 +29,13 @@ export function wireGovernanceControls(origin: string): void {
   // A new proposal reaches the list once the server's index polls for it,
   // every fifteen seconds: refresh now, and again once it surely has.
   wireProposalForm(() => {
+    dom.governanceStatus.textContent = 'Your proposal is on-chain and appears in the list below within about 15 seconds.';
     void renderGovernance();
-    setTimeout(() => void renderGovernance(), 16_000);
+    setTimeout(() => void renderGovernance(), 6_000);
+    setTimeout(() => {
+      dom.governanceStatus.textContent = '';
+      void renderGovernance();
+    }, 16_000);
   });
   dom.governanceSwitch.onclick = () => void switchToHub();
   // One listener for every card's buttons, which are rebuilt on each render.
@@ -62,9 +67,13 @@ export async function renderGovernance(): Promise<void> {
   const onHub = wallet !== null && wallet.chainId === app.chainId;
   dom.governanceWrongChain.classList.toggle('hidden', !wallet || onHub);
   if (wallet && !onHub) {
-    dom.governanceWrongChainText.textContent =
-      `Your wallet is on ${chainInfo(wallet.chainId).name}. Proposals are voted on ${hub}: switch to see the results and vote.`;
+    // A wallet that signs in-process is bound to its own network: a switch
+    // button could only fail.
+    dom.governanceWrongChainText.textContent = wallet.canSwitchChain
+      ? `Your wallet is on ${chainInfo(wallet.chainId).name}. Proposals are voted on ${hub}: switch to see the results and vote.`
+      : `Your wallet is on ${chainInfo(wallet.chainId).name} and signs there only. Proposals are voted on ${hub}, with a wallet there.`;
     dom.governanceSwitch.textContent = `Switch to ${hub}`;
+    dom.governanceSwitch.classList.toggle('hidden', !wallet.canSwitchChain);
   }
 
   renderNewProposalButton();
@@ -185,10 +194,10 @@ async function act(proposal: ProposalSummary, step: string, origin: HTMLButtonEl
       hash = await governorCalls.castVote(wallet, governor, proposal.id, SUPPORT[step]!, reason);
     }
     await wallet.waitFor(hash);
-    toast(step === 'queue' ? 'Queued in the timelock.' : step === 'execute' ? 'Executed.' : 'Vote cast.');
+    toast(step === 'queue' ? 'Queued in the timelock.' : step === 'execute' ? 'Executed.' : 'Vote cast.', 'success');
   } catch (error) {
     console.error('[governance]', error);
-    toast(errorFirstLine(error));
+    toast(errorFirstLine(error), 'error');
   } finally {
     busy = false;
     void renderGovernance();

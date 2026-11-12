@@ -67,7 +67,12 @@ export interface StakingPanelInput {
   nowSeconds: number;
   /** A read that failed, usually a wallet on the wrong chain. */
   error: string | null;
+  /** The chain votes are cast on, for saying where voting costs gas. */
+  hubName?: string;
 }
+
+/** Below this, ETH earned is dust: claiming it would cost more gas than it pays. */
+export const DUST_WEI = 1_000_000_000_000n;
 
 export interface StakingPanel {
   visible: boolean;
@@ -118,11 +123,12 @@ export function stakingPanel(input: StakingPanelInput): StakingPanel {
 
   return {
     visible: true,
-    rewards: `${formatLms(position.earned, 6)} ETH earned`,
-    claimRewardsVisible: position.earned > 0n,
+    rewards:
+      position.earned > 0n && position.earned < DUST_WEI ? '<0.000001 ETH earned' : `${formatLms(position.earned, 6)} ETH earned`,
+    claimRewardsVisible: position.earned >= DUST_WEI,
     ...playRewardsLine(input.info, input.playRewards ?? null),
     ...vestingLine(input.vesting ?? null),
-    ...delegationLine(position),
+    ...delegationLine(position, input.hubName ?? 'the hub'),
     summary:
       position.staked > 0n
         ? `Staked ${formatLms(position.staked)} LMS · ${formatLms(position.votes)} votes · ${formatLms(position.lmsBalance)} LMS in wallet`
@@ -189,27 +195,51 @@ export function vestingLine(vesting: Vesting | null): Pick<StakingPanel, 'vestin
  */
 function delegationLine(
   position: StakingPosition,
+  hubName: string,
 ): Pick<StakingPanel, 'delegation' | 'delegateDisabled' | 'undelegateVisible'> {
-  if (position.staked === 0n) return { delegation: '', delegateDisabled: true, undelegateVisible: false };
+  // Votes beyond what this wallet's own stake gives were handed to it.
+  const own = sameAddress(position.delegate, position.self) ? position.staked : 0n;
+  const handed = position.votes > own ? position.votes - own : 0n;
+  const fromOthers = handed > 0n ? ` You also vote with ${formatLms(handed)} sLMS others delegated to you.` : '';
+  if (position.staked === 0n) {
+    return { delegation: fromOthers.trim(), delegateDisabled: true, undelegateVisible: false };
+  }
   if (sameAddress(position.delegate, position.self)) {
     return {
-      delegation: 'You vote with your own stake. Voting costs gas on L1: you can hand your votes to a delegate instead.',
+      delegation: `You vote with your own stake. Voting costs gas on ${hubName}: you can hand your votes to a delegate instead.${fromOthers}`,
       delegateDisabled: false,
       undelegateVisible: false,
     };
   }
   if (sameAddress(position.delegate, ZERO_ADDRESS)) {
     return {
-      delegation: 'Your stake is not voting: delegate to yourself or to someone else.',
+      delegation: `Your stake is not voting: delegate to yourself or to someone else.${fromOthers}`,
       delegateDisabled: false,
       undelegateVisible: true,
     };
   }
   return {
-    delegation: `Your votes go to ${position.delegate}. You keep the stake and its rewards.`,
+    delegation: `Your votes go to ${shortAddress(position.delegate)}. You keep the stake and its rewards.${fromOthers}`,
     delegateDisabled: false,
     undelegateVisible: true,
   };
+}
+
+function shortAddress(address: string): string {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+/**
+ * What a new unstake request would do to one already unlocking: the vault
+ * merges them and starts the cooldown again. Null when nothing is unlocking.
+ */
+export function cooldownRestartWarning(position: Pick<StakingPosition, 'pending' | 'cooldown' | 'chainTime'>): string | null {
+  const { assets, unlockAt } = position.pending;
+  if (assets === 0n || position.chainTime >= unlockAt) return null;
+  return (
+    `This restarts the ${formatDuration(position.cooldown)} cooldown for the ${formatLms(assets)} LMS already unlocking ` +
+    `(${formatDuration(unlockAt - position.chainTime)} left).`
+  );
 }
 
 /**
@@ -245,7 +275,8 @@ export function formatDuration(seconds: number): string {
 
 /** A typed LMS amount, or null if it is not a positive number. */
 export function parseLms(text: string): bigint | null {
-  const trimmed = text.trim();
+  // A decimal comma ("0,5") is as good as a point.
+  const trimmed = text.trim().replace(',', '.');
   if (!/^\d+(\.\d{0,18})?$/.test(trimmed)) return null;
   const wei = parseUnits(trimmed, 18);
   return wei > 0n ? wei : null;
