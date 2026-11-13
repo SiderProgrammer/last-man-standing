@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
-import type { ServerMessage } from '@lms/api';
+import type { LobbyInfo, ServerMessage } from '@lms/api';
 import { Matchmaker, parseTiers, type MatchmakerPort } from '@lms/server';
 
 const STAKE = '1000000000000000';
@@ -14,7 +14,7 @@ function wallet(n: number): Address {
 }
 
 /** A matchmaker over a fake escrow, recording every lobby opened and every notice sent. */
-function harness(options: { fail?: () => boolean; fillAfterMs?: number } = {}) {
+function harness(options: { fail?: () => boolean; fillAfterMs?: number; lobbies?: () => LobbyInfo[] } = {}) {
   const opened: Array<{ stake: bigint; seats: number; roster: readonly Address[] }> = [];
   const told: Array<{ player: Address; message: ServerMessage }> = [];
   const port: MatchmakerPort = {
@@ -31,6 +31,7 @@ function harness(options: { fail?: () => boolean; fillAfterMs?: number } = {}) {
     minSeats: 4,
     fillAfterMs: options.fillAfterMs ?? 30_000,
     notify: (player, message) => told.push({ player, message }),
+    ...(options.lobbies ? { lobbies: options.lobbies, chainTime: () => Math.floor(now / 1000) } : {}),
     now: () => now,
   });
   return {
@@ -110,6 +111,80 @@ describe('matchmaker', () => {
     matchmaker.join(wallet(9), STAKE, 4);
     await matchmaker.tick();
     expect(opened[0]?.roster).toEqual([wallet(0), wallet(1), wallet(3), wallet(9)]);
+  });
+});
+
+/** An open lobby a player opened, at the 4-seat tier, with `seated` in it. */
+function playerLobby(seated: Address[], overrides: Partial<LobbyInfo> = {}): LobbyInfo {
+  return {
+    matchId: `0x${'ab'.repeat(32)}`,
+    stake: STAKE,
+    seatCount: seated.length,
+    maxSeats: 4,
+    minSeats: 4,
+    joinDeadline: 3_600,
+    status: 'open',
+    players: seated.map((address) => ({ address, chainId: 1 })),
+    cancellableAt: 3_600,
+    matchmade: false,
+    ...overrides,
+  };
+}
+
+describe('matchmaker and open lobbies', () => {
+  it('sends a queued player to an open lobby of its tier instead of waiting', async () => {
+    const lobby = playerLobby([wallet(9)]);
+    const { matchmaker, opened, matched } = harness({ lobbies: () => [lobby] });
+    matchmaker.join(wallet(0), STAKE, 4);
+    await matchmaker.tick();
+
+    expect(opened).toHaveLength(0);
+    expect(matched()).toEqual([{ player: wallet(0), message: { type: 'matched', matchId: lobby.matchId, stake: STAKE, seats: 4 } }]);
+    expect(matchmaker.spotOf(wallet(0))).toBeNull();
+    expect(matchmaker.tablesOf(wallet(0))).toEqual([{ matchId: lobby.matchId, stake: STAKE, seats: 4 }]);
+  });
+
+  it('sends no more than the seats free, holding those seats for whoever was sent', async () => {
+    const lobby = playerLobby([wallet(9), wallet(8)]);
+    const { matchmaker, matched, advance } = harness({ lobbies: () => [lobby] });
+    for (let i = 0; i < 3; i += 1) matchmaker.join(wallet(i), STAKE, 4);
+    await matchmaker.tick();
+    expect(matched().map(({ player }) => player)).toEqual([wallet(0), wallet(1)]);
+
+    // The two sent have not staked yet: their seats stay theirs.
+    advance(1_000);
+    await matchmaker.tick();
+    expect(matched()).toHaveLength(2);
+
+    // Nor after the hold: then the seat goes to the next in line.
+    advance(90_000);
+    await matchmaker.tick();
+    expect(matched().map(({ player }) => player)).toEqual([wallet(0), wallet(1), wallet(2)]);
+  });
+
+  it('leaves alone a matchmade lobby, another tier, a full lobby, one closing, and one the player sits in', async () => {
+    const lobbies = [
+      playerLobby([], { matchmade: true }),
+      playerLobby([], { maxSeats: 8 }),
+      playerLobby([], { stake: '2000000000000000' }),
+      playerLobby([wallet(5), wallet(6), wallet(7), wallet(8)]),
+      playerLobby([], { joinDeadline: 30 }),
+      playerLobby([wallet(0)]),
+    ];
+    const { matchmaker, matched } = harness({ lobbies: () => lobbies });
+    matchmaker.join(wallet(0), STAKE, 4);
+    await matchmaker.tick();
+    expect(matched()).toHaveLength(0);
+    expect(matchmaker.waiting(STAKE, 4)).toBe(1);
+  });
+
+  it('still opens a matchmade table for a full queue, which earns play-mining', async () => {
+    const lobby = playerLobby([wallet(9)]);
+    const { matchmaker, opened, matched } = harness({ lobbies: () => [lobby] });
+    for (let i = 0; i < 4; i += 1) matchmaker.join(wallet(i), STAKE, 4);
+    await matchmaker.tick();
+    expect(opened).toHaveLength(1);
+    expect(matched().every(({ message }) => message.type === 'matched' && message.matchId !== lobby.matchId)).toBe(true);
   });
 });
 

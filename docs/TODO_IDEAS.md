@@ -5,6 +5,7 @@ test, run all the features on local fork mainnet (dont forget cross chain)
 redeploy fixed game
 test all 4 chains with a real wallet(testnet)
 record video
+host the game
 update README, docs
 
 tenderly tests?

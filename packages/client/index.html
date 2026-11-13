@@ -41,6 +41,27 @@
             Practice runs entirely off-chain against house bots. Staked matches escrow a
             real stake and settle on-chain when the match ends.
           </p>
+          <nav class="hero-actions" aria-label="Ways to play">
+            <button id="go-practice" type="button" class="hero-action">
+              <strong>Start practice match</strong>
+              <span class="muted small">Free, against house bots</span>
+            </button>
+            <button id="go-queue" type="button" class="hero-action hidden">
+              <strong>Find a match</strong>
+              <span class="muted small">Get seated with other players</span>
+            </button>
+            <button id="go-create" type="button" class="hero-action">
+              <strong>Create match</strong>
+              <span class="muted small">Open a lobby, invite friends</span>
+            </button>
+          </nav>
+        </div>
+
+        <div id="practice-panel" class="panel jump-target">
+          <div class="panel-head">
+            <h2>Practice</h2>
+          </div>
+          <p class="muted small">Off-chain, against house bots. Nothing is staked.</p>
           <div class="row">
             <label for="bot-count">Opponents</label>
             <select id="bot-count">
@@ -63,14 +84,14 @@
         </div>
 
         <h3 class="section-label">Play for stakes</h3>
-        <div id="queue-panel" class="panel queue-panel hidden">
+        <div id="queue-panel" class="panel queue-panel jump-target hidden">
           <div class="panel-head">
             <h2>Find a match</h2>
             <span id="queue-state" class="pill">idle</span>
           </div>
           <p class="muted small">
-            The matchmaker seats strangers at a table and opens a lobby only they can join.
-            These are the only matches that earn LMS.
+            The matchmaker seats you at an open lobby at your stake if one has room, or puts
+            strangers together at a table only they can join. Only those matchmade tables earn LMS.
           </p>
           <div class="queue-controls">
             <div class="field">
@@ -90,10 +111,11 @@
             <button id="refresh-lobbies" class="ghost">Refresh</button>
           </div>
           <ul id="lobby-list" class="lobby-list"></ul>
-          <div class="create-lobby">
-            <h3>Open your own lobby</h3>
+          <div id="create-panel" class="create-lobby jump-target">
+            <h3>Create a match</h3>
             <p class="muted small">
-              A lobby of your own is private: share its invite link, and anyone with it can take a seat.
+              Share its invite link with friends. Players who find a match at the same stake and
+              seats can be seated in it too.
             </p>
             <div class="row">
               <label for="stake">Stake (ETH)</label>

@@ -212,6 +212,8 @@ async function main(): Promise<void> {
         minSeats: DEFAULT_RULES.minPlayers,
         fillAfterMs: config.matchmakingFillAfterMs,
         notify: (player, message) => notify(player, message),
+        lobbies: () => directory().open,
+        chainTime: () => bridge?.chainTime() ?? null,
       })
     : null;
 

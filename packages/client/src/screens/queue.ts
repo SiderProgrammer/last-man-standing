@@ -70,6 +70,8 @@ function renderQueue(): void {
   // A guest cannot stake, so it is not put at a table it could not take.
   const panel = queuePanel(app.matchmaking, Boolean(app.wallet && !app.wallet.isGuest), app.queue, app.terms, ready);
   dom.queuePanel.classList.toggle('hidden', !panel.visible);
+  // No matchmaking on this server: no hero button to a panel that is not there.
+  dom.goQueue.classList.toggle('hidden', !panel.visible);
   dom.queuePanel.classList.toggle('ready', ready !== null);
   fillSelect(dom.queueTier, panel.tiers);
   dom.queueTier.disabled = !panel.joinVisible;

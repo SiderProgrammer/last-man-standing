@@ -1,7 +1,7 @@
 import { parseEventLogs, type Address, type Hex } from 'viem';
 import { addressKey } from '@lms/consensus';
 import { gameEscrowAbi } from '@lms/contracts';
-import { errorMessage, type MatchmakingTier, type ServerMessage } from '@lms/api';
+import { errorMessage, type LobbyInfo, type MatchmakingTier, type ServerMessage } from '@lms/api';
 import { RequestError } from '../errors.js';
 import type { TxSender } from '../chain/txSender.js';
 import { readClient } from '../chain/viem.js';
@@ -25,6 +25,15 @@ export interface MatchmakerOptions {
   fillAfterMs?: number;
   /** Tells one wallet something, on every socket it is logged in on. */
   notify: (player: Address, message: ServerMessage) => void;
+  /**
+   * The open lobbies on the chain, the directory's. A player's own lobby at a
+   * tier's stake and size takes queued players before they wait for a table
+   * of their own: without it, the queue and the lobbies players open never
+   * meet. Left out, the queue only ever opens matchmade lobbies.
+   */
+  lobbies?: () => readonly LobbyInfo[];
+  /** The hub's clock in unix seconds, which join deadlines are in. Defaults to `now`. */
+  chainTime?: () => number | null;
   now?: () => number;
 }
 
@@ -41,6 +50,11 @@ interface Waiting {
  * a matchmade lobby with exactly them on its roster, and tells each one the
  * lobby's id. Each then stakes into it like any other lobby, by any route;
  * the escrow seats nobody else. Only matchmade lobbies earn play-mining.
+ *
+ * Short of a full table, a lobby a player opened at the tier's stake and size
+ * with seats free takes whoever is queued: they are told its id the same way,
+ * as `matched`, and stake into it. It earns no play-mining, but it is a game
+ * now rather than a wait. A full queue still gets a matchmade table of its own.
  *
  * What this does not stop is several wallets with one owner queueing at once
  * in a quiet tier and being matched with each other. The queue mixes whoever
@@ -64,6 +78,11 @@ export class Matchmaker {
    * theirs, since the page keeps it only in memory.
    */
   private readonly tables: Array<{ matchId: `0x${string}`; stake: string; seats: number; roster: Set<string>; at: number }> = [];
+  /**
+   * Players sent to a player's lobby, by lower-cased match id: the seats they
+   * are expected to take, so the next tick does not send more than fit.
+   */
+  private readonly sent = new Map<string, Array<{ player: string; at: number }>>();
 
   constructor(private readonly options: MatchmakerOptions) {
     this.queues = options.tiers.map(() => []);
@@ -134,6 +153,9 @@ export class Matchmaker {
       for (const [tier, queue] of this.queues.entries()) {
         const { seats, stake } = this.options.tiers[tier] as MatchmakingTier;
         const full = queue.length >= seats;
+        // A full table is a matchmade one, which earns play-mining; short of
+        // that, an open lobby with room beats waiting.
+        if (!full) this.seatInOpenLobbies(tier, now);
         const waitedOut =
           queue.length >= this.options.minSeats && now - (queue[0]?.since ?? now) >= (this.options.fillAfterMs ?? 30_000);
         if (!full && !waitedOut) continue;
@@ -173,20 +195,68 @@ export class Matchmaker {
       }
     }
     console.log(`[matchmaker] opened ${matchId} for ${roster.length} players`);
-    const now = this.now();
-    while (this.tables.length > 0 && now - (this.tables[0]?.at ?? now) >= TABLE_MEMORY_MS) this.tables.shift();
-    this.tables.push({ matchId, stake: stake.toString(), seats, roster: new Set(roster.map(addressKey)), at: now });
+    this.remember(matchId, stake.toString(), seats, roster, this.now());
     const message = { type: 'matched', matchId, stake: stake.toString(), seats } as const;
     for (const player of roster) this.options.notify(player, message);
     this.tell(this.queues[tier] as Waiting[], tier);
   }
 
-  /** Tells everyone still in a queue how many are in it. */
+  /**
+   * Sends queued players of `tier` to open lobbies players opened at its
+   * stake and size, as many as each has seats free, first in line first.
+   */
+  private seatInOpenLobbies(tier: number, now: number): void {
+    const lobbies = this.options.lobbies?.() ?? [];
+    const queue = this.queues[tier] as Waiting[];
+    const { stake, seats } = this.options.tiers[tier] as MatchmakingTier;
+    const chainNow = this.options.chainTime?.() ?? Math.floor(now / 1000);
+    for (const lobby of lobbies) {
+      if (queue.length === 0) break;
+      if (lobby.status !== 'open' || lobby.matchmade || lobby.stake !== stake || lobby.maxSeats !== seats) continue;
+      // Too little of its window left to stake in: sending anyone there only wastes their wait.
+      if (lobby.joinDeadline - chainNow < MIN_WINDOW_LEFT_S) continue;
+      const id = addressKey(lobby.matchId);
+      const seated = new Set(lobby.players.map((player) => addressKey(player.address)));
+      // Sent lately and not seated yet: their seats are spoken for.
+      const pending = (this.sent.get(id) ?? []).filter((entry) => !seated.has(entry.player) && now - entry.at < SEAT_HOLD_MS);
+      let free = lobby.maxSeats - lobby.seatCount - pending.length;
+      const picked: Waiting[] = [];
+      for (const entry of queue) {
+        if (free <= 0) break;
+        if (seated.has(addressKey(entry.player))) continue;
+        picked.push(entry);
+        free -= 1;
+      }
+      this.sent.set(id, [...pending, ...picked.map((entry) => ({ player: addressKey(entry.player), at: now }))]);
+      if (picked.length === 0) continue;
+      for (const entry of picked) {
+        queue.splice(queue.indexOf(entry), 1);
+        this.tierOf.delete(addressKey(entry.player));
+      }
+      console.log(`[matchmaker] sent ${picked.length} to open lobby ${lobby.matchId}`);
+      const roster = picked.map((entry) => entry.player);
+      this.remember(lobby.matchId, stake, seats, roster, now);
+      const message = { type: 'matched', matchId: lobby.matchId, stake, seats } as const;
+      for (const player of roster) this.options.notify(player, message);
+      this.tell(queue, tier);
+    }
+    // A lobby no longer open is gone for good: forget who was sent there.
+    const listed = new Set(lobbies.map((lobby) => addressKey(lobby.matchId)));
+    for (const id of this.sent.keys()) if (!listed.has(id)) this.sent.delete(id);
+  }
+
+  /** Keeps a table for its roster, to be told again after a reload: see `tablesOf`. */
+  private remember(matchId: `0x${string}`, stake: string, seats: number, roster: readonly Address[], now: number): void {
+    while (this.tables.length > 0 && now - (this.tables[0]?.at ?? now) >= TABLE_MEMORY_MS) this.tables.shift();
+    this.tables.push({ matchId, stake, seats, roster: new Set(roster.map(addressKey)), at: now });
+  }
+
   /** The index of the tier for `stake` and `seats`, or -1 for none. */
   private tierFor(stake: string, seats: number): number {
     return this.options.tiers.findIndex((tier) => tier.stake === stake && tier.seats === seats);
   }
 
+  /** Tells everyone still in a queue how many are in it. */
   private tell(queue: readonly Waiting[], tier: number): void {
     const { stake, seats } = this.options.tiers[tier] as MatchmakingTier;
     const message = { type: 'queued', stake, seats, waiting: queue.length } as const;
@@ -200,6 +270,15 @@ export class Matchmaker {
 
 /** How long a table is remembered for its roster: longer than any join window and lock grace. */
 const TABLE_MEMORY_MS = 2 * 3_600_000;
+
+/** The least join window an open lobby must have left for queued players to be sent to it. */
+const MIN_WINDOW_LEFT_S = 60;
+
+/**
+ * How long a seat in an open lobby is held for a player sent to it: time to
+ * see the notice and stake. Unstaked by then, the seat goes to whoever is next.
+ */
+const SEAT_HOLD_MS = 90_000;
 
 /**
  * The tiers `MATCHMAKING_TIERS` names, as JSON:

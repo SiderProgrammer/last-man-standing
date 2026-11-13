@@ -115,6 +115,9 @@ const watchWhenListed = new Set<string>();
 
 export function wireLobbyControls(): void {
   dom.practice.onclick = () => void startPractice(Number(dom.botCount.value), dom.botDifficulty.value);
+  dom.goPractice.onclick = () => jumpTo('practice-panel', dom.practice);
+  dom.goQueue.onclick = () => jumpTo('queue-panel', dom.joinQueue.classList.contains('hidden') ? dom.leaveQueue : dom.joinQueue);
+  dom.goCreate.onclick = () => jumpTo('create-panel', dom.stake);
 
   dom.refreshLobbies.onclick = () => net.send({ type: 'lobbies' });
   setInterval(tickCountdowns, 5_000);
@@ -143,6 +146,26 @@ export function wireLobbyControls(): void {
         .catch((error: unknown) => console.warn('[lobby] could not read the protocol terms', error));
     }
   });
+}
+
+/**
+ * Scrolls a lobby section to just under the sticky header (and status bar,
+ * when shown), flashes it, and puts focus on its main control.
+ */
+function jumpTo(id: string, focus: HTMLElement): void {
+  const section = document.getElementById(id);
+  if (!section) return;
+  const sticky = [...document.querySelectorAll<HTMLElement>('.topbar, .status-bar:not(.hidden)')].reduce(
+    (height, node) => height + node.offsetHeight,
+    0,
+  );
+  const top = section.getBoundingClientRect().top + window.scrollY - sticky - 12;
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: Math.max(0, top), behavior: still ? 'auto' : 'smooth' });
+  if (!(focus as HTMLButtonElement).disabled) focus.focus({ preventScroll: true });
+  section.classList.remove('flash');
+  void section.offsetWidth;
+  section.classList.add('flash');
 }
 
 /** The hero's line about staked play, which says "testnet" only on one. */
