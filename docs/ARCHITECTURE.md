@@ -118,15 +118,16 @@ where choices matter makes a non-aggression pact worth money.
 Commit-reveal does not help here: colluders simply tell each other what they will do.
 The mitigations are around the game rather than in it:
 
-- **Matchmaking instead of joinable lobbies.** Today a lobby is joined by id, so two
-  wallets controlled by one person can sit at the same table on purpose. Random
-  assignment into lobbies makes that much harder.
+- **Matchmaking instead of joinable lobbies.** Built for the lobbies that earn
+  play-mining: the matchmaker opens them with a roster from its queue, and only that
+  roster may join. Private lobbies are still joined by id, so two wallets one person
+  controls can sit at the same table on purpose; and wallets with one owner queueing
+  together in a quiet tier can still be matched with each other.
 - **Detection from the public history.** Every move is published, so a pair that
   never strikes each other across many matches is visible after the fact. The
-  analyst and the play-style records are the natural place to flag it.
+  analyst and the play-style records are the natural place to flag it. Not built.
 - **The payout schedule.** How much a pact earns depends on how the pot is split.
-
-None of these exist yet.
+  Not changed for this yet.
 
 Hidden information is enforced cryptographically, not by trusting the operator. During
 the commit window a player publishes only
@@ -202,6 +203,8 @@ same way.
 | `session.ts` | Encoding a one-click `join`/`withdrawFor`, the delegate's call check, 7702 delegation code |
 | `spokes.ts` | `JoinFailure`, Across quotes, the join message a spoke sends |
 | `zap.ts`, `governance.ts`, `proposals.ts` | Token payment, staking and rewards, and decoding governance proposals |
+| `avatars.ts` | The `PlayerAvatars` surface the server and the client share |
+| `contractErrors.ts` | Every custom error the contracts can revert with, generated, to decode a revert from any of them |
 | `registry.ts` | `readDeployment`: `contracts/deployments/<chainId>.json`. Node-only, imported as `@lms/contracts/registry` |
 
 ### `packages/api` — between the browser and the server
@@ -233,6 +236,10 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
   produce a wrong result and a wrong replay that agree perfectly. A differential test in
   `properties.test.ts` replays 45 matches across three bot strategies to hold the two
   derivations to the same answer.
+- **`match/audit.ts`** is `auditTranscript`: checks an archived transcript against
+  what the escrow stored (hash, seed, rules, root, ranking), every signature and grant
+  in it, and the auditing player's own moves and receipts. The attestor runs it before
+  it signs, and every player's browser on every proposed result.
 - **`bots/strategy.ts`** (`@lms/engine/bots`) holds the bots: a seeded keccak PRNG,
   `always`, `randomStrategy`, `readerStrategy`, and the house bot `smartStrategy` with its
   three difficulties. All of them pick only moves their cooldowns allow;
@@ -246,6 +253,9 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `main.ts` | Composition root: reads the config, wires every component, listens |
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
+| `errors.ts` | `RequestError`: a refusal with the code the client switches on |
+| `util/` | `envList` (soft JSON-list env parsing), `poll` (an unref'd repeat timer), `rpc` (calls across the attestor's process and the analyst's thread) |
+| **`analyst/`** | **The match analyst, in a worker thread; see [ANALYST.md](ANALYST.md)** |
 | **`match/`** | **One live match** |
 | `match/room.ts` | Phases, the round clock and the ready phase before round 1, client fan-out (the whole state on attach, deltas after), held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop), each round's signatures and receive times, the journal entries a restart replays, and the transcript it hands the lobby at the end |
 | `match/journal.ts` | `RoomJournal`: a staked room's commits, reveals and clock moves, in order, in memory or Postgres |
@@ -268,6 +278,10 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | **`gateway/`** | **The socket boundary** |
 | `gateway/gateway.ts` | Session registry, login under a session grant, move-signature checks, commit receipts, message dispatch |
 | `gateway/frames.ts` | Frame decoding and the error frame that goes back when it fails |
+| `gateway/limits.ts` | Rate-limit primitives and the per-IP and per-wallet limits, on a clock passed in |
+| `gateway/peer.ts` | The client's address behind `TRUSTED_PROXY_HOPS` proxies |
+| `gateway/heartbeat.ts` | Pings every socket and drops the ones that stopped answering |
+| `gateway/verifyPool.ts` | Login signature recovery on worker threads (`VERIFY_THREADS`), off the rooms' event loop |
 | **`chain/`** | **Everything that talks to a chain** |
 | `chain/bridge.ts` | `ChainBridge`: discovers lobbies, serves the directory, locks ready lobbies, opens a room once a match is seeded — only if the match's on-chain `rulesHash` is the rule set this server plays; otherwise it never locks the lobby, and calls off and refunds a live one rather than playing it under other rules |
 | `chain/escrowReader.ts` | The hub as an interface, plus the viem implementation of it, reading every tracked match in one Multicall3 batch |
@@ -276,10 +290,16 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `chain/signer.ts` | `Signer`, the interface every key signs through, where a KMS would plug in |
 | `chain/logs.ts` | The one chunked `getLogs` scan, and the confirmation depth every scan stops at |
 | `chain/sessionRelay.ts` | Submits and pays for joins and withdrawals a player's session key signed, under a daily quota |
+| `chain/chainWithdrawals.ts` | Submits a player's signed withdrawal to a spoke (`withdrawToChainFor`) and pays the hub gas |
+| `chain/crossChain.ts` | `SPOKES`, and `CrossChainWatcher`: tells a player on a spoke what their join became on the hub, a seat or a credit |
+| `chain/zap.ts` | `ZAP_TOKENS`: the tokens players may pay with, and each one's v4 route |
+| `chain/feeKeeper.ts` | Harvests `FeeRouter` on a timer, once there is more than `minHarvest` |
+| `chain/proposals.ts` | Indexes the governor's proposals from `ProposalCreated` |
+| `chain/results.ts` | Indexes `ResultProposed`, so a wallet's history survives an in-memory archive |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
 | `chain/viem.ts` | Client construction for a chain known only by id and RPC URL |
 
-Three deliberate design choices make this testable:
+Four deliberate design choices make this testable:
 
 - **The room owns the clock but never reads it.** `tick(now)` is driven from outside —
   a 250 ms interval in production, a loop in tests — so a whole match can be played
@@ -347,47 +367,69 @@ start, and a second server is refused.
 | **`assets/`** | **Everything loaded at boot** |
 | `assets/manifest.ts` | The Pixi asset manifest: the replay's effect textures |
 | `assets/loader.ts` | Loads the manifest once, skipping any file that fails rather than failing the lot. A chunk of its own, with Pixi |
+| `assets/avatars.ts` | The face a seat wears without an NFT avatar: a DiceBear robot seeded by the address, generated in the browser |
 | **`screens/`** | **What the player sees, and the controls on it** |
 | `screens/loading.ts` | The boot screen: a progress bar while assets load |
-| `screens/lobby.ts` | Practice, the staked-lobby directory, create and join, from the hub or a spoke |
+| `screens/lobby.ts` | Practice (as a guest or a wallet), the staked-lobby directory, create and join, from the hub or a spoke |
+| `screens/statusBar.ts` | The bar under the header: a match to rejoin, a table waiting, a refund, a stake crossing chains, a queue place |
+| `screens/history.ts` | "Your matches": the wallet's finished matches, each reopening in the match screen |
 | `screens/queue.ts` | The matchmaking queue: pick a tier, wait, leave |
 | `screens/discount.ts` | *On demand.* Paying part of a seat's fee in LMS: quote, permit, join |
 | `screens/zap.ts` | *On demand.* Paying a stake in a token through `ZapJoin` |
 | `screens/staking.ts` | *On demand* (`stakingPanel.ts`). Stake, unstake, claim, vesting and release, delegation |
-| `screens/governance.ts` | *On demand* (`governanceNav.ts`). Proposals, votes, the proposal form |
+| `screens/governance.ts` | *On demand* (`governanceNav.ts`). Proposals, votes, and the proposal form (`proposalForm.ts`) |
 | `screens/result.ts` | The result: ranking, the browser's and the chain's verification, Dispute |
 | `screens/match.ts` | Commit/reveal handshake, panels, replay hold, history feed, timer; mounts and disposes the arena |
+| `screens/analysis.ts` | The match analyst's tab: narrative, checked key moments that replay their round, advice |
+| `screens/help.ts` | How a round plays out, and what "verified in your browser" does and does not promise |
 | **`wallet/`** | **The player's account** |
-| `wallet/flows.ts` | Connect, login with the session grant, avatar and hub-chain panels |
+| `wallet/flows.ts` | Connect, guest practice under a key kept in the browser, login with the session grant, avatar and hub-chain panels |
 | `wallet/chains.ts` | The viem chain every write names, and `WrongChainError` |
+| `wallet/burnerChain.ts` | Dev builds: the node the burner signs through, from `?chain=` |
 | `wallet/payouts.ts` | Collecting winnings: on the hub, or to the spoke the wallet is on (`collectHome.ts`, on demand) |
 | `wallet/staking.ts`, `governance.ts`, `zap.ts`, `discount.ts` | *On demand.* Each screen's contract calls and ABIs, out of the main bundle |
+| `wallet/permit.ts` | EIP-2612 permits for LMS, so staking and the fee discount are one transaction |
+| `wallet/terms.ts` | The terms a new lobby opens on, read from `ProtocolConfig` through the escrow |
 | `wallet/wallet.ts` | Injected EIP-1193 session, the chain guard, login signature, escrow / avatar / session calls |
 | `wallet/grant.ts` | The browser's session key and the wallet's grant to it: sign logins, moves and relayed calls |
 | `wallet/oneClick.ts` | One-click play: turn the on-chain session on and off, relay joins and collects |
-| `io/keystore.ts` | Secrets sealed in IndexedDB under a non-extractable WebCrypto key |
 | `csp.ts` | The Content-Security-Policy the production build ships with |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
 | `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `game/style.ts` | *Pure.* `describeStyle`: a wallet's record from earlier matches as one line |
+| `game/verify.ts` | Replays a finished match from what was broadcast, audits its transcript against the chain, and builds a dispute's evidence bundle |
+| `game/review.ts` | *Pure.* An archived match, rebuilt into what the match screen draws |
+| `game/rewind.ts` | *Pure.* The table as it stood when a given round began, from the published history |
 | `game/salts.ts` | Persists the sealed move so a refresh cannot cost the player the round |
 | **`arena/`** | **The Pixi canvas** |
-| `arena/arena.ts` | Pixi scene: seats on a circle with address sigils or avatars, HP arcs with a lagging damage ghost, chain badges, the arena wall that closes in as the table stalls, a ⚡ on every charged seat, your aim, a round HUD |
+| `arena/arena.ts` | Pixi scene: the seat ring, your aim, a ⚡ on every charged seat, a round HUD |
+| `arena/seat.ts` | One seat: its face (generated or an NFT avatar), HP arc with a lagging damage ghost, nameplate and chain badge |
+| `arena/storm.ts` | The storm that closes in from the arena wall as the table stalls |
 | `arena/choreography.ts` | *Pure.* Turns a `RoundRecord` into a schedule of timed beats |
 | `arena/replay.ts` | Builds the round's GSAP timeline: HP drains and heals, shatters, the stall flare |
 | `arena/effects.ts` | Adds the visual effects to that timeline: projectiles, shields, particles, shake, winner |
+| `arena/recipes.ts` | What each replay moment looks like, as data that `effects.ts` plays |
 | `arena/theme.ts` | The arena's palette and text styles, including the replay's effect tints |
 | `arena/layout.ts` | *Pure.* Seat-ring and arena-wall geometry |
 | `arena/textures.ts` | Seat faces leased by URL, unloaded once no seat wears them |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
 | `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar, queue, discount and collect-home panels |
+| `ui/staking.ts`, `governance.ts`, `analysis.ts` | *Pure.* What the staking panel, a proposal card and the analysis tab show |
+| `ui/proposalBuilder.ts` | *Pure.* Proposal actions from the values a person thinks in (a percentage, days), not calldata |
+| `ui/roundText.ts`, `rules.ts` | *Pure.* A round in words for the history feed, and the rules sheet from the numbers the match runs under |
+| `ui/errors.ts` | *Pure.* Wallet and revert errors, in words a player can act on |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
+| `ui/links.ts` | Transaction links to the chain's explorer |
+| `ui/txTray.ts` | The transaction tray: every transaction the page waits on, from sent to confirmed or failed |
+| `ui/alerts.ts` | What reaches a player on another tab: the title, notifications, optional sounds |
 | `ui/chrome.ts` | `toast` and `showMatchScreen`, the helpers more than one screen uses |
 | **`io/`** | **Browser I/O** |
 | `io/net.ts` | Typed socket with backoff reconnect, re-auth, and an outbox |
-| `io/storage.ts` | `localStorage` that cannot throw, shared by `game/salts.ts` and `wallet/session.ts` |
+| `io/chainClock.ts` | The hub's clock as the server last read it, so every deadline counts in chain time |
+| `io/keystore.ts` | Secrets sealed in IndexedDB under a non-extractable WebCrypto key |
+| `io/storage.ts` | `localStorage` that cannot throw, shared by every module that keeps a setting or a sealed move |
 
 The folders split along two lines. By feature: each screen owns its controls, and
 `app.ts` does nothing but route server messages to them. By purity: anything that
@@ -475,7 +517,7 @@ winner is crowned after the final round.
   a loading screen when the page opens, so the arena finds them cached. The code names
   them by file name, and a test checks each name has a file. The loader uses Pixi's `skip` strategy: a
   texture that fails is dropped, not the whole bundle, and the effects draw a generated
-  glow in its place — just as a seat without an avatar keeps its plain circle.
+  glow in its place — just as a seat without an avatar keeps its generated face.
 - **Hit-stop borrows only spare hold.** The first kill of a round freezes the replay
   for a beat, but `round` carries `replayMs`, and the freeze is sized to what the
   choreography leaves of it (at most 0.1 s, always 0.15 s short of the hold), so the
@@ -574,7 +616,8 @@ Players wear cosmetic NFT avatars in the arena. Three decisions shape the design
   either of which can be slow or simply not answer. `AvatarRegistry` resolves in the
   background after the room is already playable, caches per wallet — including the
   misses, which are the expensive ones — and degrades to "no avatar" on any error. The
-  seat falls back to a plain circle and the match is unaffected. The metadata hop happens
+  seat keeps the face generated from its address (`assets/avatars.ts`) and the match is
+  unaffected. The metadata hop happens
   on the server rather than in each browser so there is one gateway policy, one cache and
   one timeout instead of every client fetching the same eight files.
 
@@ -743,9 +786,8 @@ otherwise every stake reverts with an error the wallet renders unreadably.
   (termination, unique ranking, HP bounds, determinism, replay equivalence, tamper
   detection), consensus parity vectors, rooms, the gateway, the chain bridge, the
   attestor process, the analyst, the client's pure modules, and a seeded chaos suite.
-- **Solidity (Foundry):** unit tests per contract and library,
-  differential fuzzing of the Yul hashers and the signature recovery loop, and stateful
-  invariant campaigns. The escrow's drives many matches at once through every state,
+- **Solidity (Foundry):** unit tests per contract and library, fuzzing of the signature
+  recovery, and stateful invariant campaigns. The escrow's drives many matches at once through every state,
   pauses and disputes included, and asserts solvency, fee and LMS accounting, the
   dispute deadlines and the pause's expiry; its handler only makes calls that should
   succeed, so it runs with `fail_on_revert`. Others cover `StakedLms` and the
@@ -755,9 +797,34 @@ otherwise every stake reverts with an error the wallet renders unreadably.
   `@lms/*` to source, exactly as `vitest.config.ts` does, so a cast that has rotted in a
   test fails `npm run typecheck` rather than sitting there unchecked.
 - **Gas:** `contracts/.gas-snapshot` is committed and `npm run sol:snapshot:check` fails
-  on drift. `SettlementLibGas.t.sol` additionally asserts the Yul hasher is never worse
-  than the ABI-encoder reference, warming the harness first so the measurement is not
-  dominated by cold-account access.
+  on drift.
+
+One Foundry suite per feature, to read a path with full call traces
+(`forge test --root contracts --match-contract <Suite> -vvvv`):
+
+| Feature | Suite |
+| --- | --- |
+| Escrow lifecycle, pause, cancellation, cross-chain joins, `joinFor` | `GameEscrowTest` |
+| Disputes, vetoes, aborts, the guardian's pause | `DisputeTest`, `VetoTest`, `AbortMatchTest`, `ExpiringPauseTest` |
+| Matchmade lobbies and their rosters | `MatchmakingTest` |
+| Solvency, fees, disputes and pause expiry under random call sequences | `EscrowInvariantTest` |
+| Attestor quorum and signature ordering | `SignatureLibTest`, `SignatureLibFuzzTest` |
+| The EIP-712 result digest | `SettlementLibTest` |
+| Hashes and replays pinned to the TypeScript | `HashLibTest`, `GoldenTranscriptTest` |
+| Cross-chain joins through Across: the spoke router, the hub receiver, signed withdrawals | `SpokeRouterTest`, `BridgeJoinReceiverTest` |
+| Across's real SpokePools, on forks | `AcrossHubForkTest`, `AcrossSpokeForkTest` |
+| Chainlink VRF adapter (mock / the Base Sepolia coordinator) | `ChainlinkVrfAdapterTest` / `VrfBaseSepoliaForkTest` |
+| The L2 sequencer feed (mock / Chainlink's on Base) | `SequencerUptimeTest` / `SequencerFeedForkTest` |
+| Governance parameters, guardian | `ProtocolConfigTest` |
+| Token, staking, rewards, governor, multisig phase | `LmsGovernorTest`, `StakedLmsTest`, `RewardsDistributorTest`, `FeeRouterTest`, `LmsDiscountTest`, `MultisigPhaseTest`, `LiquidityReserveTest`, and the `StakedLms` and rewards invariants |
+| The real deploy: Safe → timelock → config, guardian; spokes | `DeployTest`, `DeploySpokeTest` |
+| EIP-7702 session keys | `SessionKeyDelegateTest` |
+| Avatars | `PlayerAvatarsTest` |
+| Join with any token (mock pool / real mainnet pool) | `ZapJoinTest` / `ZapJoinForkTest` |
+
+The fork suites need an RPC per chain; the README's "With a chain" names the
+variables. To exercise the same features against a running stack, see
+[PLAYTEST.md](PLAYTEST.md).
 
 ### Configuration
 
@@ -768,7 +835,7 @@ otherwise every stake reverts with an error the wallet renders unreadably.
 | `COMMIT_MS` / `REVEAL_MS` | `20000` / `12000` | Round windows |
 | `REPLAY_MS` | `2500` | Hold after each round for the client replay, before the next commit clock |
 | `RPC_URL` | — | Hub RPC; without it the server runs practice lobbies only |
-| `ESCROW_ADDRESS` | zero | `GameEscrow` to watch and settle against |
+| `ESCROW_ADDRESS` | registry | `GameEscrow` to watch and settle against; blank reads `contracts/deployments/<CHAIN_ID>.json` |
 | `ATTESTOR_PK` | — | Attestor key, held by its own process; signs results, aborts and receipts, sends nothing |
 | `KEEPER_PK` | — | Sends lock, settle, abort, finalise, cancel and harvest. Without it, nothing reaches the chain |
 | `MATCHMAKER_PK` | — | Opens matchmade lobbies; without it there is no queue |

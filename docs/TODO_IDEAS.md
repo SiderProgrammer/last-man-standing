@@ -1,14 +1,11 @@
-complete TO_CHECK.md
 complete TODO.md
-update README, docs
-update missing envs
-clean up package.json
+avatars on ipfs?
 
-make sure eth / optimism chain is tested and handled
 test, run all the features on local fork mainnet (dont forget cross chain)
 redeploy fixed game
-test game with a few real players (testnet wallet)
+test all 4 chains with a real wallet(testnet)
 record video
+update README, docs
 
 tenderly tests?
 formal verification?

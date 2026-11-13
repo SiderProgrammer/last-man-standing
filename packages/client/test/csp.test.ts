@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { contentSecurityPolicy } from '../src/csp.js';
+import { contentSecurityPolicy, spokeRpcUrls } from '../src/csp.js';
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -84,5 +84,16 @@ describe('content security policy', () => {
     const production = directive(contentSecurityPolicy(env), 'connect-src') ?? [];
     expect(production.some((source) => source.includes(':95'))).toBe(false);
     expect(production).toContain('https://ipfs.io');
+  });
+
+  it("names every testnet spoke's RPC in a dev build, and ignores a malformed map", () => {
+    const env = { VITE_SPOKE_RPC_URLS: JSON.stringify({ 11155420: 'https://sepolia.optimism.io', 11155111: 'https://sepolia.gateway.tenderly.co/' }) };
+    const dev = directive(contentSecurityPolicy(env, { dev: true }), 'connect-src') ?? [];
+    expect(dev).toEqual(expect.arrayContaining(['https://sepolia.optimism.io', 'https://sepolia.gateway.tenderly.co']));
+    expect(directive(contentSecurityPolicy(env), 'connect-src')).not.toContain('https://sepolia.optimism.io');
+
+    expect(spokeRpcUrls('not json')).toEqual({});
+    expect(spokeRpcUrls('["https://x"]')).toEqual({});
+    expect(spokeRpcUrls('{"1":"https://a","2":3}')).toEqual({ 1: 'https://a' });
   });
 });

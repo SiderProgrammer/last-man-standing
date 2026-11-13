@@ -55,21 +55,50 @@ than the minimum cannot be bridged; the player withdraws it on Base instead.
   the value waits in the receiver.
 - `withdrawToChainFor` makes a deposit the Base pool accepts.
 
-## Not done
+## The live testnet deposit
 
-- **A real testnet deposit with a message** (step 6.1's live check, and the optional
-  demo it mentions) has not been made: it needs a funded key on a testnet spoke. The
-  fill time above is the API's own estimate, not a measurement. Across documents its
-  testnet as unreliable: fills take about a minute, relayers have no incentive, and
-  unfilled deposits are **not** refunded. So the local stack and the unit tests use
-  `MockAcrossSpokePool`, and the real contracts are checked by the fork tests above.
+Tried on 2026-11-12, from OP Sepolia into a Base Sepolia lobby, with
+`npm run play -- join <match> --players 1 --from op --net testnet`:
 
-To make the live check, with a little Arbitrum Sepolia ETH:
+- The deposit went out (OP Sepolia tx `0xe856e944…d04c`, deposit id 1000545,
+  0.001 ETH plus a 0.0000043 ETH fee), and Across's API indexed it with the right
+  recipient, output and message.
+- **No testnet relayer filled it.** It stayed `pending` past the lobby's 20-minute join
+  window. Over the same hours, Across's testnet relayers did fill deposits into Base
+  Sepolia from Sepolia and Arbitrum Sepolia, all with an empty message. Ours was the only
+  one with a message and the only one left unfilled. That points to the testnet
+  relayers skipping message deposits, not to a fill that would fail.
+- **The fill itself works.** `fillRelay` for that exact deposit, simulated on a Base
+  Sepolia fork against the deployed pool, receiver and escrow, goes through (171k gas).
+  During the join window it seats the player; after it, the 0.001 ETH is credited to the
+  player on the hub, as designed.
 
-1. Deploy the hub on Base Sepolia, and `DeploySpoke.s.sol` on Arbitrum Sepolia.
-2. Quote `inputToken`=Arbitrum Sepolia WETH, `outputToken`=Base Sepolia WETH,
-   `recipient`=the hub's `BridgeJoinReceiver`, `message`=the join's message, from
-   `https://testnet.across.to/api/suggested-fees`.
-3. Call `SpokeRouter.join` with the quote, and watch for `PlayerJoined` (or
-   `JoinRefunded`) on the hub escrow. Or use the client, built with
-   `VITE_ACROSS_API=https://testnet.across.to/api`; see [TESTNET.md](TESTNET.md).
+- That deposit expired unfilled at its two-hour fill deadline. Across does not refund
+  one on testnet, so its 0.001 ETH is gone.
+
+**A live seat, with our own key as the relayer (2026-11-13).** A second join from OP
+Sepolia, deposit id 1000546 (tx `0xa6cb79fc…da49`), was filled at once from
+`DEPLOYER_PK` with the Base Sepolia pool's own `fillRelay` (tx `0x6fbbe674…e435`). The
+real pool paid `BridgeJoinReceiver`, which seated the player in the open lobby, and the
+escrow records the seat's origin as OP Sepolia. Across's API lists the deposit as
+`filled` by that transaction.
+
+So everything on our side is proven live on testnet: the spoke deposit, Across's real
+pools, the receiver and the escrow. The one thing still not seen is a fill by Across's
+own testnet relayers, which looks like their choice, not ours. Whether mainnet relayers
+fill these deposits promptly is not measured either; the fork tests in
+`AcrossFork.t.sol` prove the mainnet pools accept and fill them. The local stack and the unit tests keep using `MockAcrossSpokePool`.
+
+To do it again:
+
+1. Fund a player on a spoke and give it a little hub ETH for gas (`npm run testnet -- fund`).
+2. `npm run play -- create --stake 0.001 --seats 4 --as 1 --net testnet`.
+3. `npm run play -- join <match> --players 1 --from op --relay --net testnet` (or `arb`,
+   `eth`). This quotes the fee, deposits, fills the deposit from `DEPLOYER_PK` (wrapping
+   and approving WETH as needed), and waits for the seat. Without `--relay` it waits for
+   Across's relayers instead. `npm run play -- relay <spoke tx> --from op` fills a
+   deposit that was already made, up to its fill deadline.
+   Follow a deposit at `https://testnet.across.to/api/deposit/status?originChainId=…&depositId=…`.
+
+Our fill is asked to be repaid on Base Sepolia, but Across's testnet may never repay it:
+count each `--relay` as costing the relayer the stake.

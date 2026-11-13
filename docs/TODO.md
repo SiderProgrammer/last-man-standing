@@ -16,16 +16,13 @@ design rests on are in [adr/](adr/).
 
 ## 1. Checks that need a testnet
 
-Nothing is deployed on a public chain yet: `contracts/deployments/` holds only local
-nodes. Everything below waits on a hub on Base Sepolia, which needs the deploy roles
-(Safe, guardian, team beneficiary, matchmaker, one attestor), a Chainlink VRF v2.5
-subscription owned by the Safe and funded in ETH, and testnet ETH.
-[TESTNET.md](TESTNET.md) has the steps.
+The hub is deployed on Base Sepolia (`contracts/deployments/84532.json`), with spokes on
+Arbitrum Sepolia, OP Sepolia and Sepolia. [TESTNET.md](TESTNET.md) has the steps.
 
 ### 1.1 The Privy check — deferred
 
 **Deferred, still planned.** Neither the first testnet deployment nor the mainnet demo
-waits on this: visitors use wallet-free practice (section 7) or the normal wallet flow.
+waits on this: visitors use guest practice (no wallet) or the normal wallet flow.
 Do not remove what it builds on: `SessionKeyDelegate`, the session relayer,
 `Wallet.fromAccount`, `npm run check:one-click`, the one-click buttons, and ADR 0009.
 Privy's docs describe signing an authorization for a contract you choose
@@ -57,6 +54,12 @@ relayers. The contracts already run against Across's mainnet pools in
 unreliable and does not refund an unfilled deposit, so use small amounts.
 [ACROSS.md](ACROSS.md) and [TESTNET.md](TESTNET.md) have the steps.
 
+**Join done 2026-11-13, from OP Sepolia, filled by our own key** (`npm run play -- join
+… --from op --relay`): the player was seated through the real Base Sepolia pool and
+receiver. Across's own testnet relayers left an earlier message deposit unfilled until it
+expired. Still open: a withdrawal back to a spoke. See
+[ACROSS.md](ACROSS.md#the-live-testnet-deposit).
+
 ### 1.3 The staked flow on a public chain
 
 `ChainBridge`, the keeper, the session relayer, the withdrawals and the client's
@@ -65,17 +68,13 @@ the unit tests, never against a public RPC.
 
 Features that have only run against mocks, or once by hand:
 
-- **Avatars.** `AvatarRegistry` is unit-tested including every failure path, and the
-  arena rendering was checked against stubbed entries. No `PlayerAvatars` has been
-  deployed, so the read → IPFS → texture path has never run against a real token.
-- **Play-mining end to end** ran once by hand on `dev:fork`: a four-seat match played to
-  settlement, the clock moved past the week's end, and **Claim LMS** granted the
-  reward. There is no script for it. Releasing vested LMS has not run against a chain:
-  it needs an ended epoch with claims. The view and the reads are unit-tested.
-- **Lobby chain chips.** The per-chain chips in the lobby list are typed and fed by
-  `ChainBridge`, but only the in-arena badges have been seen rendered.
-- **One-click buttons** in the client have not run against a node. Deferred with 1.1:
-  the burner is for dev builds, so a production build has no wallet that can use them.
+- **Avatars.** `PlayerAvatars` is deployed on Base Sepolia and every testnet spoke, and
+  avatars were minted on Base and Arbitrum in the 11 Nov fork playtest. Not yet seen: an
+  avatar minted on testnet showing in a testnet match.
+- **One-click play** ran on the fork once while the playtest tools were built (a relayed
+  join; [PLAYTEST.md](PLAYTEST.md) §10), but could not be turned on in the 11 Nov
+  playtest because the fork's clock had been warped. Deferred with 1.1: the burner is for
+  dev builds and guests cannot use it, so a production build has no wallet that can.
 
 ---
 
@@ -258,23 +257,20 @@ order, with the testnet deployment from section 1 before the hosting:
   and the risks. Test its two possible blockers first: redeploys against the instance
   lock, and the lock through Neon's pooled connection string. Then run a small load test
   on the deployed server, because the numbers in LOAD_TESTING.md do not apply there.
-- **Practice without a wallet.** A production build has no way in without a wallet
-  extension: the burner in `wallet/flows.ts` is for dev builds, and Privy is not wired
-  in. Practice needs only a login signature, so a key generated in the browser and
-  limited to practice would let a visitor play within seconds.
-- **Run every feature on a local mainnet fork**, cross-chain joins and withdrawals
-  included, then play with a few real people: locally, then with testnet wallets.
+- **Finish the fork playtest** (what section 2 lists as never played there), then play
+  with a few real people: locally, then with testnet wallets on all four chains.
 - **Record a walkthrough:** 2–3 minutes, after the playtests so it does not show bugs
   they would have caught. Add a GIF and screenshots; the README has no image yet.
 - **A short front section in the README,** above the rules: a one-line pitch, the live
   link, the video, the stack, about six engineering highlights and the main limitations.
   The threat and trust models stay, further down.
 - **Say what is live at the top of the README:** testnet for playing, mainnet only as an
-  unpromoted demo that is not for real use. Today this first appears at line 272.
+  unpromoted demo that is not for real use. Today this first appears far down, in
+  "A portfolio project, not a product".
 - **Link the audit work from the README:** `contracts/x-ray/` and
   `.solidity-auditor/runs/`, described as AI-assisted reviews, not an independent audit.
-- **Clear out the working notes.** Finish `TO_CHECK.md` and `TODO_IDEAS.md`, then delete
-  them or fold what is left into this file.
+- **Clear out the working notes.** Finish `TODO_IDEAS.md`, then delete it or fold what is
+  left into this file.
 - **Add a root `LICENSE`.** The repo has none.
 - **Set the GitHub repo up:** public, with a description, topics and the live link.
 - **Freeze features.** The leaderboard, the prediction market, Yul and the Guard damage

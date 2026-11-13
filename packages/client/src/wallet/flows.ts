@@ -11,6 +11,7 @@ import { GrantedKey } from './grant.js';
 import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
 import { explainError } from '../ui/errors.js';
+import { burnerRpcFor } from './burnerChain.js';
 
 /**
  * Everything the player does with their wallet: connecting, logging in with
@@ -176,13 +177,13 @@ function devBurnerKey(): string | undefined {
 }
 
 /**
- * The node the dev burner signs through. `?chain=spoke` puts it on the spoke
- * that `npm run dev:fork` runs, so a join from a spoke can be tried without a
- * wallet extension; anything else is the hub.
+ * The node the dev burner signs through: `?chain=spoke`, `?chain=op` or
+ * `?chain=<chainId>` puts it on that spoke, so a join from a spoke can be
+ * tried without a wallet extension. An unknown chain is an error, shown when
+ * the player connects, rather than a silent hub.
  */
 function burnerRpc(): string | undefined {
-  const spoke = new URLSearchParams(location.search).get('chain') === 'spoke';
-  return spoke && import.meta.env.VITE_SPOKE_RPC_URL ? import.meta.env.VITE_SPOKE_RPC_URL : import.meta.env.VITE_RPC_URL;
+  return burnerRpcFor(new URLSearchParams(location.search).get('chain'), import.meta.env);
 }
 
 export async function authenticate(): Promise<void> {

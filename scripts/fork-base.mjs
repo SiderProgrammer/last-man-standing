@@ -11,48 +11,60 @@
  * matchmaker / team roles, the production timelock and governance settings.
  *
  *   1. builds the TypeScript packages,
- *   2. forks Base (8453, the hub) and Arbitrum One (42161, the spoke),
+ *   2. forks Base (8453, the hub) and three spokes: Arbitrum One (42161),
+ *      OP Mainnet (10) and Ethereum (1) — `FORK_SPOKES=arb,op` runs fewer,
  *   3. as the Safe, creates a VRF subscription on Chainlink's real Base
  *      coordinator and funds it with ETH,
- *   4. deploys the hub with `Deploy.s.sol` and the spoke with
+ *   4. deploys the hub with `Deploy.s.sol` and each spoke with
  *      `DeploySpoke.s.sol`, then, as the Safe, adds the VRF adapter as a
  *      consumer — the same steps as docs/TESTNET.md on mainnet,
  *   5. plays the VRF node: each randomness request is answered three blocks
  *      later, delivered as the real coordinator does (from its address),
- *   6. plays an Across relayer between the two forks: every deposit
+ *   6. plays an Across relayer between the hub and each spoke: every deposit
  *      `SpokeRouter` or `BridgeJoinReceiver` makes into a real SpokePool is
  *      filled on the other chain's real SpokePool,
- *   7. funds 8 player accounts with ETH on both chains, every token that has
+ *   7. funds 8 player accounts with ETH on every chain, every token that has
  *      a live Uniswap v4 route to ETH on Base, liquid LMS, and staked sLMS
  *      (from the treasury, impersonating the timelock),
  *   8. starts the server and the client wired to all of it, and writes
  *      `contracts/deployments/fork/profile.json` for `npm run play`.
  *
- * Blocks are mined every 2 s on the hub and every second on the spoke, like
- * the real chains. Time can be moved with `npm run play -- warp 1h`.
+ * Blocks are mined like the real chains: every 2 s on Base and OP, every
+ * second on Arbitrum, every 12 s on Ethereum. Time can be moved with
+ * `npm run play -- warp 1h`.
  *
  * The registries the deploy scripts write land in
  * `contracts/deployments/fork/` (gitignored); whatever was in
- * `contracts/deployments/8453.json` and `42161.json` before is put back, so
- * the real chains' committed registries are never touched.
+ * `contracts/deployments/<chainId>.json` before is put back, so the real
+ * chains' committed registries are never touched.
  *
  * Environment (all optional):
  *   FORK_BASE_RPC_URL   Base RPC to fork, with archive state
  *   FORK_ARB_RPC_URL    Arbitrum RPC to fork, with archive state
- *   ALCHEMY_API_KEY     used for both when the two above are unset; without
- *                       it, the key of any Alchemy URL in `.env`; without
- *                       that, publicnode, which only lasts a few minutes
+ *   FORK_OP_RPC_URL     OP Mainnet RPC to fork, with archive state
+ *   FORK_ETH_RPC_URL    Ethereum RPC to fork, with archive state
+ *   ALCHEMY_API_KEY     used for every chain whose URL is unset; without it,
+ *                       the key of any Alchemy URL in `.env` (the Alchemy app
+ *                       must have each network enabled); without that,
+ *                       publicnode, which only lasts a few minutes
+ *   FORK_SPOKES         which spokes to run, default arb,op,eth; the first is
+ *                       the one `&chain=spoke` and `--from spoke` mean
  *   FORK_HUB_PORT       default 8645
- *   FORK_SPOKE_PORT     default 8646
+ *   FORK_SPOKE_PORT     Arbitrum, default 8646
+ *   FORK_OP_PORT        default 8647
+ *   FORK_ETH_PORT       default 8648
  *   FORK_SERVER_PORT    default 8791
  *   FORK_CLIENT_PORT    default 5176
  *   FORK_FILL_DELAY_MS  how long an Across deposit waits for its fill, default 5000
+ *   FORK_CUPS           compute units per second each fork may use on its RPC;
+ *                       default 330 shared across the forks (Alchemy's free tier)
  *   FORK_MAINNET_ECONOMICS=1  keep Base's defaults: no stakers' share of fees and
  *                       no LMS fee discount. Unset, both are switched on (as the
  *                       timelock) so those features can be tried.
  *   COMMIT_MS / REVEAL_MS  phase timers for the server, default 60000 / 15000:
  *                       long enough to play eight tabs by hand.
- *   GEMINI_API_KEY      passed through, to try the match analyst.
+ *   GEMINI_*, ANALYST_*  the match analyst's settings, from the shell or `.env`:
+ *                       the only part of `.env` the fork's server is given.
  *   FORK_DATABASE_URL   Postgres for the fork's server, so a restart resumes live
  *                       matches from their journal. Its own database: the server
  *                       locks it, so never the one a hosted server uses. Unset,
@@ -103,8 +115,6 @@ const FORK_DIR = fileURLToPath(new URL('../contracts/deployments/fork/', import.
 const ALCHEMY_KEY = alchemyKey();
 const HUB_FORK_URL =
   process.env.FORK_BASE_RPC_URL || (ALCHEMY_KEY ? `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}` : 'https://base-rpc.publicnode.com');
-const SPOKE_FORK_URL =
-  process.env.FORK_ARB_RPC_URL || (ALCHEMY_KEY ? `https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}` : 'https://arbitrum-one-rpc.publicnode.com');
 
 function alchemyKey() {
   if (process.env.ALCHEMY_API_KEY) return process.env.ALCHEMY_API_KEY;
@@ -116,20 +126,32 @@ function alchemyKey() {
   return null;
 }
 
+/**
+ * A transport to one of our anvils. A fork answers a call only once it has
+ * fetched the state the call touches from the remote RPC, which under a rate
+ * limit can take far longer than viem's default 10 s.
+ */
+const local = (url) => http(url, { timeout: 120_000 });
+
+/**
+ * Compute units per second each anvil may spend on the remote RPC. Every fork
+ * on one Alchemy key shares that key's limit, so together they stay under it
+ * instead of each assuming the whole of it and all being throttled at once.
+ * `FORK_CUPS` overrides it.
+ */
+const forkCups = (forks) => Number(process.env.FORK_CUPS || Math.max(50, Math.floor(330 / forks)));
+
 /** An RPC URL fit for a log line: no API key in it. */
 const masked = (url) => url.replace(/\/v2\/[A-Za-z0-9_-]+/, '/v2/***').replace(/([?&](?:key|apikey|token)=)[^&]+/i, '$1***');
 
 const HUB_PORT = Number(process.env.FORK_HUB_PORT || 8645);
-const SPOKE_PORT = Number(process.env.FORK_SPOKE_PORT || 8646);
 const SERVER_PORT = Number(process.env.FORK_SERVER_PORT || 8791);
 const CLIENT_PORT = Number(process.env.FORK_CLIENT_PORT || 5176);
 const FILL_DELAY_MS = Number(process.env.FORK_FILL_DELAY_MS || 5_000);
 const MAINNET_ECONOMICS = process.env.FORK_MAINNET_ECONOMICS === '1';
 
 const HUB_CHAIN_ID = 8453;
-const SPOKE_CHAIN_ID = 42161;
 const HUB_RPC = `http://127.0.0.1:${HUB_PORT}`;
-const SPOKE_RPC = `http://127.0.0.1:${SPOKE_PORT}`;
 const WS_URL = `ws://localhost:${SERVER_PORT}`;
 
 // Chainlink VRF v2.5 on Base: the same coordinator `Deploy.s.sol` defaults to.
@@ -144,8 +166,49 @@ const V4_QUOTER = '0x0d5e0f971ed27fbff6c2837bf31316121532048d';
 const ACROSS = JSON.parse(readFileSync(new URL('../contracts/config/across.json', import.meta.url), 'utf8')).chains;
 const HUB_POOL = ACROSS[HUB_CHAIN_ID].spokePool;
 const HUB_WETH = ACROSS[HUB_CHAIN_ID].weth;
-const SPOKE_POOL = ACROSS[SPOKE_CHAIN_ID].spokePool;
-const SPOKE_WETH = ACROSS[SPOKE_CHAIN_ID].weth;
+
+/**
+ * The spokes a player can stake from, each an anvil fork of the real chain
+ * with its real Across SpokePool. The first one run is what `&chain=spoke`
+ * and `npm run play -- --from spoke` mean; the alias is what `&chain=` and
+ * `--from` take.
+ */
+const SPOKE_CHAINS = [
+  { alias: 'arb', chainId: 42161, name: 'Arbitrum', urlEnv: 'FORK_ARB_RPC_URL', alchemy: 'arb-mainnet', publicRpc: 'https://arbitrum-one-rpc.publicnode.com', portEnv: 'FORK_SPOKE_PORT', port: 8646, blockSeconds: 1 },
+  { alias: 'op', chainId: 10, name: 'Optimism', urlEnv: 'FORK_OP_RPC_URL', alchemy: 'opt-mainnet', publicRpc: 'https://optimism-rpc.publicnode.com', portEnv: 'FORK_OP_PORT', port: 8647, blockSeconds: 2 },
+  { alias: 'eth', chainId: 1, name: 'Ethereum', urlEnv: 'FORK_ETH_RPC_URL', alchemy: 'eth-mainnet', publicRpc: 'https://ethereum-rpc.publicnode.com', portEnv: 'FORK_ETH_PORT', port: 8648, blockSeconds: 12 },
+];
+const SPOKES = pickSpokes(process.env.FORK_SPOKES).map((chain) => {
+  const port = Number(process.env[chain.portEnv] || chain.port);
+  const rpc = `http://127.0.0.1:${port}`;
+  return {
+    ...chain,
+    port,
+    rpc,
+    forkUrl: process.env[chain.urlEnv] || (ALCHEMY_KEY ? `https://${chain.alchemy}.g.alchemy.com/v2/${ALCHEMY_KEY}` : chain.publicRpc),
+    client: createPublicClient({ transport: local(rpc) }),
+    pool: ACROSS[chain.chainId].spokePool,
+    weth: ACROSS[chain.chainId].weth,
+  };
+});
+
+/** `FORK_SPOKES=arb,op`: those spokes, in that order. Unset: all of them. */
+function pickSpokes(spec) {
+  if (!spec) return SPOKE_CHAINS;
+  const picked = spec.split(',').map((alias) => alias.trim().toLowerCase()).filter(Boolean).map((alias) => {
+    const chain = SPOKE_CHAINS.find((c) => c.alias === alias);
+    if (!chain) {
+      console.error(`FORK_SPOKES: no spoke "${alias}". Known: ${SPOKE_CHAINS.map((c) => c.alias).join(', ')}.`);
+      process.exit(1);
+    }
+    return chain;
+  });
+  if (picked.length === 0) {
+    console.error('FORK_SPOKES names no spoke: leave it unset for all of them.');
+    process.exit(1);
+  }
+  return picked;
+}
 
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
@@ -206,11 +269,10 @@ const MATCHMAKING_TIERS = [
 const roles = forkRoles();
 const players = forkPlayers();
 
-const hub = createPublicClient({ transport: http(HUB_RPC) });
-const spoke = createPublicClient({ transport: http(SPOKE_RPC) });
+const hub = createPublicClient({ transport: local(HUB_RPC) });
 
 /** A wallet client for an account anvil signs for (every mnemonic account, and anything impersonated). */
-const signerOn = (rpc, address) => createWalletClient({ account: address, transport: http(rpc) });
+const signerOn = (rpc, address) => createWalletClient({ account: address, transport: local(rpc) });
 
 const abiOf = (contract) => JSON.parse(readFileSync(artifactPath(`${CONTRACTS}out/`, contract), 'utf8')).abi;
 
@@ -245,7 +307,7 @@ let stopping = false;
 
 // ------------------------------------------------------------------ output
 
-const COLORS = { hub: 90, spoke: 90, server: 36, client: 35, fork: 32, vrf: 33, across: 34 };
+const COLORS = { hub: 90, arb: 90, op: 90, eth: 90, server: 36, client: 35, fork: 32, vrf: 33, across: 34 };
 
 function log(tag, line) {
   process.stdout.write(`\x1b[${COLORS[tag] ?? 0}m[${tag}]\x1b[0m ${line}\n`);
@@ -335,15 +397,54 @@ async function listening(port) {
 
 async function assertPortsFree() {
   const busy = [];
-  for (const [name, port] of [
-    ['hub', HUB_PORT],
-    ['spoke', SPOKE_PORT],
-    ['server', SERVER_PORT],
-    ['client', CLIENT_PORT],
+  for (const [name, port, env] of [
+    ['hub', HUB_PORT, 'FORK_HUB_PORT'],
+    ...SPOKES.map((s) => [s.name, s.port, s.portEnv]),
+    ['server', SERVER_PORT, 'FORK_SERVER_PORT'],
+    ['client', CLIENT_PORT, 'FORK_CLIENT_PORT'],
   ]) {
-    if (await listening(port)) busy.push(`${name} :${port} (set FORK_${name.toUpperCase()}_PORT to move it)`);
+    if (await listening(port)) busy.push(`${name} :${port} (set ${env} to move it)`);
   }
   if (busy.length > 0) fail(`Ports already in use: ${busy.join(', ')}`);
+}
+
+/**
+ * Asks every chain's fork RPC for its chain id before any anvil starts, so a
+ * network the Alchemy app has not enabled (a 403 naming the network) stops
+ * the start with what to do, rather than one anvil dying mid-start.
+ */
+async function checkForkSources() {
+  const problems = [];
+  for (const { name, url, urlEnv, alias } of [
+    { name: 'Base', url: HUB_FORK_URL, urlEnv: 'FORK_BASE_RPC_URL' },
+    ...SPOKES.map((s) => ({ name: s.name, url: s.forkUrl, urlEnv: s.urlEnv, alias: s.alias })),
+  ]) {
+    try {
+      // A 429 is a burst limit, often left over from a run just stopped: wait it out a few times.
+      let response;
+      for (let attempt = 1; ; attempt++) {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (response.status !== 429 || attempt === 5) break;
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+      }
+      const body = await response.json().catch(() => ({}));
+      if (body.result) continue;
+      const message = String(body.error?.message ?? `HTTP ${response.status}`);
+      const disabled = /not enabled for this app/i.test(message);
+      problems.push(
+        `${name}: ${disabled ? 'this network is not enabled on your Alchemy app (dashboard.alchemy.com → your app → Networks)' : masked(message)}. ` +
+          `Or set ${urlEnv} to another archive RPC${alias ? `, or leave ${name} out with FORK_SPOKES=${SPOKES.filter((s) => s.alias !== alias).map((s) => s.alias).join(',') || 'arb'}` : ''}.`,
+      );
+    } catch (error) {
+      problems.push(`${name}: ${masked(url)} did not answer (${reason(error)}). Set ${urlEnv} to another archive RPC.`);
+    }
+  }
+  if (problems.length) fail(`Cannot fork every chain:\n  ${problems.join('\n  ')}`);
 }
 
 async function waitForAnvil(rpc, chainId, source) {
@@ -394,8 +495,8 @@ async function asImpersonated(url, address, fn) {
 // -------------------------------------------------------------- registries
 
 /**
- * The deploy scripts write `deployments/<chainId>.json`, which for 8453 and
- * 42161 is where the real chains' registries are committed. Each is set aside
+ * The deploy scripts write `deployments/<chainId>.json`, which for a mainnet
+ * is where the real chain's registry is committed. Each is set aside
  * before a deploy and put back after; the fork's own go to `deployments/fork/`.
  */
 const setAside = new Map();
@@ -459,11 +560,11 @@ function runDeploy(script, url, settings) {
   run('forge script', 'forge', ['script', script, '--rpc-url', url, '--broadcast', '--slow'], { cwd: CONTRACTS, env });
 }
 
-/** Clears EIP-7702 delegations the public test accounts carry on mainnet (sweepers), on both forks. */
+/** Clears EIP-7702 delegations the public test accounts carry on mainnet (sweepers), on every fork. */
 async function clearTestAccounts() {
   for (let index = 0; index < FORK_ACCOUNT_COUNT; index++) {
     const { address } = forkAccount(index);
-    for (const url of [HUB_RPC, SPOKE_RPC]) {
+    for (const url of [HUB_RPC, ...SPOKES.map((spoke) => spoke.rpc)]) {
       await rpc(url, 'anvil_setCode', [address, '0x']);
       await rpc(url, 'anvil_setBalance', [address, numberToHex(parseEther('10000'))]);
     }
@@ -502,14 +603,14 @@ function deployHub(subId) {
   return takeForkRegistry(HUB_CHAIN_ID);
 }
 
-function deploySpoke(hubRegistry) {
-  backUpRegistry(SPOKE_CHAIN_ID);
-  runDeploy('script/DeploySpoke.s.sol:DeploySpoke', SPOKE_RPC, {
+function deploySpoke(spoke, hubRegistry) {
+  backUpRegistry(spoke.chainId);
+  runDeploy('script/DeploySpoke.s.sol:DeploySpoke', spoke.rpc, {
     SPOKE_OWNER: roles.safe.address,
     HUB_CHAIN_ID: String(HUB_CHAIN_ID),
     HUB_RECEIVER: hubRegistry.contracts.bridgeReceiver,
   });
-  return takeForkRegistry(SPOKE_CHAIN_ID);
+  return takeForkRegistry(spoke.chainId);
 }
 
 /** As the Safe at vrf.chain.link: Add Consumer. */
@@ -603,11 +704,11 @@ function withTimeout(promise, ms) {
 
 const b32 = (address) => pad(address, { size: 32 });
 
-/** Gives the Across relayer WETH on both chains and lets each pool take it. */
+/** Gives the Across relayer WETH on every chain and lets each pool take it. */
 async function fundAcrossRelayer() {
   for (const [url, client, weth, pool] of [
     [HUB_RPC, hub, HUB_WETH, HUB_POOL],
-    [SPOKE_RPC, spoke, SPOKE_WETH, SPOKE_POOL],
+    ...SPOKES.map((spoke) => [spoke.rpc, spoke.client, spoke.weth, spoke.pool]),
   ]) {
     const wallet = signerOn(url, roles.acrossRelayer.address);
     await sendAndWait(client, wallet, { address: weth, abi: wethAbi, functionName: 'deposit', value: parseEther('500') });
@@ -616,15 +717,26 @@ async function fundAcrossRelayer() {
 }
 
 /**
- * Plays an Across relayer, both ways, on the real SpokePools: reads each
- * deposit our contracts make on one fork and, `FILL_DELAY_MS` later, fills it
- * on the other with `fillRelay`, which pays the recipient and calls its
- * handler with the deposit's message.
+ * Plays an Across relayer between the hub and each spoke, both ways, on the
+ * real SpokePools: reads each deposit our contracts make on one fork and,
+ * `FILL_DELAY_MS` later, fills it on the other with `fillRelay`, which pays
+ * the recipient and calls its handler with the deposit's message.
  */
-function runAcrossRelayer(hubFrom, spokeFrom) {
-  relay({ name: 'spoke → hub', client: spoke, pool: SPOKE_POOL, origin: SPOKE_CHAIN_ID, from: spokeFrom }, { url: HUB_RPC, client: hub, pool: HUB_POOL, chainId: HUB_CHAIN_ID });
-  relay({ name: 'hub → spoke', client: hub, pool: HUB_POOL, origin: HUB_CHAIN_ID, from: hubFrom }, { url: SPOKE_RPC, client: spoke, pool: SPOKE_POOL, chainId: SPOKE_CHAIN_ID });
+function runAcrossRelayer(hubFrom, spokeHeads) {
+  const hubSide = { url: HUB_RPC, client: hub, pool: HUB_POOL, chainId: HUB_CHAIN_ID };
+  SPOKES.forEach((s, i) => {
+    const spokeSide = { url: s.rpc, client: s.client, pool: s.pool, chainId: s.chainId };
+    relay({ name: `${s.alias} → hub`, client: s.client, pool: s.pool, origin: s.chainId, from: spokeHeads[i] }, hubSide);
+    relay({ name: `hub → ${s.alias}`, client: hub, pool: HUB_POOL, origin: HUB_CHAIN_ID, from: hubFrom }, spokeSide);
+  });
 }
+
+/**
+ * One fill at a time per destination chain: two sent at once from the
+ * relayer's one account take the same nonce, and one of them is dropped.
+ * Three spokes all fill on the hub, so the queue is the chain's, not the route's.
+ */
+const fillQueues = new Map();
 
 function relay(source, destination) {
   const wallet = signerOn(destination.url, roles.acrossRelayer.address);
@@ -657,11 +769,9 @@ function relay(source, destination) {
     }
   }, 1_500).unref();
 
-  // One fill at a time: two sent at once from the relayer's one account
-  // take the same nonce, and one of them is dropped.
-  let fills = Promise.resolve();
   const queueFill = (deposit, attempt = 1) => {
-    fills = fills.then(() => fill(deposit, attempt));
+    const queued = (fillQueues.get(destination.url) ?? Promise.resolve()).then(() => fill(deposit, attempt));
+    fillQueues.set(destination.url, queued);
   };
 
   const fill = async (deposit, attempt) => {
@@ -782,10 +892,19 @@ async function seedGovernance(contracts) {
   }
 }
 
+/**
+ * The match analyst's settings (`GEMINI_API_KEY` and the rest of `GEMINI_*`
+ * and `ANALYST_*`), from the shell or `.env`. The rest of `.env` stays out:
+ * it names the real database and the real chain.
+ */
+function analystEnv() {
+  return Object.fromEntries(Object.entries(readDotEnv()).filter(([name, value]) => /^(GEMINI_|ANALYST_)/.test(name) && value !== ''));
+}
+
 /** Mines on a timer from now on, like the real chains, so confirmations and block-based waits progress on their own. */
 async function startIntervalMining() {
   await rpc(HUB_RPC, 'evm_setIntervalMining', [2]);
-  await rpc(SPOKE_RPC, 'evm_setIntervalMining', [1]);
+  for (const spoke of SPOKES) await rpc(spoke.rpc, 'evm_setIntervalMining', [spoke.blockSeconds]);
 }
 
 // -------------------------------------------------------------------- main
@@ -797,15 +916,17 @@ async function main() {
   log('fork', 'Building the TypeScript packages…');
   run('tsc --build', process.execPath, ['node_modules/typescript/bin/tsc', '--build']);
 
-  log('fork', `Forking Base from ${masked(HUB_FORK_URL)} and Arbitrum One from ${masked(SPOKE_FORK_URL)}…`);
+  log('fork', `Forking Base from ${masked(HUB_FORK_URL)}${SPOKES.map((s) => `, ${s.name} from ${masked(s.forkUrl)}`).join('')}…`);
   if (!ALCHEMY_KEY && !process.env.FORK_BASE_RPC_URL) {
-    log('fork', 'No archive RPC: public endpoints stop serving the fork block after a few minutes (Arbitrum first). Set ALCHEMY_API_KEY, or FORK_BASE_RPC_URL and FORK_ARB_RPC_URL.');
+    log('fork', 'No archive RPC: public endpoints stop serving the fork block after a few minutes. Set ALCHEMY_API_KEY, or FORK_BASE_RPC_URL and each FORK_<ARB|OP|ETH>_RPC_URL.');
   }
-  const anvilArgs = (url, port) => ['--fork-url', url, '--port', String(port), '--accounts', String(FORK_ACCOUNT_COUNT), '--quiet'];
+  await checkForkSources();
+  const cups = String(forkCups(1 + SPOKES.length));
+  const anvilArgs = (url, port) => ['--fork-url', url, '--port', String(port), '--accounts', String(FORK_ACCOUNT_COUNT), '--compute-units-per-second', cups, '--retries', '10', '--quiet'];
   start('hub', 'anvil', anvilArgs(HUB_FORK_URL, HUB_PORT));
-  start('spoke', 'anvil', anvilArgs(SPOKE_FORK_URL, SPOKE_PORT));
+  for (const spoke of SPOKES) start(spoke.alias, 'anvil', anvilArgs(spoke.forkUrl, spoke.port));
   await waitForAnvil(HUB_RPC, HUB_CHAIN_ID, HUB_FORK_URL);
-  await waitForAnvil(SPOKE_RPC, SPOKE_CHAIN_ID, SPOKE_FORK_URL);
+  for (const spoke of SPOKES) await waitForAnvil(spoke.rpc, spoke.chainId, spoke.forkUrl);
   await clearTestAccounts();
 
   log('fork', 'As the Safe: creating and funding a VRF v2.5 subscription on Chainlink’s Base coordinator…');
@@ -819,10 +940,11 @@ async function main() {
   log('fork', 'As the Safe: adding the VRF adapter as a consumer…');
   await addVrfConsumer(subId, c.randomnessOracle);
 
-  log('fork', 'Deploying the spoke on Arbitrum with DeploySpoke.s.sol…');
-  const spokeRegistry = deploySpoke(hubRegistry);
-  const s = spokeRegistry.contracts;
-  log('fork', `SpokeRouter ${s.spokeRouter} · avatars ${s.avatars}`);
+  for (const spoke of SPOKES) {
+    log('fork', `Deploying the spoke on ${spoke.name} with DeploySpoke.s.sol…`);
+    spoke.registry = deploySpoke(spoke, hubRegistry);
+    log('fork', `${spoke.name}: SpokeRouter ${spoke.registry.contracts.spokeRouter} · avatars ${spoke.registry.contracts.avatars}`);
+  }
 
   log('fork', 'Funding the Across relayer, the players and governance…');
   await fundAcrossRelayer();
@@ -832,24 +954,36 @@ async function main() {
   }
   await seedGovernance(c);
 
-  const [hubHead, spokeHead] = await Promise.all([hub.getBlockNumber(), spoke.getBlockNumber()]);
+  const [hubHead, ...spokeHeads] = await Promise.all([hub.getBlockNumber(), ...SPOKES.map((spoke) => spoke.client.getBlockNumber())]);
   runVrfNode(c.randomnessOracle, hubHead + 1n);
-  runAcrossRelayer(hubHead + 1n, spokeHead + 1n);
+  runAcrossRelayer(hubHead + 1n, spokeHeads.map((head) => head + 1n));
   await startIntervalMining();
 
+  const first = SPOKES[0];
   const profile = {
     net: 'fork',
     createdAt: new Date().toISOString(),
     hub: { chainId: HUB_CHAIN_ID, name: 'Base (fork)', rpc: HUB_RPC },
-    spoke: { chainId: SPOKE_CHAIN_ID, name: 'Arbitrum (fork)', rpc: SPOKE_RPC },
+    // The first spoke, as `--from spoke` means it; `spokes` has every one.
+    spoke: { chainId: first.chainId, name: `${first.name} (fork)`, rpc: first.rpc },
+    spokes: SPOKES.map((spoke) => ({
+      chainId: spoke.chainId,
+      alias: spoke.alias,
+      name: `${spoke.name} (fork)`,
+      rpc: spoke.rpc,
+      contracts: spoke.registry.contracts,
+      deployBlock: spoke.registry.deployBlock,
+      pool: spoke.pool,
+      weth: spoke.weth,
+    })),
     ws: WS_URL,
     client: `http://localhost:${CLIENT_PORT}`,
     deployBlock: hubRegistry.deployBlock,
-    spokeDeployBlock: spokeRegistry.deployBlock,
+    spokeDeployBlock: first.registry.deployBlock,
     contracts: c,
-    spokeContracts: s,
+    spokeContracts: first.registry.contracts,
     vrf: { coordinator: VRF_COORDINATOR, subId: subId.toString() },
-    across: { hubPool: HUB_POOL, spokePool: SPOKE_POOL, hubWeth: HUB_WETH, spokeWeth: SPOKE_WETH, api: null },
+    across: { hubPool: HUB_POOL, spokePool: first.pool, hubWeth: HUB_WETH, spokeWeth: first.weth, api: null },
     tokens,
     tiers: MATCHMAKING_TIERS,
     roles,
@@ -861,6 +995,7 @@ async function main() {
     tagged: false,
     env: {
       ...process.env,
+      ...analystEnv(),
       // Never the developer's real database from a shell that exported `.env`:
       // in memory unless FORK_DATABASE_URL names one for the fork alone. In
       // memory, a server restart refunds live matches instead of resuming them.
@@ -897,9 +1032,9 @@ async function main() {
       GOVERNOR_FROM_BLOCK: String(hubRegistry.deployBlock),
       AVATAR_COLLECTIONS: JSON.stringify([
         { chainId: HUB_CHAIN_ID, address: c.avatars, rpcUrl: HUB_RPC },
-        { chainId: SPOKE_CHAIN_ID, address: s.avatars, rpcUrl: SPOKE_RPC },
+        ...SPOKES.map((spoke) => ({ chainId: spoke.chainId, address: spoke.registry.contracts.avatars, rpcUrl: spoke.rpc })),
       ]),
-      SPOKES: JSON.stringify([{ chainId: SPOKE_CHAIN_ID, router: s.spokeRouter }]),
+      SPOKES: JSON.stringify(SPOKES.map((spoke) => ({ chainId: spoke.chainId, router: spoke.registry.contracts.spokeRouter }))),
       CROSS_CHAIN_FROM_BLOCK: String(hubRegistry.deployBlock),
     },
   });
@@ -909,7 +1044,9 @@ async function main() {
       ...process.env,
       VITE_WS_URL: WS_URL,
       VITE_RPC_URL: HUB_RPC,
-      VITE_SPOKE_RPC_URL: SPOKE_RPC,
+      VITE_SPOKE_RPC_URL: first.rpc,
+      // By chain id and by alias: `&chain=10` or `&chain=op`.
+      VITE_SPOKE_RPC_URLS: JSON.stringify(Object.fromEntries(SPOKES.flatMap((spoke) => [[spoke.chainId, spoke.rpc], [spoke.alias, spoke.rpc]]))),
       VITE_ACROSS_API: '',
       VITE_DEV_KEY: players[0].key,
       VITE_DEV_KEYS: players.map((p) => p.key).join(','),
@@ -918,8 +1055,10 @@ async function main() {
 
   const url = `http://localhost:${CLIENT_PORT}`;
   log('fork', '');
-  log('fork', `\x1b[1mReady → ${url}/?player=1 … ${url}/?player=8\x1b[0m   (add &chain=spoke to stake from Arbitrum)`);
-  log('fork', `Players (10,000 ETH on both forks; ${tokens.map((t) => `${t.funding} ${t.symbol}`).join(', ')}; ${PLAYER_LIQUID_LMS} LMS; ${PLAYER_STAKED_LMS} sLMS):`);
+  log('fork', `\x1b[1mReady → ${url}/?player=1 … ${url}/?player=8\x1b[0m`);
+  log('fork', `Stake from a spoke with &chain=${SPOKES.map((spoke) => `${spoke.alias} (${spoke.name})`).join(', ')}`);
+  log('fork', `One seat per chain: ${['?player=1', ...SPOKES.map((spoke, i) => `?player=${i + 2}&chain=${spoke.alias}`)].map((q) => `${url}/${q}`).join('  ')}`);
+  log('fork', `Players (10,000 ETH on every fork; ${tokens.map((t) => `${t.funding} ${t.symbol}`).join(', ')}; ${PLAYER_LIQUID_LMS} LMS; ${PLAYER_STAKED_LMS} sLMS):`);
   for (const player of players) log('fork', `  P${player.n}  ${player.address}`);
   log('fork', MAINNET_ECONOMICS ? 'Economics: Base defaults (no stakers’ share, no LMS discount).' : `Economics: stakers get ${DEMO_STAKER_BPS / 100}% of fees, LMS discount on (set as the timelock).`);
   log('fork', 'In another terminal: npm run play -- help');

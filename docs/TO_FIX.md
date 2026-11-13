@@ -1,0 +1,3 @@
+- match leaving penalty
+- afk player penalty
+- history/reads tab

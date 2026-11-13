@@ -94,8 +94,8 @@ export interface AvatarEntry {
   chainId: number;
   /**
    * Resolved image URL, already rewritten from `ipfs://` to a gateway.
-   * Null when the metadata could not be read: the seat then falls back to its
-   * plain circle and the match is unaffected.
+   * Null when the metadata could not be read: the seat then keeps the face
+   * generated from its address and the match is unaffected.
    */
   image: string | null;
 }

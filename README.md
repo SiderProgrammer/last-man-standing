@@ -269,7 +269,8 @@ are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
 the guardian and the timelock. Each signs through a `Signer` interface, which
 is where a KMS would plug in; today every key is in the server's memory.
 
-**A portfolio project, not a product.** Nothing is on a public chain yet. The plan is
+**A portfolio project, not a product.** It is deployed on testnet only: the hub on
+Base Sepolia, spokes on Arbitrum Sepolia, OP Sepolia and Sepolia. The plan is
 testnet for playing, then an unpromoted mainnet demo to show it can be deployed there
 ([ADR 0012](docs/adr/0012-launch-scope.md)). Real use would need independent signers
 for the Safe, an independent audit and paid hosting, none of which this has. Do not
@@ -330,59 +331,115 @@ which is what makes a match replayable by a third party.
 
 ## Running it locally
 
+### What you need
+
+- **Node.js 20 or newer**, with npm, and **Git**.
+- **[Foundry](https://getfoundry.sh)** (`forge`, `anvil`, `cast`) on `PATH`, for
+  everything staked. Practice mode alone runs without it.
+- Optional: a free **Alchemy API key**, so the forks below read from an archive
+  node. Without one they use publicnode, which stops serving the fork block
+  after a few minutes.
+- Optional: a **`GEMINI_API_KEY`** for the [match analyst](#match-analyst).
+
+### Get the code
+
 ```bash
 git clone --recurse-submodules https://github.com/SiderProgrammer/last-man-standing
+cd last-man-standing
 npm install
-cp .env.example .env
 ```
 
 The Solidity dependencies (`forge-std`, OpenZeppelin) are git submodules under
 `contracts/lib/`. In a clone made without `--recurse-submodules`, run
-`git submodule update --init` before `forge build`.
+`git submodule update --init` first, or nothing under `contracts/` compiles.
 
-The server's `dev` and `start` scripts read this root `.env`; variables already set
-in the shell win. Practice mode needs no chain at all. In two terminals:
+No `.env` is needed for any of the three ways to run it below.
+
+### Every feature, in one command
+
+```bash
+npm run fork:base
+```
+
+This is the whole game: staked lobbies, matchmaking, settlement and disputes,
+cross-chain joins, paying in tokens, one-click play, avatars, play-mining,
+staking and governance. No testnet funds are needed. It forks Base (the hub)
+and three spokes, Arbitrum One, OP Mainnet and Ethereum, keeping their chain
+ids, and deploys the protocol on its production path. On the forks it plays the
+Chainlink VRF node and the Across relayer itself. It funds eight players with
+ETH on every chain, every token with a Uniswap v4 route (USDC, USDT, DAI,
+cbBTC), LMS and staked sLMS, and then starts the server and the client. The
+first start takes a few minutes. Ctrl+C stops everything, and every start is a
+fresh deploy.
+
+With an Alchemy key, which must have Base, Arbitrum, OP and Ethereum enabled:
+
+```bash
+ALCHEMY_API_KEY=<key> npm run fork:base
+```
+
+In PowerShell, run `$env:ALCHEMY_API_KEY="<key>"` first, then `npm run fork:base`.
+`FORK_SPOKES=arb` forks one spoke instead of three, which starts faster.
+
+When it prints `Ready`, open a tab per player. Each tab signs with its own
+funded key, so no wallet extension is needed:
+
+```
+http://localhost:5176/?player=1   …   http://localhost:5176/?player=8
+http://localhost:5176/?player=2&chain=arb     player 2, staking from Arbitrum
+http://localhost:5176/?player=3&chain=op      player 3, from OP Mainnet
+http://localhost:5176/?player=4&chain=eth     player 4, from Ethereum
+```
+
+Seats you do not want to play by hand can go to bots, which speak the real wire
+protocol. Run this in a second terminal while the fork is up:
+
+```bash
+npm run play -- table --seats 6 --humans 2   # P1 opens a lobby, bots take seats 3-6
+npm run play -- warp 1h                      # move time on every chain, e.g. past the challenge window
+npm run play -- help                         # disputes, governance, rewards, withdrawals, ...
+```
+
+[docs/PLAYTEST.md](docs/PLAYTEST.md) is the checklist of every feature, for this
+fork and for testnet (`npm run testnet -- up`).
+
+### Practice only, no chain
 
 ```bash
 npm run dev --workspace @lms/server     # ws://localhost:8787
 npm run dev --workspace @lms/client     # http://localhost:5173
 ```
 
-Open the client, connect a wallet, and start a practice match against house
-bots. Without a wallet extension, set `VITE_DEV_KEY` to any test private key and
-the client signs the login nonce with an in-page burner instead.
+Run these in two terminals. Open the client and start a practice match against
+house bots, as a guest or with a wallet. Nothing is staked or settled. The
+server reads an optional root `.env` (`cp .env.example .env`), which documents
+every setting. Variables already set in the shell take precedence.
 
-### On a mainnet fork, in one command
-
-Everything staked — lobbies, settlement, paying in USDC, USDT or DAI through
-Uniswap v4 — against real contracts and real liquidity, with no testnet funds
-and no `.env`. Needs [Foundry](https://getfoundry.sh) on `PATH`.
+### A lighter fork: `npm run dev:fork`
 
 ```bash
 npm run dev:fork
 ```
 
-It forks mainnet into anvil (chain 31337), deploys the protocol including
-`ZapJoin`, funds a test wallet with 1000 of each token, opens two lobbies, and
-starts the server and client wired to it. Open http://localhost:5174. Without a
-wallet extension the page signs with that funded test wallet on its own; with
-one, add the network (`http://127.0.0.1:8545`, chain id 31337) and rerun with
-`FORK_PLAYER=<your address>` to fund your own account. Ctrl+C stops everything.
+This forks Ethereum mainnet as a single local chain (31337), with a plain
+spoke beside it. The randomness oracle and the Across pools are mocks. It funds
+one test wallet with 1000 USDC, USDT and DAI, opens two lobbies, and serves the
+client on http://localhost:5174. Without a wallet extension, the page signs with
+that wallet on its own. With one, add the network (`http://127.0.0.1:8545`,
+chain id 31337) and rerun with `FORK_PLAYER=<your address>` to fund your own
+account. `?chain=spoke` stakes from the spoke. `FORK_RPC_URL` replaces the
+public RPC.
 
-It runs beside a normal `npm run dev` (ports 8788 and 5174, not 8787 and 5173).
-To exercise everything that has no UI yet — cancellation, governance,
-cross-chain joins, withdrawals — see [docs/SIMULATE.md](docs/SIMULATE.md), which drives the
-same fork with `cast`.
+### Ports
 
-`FORK_RPC_URL` swaps the public RPC for your own — worth doing for long
-sessions, since a pruned node eventually stops serving the fork block's state.
+| | Server | Client | Chains |
+| --- | --- | --- | --- |
+| `npm run fork:base` | 8791 | 5176 | 8645 Base, 8646 Arbitrum, 8647 OP, 8648 Ethereum |
+| `npm run dev:fork` | 8788 | 5174 | 8545 hub, 8546 spoke |
+| practice (`npm run dev`) | 8787 | 5173 | none |
 
-To rehearse the real Base deploy instead, use `npm run fork:base`. It forks
-Base and Arbitrum One with their own chain ids and deploys on the production
-path: Chainlink VRF, Across's real pools, and separate roles. It funds eight
-players, and `npm run play` drives any of them as bots beside browser tabs
-(`/?player=N`). [docs/PLAYTEST.md](docs/PLAYTEST.md) has a checklist of every
-feature, for that fork and for testnet (`npm run testnet -- up`).
+Each mode uses its own ports, so they can run side by side. Each fork's
+`FORK_*_PORT` variables move its ports.
 
 ### With a chain
 
@@ -432,12 +489,13 @@ router and receiver against the real SpokePools on Base, Arbitrum, Optimism and
 Ethereum (`BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `MAINNET_RPC_URL`),
 and `finalize` against Chainlink's sequencer uptime feed on Base, including the
 grace period after its last outage (`BASE_RPC_URL`).
-No real Across testnet deposit has been made yet; [docs/ACROSS.md](docs/ACROSS.md)
-says how. `npm run dev:fork` runs a hub and a spoke together, with mock Across pools
-and a local relayer between them; open the client with `?chain=spoke` to stake from
-the spoke.
-[docs/TESTNET.md](docs/TESTNET.md) walks through the same thing on two public
-testnets, and [docs/TODO.md](docs/TODO.md) lists what is still open.
+On testnet, a join from OP Sepolia was seated through Across's real pools, with our own
+key as the relayer because Across's testnet relayers did not fill it;
+[docs/ACROSS.md](docs/ACROSS.md) has the details. `npm run fork:base` runs the hub and
+three spokes against Across's real pools, and `npm run dev:fork` a hub and one spoke with
+mock pools; on either, open the client with `?chain=spoke` to stake from a spoke.
+[docs/TESTNET.md](docs/TESTNET.md) walks through the testnet deployment, and
+[docs/TODO.md](docs/TODO.md) lists what is still open.
 
 ## Tests
 

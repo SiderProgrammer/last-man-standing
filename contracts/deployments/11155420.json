@@ -1,0 +1,11 @@
+{
+  "chainId": 11155420,
+  "contracts": {
+    "acrossSpokePool": "0x4e8E101924eDE233C13e2D8622DC8aED2872d505",
+    "avatars": "0x9B8e41779a346890f0376dA9322A99ac9864bD7D",
+    "owner": "0xbf8Bc2B42Bd9465f3465692eA36B53a08959A75b",
+    "spokeRouter": "0x96b49DF496db35b9d78B817c4E76d0BE46A4Ff6C",
+    "weth": "0x4200000000000000000000000000000000000006"
+  },
+  "deployBlock": 51356357
+}

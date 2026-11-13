@@ -5,9 +5,13 @@
  * some seats by hand in browser tabs (`?player=N`), the rest by bots that
  * speak the real wire protocol and stake real (test) ETH.
  *
- *   --net fork      the stack `npm run fork:base` runs (default)
- *   --net testnet   Base Sepolia + Arbitrum Sepolia, with the server from
- *                   `npm run testnet -- up`; players from `npm run testnet -- accounts`
+ *   --net fork      the stack `npm run fork:base` runs (default): Base and its
+ *                   spokes Arbitrum, OP Mainnet and Ethereum
+ *   --net testnet   Base Sepolia and its spokes, with the server from
+ *                   `npm run testnet -- up`; players from `npm run testnet -- accounts`.
+ *
+ * On either, `--from spoke` joins from the first spoke and `--from arb|op|eth`
+ * (or a chain id) from that one.
  *
  * `npm run play -- help` lists the commands. docs/PLAYTEST.md walks through
  * every feature with them.
@@ -45,6 +49,7 @@ import {
 } from '@lms/contracts';
 import { BotClient, wsLink } from '@lms/harness';
 
+import { acrossFillAbi, fillDeposit } from './lib/acrossFill.mjs';
 import { loadProfile } from './lib/profile.mjs';
 
 const STATUS = ['None', 'Open', 'Pending', 'Live', 'Proposed', 'Settled', 'Cancelled'];
@@ -77,17 +82,18 @@ const HELP = `npm run play -- <command> [--net fork|testnet]
 
 Accounts and lobbies
   info                                   chains, contracts, roles, server
-  accounts                               every player: ETH on both chains, escrow balance, LMS, sLMS
+  accounts                               every player: ETH on every chain, escrow balance, LMS, sLMS
   lobbies [--last 10]                    the newest lobbies and their state
   status <match>                         one lobby: seats, origins, result, balances
 
 Seating and playing (match = 0x… id, #nonce, or "last")
   create --stake 0.001 --seats 4 [--as 1]                     open a private lobby
-  join <match> --players 2-4 [--from spoke] [--token USDC] [--lms 1000]
+  join <match> --players 2-4 [--from spoke|arb|op|eth [--relay]] [--token USDC] [--lms 1000]
+  relay <spoke tx> [--from arb|op|eth]                        fill a spoke join's Across deposit from DEPLOYER_PK (testnet)
   bots <match> --players 2-4 [--hold] [--think 500-3000]      seated players play it out
   fill <match> --players 2-4 [join and bots options]          join, then play
   table --seats 6 --humans 2 [--stake 0.001]                  lobby by P1, bots in seats humans+1…, you join P1…Phumans in tabs
-  queue --stake 0.001 --seats 4 --players 2-4 [--from spoke]  bots matchmake, stake, play
+  queue --stake 0.001 --seats 4 --players 2-4 [--from spoke|arb|op|eth]  bots matchmake, stake, play
 
 Lifecycle by hand
   lock <match> [--as N]   cancel <match> [--as N]   finalize <match> [--as N]
@@ -103,7 +109,7 @@ Play-mining (matchmade lobbies only)
   rewards [--players all] [--claim] [--release]   LMS earned per ended week, claimed into vesting, released as it vests
 
 Time (fork only)
-  warp <90s|10m|1h|2d|epoch>             moves both forks' clocks; "epoch" = past the next play-mining week
+  warp <90s|10m|1h|2d|epoch>             moves every fork's clock; "epoch" = past the next play-mining week
 
 Players: --players 2-4 | 1,3,5 | all.  --as N acts as player N.`;
 
@@ -111,7 +117,9 @@ Players: --players 2-4 | 1,3,5 | all.  --as N acts as player N.`;
 
 let profile;
 try {
-  profile = command === 'help' ? null : loadProfile(net);
+  // `--from op` both picks the spoke and joins from it; `--from spoke` takes the default one.
+  const spokeChoice = flags.from && flags.from !== 'spoke' && flags.from !== 'hub' ? flags.from : flags['spoke-chain'];
+  profile = command === 'help' ? null : loadProfile(net, { spoke: spokeChoice });
 } catch (error) {
   console.error(error.message);
   process.exit(1);
@@ -230,11 +238,13 @@ async function info() {
 }
 
 async function accounts() {
+  // Every spoke, not just the picked one: a player may stake from any of them.
+  const spokeClients = (profile.spokes ?? []).map((s) => ({ s, client: createPublicClient({ transport: http(s.rpc) }) }));
   const rows = await Promise.all(
     profile.players.map(async (p) => {
       const [hubEth, spokeEth, owed, lms, slms] = await Promise.all([
         hub.getBalance({ address: p.address }),
-        spoke ? spoke.getBalance({ address: p.address }) : 0n,
+        Promise.all(spokeClients.map(({ client }) => client.getBalance({ address: p.address }).catch(() => null))),
         hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [p.address] }),
         C.lmsToken ? hub.readContract({ address: C.lmsToken, abi: erc20Abi, functionName: 'balanceOf', args: [p.address] }) : 0n,
         C.stakedLms ? hub.readContract({ address: C.stakedLms, abi: erc20Abi, functionName: 'balanceOf', args: [p.address] }) : 0n,
@@ -242,12 +252,16 @@ async function accounts() {
       return { p, hubEth, spokeEth, owed, lms, slms };
     }),
   );
-  console.log(`     address                                     ${profile.hub.name.padEnd(14)} ${(profile.spoke?.name ?? '').padEnd(16)} escrow     LMS        sLMS`);
+  const spokeHeads = spokeClients.map(({ s }) => (s.alias ?? String(s.chainId)).padStart(10)).join(' ');
+  console.log(`     address                                     ${'hub'.padStart(10)} ${spokeHeads}    escrow       LMS       sLMS`);
   for (const { p, hubEth, spokeEth, owed, lms, slms } of rows) {
+    const onSpokes = spokeEth.map((b) => (b === null ? '?' : eth(b)).padStart(10)).join(' ');
     console.log(
-      `P${p.n}   ${p.address}  ${eth(hubEth).padStart(14)} ${eth(spokeEth).padStart(16)} ${eth(owed).padStart(9)} ${Number(formatEther(lms)).toFixed(0).padStart(9)} ${Number(formatEther(slms)).toFixed(0).padStart(10)}`,
+      `P${p.n}   ${p.address}  ${eth(hubEth).padStart(10)} ${onSpokes} ${eth(owed).padStart(9)} ${Number(formatEther(lms)).toFixed(0).padStart(9)} ${Number(formatEther(slms)).toFixed(0).padStart(10)}`,
     );
   }
+  if (spokeClients.length) console.log(`
+(ETH on ${['hub ' + profile.hub.name, ...spokeClients.map(({ s }) => `${s.alias ?? s.chainId} ${s.name}`)].join(', ')})`);
 }
 
 async function lobbies() {
@@ -290,7 +304,7 @@ async function status() {
       hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'seatOrigin', args: [id, seat] }),
       hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [seat] }),
     ]);
-    console.log(`  seat ${i}  ${seat} ${(byAddress.get(seat.toLowerCase()) ?? '').padEnd(3)} from ${origin === 0 ? profile.hub.name : `chain ${origin}`}  escrow balance ${eth(owed)}`);
+    console.log(`  seat ${i}  ${seat} ${(byAddress.get(seat.toLowerCase()) ?? '').padEnd(3)} from ${origin === 0 ? profile.hub.name : (profile.spokes?.find((s) => s.chainId === Number(origin))?.name ?? `chain ${origin}`)}  escrow balance ${eth(owed)}`);
   }
   if (m.status >= 4) {
     const result = await resultOf(id);
@@ -318,7 +332,7 @@ async function joinOne(id, p, m, how) {
     console.log(`  P${p.n} already seated`);
     return;
   }
-  if (how.from === 'spoke') return joinFromSpoke(id, p, m.stake);
+  if (how.from && how.from !== 'hub') return joinFromSpoke(id, p, m.stake);
   if (how.token) return joinWithToken(id, p, m.stake, how.token);
   if (how.lms) return joinWithLms(id, p, m.stake, parseEther(String(how.lms)));
   await send('hub', p.key, { address: C.escrow, abi: gameEscrowAbi, functionName: 'join', args: [id], value: m.stake }, `P${p.n} joins on ${profile.hub.name}`);
@@ -342,11 +356,14 @@ async function joinFromSpoke(id, p, stake) {
         stake,
       )
     : localQuote(stake, now);
-  await send('spoke', p.key, { address: router, abi: spokeRouterAbi, functionName: 'join', args: [id, zeroAddress, quote], value: inputAmount }, `P${p.n} stakes from ${profile.spoke.name} (${formatEther(inputAmount)} ETH incl. ${formatEther(inputAmount - stake)} Across fee)`);
+  const owedBefore = await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [p.address] });
+  const receipt = await send('spoke', p.key, { address: router, abi: spokeRouterAbi, functionName: 'join', args: [id, zeroAddress, quote], value: inputAmount }, `P${p.n} stakes from ${profile.spoke.name} (${formatEther(inputAmount)} ETH incl. ${formatEther(inputAmount - stake)} Across fee)`);
+  // `--relay`: fill it from the deployer rather than wait for Across's
+  // testnet relayers, which leave deposits with a message unfilled.
+  if (flags.relay) await relayDeposit(receipt);
   process.stdout.write(`  P${p.n} in transit…`);
   // A stake that lands in a lobby already full is credited instead of
   // seated: the balance growing is how that shows.
-  const owedBefore = await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'withdrawable', args: [p.address] });
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     if (await hub.readContract({ address: C.escrow, abi: gameEscrowAbi, functionName: 'hasSeat', args: [id, p.address] })) {
@@ -362,6 +379,39 @@ async function joinFromSpoke(id, p, stake) {
     process.stdout.write('.');
   }
   console.log(' not filled after 10 minutes. If the lobby filled meanwhile, the stake is credited: see `withdraw`.');
+}
+
+/**
+ * Fills a spoke join's Across deposit on the hub from the deployer, as a
+ * relayer would (scripts/lib/acrossFill.mjs). Repayment is asked for on the
+ * hub; Across's testnet may never make it.
+ */
+async function relayDeposit(spokeReceipt) {
+  if (net !== 'testnet') throw new Error('`--relay` is for testnet: the fork fills its mock pools itself.');
+  const relayer = profile.roles.deployer;
+  if (!relayer?.key) throw new Error('`--relay` fills from DEPLOYER_PK: set it in .env.');
+  const [deposit] = parseEventLogs({ abi: acrossFillAbi, eventName: 'FundsDeposited', logs: spokeReceipt.logs }).filter(
+    (log) => log.address.toLowerCase() === profile.across.spokePool.toLowerCase(),
+  );
+  if (!deposit) throw new Error(`No Across deposit in ${spokeReceipt.transactionHash}.`);
+  await fillDeposit({
+    hub,
+    send: (request, label) => send('hub', relayer.key, request, label),
+    relayer: relayer.address,
+    d: deposit.args,
+    originChainId: profile.spoke.chainId,
+    hubChainId: profile.hub.chainId,
+    hubPool: profile.across.hubPool,
+    hubWeth: profile.across.hubWeth,
+  });
+}
+
+/** `relay <spoke tx> [--from op]`: fills a join's Across deposit from the deployer. */
+async function relay() {
+  const hash = positional[1];
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash ?? '')) throw new Error('Usage: relay <spoke deposit tx> [--from arb|op|eth]');
+  if (!spoke) throw new Error('This network has no spoke.');
+  await relayDeposit(await spoke.getTransactionReceipt({ hash }));
 }
 
 function zapTokens() {
@@ -641,11 +691,11 @@ async function warp() {
   } else {
     seconds = parseDuration(arg);
   }
-  for (const url of [profile.hub.rpc, profile.spoke?.rpc].filter(Boolean)) {
+  for (const url of [profile.hub.rpc, ...(profile.spokes ?? []).map((s) => s.rpc)]) {
     await rpcCall(url, 'evm_increaseTime', [seconds]);
     await rpcCall(url, 'evm_mine', []);
   }
-  console.log(`Both forks moved ${seconds}s: chain time ${new Date((now + seconds) * 1000).toISOString()}`);
+  console.log(`Every fork moved ${seconds}s: chain time ${new Date((now + seconds) * 1000).toISOString()}`);
 }
 
 // --------------------------------------------------------------------- main
@@ -657,6 +707,7 @@ const COMMANDS = {
   status,
   create,
   join: () => join(),
+  relay,
   bots: () => bots(),
   fill,
   table,

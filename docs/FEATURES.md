@@ -18,7 +18,7 @@ the third-party integration behind it is a local stub.
 | Standard | Where | Why it is used |
 | --- | --- | --- |
 | **EIP-712** typed structured data | `SettlementLib`, `SessionKeyDelegate`, `BridgeJoinReceiver`, `packages/consensus/src/eip712/` | Attestors sign results, wallets sign session grants and withdrawals, and session keys sign every move as a readable structure; the domain binds a signature to one contract or chain |
-| **EIP-1153** transient storage | `SeatSetLib` | A scratch set that self-clears at end of transaction, turning the settlement permutation check from quadratic to linear |
+| **EIP-1153** transient storage | `PullPayable` (OpenZeppelin's `ReentrancyGuardTransient`) | The reentrancy lock costs about 100 gas per access instead of a cold `SSTORE` |
 | **EIP-1193** provider interface | `client/wallet/wallet.ts` | The browser talks to any injected wallet without knowing which one |
 | **EIP-7702** EOA code delegation | `SessionKeyDelegate` | One-click joins and withdrawals without changing the player's address — see [Account abstraction](#account-abstraction) |
 | **ERC-721** | `PlayerAvatars` | Cosmetic avatars, one collection per chain |
@@ -68,8 +68,9 @@ so ids from two deployments or two chains never collide.
   funds, and a guardian pause expires after 7 days unless governance extends it.
   It does stop bridged withdrawals to a spoke, the one route that a bug in the
   receiver could use to reach every balance.
-- **Matchmade lobbies** take a seat only with a server-signed `JoinTicket`, and
-  only they earn play-mining; private lobbies keep join-by-id.
+- **Matchmade lobbies** are opened by the matchmaker key with the roster its queue
+  formed (`createMatchmade`), take a seat only from that roster, and are the only
+  lobbies that earn play-mining; private lobbies keep join-by-id.
 
 **The solvency invariant:** `address(this).balance == totalOwed + totalEscrowed`,
 asserted by a Foundry invariant campaign over random call sequences on many
@@ -166,8 +167,10 @@ match: `seed = keccak256(abi.encode(randomness, matchId))`.
 ## Cross-chain
 
 `SpokeRouter` · `BridgeJoinReceiver` · `packages/contracts/src/spokes.ts` ·
-[ACROSS.md](ACROSS.md) · **Live on the local fork and on mainnet forks; not yet
-on Across's testnet**
+[ACROSS.md](ACROSS.md) · **Live on the local forks, and against Across's real
+pools on mainnet forks and on testnet** (a join from OP Sepolia, filled by our own
+key; Across's testnet relayers skip message deposits). A withdrawal to a spoke has
+not run on testnet.
 
 Players on different chains share one lobby and one prize pool. The hub holds
 all value and all match state; a spoke holds nothing:
@@ -436,24 +439,19 @@ An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
 - **A transfer clears the sender's equipped slot**, so `avatarOf` never names a
   token the wallet sold.
 - **Every failure is soft**: resolved in the background, cached with misses,
-  and a seat without one is a plain circle.
+  and a seat without one wears a face generated from its address.
 
 ---
 
-## Gas engineering in Yul
+## No hand-written assembly in the value path
 
 `contracts/src/libraries/` · **Live**
 
-| Library | Technique | Why it is worth it |
-| --- | --- | --- |
-| `SettlementLib` | Hashes the ranking straight out of calldata | Settlement hashes a variable-length array on every call; the encoder copies it twice |
-| `SignatureLib` | One reusable `ecrecover` frame per batch | Runs `threshold` times per settlement |
-| `SeatSetLib` | EIP-1153 transient storage as a scratch set | Linear permutation check at the 256-seat ceiling; a revert needs no cleanup |
-| `HashLib` | Hand-rolled `chainHistory` and `drawBps` | Two- and three-word hashes with no encoder overhead |
-
-Every routine has a plain-Solidity reference beside it and a differential fuzz
-test, dirty high bits in calldata addresses included. `contracts/.gas-snapshot`
-is committed and CI fails on drift.
+Settlement hashing (`SettlementLib`), signature recovery (`SignatureLib`, over
+OpenZeppelin's `ECDSA`), the consensus hashes (`HashLib`) and the seat-set check
+are plain Solidity. Yul versions saved about 1k gas on a four-seat settlement
+(0.1%), which did not pay for the review burden, so they were removed.
+`contracts/.gas-snapshot` is committed and CI fails on drift.
 
 ---
 
@@ -493,10 +491,11 @@ is committed and CI fails on drift.
 | Golden transcripts | `engine/test/golden.test.ts` | `test/unit/GoldenTranscript.t.sol` |
 
 If an encoding drifts, exactly one suite fails instead of the two sides
-diverging silently. Beyond those: differential fuzzing of every Yul routine,
+diverging silently. Beyond those: fuzzing of the signature recovery,
 invariant campaigns for the escrow, staking and the rewards, engine property
 tests (termination, unique ranking, HP bounds, determinism, replay equivalence,
 tamper detection), fork tests against Across, VRF, Uniswap v4 and the sequencer
 feed, at least 90% branch coverage on every contract that moves value, and a
 seeded chaos suite
-against the server. Commands are in the README.
+against the server. Commands are in the README; the suite for each feature is in
+[ARCHITECTURE.md](ARCHITECTURE.md#testing).

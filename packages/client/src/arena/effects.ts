@@ -21,7 +21,7 @@ import { FLOAT, FX, TITLE } from './theme.js';
  * `gsap.context`, so `clear()` stops all of them at once.
  *
  * Textures come from the asset loader. Any that failed to load is replaced by
- * a generated glow, exactly as a seat without an avatar keeps its plain circle.
+ * a generated glow, exactly as a seat without an avatar keeps its generated face.
  */
 
 /**

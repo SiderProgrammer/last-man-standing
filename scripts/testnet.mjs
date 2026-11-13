@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 /**
- * `npm run testnet -- <command>` — gets the Base Sepolia + Arbitrum Sepolia
- * deployment ready to be played from 4, 6 or 8 accounts.
+ * `npm run testnet -- <command>` — gets the Base Sepolia hub and its spokes
+ * (Arbitrum Sepolia, OP Sepolia, Sepolia) ready to be played from 4, 6 or 8
+ * accounts. `--spoke-chain arb|op|eth` (or a chain id, or `PLAY_SPOKE`) picks
+ * the spoke `fund` and `doctor` look at; the default is the first deployed.
  *
  *   accounts [--count 8] [--force]   generates player keys into .testnet-accounts.json (gitignored)
- *   fund [--hub 0.01] [--spoke 0.005] [--spoke-players 1-2] [--roles 0.02] [--yes]
+ *   fund [--hub 0.01] [--spoke 0.005] [--spoke-players 1-2 | arb:2,op:3,eth:4] [--roles 0.02] [--yes]
  *                                    tops every player up to --hub / --spoke ETH, and the
  *                                    server's keeper, matchmaker and relayer keys to --roles
  *                                    on Base Sepolia, from FUNDER_PK (default DEPLOYER_PK).
+ *                                    `arb:2,op:3,eth:4` funds P2 on Arbitrum Sepolia, P3 on
+ *                                    OP Sepolia and P4 on Sepolia in one run.
  *                                    Prints the plan; sends only with --yes.
  *   doctor                           checks everything a staked match needs, and says what is missing
- *   up [--commit-ms 60000] [--db] [--client-only --ws wss://…]
+ *   up [--commit-ms 60000] [--db] [--relay] [--client-only --ws wss://…]
  *                                    runs the game server and a dev client against testnet,
  *                                    with one burner per tab: http://localhost:5173/?player=N
+ *                                    (&chain=arb|op|eth for a spoke), and every deployed spoke
+ *                                    in the server's SPOKES. --relay also fills the players'
+ *                                    spoke joins from DEPLOYER_PK, which Across's testnet
+ *                                    relayers leave unfilled (docs/ACROSS.md).
  *
  * Then play with `npm run play -- <command> --net testnet`.
  */
@@ -23,6 +31,7 @@ import { createPublicClient, createWalletClient, formatEther, http, parseAbi, pa
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { protocolConfigAbi } from '@lms/contracts';
 
+import { acrossFillAbi, fillDeposit, toBytes32 } from './lib/acrossFill.mjs';
 import { TESTNET, TESTNET_ACCOUNTS, loadProfile, readDotEnv, testnetPlayers } from './lib/profile.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -98,8 +107,37 @@ function numbers(spec) {
   return set;
 }
 
+/** The spoke `which` names: alias, chain id or name. */
+function findSpoke(spokes, which) {
+  const wanted = String(which).toLowerCase();
+  const found = spokes.find((s) => s.alias === wanted || String(s.chainId) === wanted || s.name.toLowerCase() === wanted);
+  if (!found) throw new Error(`No deployed spoke "${which}": ${spokes.map((s) => `${s.alias} (${s.chainId})`).join(', ') || 'none'}.`);
+  return found;
+}
+
+/**
+ * Who `fund` tops up on which spoke. `--spoke-players 1-2` means those
+ * players on the picked spoke (`--spoke-chain`); `arb:2,op:3,eth:4` names a
+ * spoke per entry, so one run sets up a table with a seat on every chain.
+ * Unset: every player on the picked spoke.
+ */
+function spokeAssignments(profile) {
+  const spec = flags['spoke-players'];
+  if (!spec || spec === true || !String(spec).includes(':')) {
+    return profile.spoke ? [{ ...profile.spoke, only: spec && spec !== true ? numbers(spec) : null }] : [];
+  }
+  const bySpoke = new Map();
+  for (const part of String(spec).split(',')) {
+    const [which, who] = part.split(':');
+    const spoke = findSpoke(profile.spokes, which);
+    if (!bySpoke.has(spoke.chainId)) bySpoke.set(spoke.chainId, { ...spoke, only: new Set() });
+    for (const n of numbers(who)) bySpoke.get(spoke.chainId).only.add(n);
+  }
+  return [...bySpoke.values()];
+}
+
 async function fund() {
-  const profile = loadProfile('testnet');
+  const profile = loadProfile('testnet', { spoke: flags['spoke-chain'] });
   const env = profile.env;
   const funderKey = env.FUNDER_PK || env.DEPLOYER_PK;
   if (!/^0x[0-9a-fA-F]{64}$/.test(funderKey ?? '')) throw new Error('Set FUNDER_PK (or DEPLOYER_PK) in .env: the account that pays.');
@@ -109,16 +147,15 @@ async function fund() {
   const funder = privateKeyToAccount(funderKey);
   const targets = { hub: parseEther(String(flags.hub ?? '0.01')), spoke: parseEther(String(flags.spoke ?? '0.005')), roles: parseEther(String(flags.roles ?? '0.02')) };
   const sides = [
-    { side: 'hub', ...profile.hub },
-    ...(profile.spoke ? [{ side: 'spoke', ...profile.spoke }] : []),
+    { side: 'hub', kind: 'hub', ...profile.hub, only: null },
+    ...spokeAssignments(profile).map((s) => ({ side: `spoke ${s.chainId}`, kind: 'spoke', chainId: s.chainId, name: s.name, rpc: s.rpc, only: s.only })),
   ];
 
   const plan = [];
-  for (const { side, chainId, name, rpc } of sides) {
+  for (const { side, kind, chainId, name, rpc, only } of sides) {
     const client = createPublicClient({ transport: http(rpc) });
-    const only = side === 'spoke' && flags['spoke-players'] ? numbers(flags['spoke-players']) : null;
-    const recipients = players.filter((p) => !only || only.has(p.n)).map((p) => ({ label: `P${p.n}`, address: p.address, target: targets[side] }));
-    if (side === 'hub') {
+    const recipients = players.filter((p) => !only || only.has(p.n)).map((p) => ({ label: `P${p.n}`, address: p.address, target: targets[kind] }));
+    if (kind === 'hub') {
       for (const role of ['keeper', 'matchmaker', 'sessionRelayer']) {
         const r = profile.roles[role];
         if (r) recipients.push({ label: role, address: r.address, target: targets.roles });
@@ -151,7 +188,7 @@ async function fund() {
 // ------------------------------------------------------------------- doctor
 
 async function doctor() {
-  const profile = loadProfile('testnet');
+  const profile = loadProfile('testnet', { spoke: flags['spoke-chain'] });
   const env = profile.env;
   const C = profile.contracts;
   const hub = createPublicClient({ transport: http(profile.hub.rpc) });
@@ -164,15 +201,8 @@ async function doctor() {
   const warn = (line) => console.log(`  note  ${line}`);
 
   console.log('Chains');
-  for (const [side, expected] of [
-    ['hub', TESTNET.hubChainId],
-    ['spoke', TESTNET.spokeChainId],
-  ]) {
-    const config = profile[side];
-    if (!config) {
-      warn(`no ${side} registry: cross-chain joins are off`);
-      continue;
-    }
+  if (profile.spokes.length === 0) warn('no spoke registry: cross-chain joins are off');
+  for (const [config, expected] of [[profile.hub, TESTNET.hubChainId], ...profile.spokes.map((s) => [s, s.chainId])]) {
     try {
       const id = await createPublicClient({ transport: http(config.rpc) }).getChainId();
       if (id === expected) ok(`${config.name} RPC answers (${id})`);
@@ -240,11 +270,18 @@ async function doctor() {
   console.log('Players');
   const players = testnetPlayers();
   if (players.length === 0) bad('no players: npm run testnet -- accounts');
-  const spokeClient = profile.spoke && createPublicClient({ transport: http(profile.spoke.rpc) });
+  // Every spoke, since a player may stake from any of them: a seat needs the
+  // stake plus gas on the chain it stakes from.
+  const spokeClients = profile.spokes.map((s) => ({ s, client: createPublicClient({ transport: http(s.rpc) }) }));
   for (const p of players) {
-    const [h, s] = await Promise.all([hub.getBalance({ address: p.address }), spokeClient ? spokeClient.getBalance({ address: p.address }) : 0n]);
-    const line = `P${p.n} ${p.address}  ${formatEther(h)} ETH hub · ${formatEther(s)} ETH spoke`;
-    if (h >= parseEther('0.003')) ok(line);
+    const [h, ...onSpokes] = await Promise.all([
+      hub.getBalance({ address: p.address }),
+      ...spokeClients.map(({ client }) => client.getBalance({ address: p.address }).catch(() => null)),
+    ]);
+    const spokeText = spokeClients.map(({ s }, i) => `${s.alias} ${onSpokes[i] === null ? '?' : formatEther(onSpokes[i])}`).join(' · ');
+    const line = `P${p.n} ${p.address}  hub ${formatEther(h)}${spokeText ? ` · ${spokeText}` : ''} ETH`;
+    const enough = parseEther('0.003');
+    if (h >= enough || onSpokes.some((b) => b !== null && b >= enough)) ok(line);
     else bad(`${line}: fund it (npm run testnet -- fund)`);
   }
 
@@ -301,10 +338,9 @@ function start(tag, args, env) {
 }
 
 async function up() {
-  const profile = loadProfile('testnet');
+  const profile = loadProfile('testnet', { spoke: flags['spoke-chain'] });
   const env = readDotEnv();
   const C = profile.contracts;
-  const S = profile.spokeContracts;
   const players = testnetPlayers();
   const wsPort = Number(env.WS_PORT || 8787);
   const ws = flags.ws ?? `ws://localhost:${wsPort}`;
@@ -327,12 +363,13 @@ async function up() {
         JSON.stringify([4, 6, 8].map((seats) => ({ stake: parseEther('0.001').toString(), seats }))),
       MATCHMAKING_FILL_AFTER_MS: env.MATCHMAKING_FILL_AFTER_MS || '15000',
       GATEWAY_LIMITS: env.GATEWAY_LIMITS || JSON.stringify({ connectRatePerIp: 50, connectBurstPerIp: 100, loginRatePerIp: 50, loginBurstPerIp: 100 }),
-      SPOKES: env.SPOKES || (S.spokeRouter ? JSON.stringify([{ chainId: TESTNET.spokeChainId, router: S.spokeRouter }]) : ''),
+      // Every deployed spoke, so a wallet on any of them is offered a join.
+      SPOKES: env.SPOKES || JSON.stringify(profile.spokes.filter((s) => s.contracts.spokeRouter).map((s) => ({ chainId: s.chainId, router: s.contracts.spokeRouter }))),
       AVATAR_COLLECTIONS:
         env.AVATAR_COLLECTIONS ||
         JSON.stringify([
           ...(C.avatars ? [{ chainId: TESTNET.hubChainId, address: C.avatars, rpcUrl: profile.hub.rpc }] : []),
-          ...(S.avatars && profile.spoke ? [{ chainId: TESTNET.spokeChainId, address: S.avatars, rpcUrl: profile.spoke.rpc }] : []),
+          ...profile.spokes.filter((s) => s.contracts.avatars).map((s) => ({ chainId: s.chainId, address: s.contracts.avatars, rpcUrl: s.rpc })),
         ]),
       FEE_ROUTER: env.FEE_ROUTER || C.feeRouter || '',
       ...(zap.length && !env.ZAP_TOKENS ? { V4_QUOTER: TESTNET.v4Quoter, ZAP_TOKENS: JSON.stringify(zap) } : {}),
@@ -354,12 +391,21 @@ async function up() {
       VITE_WS_URL: ws,
       VITE_RPC_URL: profile.hub.rpc,
       VITE_SPOKE_RPC_URL: profile.spoke?.rpc ?? '',
+      // By chain id and by alias, so a tab can say `&chain=11155420` or `&chain=op`.
+      VITE_SPOKE_RPC_URLS: JSON.stringify(Object.fromEntries(profile.spokes.flatMap((s) => [[s.chainId, s.rpc], [s.alias, s.rpc]]))),
       VITE_ACROSS_API: profile.across.api,
       VITE_DEV_KEY: players[0]?.key ?? '',
       VITE_DEV_KEYS: players.map((p) => p.key).join(','),
     }),
   );
-  console.log(`[testnet] client: http://localhost:${clientPort}/?player=1 … /?player=${players.length || 8}  (&chain=spoke to stake from ${profile.spoke?.name ?? 'the spoke'})`);
+  console.log(`[testnet] client: http://localhost:${clientPort}/?player=1 … /?player=${players.length || 8}`);
+  if (profile.spokes.length) {
+    console.log(`[testnet] stake from a spoke with &chain=${profile.spokes.map((s) => `${s.alias} (${s.name})`).join(', ')}`);
+    const tabs = ['?player=1', ...profile.spokes.slice(0, 3).map((s, i) => `?player=${i + 2}&chain=${s.alias}`)];
+    console.log(`[testnet] one seat per chain: ${tabs.map((t) => `http://localhost:${clientPort}/${t}`).join('  ')}`);
+  }
+  if (flags.relay) await startRelayer(profile, players);
+  else if (profile.spokes.length) console.log("[testnet] no --relay: spoke joins wait for Across's testnet relayers, which skip them (docs/ACROSS.md)");
   const stop = () => {
     for (const child of children) {
       if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
@@ -369,6 +415,90 @@ async function up() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+}
+
+// -------------------------------------------------------------------- relay
+
+/** Spoke blocks a relayer looks back at start, so a join made just before is not missed. */
+const RELAY_LOOKBACK_BLOCKS = 300n;
+const RELAY_POLL_MS = 4_000;
+
+/**
+ * `up --relay`: watches every spoke's Across SpokePool for joins the test
+ * players make to the hub's `BridgeJoinReceiver`, and fills each one from
+ * DEPLOYER_PK, one at a time. Anyone else's deposit is left alone, so a
+ * stranger cannot spend the deployer's ETH. Each fill costs the relayer the
+ * stake: Across's testnet may never repay it.
+ */
+async function startRelayer(profile, players) {
+  const relayer = profile.roles.deployer;
+  if (!relayer?.key) throw new Error('`up --relay` fills from DEPLOYER_PK: set it in .env.');
+  const receiver = profile.contracts.bridgeReceiver;
+  if (!receiver) throw new Error('The hub registry has no bridgeReceiver: nothing to relay to.');
+  if (profile.spokes.length === 0) throw new Error('No spoke is deployed: nothing to relay.');
+
+  const hubChainId = TESTNET.hubChainId;
+  const hub = createPublicClient({ transport: http(profile.hub.rpc) });
+  const wallet = createWalletClient({ account: privateKeyToAccount(relayer.key), chain: chain(hubChainId, profile.hub.name, profile.hub.rpc), transport: http(profile.hub.rpc) });
+  const send = async (request, label) => {
+    const { request: prepared } = await hub.simulateContract({ account: wallet.account, ...request });
+    const hash = await wallet.writeContract(prepared);
+    const receipt = await hub.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') throw new Error(`${label} reverted: ${hash}`);
+    console.log(`[relay] ${label}  tx ${hash}`);
+    return receipt;
+  };
+
+  const byDepositor = new Map(players.map((p) => [toBytes32(p.address), `P${p.n}`]));
+  const recipient = toBytes32(receiver);
+  const seen = new Set();
+  let fills = Promise.resolve();
+
+  const balance = await hub.getBalance({ address: relayer.address });
+  console.log(`[relay] filling the players' spoke joins from ${relayer.address} (${formatEther(balance)} ETH on ${profile.hub.name}; each fill costs the stake)`);
+
+  for (const spoke of profile.spokes) {
+    const client = createPublicClient({ transport: http(spoke.rpc) });
+    let cursor = null;
+    let busy = false;
+    const tick = async () => {
+      const head = await client.getBlockNumber();
+      if (cursor === null) cursor = head > RELAY_LOOKBACK_BLOCKS ? head - RELAY_LOOKBACK_BLOCKS : 0n;
+      while (cursor <= head) {
+        const to = cursor + 999n < head ? cursor + 999n : head;
+        const logs = await client.getContractEvents({
+          address: spoke.contracts.acrossSpokePool,
+          abi: acrossFillAbi,
+          eventName: 'FundsDeposited',
+          args: { destinationChainId: BigInt(hubChainId) },
+          fromBlock: cursor,
+          toBlock: to,
+        });
+        for (const { args: d } of logs) {
+          const who = byDepositor.get(d.depositor.toLowerCase());
+          if (!who || d.recipient.toLowerCase() !== recipient) continue;
+          const key = `${spoke.chainId}:${d.depositId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          console.log(`[relay] ${who} staked ${formatEther(d.inputAmount)} ETH on ${spoke.name} (deposit ${d.depositId}): filling`);
+          fills = fills.then(() =>
+            fillDeposit({ hub, send, relayer: relayer.address, d, originChainId: spoke.chainId, hubChainId, hubPool: profile.across.hubPool, hubWeth: profile.across.hubWeth }).catch((error) =>
+              // Already filled (by `play --relay`, or by Across after all) lands here too.
+              console.log(`[relay] deposit ${d.depositId} from ${spoke.name} not filled: ${error.shortMessage ?? error.message}`),
+            ),
+          );
+        }
+        cursor = to + 1n;
+      }
+    };
+    setInterval(() => {
+      if (busy) return;
+      busy = true;
+      tick()
+        .catch((error) => console.log(`[relay] ${spoke.name} poll failed: ${error.shortMessage ?? error.message}`))
+        .finally(() => (busy = false));
+    }, RELAY_POLL_MS);
+  }
 }
 
 // --------------------------------------------------------------------- main

@@ -23,7 +23,9 @@ export function contentSecurityPolicy(env: Record<string, string | undefined>, o
   // Only the dev burner reads an RPC from the page; production signs through
   // the wallet, which talks to its own node.
   const rpcs = options.dev
-    ? [env.VITE_RPC_URL ?? DEV_RPC_URL, env.VITE_SPOKE_RPC_URL].flatMap((url) => (url ? [originOf(url)] : []))
+    ? [env.VITE_RPC_URL ?? DEV_RPC_URL, env.VITE_SPOKE_RPC_URL, ...Object.values(spokeRpcUrls(env.VITE_SPOKE_RPC_URLS))].flatMap((url) =>
+        url ? [originOf(url)] : [],
+      )
     : [];
   // Across's fee API, which the page asks to price a join from a spoke.
   const across = env.VITE_ACROSS_API ? [originOf(env.VITE_ACROSS_API)] : [];
@@ -73,4 +75,20 @@ function serverOrigins(wsUrl: string | undefined): string[] {
 
 function originOf(url: string): string {
   return new URL(url).origin;
+}
+
+/**
+ * `VITE_SPOKE_RPC_URLS`: each spoke's RPC by chain id, as JSON. Anything that
+ * is not an object of strings reads as none, so a bad value only turns the
+ * burner's spoke switch off.
+ */
+export function spokeRpcUrls(json: string | undefined): Record<string, string> {
+  if (!json) return {};
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return {};
+  }
 }

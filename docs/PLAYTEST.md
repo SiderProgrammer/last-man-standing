@@ -4,13 +4,13 @@ Two environments, the same tools:
 
 | | Local rehearsal fork | Testnet |
 | --- | --- | --- |
-| Chains | Base (8453) and Arbitrum One (42161), forked locally | Base Sepolia (84532) and Arbitrum Sepolia (421614) |
-| Deploy | `Deploy.s.sol` / `DeploySpoke.s.sol` on their **production path**, run fresh on every start | the committed `contracts/deployments/84532.json` and `421614.json` |
+| Chains | hub Base (8453); spokes Arbitrum One (42161), OP Mainnet (10), Ethereum (1); all forked locally | hub Base Sepolia (84532); spokes Arbitrum Sepolia (421614), OP Sepolia (11155420), Sepolia (11155111) |
+| Deploy | `Deploy.s.sol` / `DeploySpoke.s.sol` on their **production path**, run fresh on every start | the committed `contracts/deployments/<chainId>.json` |
 | Randomness | Chainlink's real Base VRF coordinator and a real subscription; the script delivers each answer as the coordinator does | Chainlink VRF on Base Sepolia |
-| Across | the real SpokePools on both forks; the script plays the relayer (fills after 5 s, no fee) | Across's testnet relayers (about a minute, real fee, unreliable) |
+| Across | the real SpokePools on every fork; the script plays the relayer (fills after 5 s, no fee) | Across's real testnet pools; `up --relay` fills the joins from `DEPLOYER_PK`, since Across's testnet relayers skip them |
 | Tokens | every token with a live Uniswap v4 route at the fork block (USDC, USDT, DAI, cbBTC) | USDC, if a v4 route prices (`doctor` says) |
-| Time | `npm run play -- warp 1h` moves both chains | real time only |
-| Players | 8 anvil test accounts, 10,000 ETH on both chains, tokens, 50k LMS, 300k sLMS | 8 generated keys, funded from your deployer |
+| Time | `npm run play -- warp 1h` moves every chain | real time only |
+| Players | 8 anvil test accounts, 10,000 ETH on every chain, tokens, 50k LMS, 300k sLMS | 8 generated keys, funded from your deployer |
 | Start | `npm run fork:base` | `npm run testnet -- up` |
 
 Every seat can be a browser tab (`/?player=N` signs with player N's key, no
@@ -25,16 +25,22 @@ npm run fork:base
 ```
 
 Needs Foundry. It forks with an archive RPC: `ALCHEMY_API_KEY`, or the key of
-any Alchemy URL already in `.env`, or `FORK_BASE_RPC_URL` and
-`FORK_ARB_RPC_URL`. Without one it falls back to publicnode, which stops
-serving the fork block after a few minutes.
+any Alchemy URL already in `.env`, or `FORK_BASE_RPC_URL`, `FORK_ARB_RPC_URL`,
+`FORK_OP_RPC_URL` and `FORK_ETH_RPC_URL`. Without one it falls back to
+publicnode, which stops serving the fork block after a few minutes.
 
-Startup takes about two minutes: it forks both chains, creates and funds a
-VRF subscription as the Safe, deploys hub and spoke, adds the VRF adapter as a
+**The Alchemy app must have every network enabled**: Base, Arbitrum, OP Mainnet and
+Ethereum (dashboard.alchemy.com → the app → Networks). The script checks each one
+before it starts and says which is missing. To run fewer spokes, set
+`FORK_SPOKES=arb` (or `arb,op`); the first one listed is what `&chain=spoke` and
+`--from spoke` mean.
+
+Startup takes two to three minutes: it forks every chain, creates and funds a
+VRF subscription as the Safe, deploys the hub and each spoke, adds the VRF adapter as a
 consumer, funds the players, and starts the server (`:8791`) and client
 (`:5176`). The fork's registries and `profile.json` go to
-`contracts/deployments/fork/` (gitignored). The real `8453.json` and
-`42161.json`, when they exist, are put back as they were. Ctrl+C stops
+`contracts/deployments/fork/` (gitignored). A real registry for any of those
+chains, when it exists, is put back as it was. Ctrl+C stops
 everything; every start is a fresh deploy.
 
 Unless `FORK_MAINNET_ECONOMICS=1` is set, the script also switches on two
@@ -46,8 +52,17 @@ Open the tabs you want to play by hand:
 
 ```
 http://localhost:5176/?player=1   …   http://localhost:5176/?player=8
-http://localhost:5176/?player=5&chain=spoke     player 5, staking from Arbitrum
+http://localhost:5176/?player=2&chain=arb       player 2, staking from Arbitrum
+http://localhost:5176/?player=3&chain=op        player 3, staking from OP Mainnet
+http://localhost:5176/?player=4&chain=eth       player 4, staking from Ethereum
 ```
+
+`&chain=` also takes a chain id (`&chain=10`) or `spoke` (the first one). A chain
+the fork does not run is an error when you connect, not a silent switch to Base.
+Blocks come as on the real chains: every 2 s on Base and OP, every second on
+Arbitrum, every 12 s on Ethereum.
+
+The same with bots: `npm run play -- join <match> --players 2 --from op`.
 
 Each tab is a different wallet, and its title shows which. The commit window is
 60 s (`COMMIT_MS`), so you can switch between tabs; background tabs still play.
@@ -70,9 +85,10 @@ npm run testnet -- fund --yes        # sends it, from FUNDER_PK or DEPLOYER_PK
 ```
 
 `fund` tops every player up to `--hub 0.01` ETH on Base Sepolia and `--spoke
-0.005` on Arbitrum Sepolia. It tops the keeper, matchmaker and relayer keys up
-to `--roles 0.02`. If the deployer is short on Arbitrum Sepolia, fund only the
-players who will stake from there: `--spoke 0.004 --spoke-players 5-6`.
+0.005` on one spoke (`--spoke-chain arb|op|eth`, default Arbitrum Sepolia). It
+tops the keeper, matchmaker and relayer keys up to `--roles 0.02`. To fund only
+the players who will stake from a spoke: `--spoke-players 5-6`. To give each
+spoke its own players in one run: `--spoke-players arb:2,op:3,eth:4`.
 
 Then:
 
@@ -90,6 +106,44 @@ server is up, stop it while you test locally, or the two race for nonces and
 both run the matchmaking queue.
 
 Use the same `play` commands with `--net testnet` (or `PLAY_NET=testnet`).
+On testnet, `--from arb|op|eth` picks the spoke a `join` or `queue` stakes from
+(`--from spoke` is the first one), and `--relay` fills the deposit at once.
+
+### Four players on four chains
+
+One seat on each chain: P1 on the hub, P2 on Arbitrum Sepolia, P3 on OP Sepolia,
+P4 on Sepolia.
+
+```bash
+npm run testnet -- fund --hub 0.005 --spoke-players arb:2,op:3,eth:4 --yes
+npm run testnet -- doctor            # each player's ETH on every chain
+npm run testnet -- up --relay
+```
+
+`up` prints the four tabs; open them:
+
+```
+http://localhost:5173/?player=1
+http://localhost:5173/?player=2&chain=arb
+http://localhost:5173/?player=3&chain=op
+http://localhost:5173/?player=4&chain=eth
+```
+
+`&chain=` also takes a chain id (`&chain=11155420`). In each tab, **Stake** on
+the same lobby: open one with `npm run play -- create --stake 0.001 --seats 4 --as 1
+--net testnet`. It shows in every tab's lobby list, or add `&lobby=<id>` to a tab's address to
+highlight it. P1 joins on Base Sepolia.
+The others pay the stake plus Across's fee on their own chain, and `up --relay`
+fills each deposit on the hub (`[relay] P3 staked … on OP Sepolia`). The seat
+shows its chain's badge. `npm run play -- status last --net testnet` lists each
+seat's origin.
+
+Every `--relay` fill costs `DEPLOYER_PK` the stake on Base Sepolia, because
+Across's testnet may never repay it: keep about 0.001 ETH per spoke join there.
+`up --relay` fills only deposits from the players in `.testnet-accounts.json` to
+the hub's `BridgeJoinReceiver`, so nobody else can spend it. Without `--relay`,
+a spoke join waits for Across's relayers, which left the one such join tried
+unfilled (docs/ACROSS.md). It expires after two hours, and its ETH is lost.
 
 ## The `play` CLI
 
@@ -99,16 +153,17 @@ npm run play -- help
 
 | Command | What it does |
 | --- | --- |
-| `accounts` | every player: ETH on both chains, escrow balance, LMS, sLMS |
+| `accounts` | every player: ETH on every chain, escrow balance, LMS, sLMS |
 | `lobbies` / `status <match>` | lobby list; one lobby's seats, origins, result and balances |
 | `table --seats 6 --humans 2` | P1 opens a lobby, bots take seats 3–6 and wait; you join as P1 and P2 in tabs |
-| `create`, `join`, `bots`, `fill` | the same in steps: `join` takes `--from spoke`, `--token USDC`, `--lms 1000` |
+| `create`, `join`, `bots`, `fill` | the same in steps: `join` takes `--from spoke` (testnet: `--from arb|op|eth`, `--relay`), `--token USDC`, `--lms 1000` |
+| `relay <spoke tx> --from op` | testnet: fills a spoke join's deposit from `DEPLOYER_PK` |
 | `queue --seats 8 --players 1-8` | bots matchmake, stake into the matchmade lobby, play |
 | `finalize`, `withdraw`, `lock`, `cancel` | the permissionless lifecycle calls |
 | `dispute --as N`, `veto`, `dismiss`, `pause` | the dispute path and the guardian |
 | `rewards [--claim] [--release]` | play-mining per ended week, claim into vesting, release |
 | `gov propose / vote / state / queue / execute` | a full proposal changing the stakers' share of fees |
-| `warp 1h \| 2d \| epoch` | fork only: moves both chains' clocks |
+| `warp 1h \| 2d \| epoch` | fork only: moves every chain's clock |
 
 A match is a full id, `#nonce`, or `last`.
 
