@@ -1,5 +1,6 @@
 import { dom, store } from '../context.js';
 import { renderNav, showScreen } from '../ui/chrome.js';
+import { leaveMatchFor } from './match.js';
 
 /**
  * The way into the governance screen, which is not part of the main bundle:
@@ -23,6 +24,7 @@ function load(): Promise<Screen> {
 export function wireGovernanceNav(origin: string): void {
   serverOrigin = origin;
   dom.navGovernance.onclick = () => {
+    if (!leaveMatchFor()) return;
     showScreen('governance');
     refreshGovernance();
   };

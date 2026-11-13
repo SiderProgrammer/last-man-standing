@@ -46,12 +46,12 @@ export function showLobbyScreen(): void {
 }
 
 /**
- * The header's way between screens. During a match it offers nothing that
- * leaves the table: a seat that wanders off misses its rounds.
+ * The header's way between screens, the match included: leaving a table
+ * whose seat still plays asks first (see `leaveMatchFor` in `match.ts`).
  */
 export function renderNav(): void {
-  dom.navLobby.classList.toggle('hidden', current === 'lobby' || current === 'match');
-  dom.navGovernance.classList.toggle('hidden', !app.staking?.governor || current === 'match' || current === 'governance');
+  dom.navLobby.classList.toggle('hidden', current === 'lobby');
+  dom.navGovernance.classList.toggle('hidden', !app.staking?.governor || current === 'governance');
 }
 
 // ---------------------------------------------------------------- phone menu
@@ -85,7 +85,6 @@ export function wireChrome(): void {
     document.body.classList.toggle('menu-open', open);
     dom.navMenu.setAttribute('aria-expanded', String(open));
   };
-  dom.navLobby.onclick = () => showScreen('lobby');
   // Picking anything in the menu closes it.
   dom.topbarNav.addEventListener('click', (event) => {
     if (event.target instanceof HTMLButtonElement) closeMenu();

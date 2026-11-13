@@ -30,7 +30,7 @@ import { phasePlan, type PhasePlan } from '../game/phase.js';
 import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
-import { showLobbyScreen, showMatchScreen, toast } from '../ui/chrome.js';
+import { currentScreen, showLobbyScreen, showMatchScreen, showScreen, toast } from '../ui/chrome.js';
 import { callBack, cue, setSound, soundOn } from '../ui/alerts.js';
 import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
 import { renderWinnings } from '../wallet/payouts.js';
@@ -843,6 +843,10 @@ export function wireMatchControls(): void {
   });
   dom.tabAnalysis.classList.toggle('hidden', !app.analyst);
   dom.resultBack.onclick = leaveMatch;
+  // The header's Lobby, from any screen: from a match, it leaves the table.
+  dom.navLobby.onclick = () => {
+    if (leaveMatchFor()) showScreen('lobby');
+  };
   dom.resultAgain.onclick = () => {
     if (againTier) {
       net.send({ type: 'queue', stake: againTier.stake, seats: againTier.seats });
@@ -890,6 +894,21 @@ export function leaveMatch(): void {
   void renderWinnings();
   // A practice match is archived by now: "Your matches" lists it.
   net.send({ type: 'history' });
+}
+
+/**
+ * Off the match screen for another, from the header: asks first while the
+ * player's seat is still in a running match, then leaves the table as
+ * `leaveMatch` does. False when they chose to stay.
+ */
+export function leaveMatchFor(): boolean {
+  if (currentScreen() !== 'match') return true;
+  const playing = !matchOver() && app.you !== null && !eliminated();
+  if (playing && !window.confirm('Leave this match? Your seat keeps playing without you.')) {
+    return false;
+  }
+  leaveMatch();
+  return true;
 }
 
 /** True while the player's seat is out of a match that is still running. */
