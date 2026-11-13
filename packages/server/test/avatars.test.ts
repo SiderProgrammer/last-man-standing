@@ -202,6 +202,40 @@ describe('AvatarRegistry', () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it('lets a fresh read past a cached miss, but not one cached moments ago', async () => {
+    let clock = 0;
+    let minted = false;
+    const read = vi.fn(() => Promise.resolve(minted ? ([3n, 'ipfs://cid/3'] as const) : ([0n, ''] as const)));
+    const instance = registry({
+      reads: { [HUB]: read },
+      fetchImpl: jsonFetch({ image: 'ipfs://img/three.svg' }),
+      now: () => clock,
+    });
+    const alice = [seats[0] as AvatarSubject];
+
+    // Sat down without one: the miss is cached for the whole TTL.
+    expect(await instance.resolve(alice)).toEqual([]);
+    minted = true;
+    clock = 60_000;
+    expect(await instance.resolve(alice)).toEqual([]);
+
+    // Asking about itself, the wallet sees what it just minted...
+    const [fresh] = await instance.resolve(alice, { fresh: true });
+    expect(fresh).toMatchObject({ seat: 0, tokenId: '3', image: 'https://gateway.test/ipfs/img/three.svg' });
+    expect(read).toHaveBeenCalledTimes(2);
+
+    // ...and the next match's seats see it too, from the refreshed cache.
+    expect(await instance.resolve(alice)).toEqual([fresh]);
+
+    // Repeating the request straight away costs no further read.
+    clock += 9_999;
+    await instance.resolve(alice, { fresh: true });
+    expect(read).toHaveBeenCalledTimes(2);
+    clock += 1;
+    await instance.resolve(alice, { fresh: true });
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
   it('does no work at all when nothing is configured', async () => {
     const instance = new AvatarRegistry({ collections: [] });
 

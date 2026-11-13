@@ -121,8 +121,11 @@ refuses the placeholder URI, and rewrites only `avatars` in
 old collection stay there, and the server stops reading them.
 
 The server rewrites `ipfs://` to `IPFS_GATEWAY`, and the client's page has to allow
-that origin in `VITE_CSP_MEDIA`. `ipfs.io` works, but it is slow and rate-limited.
-A pinning service's own gateway is better; change both together.
+that origin in `VITE_CSP_MEDIA`. Both default to Filebase's public gateway
+(`https://ipfs.filebase.io`), which served the art in about half a second on 14 Nov.
+`ipfs.io` answered with HTTP 429, and Pinata's public gateway, where the art is
+pinned, took 4–7 s a file: past the server's metadata timeout, so every avatar
+resolved to "no picture". A dedicated gateway is better still; change both together.
 
 ## 3. Point the server and the client at both
 

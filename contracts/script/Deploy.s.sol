@@ -8,6 +8,7 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {ProtocolConfig} from "../src/ProtocolConfig.sol";
 import {GameEscrow} from "../src/GameEscrow.sol";
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
+import {AVATAR_ART_BASE_URI} from "./AvatarArt.sol";
 import {SessionKeyDelegate} from "../src/SessionKeyDelegate.sol";
 import {ZapJoin} from "../src/periphery/ZapJoin.sol";
 import {BridgeJoinReceiver} from "../src/periphery/BridgeJoinReceiver.sol";
@@ -201,7 +202,7 @@ contract Deploy is Registry, AcrossBook {
             "LMS Avatars",
             "LMSA",
             vm.envOr("AVATAR_MAX_SUPPLY", uint256(100)),
-            vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
+            vm.envOr("AVATAR_BASE_URI", AVATAR_ART_BASE_URI)
         );
         deployment.sessionDelegate = new SessionKeyDelegate(deployment.escrow);
         deployment.zap = _zap(deployment.escrow);

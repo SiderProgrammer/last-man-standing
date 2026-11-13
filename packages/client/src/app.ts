@@ -39,6 +39,7 @@ import {
   onAuthed,
   onAvatar,
   onLoginRejected,
+  paintAccountAvatar,
   resumeSession,
   wireWalletControls,
 } from './wallet/flows.js';
@@ -108,7 +109,8 @@ const HANDLERS: Handlers = {
   authed: (message) => {
     onAuthed();
     // From here the wallet button opens the account screen.
-    dom.connect.textContent = app.wallet?.isGuest ? 'Guest ▾' : `${short(message.address)} ▾`;
+    dom.connectLabel.textContent = app.wallet?.isGuest ? 'Guest ▾' : `${short(message.address)} ▾`;
+    paintAccountAvatar();
     dom.connect.title = 'Your account: staking, avatar and session key';
     dom.connect.classList.remove('primary');
     net.flush();

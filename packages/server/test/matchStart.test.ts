@@ -131,3 +131,72 @@ describe('one table at a time', () => {
     expect(rooms.get(room.matchId)).toBeNull();
   });
 });
+
+describe('avatars at the table', () => {
+  /** A registry stub on a hub and two spokes, answering from `owned`. */
+  function registry(owned: Record<string, { tokenId: string; image: string | null }>) {
+    const asked: Array<{ index: number; chainId: number }> = [];
+    const stub = {
+      empty: false,
+      chains: [84532, 421614, 11155420],
+      resolve: async (subjects: ReadonlyArray<{ index: number; address: string; chainId: number }>) => {
+        asked.push(...subjects.map(({ index, chainId }) => ({ index, chainId })));
+        return subjects.flatMap((subject) => {
+          const found = owned[`${subject.chainId}:${subject.address.toLowerCase()}`];
+          return found ? [{ seat: subject.index, chainId: subject.chainId, ...found }] : [];
+        });
+      },
+    };
+    return { stub, asked };
+  }
+
+  function lobbyWith(stub: unknown) {
+    return new Lobby({ archive: new MemoryArchive(), relayer: nullRelayer, commitMs: COMMIT_MS, revealMs: 5_000, avatars: stub as never });
+  }
+
+  it("dresses a practice seat in its wallet's avatar from any chain, and asks nothing about the bots", async () => {
+    const { stub, asked } = registry({
+      [`11155420:${HUMAN.toLowerCase()}`]: { tokenId: '1', image: 'https://ipfs.example/1.svg' },
+    });
+    const watcher = new FakeClient(HUMAN);
+    const lobby = lobbyWith(stub);
+    const room = lobby.createPractice(HUMAN, 3, 0);
+    lobby.attach(room.matchId, watcher, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Practice is on no chain: the human is asked about on every collection, the bots on none.
+    expect(asked).toEqual([
+      { index: 0, chainId: 84532 },
+      { index: 0, chainId: 421614 },
+      { index: 0, chainId: 11155420 },
+    ]);
+    expect(watcher.last('avatars')).toMatchObject({
+      entries: [{ seat: 0, chainId: 11155420, tokenId: '1', image: 'https://ipfs.example/1.svg' }],
+    });
+  });
+
+  it('prefers the first chain with a picture when a practice wallet holds several', async () => {
+    const human = HUMAN.toLowerCase();
+    const { stub } = registry({
+      [`84532:${human}`]: { tokenId: '4', image: null },
+      [`421614:${human}`]: { tokenId: '9', image: 'https://ipfs.example/9.svg' },
+      [`11155420:${human}`]: { tokenId: '2', image: 'https://ipfs.example/2.svg' },
+    });
+    const watcher = new FakeClient(HUMAN);
+    const lobby = lobbyWith(stub);
+    const room = lobby.createPractice(HUMAN, 1, 0);
+    lobby.attach(room.matchId, watcher, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(watcher.last('avatars')).toMatchObject({ entries: [{ seat: 0, chainId: 421614, tokenId: '9' }] });
+  });
+
+  it('asks a staked seat only about the chain it staked from', async () => {
+    const { stub, asked } = registry({});
+    const setup = setupWithBots(4, 'staked-avatars');
+    lobbyWith(stub).adopt(setup, [3], 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(asked).toEqual(setup.seats.filter((seat) => seat.index !== 3).map(({ index, chainId }) => ({ index, chainId })));
+  });
+});

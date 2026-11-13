@@ -30,7 +30,7 @@ export function contentSecurityPolicy(env: Record<string, string | undefined>, o
   // Across's fee API, which the page asks to price a join from a spoke.
   const across = env.VITE_ACROSS_API ? [originOf(env.VITE_ACROSS_API)] : [];
   // Where avatar images come from: the IPFS gateway the server rewrites to.
-  const media = (env.VITE_CSP_MEDIA ?? 'https://ipfs.io').split(/\s+/).filter(Boolean);
+  const media = (env.VITE_CSP_MEDIA ?? 'https://ipfs.filebase.io').split(/\s+/).filter(Boolean);
 
   const directives: Record<string, string[]> = {
     'default-src': ["'none'"],

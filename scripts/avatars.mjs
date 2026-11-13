@@ -127,7 +127,7 @@ async function check(baseUri, flags) {
   if (!baseUri?.startsWith('ipfs://') || !baseUri.endsWith('/')) {
     throw new Error('check needs the base URI as deployed, e.g. ipfs://bafybei…/');
   }
-  const gateway = env.IPFS_GATEWAY || 'https://ipfs.io/ipfs/';
+  const gateway = env.IPFS_GATEWAY || 'https://ipfs.filebase.io/ipfs/';
   const toHttp = (uri) => (uri.startsWith('ipfs://') ? `${gateway}${uri.slice('ipfs://'.length)}` : uri);
   const id = flags.id ?? '1';
 

@@ -7,7 +7,7 @@ interface ImportMetaEnv {
    * only on localhost: a deployed build must set it.
    */
   readonly VITE_WS_URL?: string;
-  /** Space-separated origins avatar images load from, for the CSP. Defaults to `https://ipfs.io`. */
+  /** Space-separated origins avatar images load from, for the CSP. Defaults to `https://ipfs.filebase.io`. */
   readonly VITE_CSP_MEDIA?: string;
   /** RPC used by the development burner wallet. */
   readonly VITE_RPC_URL?: string;

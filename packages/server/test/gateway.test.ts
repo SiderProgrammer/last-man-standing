@@ -872,10 +872,12 @@ describe('gateway session grants and signed moves', () => {
 describe('gateway: avatars and history from the chain', () => {
   it('answers which avatar the wallet wears, and none without a registry', async () => {
     const asked: unknown[] = [];
+    const options: unknown[] = [];
     const { socket } = harness({
       avatars: {
-        resolve: async (subjects) => {
+        resolve: async (subjects, resolveOptions) => {
           asked.push(...subjects);
+          options.push(resolveOptions);
           return [{ tokenId: '7', image: 'https://gateway.example/7.png' }];
         },
       },
@@ -883,6 +885,8 @@ describe('gateway: avatars and history from the chain', () => {
     await login(socket);
     await socket.deliver({ type: 'avatar', chainId: 84532 });
     expect(asked).toEqual([{ index: 0, address: account.address, chainId: 84532 }]);
+    // Its own avatar, asked after a mint: past a stale cached miss.
+    expect(options).toEqual([{ fresh: true }]);
     expect(socket.last('avatar')).toEqual({ type: 'avatar', chainId: 84532, avatar: { tokenId: '7', image: 'https://gateway.example/7.png' } });
 
     const bare = harness();

@@ -128,7 +128,7 @@ const ENV = z.object({
   GATEWAY_LIMITS: json,
   VERIFY_THREADS: whole(Math.max(1, Math.min(4, availableParallelism() - 1))),
   AVATAR_COLLECTIONS: text(),
-  IPFS_GATEWAY: text('https://ipfs.io/ipfs/'),
+  IPFS_GATEWAY: text('https://ipfs.filebase.io/ipfs/'),
   SESSION_DELEGATE: address,
   SESSION_RELAYER_PK: privateKey,
   MATCHMAKER_PK: privateKey,

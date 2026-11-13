@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
+import {AVATAR_ART_BASE_URI} from "./AvatarArt.sol";
 
 /// @notice Replaces one chain's avatar collection, leaving everything else that
 ///         chain has deployed alone. Run once per chain, hub and spokes alike.
@@ -17,7 +18,8 @@ import {PlayerAvatars} from "../src/PlayerAvatars.sol";
 ///      Environment:
 ///        DEPLOYER_PK        pays for the deploy; holds nothing afterwards
 ///        AVATAR_BASE_URI    `ipfs://<metadata folder CID>/`, from `npm run avatars`;
-///                           required, and the placeholder is refused
+///                           defaults to the pinned art (`AvatarArt.sol`), and
+///                           the old placeholder is refused
 ///        AVATAR_MAX_SUPPLY  defaults to 100; must not exceed the files pinned
 ///        AVATAR_OWNER       defaults to the registry's `timelock` (a hub), else
 ///                           its `owner` (a spoke's `SPOKE_OWNER`)
@@ -30,7 +32,7 @@ contract DeployAvatars is Script {
 
     function run() external returns (PlayerAvatars avatars) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
-        string memory baseUri = vm.envString("AVATAR_BASE_URI");
+        string memory baseUri = vm.envOr("AVATAR_BASE_URI", AVATAR_ART_BASE_URI);
         if (!_isRealBaseUri(baseUri)) revert BaseUriRequired();
 
         string memory path = string.concat(vm.projectRoot(), "/deployments/", vm.toString(block.chainid), ".json");

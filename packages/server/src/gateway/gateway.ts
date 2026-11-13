@@ -146,7 +146,12 @@ export interface GatewayOptions {
    */
   results?: { forPlayer(address: `0x${string}`, limit: number, before?: number): MatchSummary[] };
   /** Resolves the avatar a wallet wears on a chain, for `avatar`. Omitted, every wallet wears none. */
-  avatars?: { resolve(subjects: ReadonlyArray<{ index: number; address: `0x${string}`; chainId: number }>): Promise<Array<{ tokenId: string; image: string | null }>> };
+  avatars?: {
+    resolve(
+      subjects: ReadonlyArray<{ index: number; address: `0x${string}`; chainId: number }>,
+      options?: { fresh?: boolean },
+    ): Promise<Array<{ tokenId: string; image: string | null }>>;
+  };
   /** Writes post-match analyses. Omitted, `analyze` answers "unavailable". */
   analyst?: MatchAnalyst;
   /** Lobby directory from the chain bridge. Empty when running without an RPC. */
@@ -455,7 +460,10 @@ export class Gateway {
         return;
       }
       case 'avatar': {
-        const [found] = (await this.options.avatars?.resolve([{ index: 0, address, chainId: message.chainId }])) ?? [];
+        // Fresh: the wallet asks about itself after a mint or an equip, and a
+        // miss cached when it last sat down must not hide the new avatar.
+        const [found] =
+          (await this.options.avatars?.resolve([{ index: 0, address, chainId: message.chainId }], { fresh: true })) ?? [];
         session.send({
           type: 'avatar',
           chainId: message.chainId,

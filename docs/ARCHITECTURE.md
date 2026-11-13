@@ -849,7 +849,7 @@ variables. To exercise the same features against a running stack, see
 | `SESSION_RELAYER_PK` | — | Pays relayed gas. Its own key, holding only gas money |
 | `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |
 | `AVATAR_COLLECTIONS` | — | `PlayerAvatars` deployments as JSON: `chainId`, `address`, `rpcUrl` per chain |
-| `IPFS_GATEWAY` | `https://ipfs.io/ipfs/` | Prefix `ipfs://` is rewritten to when fetching metadata |
+| `IPFS_GATEWAY` | `https://ipfs.filebase.io/ipfs/` | Prefix `ipfs://` is rewritten to when fetching metadata |
 | `VITE_WS_URL` | current host `:8787` | Server the browser client connects to |
 | `VITE_DEV_KEY` | — | Dev-only burner key so the practice loop needs no wallet extension |
 

@@ -555,11 +555,12 @@ async function renderArena(state: PublicMatchState, you: number | null): Promise
     if (mounting !== pending) return;
     arena = mounted;
     arena.onPick = pickTarget;
-    // Avatars for this match may have landed while the canvas was still
-    // being created, in which case nothing has handed them to the arena yet.
-    if (app.avatars.length > 0) arena.setAvatars(app.avatars);
   }
   arena.render(state, you);
+  // After the render, which is what creates the seats: avatars that landed
+  // while the canvas was still being made, or before this match's first
+  // state, had no seat to go on. A seat already wearing its face skips it.
+  if (app.avatars.length > 0) arena.setAvatars(app.avatars);
   renderMove();
 }
 

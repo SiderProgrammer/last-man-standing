@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {DeploySpoke} from "../../script/DeploySpoke.s.sol";
+import {AVATAR_ART_BASE_URI} from "../../script/AvatarArt.sol";
 import {MockAcrossSpokePool} from "../../src/mocks/MockAcrossSpokePool.sol";
 
 /// @dev Runs the real spoke deploy on the local spoke chain, where it brings
@@ -38,6 +39,17 @@ contract DeploySpokeTest is Test {
         assertEq(d.router.hubChainId(), HUB_CHAIN);
         assertEq(d.router.hubReceiver(), hubReceiver);
         assertEq(d.router.hubWeth(), HUB_WETH, "the hub's WETH comes from the address book");
+    }
+
+    /// @dev A deploy that is given no `AVATAR_BASE_URI` (as `npm run fork:base`
+    ///      gives none) still ships the pinned art, not a placeholder that
+    ///      leaves every avatar without a picture.
+    function test_avatarsDefaultToThePinnedArt() public {
+        address player = makeAddr("player");
+        vm.prank(player);
+        d.avatars.mint();
+        assertEq(d.avatars.tokenURI(1), string.concat(AVATAR_ART_BASE_URI, "1"));
+        assertEq(d.avatars.maxSupply(), 100, "the art covers ids 1-100");
     }
 
     /// @dev A local node has no Across: the script brings a mock pool.

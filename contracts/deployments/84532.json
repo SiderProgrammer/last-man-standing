@@ -2,7 +2,7 @@
   "chainId": 84532,
   "contracts": {
     "acrossSpokePool": "0x82B564983aE7274c86695917BBf8C99ECb6F0F8F",
-    "avatars": "0x58F99A23477C3be7CED2F8b505e3909B1f53b174",
+    "avatars": "0x3B8B46deE362270A350035b384fE5184612E7105",
     "bridgeReceiver": "0x150541b9c5aF5C4ee4CF4FDF34a42a4fB4B7cC3f",
     "config": "0x9B8e41779a346890f0376dA9322A99ac9864bD7D",
     "escrow": "0x706AfEb6fDBD6c14e81daecc81721BB5eD46F2c5",

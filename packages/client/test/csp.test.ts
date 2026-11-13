@@ -83,7 +83,7 @@ describe('content security policy', () => {
 
     const production = directive(contentSecurityPolicy(env), 'connect-src') ?? [];
     expect(production.some((source) => source.includes(':95'))).toBe(false);
-    expect(production).toContain('https://ipfs.io');
+    expect(production).toContain('https://ipfs.filebase.io');
   });
 
   it("names every testnet spoke's RPC in a dev build, and ignores a malformed map", () => {

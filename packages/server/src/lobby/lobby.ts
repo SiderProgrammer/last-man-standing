@@ -13,7 +13,7 @@ import {
   type Transcript,
 } from '@lms/consensus';
 import { PRACTICE_CHAIN_ID } from '@lms/contracts';
-import { errorMessage } from '@lms/api';
+import { errorMessage, type AvatarEntry } from '@lms/api';
 import type { MatchSetup } from '@lms/engine';
 import { Room, type Client, type RoomOptions } from '../match/room.js';
 import type { AvatarRegistry } from '../chain/avatars.js';
@@ -432,7 +432,7 @@ export class Lobby {
   ): Room {
     const room = new Room(setup, this.roomOptions(setup, botSeats, staked, botDifficulty), now);
     this.register(room);
-    void this.decorate(room, setup);
+    void this.decorate(room, setup, botSeats);
     if (staked) void this.brief(room, setup);
     return room;
   }
@@ -490,12 +490,23 @@ export class Lobby {
    * whereas making the match wait on an IPFS gateway would let a slow one
    * eat into the round clock.
    */
-  private async decorate(room: Room, setup: MatchSetup): Promise<void> {
+  private async decorate(room: Room, setup: MatchSetup, botSeats: readonly number[] = []): Promise<void> {
     const registry = this.options.avatars;
     if (!registry || registry.empty) return;
 
+    // Bots own nothing: asking about them only spends RPC calls.
+    const bots = new Set(botSeats);
+    const subjects = setup.seats
+      .filter((seat) => !bots.has(seat.index))
+      // Practice is played on no chain, so a practice seat wears the avatar
+      // its wallet holds on any collection, asked in the registry's order
+      // (the hub first). Without this, practice never showed an avatar.
+      .flatMap((seat) =>
+        seat.chainId === PRACTICE_CHAIN_ID ? registry.chains.map((chainId) => ({ ...seat, chainId })) : [seat],
+      );
+
     try {
-      room.setAvatars(await registry.resolve(setup.seats));
+      room.setAvatars(onePerSeat(await registry.resolve(subjects)));
     } catch (error) {
       // Cosmetic: a failure here must never surface to the players.
       console.warn('[lobby] avatar resolution failed:', errorMessage(error));
@@ -638,4 +649,18 @@ function botAddress(matchId: `0x${string}`, seat: number): `0x${string}` {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Keeps one avatar per seat, in the order they were resolved: the first that
+ * has a picture, else the first at all. A practice seat is asked on every
+ * chain, and its wallet may hold an avatar on more than one.
+ */
+function onePerSeat(entries: readonly AvatarEntry[]): AvatarEntry[] {
+  const chosen = new Map<number, AvatarEntry>();
+  for (const entry of entries) {
+    const current = chosen.get(entry.seat);
+    if (!current || (!current.image && entry.image)) chosen.set(entry.seat, entry);
+  }
+  return [...chosen.values()];
 }

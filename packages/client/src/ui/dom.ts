@@ -19,6 +19,8 @@ export function queryDom(doc: Document = document) {
   const el = <T extends HTMLElement>(id: string) => byId<T>(doc, id);
   return {
     connect: el<HTMLButtonElement>('connect'),
+    connectAvatar: el<HTMLImageElement>('connect-avatar'),
+    connectLabel: el<HTMLSpanElement>('connect-label'),
     chainLabel: el<HTMLSpanElement>('chain-label'),
     topbarNav: el<HTMLElement>('topbar-nav'),
     navMenu: el<HTMLButtonElement>('nav-menu'),

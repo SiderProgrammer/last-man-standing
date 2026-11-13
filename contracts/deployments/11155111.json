@@ -2,7 +2,7 @@
   "chainId": 11155111,
   "contracts": {
     "acrossSpokePool": "0x5ef6C01E11889d86803e0B23e3cB3F9E9d97B662",
-    "avatars": "0xb6937a4EbFd1057F406e33F0E14fecd4f1972b4b",
+    "avatars": "0x9F2e048284860487738608fD1CD56CAE81098939",
     "owner": "0xbf8Bc2B42Bd9465f3465692eA36B53a08959A75b",
     "spokeRouter": "0xba03F8EfB0Ed787d8DCd664cD9E4d4479ed05E33",
     "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14"

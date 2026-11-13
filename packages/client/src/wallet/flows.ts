@@ -12,6 +12,7 @@ import { refreshOneClick } from './oneClick.js';
 import { Wallet } from './wallet.js';
 import { explainError } from '../ui/errors.js';
 import { burnerRpcFor } from './burnerChain.js';
+import { defaultAvatar } from '../assets/avatars.js';
 
 /**
  * Everything the player does with their wallet: connecting, logging in with
@@ -313,7 +314,33 @@ export function onAvatar(message: Extract<ServerMessage, { type: 'avatar' }>): v
   showAvatarImage(message.avatar?.image ?? null);
 }
 
+/** The picture of the NFT this wallet wears on its current chain, once the server has resolved it. */
+let wornImage: string | null = null;
+
+/**
+ * The small face on the account button, next to the address: the NFT avatar
+ * when the wallet wears one, otherwise the face the arena draws for it.
+ */
+export function paintAccountAvatar(): void {
+  const image = dom.connectAvatar;
+  const address = app.wallet?.address;
+  if (!address) {
+    image.classList.add('hidden');
+    image.removeAttribute('src');
+    return;
+  }
+  const fallback = defaultAvatar(address);
+  // A gateway that does not answer drops back to the generated face.
+  image.onerror = () => {
+    if (image.src !== fallback) image.src = fallback;
+  };
+  image.src = wornImage ?? fallback;
+  image.classList.remove('hidden');
+}
+
 function showAvatarImage(url: string | null): void {
+  wornImage = url;
+  paintAccountAvatar();
   const image = dom.avatarImage;
   if (!url) {
     image.classList.add('hidden');

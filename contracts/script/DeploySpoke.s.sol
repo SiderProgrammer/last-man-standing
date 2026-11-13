@@ -6,6 +6,7 @@ import {Registry} from "./Registry.sol";
 import {AcrossBook} from "./AcrossBook.sol";
 
 import {PlayerAvatars} from "../src/PlayerAvatars.sol";
+import {AVATAR_ART_BASE_URI} from "./AvatarArt.sol";
 import {SpokeRouter} from "../src/periphery/SpokeRouter.sol";
 import {IAcrossSpokePool} from "../src/vendor/across/IAcrossSpokePool.sol";
 import {IWETH9} from "../src/vendor/across/IWETH9.sol";
@@ -91,7 +92,7 @@ contract DeploySpoke is Registry, AcrossBook {
                 "LMS Avatars",
                 "LMSA",
                 vm.envOr("AVATAR_MAX_SUPPLY", uint256(100)),
-                vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
+                vm.envOr("AVATAR_BASE_URI", AVATAR_ART_BASE_URI)
             );
         }
         vm.stopBroadcast();

@@ -36,13 +36,29 @@ export interface AvatarSubject {
 type Avatar = Omit<AvatarEntry, 'seat'>;
 
 interface CacheEntry {
+  stored: number;
   expires: number;
   value: Avatar | null;
 }
 
-const DEFAULT_GATEWAY = 'https://ipfs.io/ipfs/';
+export interface ResolveOptions {
+  /**
+   * Re-reads anything cached more than `FRESH_FLOOR_MS` ago. For a wallet
+   * asking about itself: it has just minted or equipped, and a miss cached
+   * when it joined a match would otherwise hide its new avatar for the rest
+   * of the TTL.
+   */
+  fresh?: boolean;
+}
+
+const DEFAULT_GATEWAY = 'https://ipfs.filebase.io/ipfs/';
 const DEFAULT_TTL_MS = 5 * 60_000;
-const DEFAULT_TIMEOUT_MS = 4_000;
+const DEFAULT_TIMEOUT_MS = 8_000;
+/**
+ * How recent a cached entry a fresh read still accepts. Bounds what one
+ * socket can cost in RPC calls and gateway fetches by repeating `avatar`.
+ */
+const FRESH_FLOOR_MS = 10_000;
 
 /**
  * Resolves the avatar a seat is wearing.
@@ -98,12 +114,12 @@ export class AvatarRegistry {
    * different chains, and doing them in sequence would make the wait the sum of
    * every RPC rather than the slowest one.
    */
-  async resolve(subjects: readonly AvatarSubject[]): Promise<AvatarEntry[]> {
+  async resolve(subjects: readonly AvatarSubject[], options: ResolveOptions = {}): Promise<AvatarEntry[]> {
     if (this.empty) return [];
 
     const settled = await Promise.all(
       subjects.map(async (subject) => {
-        const value = await this.resolveOne(subject);
+        const value = await this.resolveOne(subject, options.fresh ?? false);
         return value === null ? null : { seat: subject.index, ...value };
       }),
     );
@@ -111,16 +127,18 @@ export class AvatarRegistry {
     return settled.filter((entry): entry is AvatarEntry => entry !== null);
   }
 
-  private async resolveOne(subject: AvatarSubject): Promise<Avatar | null> {
+  private async resolveOne(subject: AvatarSubject, fresh: boolean): Promise<Avatar | null> {
     const collection = this.clients.get(subject.chainId);
     if (!collection) return null;
 
     const key = `${subject.chainId}:${addressKey(subject.address)}`;
     const cached = this.cache.get(key);
-    if (cached && cached.expires > this.now()) return cached.value;
+    const now = this.now();
+    if (cached && cached.expires > now && !(fresh && now - cached.stored >= FRESH_FLOOR_MS)) return cached.value;
 
     const value = await this.read(collection, subject.chainId, subject.address);
-    this.cache.set(key, { value, expires: this.now() + this.ttlMs });
+    // Stored either way, so the next match's seats see what this read found.
+    this.cache.set(key, { value, stored: this.now(), expires: this.now() + this.ttlMs });
     return value;
   }
 
