@@ -90,7 +90,7 @@ contract DeploySpoke is Registry, AcrossBook {
                 d.owner,
                 "LMS Avatars",
                 "LMSA",
-                vm.envOr("AVATAR_MAX_SUPPLY", uint256(10_000)),
+                vm.envOr("AVATAR_MAX_SUPPLY", uint256(100)),
                 vm.envOr("AVATAR_BASE_URI", string("ipfs://bafyplaceholder/"))
             );
         }

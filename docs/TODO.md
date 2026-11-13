@@ -70,7 +70,9 @@ Features that have only run against mocks, or once by hand:
 
 - **Avatars.** `PlayerAvatars` is deployed on Base Sepolia and every testnet spoke, and
   avatars were minted on Base and Arbitrum in the 11 Nov fork playtest. Not yet seen: an
-  avatar minted on testnet showing in a testnet match.
+  avatar minted on testnet showing in a testnet match. The deployed collections point at
+  the placeholder base URI, so none has art yet: pin the art and redeploy with
+  `DeployAvatars` ([TESTNET.md](TESTNET.md#2a-avatar-art)).
 - **One-click play** ran on the fork once while the playtest tools were built (a relayed
   join; [PLAYTEST.md](PLAYTEST.md) §10), but could not be turned on in the 11 Nov
   playtest because the fork's clock had been warped. Deferred with 1.1: the burner is for

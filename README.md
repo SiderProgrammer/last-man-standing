@@ -187,7 +187,9 @@ Around that core:
   server pays the gas, up to a daily quota per wallet. See [Wallets](#wallets).
 - **Avatars** — a cosmetic ERC-721 collection, deployed per chain and owned by
   its timelock. Minting is free and limited to one per wallet, which stops one
-  wallet taking the supply but not someone with many wallets.
+  wallet taking the supply but not someone with many wallets. Every token's art is
+  public before it is minted, and ids go in mint order, so a player can see what
+  the next mint will draw and time it. Accepted: the art is cosmetic.
 - **Match analyst** — after a match, Gemini writes a post-match analysis for
   the sidebar, with key moments checked against the published
   rounds and clickable to replay. Commentary only: it reads the archive after

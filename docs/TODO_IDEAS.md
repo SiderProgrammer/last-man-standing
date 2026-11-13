@@ -1,5 +1,5 @@
+avatars on ipfs, selecting tab
 complete TODO.md
-avatars on ipfs?
 
 test, run all the features on local fork mainnet (dont forget cross chain)
 redeploy fixed game

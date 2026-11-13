@@ -1,3 +1,4 @@
 - match leaving penalty
 - afk player penalty
 - history/reads tab
+- disable match joining/creation until current match finished

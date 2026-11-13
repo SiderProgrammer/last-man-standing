@@ -89,6 +89,41 @@ on 2026-11-12. `--skip-simulation` takes the gas limits from the node instead.
 Nothing needs registering on the hub: the receiver takes a fill from any chain
 Across serves.
 
+## 2a. Avatar art
+
+The collections need their art pinned on IPFS before they are deployed: the base
+URI is set in the constructor, and changing it later on the hub takes a governance
+proposal. The art is 100 DiceBear "Pixel Art" faces (CC0), drawn from the token id,
+so a re-run makes the same files and the same CIDs.
+
+1. `npm run avatars -- images` writes `dist/avatars/images/1.svg … 100.svg`.
+2. Upload that folder **as a folder** to a pinning service (Pinata, Filebase, …) and
+   copy its CID.
+3. `npm run avatars -- metadata <images CID>` writes `dist/avatars/metadata/1 … 100`,
+   with no extension, because `tokenURI` is `baseUri + id`.
+4. Upload that folder too, and copy its CID.
+5. `npm run avatars -- check ipfs://<metadata CID>/` fetches token 1's metadata and
+   image through `IPFS_GATEWAY`, as the server will.
+
+Then deploy with `AVATAR_BASE_URI=ipfs://<metadata CID>/` (the trailing slash
+matters) and `AVATAR_MAX_SUPPLY=100`. A fresh hub or spoke deploy picks both up. To
+replace only the collection on a chain that is already deployed, run this on every
+chain with that chain's `--rpc-url` (and `--skip-simulation` on Sepolia):
+
+```bash
+DEPLOYER_PK=0x… AVATAR_BASE_URI=ipfs://<metadata CID>/ \
+forge script script/DeployAvatars.s.sol:DeployAvatars --rpc-url $BASE_SEPOLIA_RPC --broadcast --verify
+```
+
+It takes the owner from the registry (`timelock` on the hub, `owner` on a spoke),
+refuses the placeholder URI, and rewrites only `avatars` in
+`contracts/deployments/<chainId>.json`. Commit the registries. Tokens minted on the
+old collection stay there, and the server stops reading them.
+
+The server rewrites `ipfs://` to `IPFS_GATEWAY`, and the client's page has to allow
+that origin in `VITE_CSP_MEDIA`. `ipfs.io` works, but it is slow and rate-limited.
+A pinning service's own gateway is better; change both together.
+
 ## 3. Point the server and the client at both
 
 The server needs four keys, each its own, and refuses to start if two are the

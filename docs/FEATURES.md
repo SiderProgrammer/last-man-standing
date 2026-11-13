@@ -440,6 +440,13 @@ An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
   token the wallet sold.
 - **Every failure is soft**: resolved in the background, cached with misses,
   and a seat without one wears a face generated from its address.
+- **The art**: 100 DiceBear "Pixel Art" faces (CC0), one per token id, made by
+  `npm run avatars` and pinned on IPFS. Every chain's collection points at the
+  same files, so #7 looks the same everywhere.
+- **No reveal, by choice**: the metadata is pinned before anyone mints and ids
+  go in mint order, so anyone can look up what the next mint will draw and time
+  their mint, with extra wallets if they like. There is no hidden reveal or
+  shuffled offset; for a free cosmetic that is accepted.
 
 ---
 
