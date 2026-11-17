@@ -49,7 +49,7 @@ import { protocolTerms } from '../wallet/terms.js';
 import { connectWallet, signInToPractise } from '../wallet/flows.js';
 import { confirmFirstStake } from './help.js';
 import { formatDuration } from '../ui/staking.js';
-import { RelayError, canRelay, relayJoin } from '../wallet/oneClick.js';
+import { RelayError, canRelay, relayJoin, relayOpenLobby } from '../wallet/oneClick.js';
 import { chainNow } from '../io/chainClock.js';
 import { explainError } from '../ui/errors.js';
 
@@ -134,7 +134,7 @@ export function wireLobbyControls(): void {
   dom.seats.value = String(DEFAULT_RULES.minPlayers);
   dom.seats.onchange = renderCreateForm;
 
-  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId', 'escrowPaused'], renderPayWith);
+  store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId', 'escrowPaused', 'openLobbies'], renderPayWith);
   store.subscribe(['lobbies', 'inTransit', 'matched', 'matchmaking', 'terms', 'wallet', 'escrowPaused'], renderLobbies);
   store.subscribe(['terms', 'matchmaking'], defaultStake);
   store.subscribe(['terms', 'escrow', 'wallet', 'walletChainId', 'spokes'], renderCreateForm);
@@ -209,12 +209,15 @@ function renderCreateForm(): void {
     dom.createLobby.textContent = 'Connect a wallet';
     return;
   }
-  if (spoke) {
-    dom.stakeRange.textContent = `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`;
+  if (spoke && !app.openLobbies) {
+    dom.stakeRange.textContent = spokeCannotOpenText(spoke);
     dom.stakeRange.classList.remove('warn-text');
     dom.createLobby.textContent = 'Create & stake';
     return;
   }
+  // From a spoke, the server opens the lobby on the hub and the stake is
+  // bridged into it from here, with Across's fee on top.
+  const from = spoke ? ` from ${chainInfo(spoke.chainId).name}` : '';
   const parsed = parseStakeInput(dom.stake.value, app.terms);
   const range = app.terms ? `Stakes ${stakeRangeText(app.terms)}.` : '';
   if (!parsed.ok) {
@@ -225,23 +228,31 @@ function renderCreateForm(): void {
   }
   const seats = Number(dom.seats.value);
   const prize = prizeSummary(parsed.wei, seats, app.terms);
-  dom.stakeRange.textContent = [range, prize ? `A full table: ${prize} ETH.` : ''].filter(Boolean).join(' ');
+  const bridged = spoke ? spokeOpensText(spoke) : '';
+  dom.stakeRange.textContent = [range, prize ? `A full table: ${prize} ETH.` : '', bridged].filter(Boolean).join(' ');
   dom.stakeRange.classList.remove('warn-text');
-  dom.createLobby.textContent = `Create & stake ${formatEther(parsed.wei)} ETH`;
+  dom.createLobby.textContent = `Create & stake ${formatEther(parsed.wei)} ETH${from}`;
+}
+
+/** Why a wallet on a spoke cannot open a lobby: the server does not open them for it. */
+function spokeCannotOpenText(spoke: SpokeInfo): string {
+  return `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`;
+}
+
+/** What creating from a spoke does: the server opens it on the hub, the stake bridges from here. */
+function spokeOpensText(spoke: SpokeInfo): string {
+  return `The lobby is opened on ${chainInfo(app.chainId).name} for you, gas paid; you then stake into it from ${chainInfo(spoke.chainId).name}, plus a bridge fee.`;
 }
 
 /**
- * The right moment to say that lobbies are opened on the hub: a wallet on a
- * spoke stakes into them but cannot create one.
+ * The right moment to say where lobbies are opened: a wallet on a spoke
+ * stakes into them, and opens one only through the server.
  */
 export function renderPayWith(): void {
   const spoke = currentSpoke();
-  dom.createLobby.disabled = !app.escrow || spoke !== null || app.escrowPaused;
-  dom.createLobby.title = app.escrowPaused
-    ? PAUSED_TEXT
-    : spoke
-      ? `Lobbies are opened on ${chainInfo(app.chainId).name}. You can stake into any of them from ${chainInfo(spoke.chainId).name}.`
-      : '';
+  const cannot = spoke !== null && !app.openLobbies;
+  dom.createLobby.disabled = !app.escrow || cannot || app.escrowPaused;
+  dom.createLobby.title = app.escrowPaused ? PAUSED_TEXT : spoke ? (cannot ? spokeCannotOpenText(spoke) : spokeOpensText(spoke)) : '';
   renderCreateForm();
   renderLobbies();
 }
@@ -367,6 +378,19 @@ function openingRow(lobby: LobbyInfo): HTMLLIElement {
   invite.onclick = () => void copyInvite(lobby.matchId);
   const buttons = element('div', 'lobby-buttons');
   buttons.append(invite);
+  // Opened for a wallet on a spoke, which stakes into it from there: no need
+  // to wait for the directory to list it first.
+  const spoke = currentSpoke();
+  if (spoke) {
+    const stake = element('button');
+    if (app.inTransit.has(lobby.matchId.toLowerCase())) {
+      disable(stake, 'In transit…', `Your stake is on its way to ${chainInfo(app.chainId).name}. You will be told when it lands.`);
+    } else {
+      idleSpokeButton(stake, lobby, spoke);
+      stake.classList.add('primary');
+    }
+    buttons.append(stake);
+  }
   li.append(label, buttons);
   return li;
 }
@@ -608,12 +632,14 @@ function disable(button: HTMLButtonElement, label: string, why: string): void {
 async function createLobby(): Promise<void> {
   const { wallet, escrow } = app;
   if (!wallet || !escrow) return toast('Connect a wallet first.', 'error');
-  if (currentSpoke()) return toast(dom.createLobby.title, 'error');
+  const spoke = currentSpoke();
+  if (spoke && !app.openLobbies) return toast(dom.createLobby.title, 'error');
   if (wallet.isGuest) return void connectWallet();
   const stake = parseStakeInput(dom.stake.value, app.terms);
   if (!stake.ok) return toast(stake.error, 'error');
   if (!(await confirmFirstStake())) return;
   const seats = Number(dom.seats.value);
+  if (spoke) return openFromSpoke(stake.wei, seats, spoke);
   try {
     dom.createLobby.disabled = true;
     dom.createLobby.textContent = 'Confirm the new lobby…';
@@ -623,18 +649,7 @@ async function createLobby(): Promise<void> {
     created.add(matchId.toLowerCase());
     // Creating does not seat you: the stake goes in with a join of its own,
     // asked for straight away so it is one click for the player.
-    const lobby: LobbyInfo = {
-      matchId,
-      stake: stake.wei.toString(),
-      seatCount: 0,
-      maxSeats: seats,
-      minSeats: seats,
-      joinDeadline: 0,
-      status: 'open',
-      players: [],
-      cancellableAt: 0,
-      matchmade: false,
-    };
+    const lobby = freshLobby(matchId, stake.wei, seats);
     opening.set(matchId.toLowerCase(), lobby);
     renderLobbies();
     refreshDirectorySoon();
@@ -648,6 +663,52 @@ async function createLobby(): Promise<void> {
     dom.createLobby.disabled = false;
     renderCreateForm();
   }
+}
+
+/**
+ * Creating from a spoke: the server opens the lobby on the hub and pays its
+ * gas, since the wallet may hold none there. The stake then goes in from the
+ * spoke through the row's own button, priced and bridged like any spoke join.
+ */
+async function openFromSpoke(stake: bigint, seats: number, spoke: SpokeInfo): Promise<void> {
+  const hub = chainInfo(app.chainId).name;
+  try {
+    dom.createLobby.disabled = true;
+    dom.createLobby.textContent = `Opening on ${hub}…`;
+    const matchId = await relayOpenLobby(stake, seats);
+    const id = matchId.toLowerCase();
+    created.add(id);
+    opening.set(id, freshLobby(matchId, stake, seats));
+    renderLobbies();
+    refreshDirectorySoon();
+    showLobbyRow(matchId);
+    toast(
+      `Lobby open on ${hub}. Stake into it from ${chainInfo(spoke.chainId).name} with its row's button to take your seat.`,
+      'success',
+      { sticky: true, action: { label: 'Show it', run: () => showLobbyRow(matchId) } },
+    );
+  } catch (error) {
+    toast(error instanceof RelayError ? `The lobby was not opened: ${error.message}.` : explainError(error), 'error');
+  } finally {
+    dom.createLobby.disabled = false;
+    renderCreateForm();
+  }
+}
+
+/** A lobby this page just opened, as the directory will list it, before it does. */
+function freshLobby(matchId: `0x${string}`, stake: bigint, seats: number): LobbyInfo {
+  return {
+    matchId,
+    stake: stake.toString(),
+    seatCount: 0,
+    maxSeats: seats,
+    minSeats: seats,
+    joinDeadline: 0,
+    status: 'open',
+    players: [],
+    cancellableAt: 0,
+    matchmade: false,
+  };
 }
 
 /** The id of the lobby a `createMatch` receipt opened. */

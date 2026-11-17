@@ -33,11 +33,13 @@ export class RelayError extends Error {
   }
 }
 
-const pending = new Map<string, { resolve: (tx: Hex) => void; reject: (error: Error) => void }>();
+type Relayed = Extract<ServerMessage, { type: 'relayed' }>;
+
+const pending = new Map<string, { resolve: (message: Relayed) => void; reject: (error: Error) => void }>();
 let nextId = 0;
 
-export function onRelayed(message: Extract<ServerMessage, { type: 'relayed' }>): void {
-  pending.get(message.id)?.resolve(message.tx);
+export function onRelayed(message: Relayed): void {
+  pending.get(message.id)?.resolve(message);
   pending.delete(message.id);
 }
 
@@ -85,11 +87,26 @@ async function relay(call: Pick<SessionCallParams, 'target' | 'value' | 'data'>)
  * `relay.error`: a session call, or a signed withdrawal to a spoke. Resolves
  * with the mined transaction, or rejects with a `RelayError`.
  */
-export function sendRelayed(frame: (id: string) => ClientMessage): Promise<Hex> {
+export async function sendRelayed(frame: (id: string) => ClientMessage): Promise<Hex> {
+  return (await sendRelayedFrame(frame)).tx;
+}
+
+/** `sendRelayed`, resolving with the whole `relayed` answer rather than its transaction. */
+function sendRelayedFrame(frame: (id: string) => ClientMessage): Promise<Relayed> {
   const id = `relay-${(nextId += 1)}`;
-  const landed = new Promise<Hex>((resolve, reject) => pending.set(id, { resolve, reject }));
+  const landed = new Promise<Relayed>((resolve, reject) => pending.set(id, { resolve, reject }));
   net.send(frame(id));
   return landed;
+}
+
+/**
+ * Has the server open a lobby on the hub, paying the gas, for a wallet on a
+ * spoke to stake into from there. Resolves with its id once it is mined.
+ */
+export async function relayOpenLobby(stake: bigint, seats: number): Promise<Hex> {
+  const answer = await sendRelayedFrame((id) => ({ type: 'openLobby', id, stake: stake.toString(), seats }));
+  if (!answer.matchId) throw new RelayError('INTERNAL', 'the server opened no lobby');
+  return answer.matchId;
 }
 
 /**

@@ -26,8 +26,8 @@ import type { MatchDelta } from './delta.js';
 import type { PlayStyle } from './style.js';
 import type { AnalysisErrorCode, MatchAnalysis } from './analysis.js';
 
-/** What a `relayed` frame relayed: a session call, or a withdrawal to a spoke. */
-export type RelayKind = SessionCallKind | 'withdrawToChain';
+/** What a `relayed` frame relayed: a session call, a withdrawal to a spoke, or a lobby opened for a wallet. */
+export type RelayKind = SessionCallKind | 'withdrawToChain' | 'openLobby';
 
 /** Largest client frame the server will parse. Every legitimate message is far smaller. */
 export const MAX_CLIENT_FRAME_BYTES = 8 * 1024;
@@ -169,6 +169,15 @@ export type ClientMessage =
    */
   | { type: 'withdrawToChain'; id: string; withdrawal: WireWithdrawal; quote: WireBridgeQuote; signature: `0x${string}` }
   /**
+   * Asks the server to open a lobby on the hub for the authenticated wallet,
+   * paying the gas: for a wallet on a spoke, which then stakes into it from
+   * there like any other lobby. `stake` is wei as a decimal string. Answered
+   * with `relayed` (kind `openLobby`, carrying the `matchId`) or `relay.error`
+   * with the same `id`, and counted against the same daily quota. Opening
+   * does not seat anyone.
+   */
+  | { type: 'openLobby'; id: string; stake: string; seats: number }
+  /**
    * Joins the matchmaking queue, for any table whose stake and size fall in
    * the ranges given. Answered with `queued`, then `matched` once the queue
    * has put a table together. One place per wallet; queueing again replaces it.
@@ -239,6 +248,12 @@ export type ServerMessage =
        * bring their balance home.
        */
       withdrawToChain: boolean;
+      /**
+       * True when this server opens lobbies on the hub for a wallet
+       * (`openLobby`), so a player on a spoke can create one without gas on
+       * the hub.
+       */
+      openLobbies: boolean;
     }
   | { type: 'authed'; address: `0x${string}` }
   /**
@@ -337,8 +352,11 @@ export type ServerMessage =
   /** The finished analysis, its key moments already checked against the history. */
   | { type: 'analysis.done'; analysis: MatchAnalysis; cached: boolean }
   | { type: 'analysis.error'; matchId: `0x${string}`; code: AnalysisErrorCode; message: string }
-  /** A relayed call that landed. `left` is how many more the wallet may relay today. */
-  | { type: 'relayed'; id: string; kind: RelayKind; tx: `0x${string}`; left: number }
+  /**
+   * A relayed call that landed. `left` is how many more the wallet may relay
+   * today. `matchId` is set for `openLobby`: the lobby it opened.
+   */
+  | { type: 'relayed'; id: string; kind: RelayKind; tx: `0x${string}`; left: number; matchId?: `0x${string}` }
   /**
    * This wallet's balance in the hub escrow, in wei, and what a signed
    * withdrawal of it must name: the receiver it is signed to, the nonce it

@@ -200,6 +200,11 @@ relayer on hub  → fills exactly the stake in WETH, then handleV3AcrossMessage
   `withdrawToChainFor`, bridging the whole balance to the chain and address
   named, Across's fee capped by the signature. It waits while the escrow is
   paused; `withdraw` on the hub does not.
+- **Opening a lobby from a spoke.** `createMatch` is a hub call with no
+  stake, so the server's relayer sends it for a spoke wallet (`openLobby`)
+  and hands back the `matchId`; the player stakes into it from the spoke like
+  any other lobby. It counts against the relay quota, and a wallet has at most
+  one such lobby waiting for its stake at a time.
 - **Contract wallets name their hub account**, since their address on a spoke
   may be someone else's on the hub; an EOA delegated under 7702 is still an EOA.
 

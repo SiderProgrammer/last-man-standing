@@ -141,6 +141,7 @@ const MESSAGES: { [K in ClientMessage['type']]: z.ZodType } = {
     }),
     signature,
   }),
+  openLobby: z.object({ type: z.literal('openLobby'), id: relayId, stake: wei, seats: integer(2, 256) }),
   relay: z.object({
     type: z.literal('relay'),
     id: relayId,

@@ -33,6 +33,7 @@ import { AnalystWorker } from './analyst/remote.js';
 import { Matchmaker, viemMatchmakerPort } from './lobby/matchmaker.js';
 import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
+import { LobbyOpener, viemLobbyOpenerPort } from './chain/lobbyOpener.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 import { repeat } from './util/poll.js';
 
@@ -198,6 +199,20 @@ async function main(): Promise<void> {
         })
       : null;
 
+  // Lobbies opened on the hub for players on a spoke, who have no gas there,
+  // with the session relayer's gas. Needs a key and a spoke to stake from.
+  const opener =
+    relaySender && spokes.length > 0
+      ? new LobbyOpener({
+          port: viemLobbyOpenerPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: relaySender }),
+          quota: relayQuota,
+          lobbies: () => {
+            const { open, live } = directory();
+            return [...open, ...live];
+          },
+        })
+      : null;
+
   // Reads finished matches from the archive and nothing else, in a worker
   // thread of its own; see `analyst/analyst.ts`.
   const analyst = config.analyst.enabled ? analystWorker(archive, styles) : undefined;
@@ -236,6 +251,7 @@ async function main(): Promise<void> {
     practiceReceipts,
     ...(relay ? { relay } : {}),
     ...(withdrawals ? { withdrawals } : {}),
+    ...(opener ? { opener } : {}),
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,

@@ -68,6 +68,8 @@ export interface AppState {
   spokes: SpokeInfo[];
   /** True when the server submits signed withdrawals to a spoke. */
   withdrawToChain: boolean;
+  /** True when the server opens lobbies on the hub for a wallet on a spoke. */
+  openLobbies: boolean;
   /** The staked-lobby directory, as the server last sent it. */
   lobbies: { open: readonly LobbyInfo[]; live: readonly LobbyInfo[] };
   /** True while the escrow is paused: nothing can be staked, collecting still works. */
@@ -158,6 +160,7 @@ export const store = createStore<AppState>({
   spokes: [],
   discount: null,
   withdrawToChain: false,
+  openLobbies: false,
   lobbies: { open: [], live: [] },
   escrowPaused: false,
   inTransit: new Set(),

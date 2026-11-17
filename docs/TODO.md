@@ -57,7 +57,9 @@ unreliable and does not refund an unfilled deposit, so use small amounts.
 **Join done 2026-11-13, from OP Sepolia, filled by our own key** (`npm run play -- join
 … --from op --relay`): the player was seated through the real Base Sepolia pool and
 receiver. Across's own testnet relayers left an earlier message deposit unfilled until it
-expired. Still open: a withdrawal back to a spoke. See
+expired. Still open: a withdrawal back to a spoke, and a lobby created from a spoke (the
+server opens it on the hub, the player stakes from the spoke; unit-tested, not yet run
+against a chain). See
 [ACROSS.md](ACROSS.md#the-live-testnet-deposit).
 
 ### 1.3 The staked flow on a public chain

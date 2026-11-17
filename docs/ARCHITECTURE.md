@@ -211,7 +211,7 @@ same way.
 
 | File | Responsibility |
 | --- | --- |
-| `wire.ts` | `ClientMessage` / `ServerMessage` unions, `LobbyInfo`, error codes, login prefix |
+| `wire.ts` | `ClientMessage` / `ServerMessage` unions (relayed calls, `openLobby` and the queue among them), `LobbyInfo`, error codes, login prefix |
 | `delta.ts` | `MatchDelta` and `applyDelta`, the snapshot diffs a room sends |
 | `chain.ts` | What `hello` advertises (spokes, staking, token payment) and the cross-chain, avatar and relayed-call DTOs |
 | `style.ts`, `analysis.ts` | The dossier's `PlayStyle` and the match analyst's output |
@@ -291,6 +291,7 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `chain/logs.ts` | The one chunked `getLogs` scan, and the confirmation depth every scan stops at |
 | `chain/sessionRelay.ts` | Submits and pays for joins and withdrawals a player's session key signed, under a daily quota |
 | `chain/chainWithdrawals.ts` | Submits a player's signed withdrawal to a spoke (`withdrawToChainFor`) and pays the hub gas |
+| `chain/lobbyOpener.ts` | Opens a lobby on the hub (`createMatch`) for a player on a spoke and pays the gas, one waiting lobby per wallet, on the relay quota |
 | `chain/crossChain.ts` | `SPOKES`, and `CrossChainWatcher`: tells a player on a spoke what their join became on the hub, a seat or a credit |
 | `chain/zap.ts` | `ZAP_TOKENS`: the tokens players may pay with, and each one's v4 route |
 | `chain/feeKeeper.ts` | Harvests `FeeRouter` on a timer, once there is more than `minHarvest` |
@@ -392,7 +393,7 @@ start, and a second server is refused.
 | `wallet/terms.ts` | The terms a new lobby opens on, read from `ProtocolConfig` through the escrow |
 | `wallet/wallet.ts` | Injected EIP-1193 session, the chain guard, login signature, escrow / avatar / session calls |
 | `wallet/grant.ts` | The browser's session key and the wallet's grant to it: sign logins, moves and relayed calls |
-| `wallet/oneClick.ts` | One-click play: turn the on-chain session on and off, relay joins and collects |
+| `wallet/oneClick.ts` | One-click play: turn the on-chain session on and off, relay joins and collects; requests answered by the relayer, a lobby opened for a spoke wallet among them |
 | `csp.ts` | The Content-Security-Policy the production build ships with |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
@@ -765,6 +766,19 @@ recipient, the most Across may take), and anyone, typically the server, submits 
 It reverts while the escrow is paused. The typed data has no chain id in its domain, so a
 wallet on a spoke can sign it.
 
+**Opening a lobby from a spoke.** `createMatch` exists only on the hub, and a spoke has no
+way to ask for it through Across: the join message names a lobby that must already exist.
+But it takes no stake, seats nobody and anyone may call it, so the server opens it instead.
+A logged-in wallet sends `openLobby` with a stake and a size; `LobbyOpener` sends
+`createMatch` from `SESSION_RELAYER_PK`, simulated first, and answers with the new
+`matchId`. The player then stakes into it from the spoke with an ordinary `SpokeRouter.join`.
+Each opening counts against the same `RELAY_QUOTA_PER_DAY` as relayed calls, and a wallet
+has at most one lobby opened for it that it has not staked into yet, for as long as a lobby
+takes joins (10 minutes), so empty lobbies cannot be opened in bulk on the server's gas. It
+is offered (`hello.openLobbies`) only with the relayer key and at least one spoke, and
+refused while the escrow is paused. The lobby is an ordinary private one: on-chain its
+`MatchCreated` names the relayer, not the player, which nothing reads.
+
 **No registration.** The router is ownerless and the receiver takes a fill from any
 chain Across serves, so a new spoke is a deploy and a line in the server's `SPOKES`, not
 a governance proposal. The origin chain in a seat is what the message claims, shown and
@@ -846,7 +860,7 @@ variables. To exercise the same features against a running stack, see
 | `DATABASE_URL` | — | Postgres (e.g. Neon) for the archive, analysis cache, play styles and room journals. Unreachable stops the server; blank or `ARCHIVE=memory` keeps everything in memory |
 | `SESSION_DELEGATE` | registry | `SessionKeyDelegate` for one-click play. Offered only with `RPC_URL`, an escrow and `SESSION_RELAYER_PK` |
 | `SESSION_RELAYER_PK` | — | Pays relayed gas. Its own key, holding only gas money |
-| `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day |
+| `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day: session calls, withdrawals to a spoke and lobbies opened for a spoke wallet together |
 | `AVATAR_COLLECTIONS` | — | `PlayerAvatars` deployments as JSON: `chainId`, `address`, `rpcUrl` per chain |
 | `IPFS_GATEWAY` | `https://ipfs.filebase.io/ipfs/` | Prefix `ipfs://` is rewritten to when fetching metadata |
 | `VITE_WS_URL` | current host `:8787` | Server the browser client connects to |

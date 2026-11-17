@@ -233,6 +233,7 @@ The rest are UI paths to click through.
 - [ ] Tokens: in the lobby, **Pay with** USDC / USDT / DAI / cbBTC; or `join last --players 2 --token USDC`. The first token join costs an approval first.
 - [ ] LMS discount: tick **Pay part of the fee in LMS**; or `join last --players 4 --lms 1000`. Then 1 LMS covers half of a 0.001 ETH stake's fee. It is burned at settlement and refunded on a cancel or veto.
 - [ ] From Arbitrum: tab `?player=5&chain=spoke` → **Stake from ARB**; or `join last --players 5 --from spoke`. The seat shows an ARB badge.
+- [ ] Create from Arbitrum: tab `?player=5&chain=spoke` → **Create & stake … from Arbitrum**. The server opens the lobby on the hub (no wallet prompt), its row shows under "Yours" with **Stake from ARB**; stake, and the seat shows an ARB badge. A second create before staking is refused until the first is staked into or 10 min pass.
 - [ ] Testnet: Across's real fee is quoted and paid, and fills take about a minute. To see a refund, stake from the spoke into a lobby that fills first: the stake is credited on the hub.
 
 ### 7. Collecting to the spoke

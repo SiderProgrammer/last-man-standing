@@ -146,7 +146,10 @@ prices each join and is added to the page's Content-Security-Policy.
 
 ## 4. Try it
 
-1. Open a lobby on the hub.
+1. Open a lobby on the hub. Or skip to step 2 and use **Create & stake** from
+   Arbitrum Sepolia: the server opens the lobby on Base Sepolia from
+   `SESSION_RELAYER_PK` (which needs a little Base Sepolia ETH), and its row
+   shows under "Yours", ready for step 3.
 2. Switch the wallet to Arbitrum Sepolia. The chip reads
    "Staking from Arbitrum Sepolia → Base Sepolia hub".
 3. **Stake from ARB**, then **Pay … + … fee**. The row reads *In transit…*.

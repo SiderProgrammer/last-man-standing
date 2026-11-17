@@ -21,9 +21,11 @@ import {
 } from '@lms/api';
 import {
   AnalystError,
+  DailyQuota,
   Gateway,
   HISTORY_PAGE,
   Lobby,
+  LobbyOpener,
   Matchmaker,
   MemoryArchive,
   SessionRelay,
@@ -130,6 +132,8 @@ interface Extras {
   results: NonNullable<GatewayOptions['results']>;
   avatars: NonNullable<GatewayOptions['avatars']>;
   chainTime: () => number | null;
+  opener: LobbyOpener;
+  paused: () => boolean;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -158,6 +162,8 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.results ? { results: extras.results } : {}),
     ...(extras.avatars ? { avatars: extras.avatars } : {}),
     ...(extras.chainTime ? { chainTime: extras.chainTime } : {}),
+    ...(extras.opener ? { opener: extras.opener } : {}),
+    ...(extras.paused ? { paused: extras.paused } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -344,6 +350,58 @@ describe('gateway', () => {
     const call = { target: ESCROW, value: '0', data: '0x' as const, nonce: '0', signature: '0x1234' as const };
     await socket.deliver({ type: 'relay', id: 'x', call });
     expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
+  });
+
+  describe('openLobby', () => {
+    const OPENED = `0x${'0e'.repeat(32)}` as const;
+    const opener = (opened: Array<{ stake: bigint; seats: number }> = []) =>
+      new LobbyOpener({
+        port: {
+          open: async (stake, seats) => {
+            opened.push({ stake, seats });
+            return { tx: `0x${'77'.repeat(32)}`, matchId: OPENED };
+          },
+        },
+        quota: new DailyQuota(5),
+        lobbies: () => [],
+      });
+
+    it('advertises opening lobbies only when it does', () => {
+      expect(harness({ opener: opener() }).socket.last('hello')?.openLobbies).toBe(true);
+      expect(harness().socket.last('hello')?.openLobbies).toBe(false);
+    });
+
+    it('opens a lobby for the logged-in wallet and answers by id with its match id', async () => {
+      const opened: Array<{ stake: bigint; seats: number }> = [];
+      const { socket } = harness({ opener: opener(opened) });
+      await login(socket);
+      await socket.deliver({ type: 'openLobby', id: 'o', stake: '1000000000000000', seats: 4 });
+      expect(socket.last('relayed')).toMatchObject({ id: 'o', kind: 'openLobby', matchId: OPENED, left: 4 });
+      expect(opened).toEqual([{ stake: 10n ** 15n, seats: 4 }]);
+    });
+
+    it('answers UNAVAILABLE without an opener, and while staked play is paused', async () => {
+      const bare = harness();
+      await login(bare.socket);
+      await bare.socket.deliver({ type: 'openLobby', id: 'x', stake: '1000000000000000', seats: 4 });
+      expect(bare.socket.last('relay.error')).toMatchObject({ id: 'x', code: 'UNAVAILABLE' });
+
+      const opened: Array<{ stake: bigint; seats: number }> = [];
+      const paused = harness({ opener: opener(opened), paused: () => true });
+      await login(paused.socket);
+      await paused.socket.deliver({ type: 'openLobby', id: 'y', stake: '1000000000000000', seats: 4 });
+      expect(paused.socket.last('relay.error')).toMatchObject({ id: 'y', code: 'UNAVAILABLE' });
+      expect(opened).toEqual([]);
+    });
+
+    it('refuses before login, and a malformed one', async () => {
+      const { socket } = harness({ opener: opener() });
+      await socket.deliver({ type: 'openLobby', id: 'x', stake: '1000000000000000', seats: 4 });
+      expect(socket.last('error')?.code).toBe('NOT_AUTHENTICATED');
+      await login(socket);
+      socket.deliverRaw({ type: 'openLobby', id: 'x', stake: '1e15', seats: 4 });
+      expect(socket.last('error')?.code).toBe('MALFORMED_FRAME');
+    });
   });
 
   it('advertises token payment so the client can offer it', () => {

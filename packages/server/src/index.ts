@@ -62,6 +62,13 @@ export {
   type HubBalance,
   type WithdrawalPort,
 } from './chain/chainWithdrawals.js';
+export {
+  LobbyOpener,
+  OPEN_HOLD_MS,
+  viemLobbyOpenerPort,
+  type LobbyOpenerOptions,
+  type LobbyOpenerPort,
+} from './chain/lobbyOpener.js';
 export { keySigner, signerAccount, type Signer } from './chain/signer.js';
 export {
   AttestationRefused,

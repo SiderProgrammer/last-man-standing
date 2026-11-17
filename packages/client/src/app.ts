@@ -195,6 +195,7 @@ function onHello(message: Extract<ServerMessage, { type: 'hello' }>): void {
     analyst: message.analyst,
     matchmaking: message.matchmaking,
     withdrawToChain: message.withdrawToChain,
+    openLobbies: message.openLobbies,
     // A new connection: the server let the old one's place in the queue go.
     queue: null,
     queuedSince: null,

@@ -32,6 +32,7 @@ import { offlineVerify, offlineVerifyTyped } from './verifyPool.js';
 import type { Client } from '../match/room.js';
 import { AnalystError, classify, type MatchAnalyst } from '../analyst/analyst.js';
 import type { ChainWithdrawals } from '../chain/chainWithdrawals.js';
+import type { LobbyOpener } from '../chain/lobbyOpener.js';
 import type { SessionRelay } from '../chain/sessionRelay.js';
 import type { Matchmaker } from '../lobby/matchmaker.js';
 
@@ -127,6 +128,11 @@ export interface GatewayOptions {
    * refused.
    */
   withdrawals?: ChainWithdrawals;
+  /**
+   * Opens lobbies on the hub for players, paying the gas. Omitted, `hello`
+   * says the server opens none, and `openLobby` is refused.
+   */
+  opener?: LobbyOpener;
   /**
    * The matchmaking queue. Omitted, `hello` says there is none, `queue` is
    * refused, and every lobby is one a player opened.
@@ -295,6 +301,7 @@ export class Gateway {
       practiceReceiptSigner: this.options.practiceReceipts?.address ?? null,
       matchmaking: Boolean(this.options.matchmaker),
       withdrawToChain: this.options.withdrawals !== undefined,
+      openLobbies: this.options.opener !== undefined,
     });
 
     socket.onMessage((data: unknown) => this.receive(session, String(data)));
@@ -477,6 +484,17 @@ export class Gateway {
           ? async () => ({ ...(await withdrawals.submit(address, message)), kind: 'withdrawToChain' as const })
           : null;
         await this.answerRelayed(session, message.id, submit, 'this server bridges no withdrawals');
+        return;
+      }
+      case 'openLobby': {
+        const opener = this.options.opener;
+        const open = opener
+          ? async () => {
+              if (this.options.paused?.()) throw new RequestError('UNAVAILABLE', 'staked play is paused right now: no lobby opens until it resumes');
+              return { ...(await opener.open(address, message.stake, message.seats)), kind: 'openLobby' as const };
+            }
+          : null;
+        await this.answerRelayed(session, message.id, open, 'this server opens no lobbies');
         return;
       }
       case 'queue': {
@@ -721,7 +739,7 @@ export class Gateway {
   private async answerRelayed(
     session: Session,
     id: string,
-    send: (() => Promise<{ kind: RelayKind; tx: `0x${string}`; left: number }>) | null,
+    send: (() => Promise<{ kind: RelayKind; tx: `0x${string}`; left: number; matchId?: `0x${string}` }>) | null,
     unavailable: string,
   ): Promise<void> {
     if (!send) {
@@ -729,8 +747,8 @@ export class Gateway {
       return;
     }
     try {
-      const { kind, tx, left } = await send();
-      session.send({ type: 'relayed', id, kind, tx, left });
+      const { kind, tx, left, matchId } = await send();
+      session.send({ type: 'relayed', id, kind, tx, left, ...(matchId ? { matchId } : {}) });
     } catch (error) {
       const { code, message } = errorFrame(error);
       session.send({ type: 'relay.error', id, code, message });
