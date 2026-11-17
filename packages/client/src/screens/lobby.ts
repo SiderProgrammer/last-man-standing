@@ -1,5 +1,5 @@
 import { formatEther, parseEventLogs, type TransactionReceipt } from 'viem';
-import { MatchPhase, sameAddress, type BotDifficulty } from '@lms/consensus';
+import { DEFAULT_RULES, MatchPhase, sameAddress, type BotDifficulty } from '@lms/consensus';
 import {
   chainCss,
   chainInfo,
@@ -22,7 +22,7 @@ import { currentScreen, showMatchScreen, showScreen, toast } from '../ui/chrome.
 import { showLobbyRow } from './statusBar.js';
 import { leaveMatch } from './match.js';
 import { callBack } from '../ui/alerts.js';
-import { element } from '../ui/dom.js';
+import { element, fillSelect } from '../ui/dom.js';
 import { short } from '../ui/format.js';
 import {
   crossChainNotice,
@@ -123,6 +123,15 @@ export function wireLobbyControls(): void {
   setInterval(tickCountdowns, 5_000);
   dom.createLobby.onclick = () => void createLobby();
   dom.stake.oninput = renderCreateForm;
+  // Every table size the rules allow, smallest first and picked.
+  fillSelect(
+    dom.seats,
+    Array.from({ length: DEFAULT_RULES.maxPlayers - DEFAULT_RULES.minPlayers + 1 }, (_, i): [string, string] => {
+      const seats = String(DEFAULT_RULES.minPlayers + i);
+      return [seats, seats];
+    }),
+  );
+  dom.seats.value = String(DEFAULT_RULES.minPlayers);
   dom.seats.onchange = renderCreateForm;
 
   store.subscribe(['zap', 'wallet', 'walletChainId', 'escrow', 'spokes', 'chainId', 'escrowPaused'], renderPayWith);
