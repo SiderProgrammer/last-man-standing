@@ -363,7 +363,7 @@ async function mintAvatar(): Promise<void> {
     dom.mintAvatar.disabled = true;
     dom.avatarStatus.textContent = 'Confirm in your wallet…';
     const hash = await wallet.mintAvatar(collection.address);
-    await wallet.waitFor(hash, 'Mint avatar');
+    await wallet.waitFor(hash, 'Mint random avatar');
     toast('Avatar minted. You will wear it in your next match.', 'success');
   } catch (error) {
     toast(explainError(error), 'error');

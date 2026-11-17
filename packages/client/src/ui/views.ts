@@ -373,11 +373,10 @@ export function avatarPanel(
 
   if (!status) return { mintDisabled: true, status: 'Connect a wallet to check.' };
 
-  const supply = `${status.totalMinted}/${status.maxSupply} minted`;
-  if (status.equipped > 0n) return { mintDisabled: true, status: `Wearing #${status.equipped} · ${supply}` };
-  if (status.minted) return { mintDisabled: true, status: `You own one but wear none · ${supply}` };
-  if (status.totalMinted >= status.maxSupply) return { mintDisabled: true, status: `Sold out · ${supply}` };
-  return { mintDisabled: false, status: `Free, one per wallet · ${supply}` };
+  if (status.equipped > 0n) return { mintDisabled: true, status: `Wearing #${status.equipped}` };
+  if (status.minted) return { mintDisabled: true, status: 'You own one but wear none' };
+  if (status.totalMinted >= status.maxSupply) return { mintDisabled: true, status: 'Sold out' };
+  return { mintDisabled: false, status: 'Free, one per wallet' };
 }
 
 /** A lobby row's text: its stake, how full it is, and its status. */

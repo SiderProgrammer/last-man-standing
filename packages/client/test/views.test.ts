@@ -195,23 +195,23 @@ describe('avatar panel', () => {
   it('offers a mint when the wallet owns nothing and supply remains', () => {
     expect(avatarPanel(true, collection, SEPOLIA, 1, status())).toEqual({
       mintDisabled: false,
-      status: 'Free, one per wallet · 3/10 minted',
+      status: 'Free, one per wallet',
     });
   });
 
   it('shows what is being worn', () => {
     const panel = avatarPanel(true, collection, SEPOLIA, 1, status({ equipped: 7n, minted: true }));
-    expect(panel).toEqual({ mintDisabled: true, status: 'Wearing #7 · 3/10 minted' });
+    expect(panel).toEqual({ mintDisabled: true, status: 'Wearing #7' });
   });
 
   it('distinguishes owning one from wearing one', () => {
     const panel = avatarPanel(true, collection, SEPOLIA, 1, status({ minted: true }));
-    expect(panel.status).toBe('You own one but wear none · 3/10 minted');
+    expect(panel.status).toBe('You own one but wear none');
   });
 
   it('reports a sold-out collection', () => {
     const panel = avatarPanel(true, collection, SEPOLIA, 1, status({ totalMinted: 10n }));
-    expect(panel).toEqual({ mintDisabled: true, status: 'Sold out · 10/10 minted' });
+    expect(panel).toEqual({ mintDisabled: true, status: 'Sold out' });
   });
 });
 
