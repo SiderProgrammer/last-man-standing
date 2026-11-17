@@ -1,6 +1,7 @@
 import { keccak256, toHex, type Hex, type TypedDataDefinition } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
+  DEFAULT_RULES,
   Action,
   legalActions,
   MatchPhase,
@@ -82,7 +83,7 @@ export interface BotClientOptions {
   /** A staked table this bot is already seated at: it watches that match instead of opening a practice room. */
   table?: `0x${string}`;
   /**
-   * Queue for this matchmaking tier instead of opening a practice room. When
+   * Queue for a table at exactly this stake, of up to `seats` seats, instead of opening a practice room. When
    * the queue opens a lobby for this bot, `onMatched` takes the seat (on
    * chain, outside the bot) and the bot then plays the match.
    */
@@ -255,7 +256,10 @@ export class BotClient {
         this.emit({ type: 'authed', ms: this.options.now() - this.connectedAt });
         // Back into the match in progress, or into a new one.
         if (this.matchId) this.send({ type: 'watch', matchId: this.matchId });
-        else if (this.options.queue) this.send({ type: 'queue', ...this.options.queue });
+        else if (this.options.queue) {
+          const { stake, seats } = this.options.queue;
+          this.send({ type: 'queue', minStake: stake, maxStake: stake, minSeats: Math.min(DEFAULT_RULES.minPlayers, seats), maxSeats: seats });
+        }
         else this.nextGame();
         return;
       }

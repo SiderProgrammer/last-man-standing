@@ -163,13 +163,15 @@ Around that core:
   LMS per ETH of fees (the real bound on farming) and a per-wallet cap per
   week (which stops one wallet taking a quiet week, not sybils). Only
   matchmade lobbies count.
-- **Matchmaking** — players queue for a tier (a stake and a table size); when
-  a tier has a table, the server's matchmaker key opens a lobby on the escrow
-  with exactly those players on its roster, and only they can take a seat in
-  it, by any route. A lobby a player opens is private: anyone with its id
-  joins, and it earns no play-mining, because its creator could fill it with
-  their own wallets. The queue cannot stop that either: several wallets with
-  one owner queueing together in a quiet tier can be matched with each other.
+- **Matchmaking** — players queue with a stake range and a table-size range;
+  when enough players' ranges overlap, the server's matchmaker key opens a
+  lobby on the escrow at the lowest stake all of them accept, with exactly
+  those players on its roster, and only they can take a seat in it, by any
+  route. Short of a full table, an open lobby a player made inside someone's
+  ranges takes them instead. A lobby a player opens is private: anyone with
+  its id joins, and it earns no play-mining, because its creator could fill it
+  with their own wallets. The queue cannot stop that either: several wallets
+  with one owner queueing together in a quiet range can be matched with each other.
 - **LMS fee discount** — a seat may pay up to half its fee in LMS at a
   governance-set rate (`joinWithLms`). The LMS is held with the stake, burned
   when the match settles and refunded if it does not.
@@ -302,7 +304,7 @@ cap, and about 351,600 LMS a week in the first year):
   for one wallet to reach it; its job is stopping one wallet taking a quiet
   week, not stopping someone with many.
 - **Only matchmade lobbies earn**, and the queue cannot tell two wallets with
-  one owner apart: queueing together in a quiet tier can still seat them
+  one owner apart: queueing together in a quiet range can still seat them
   together. A lobby a player opens is private and earns nothing, since its
   creator could fill it alone.
 - **Recycling LMS earns nothing extra.** Paying part of a fee in LMS earns

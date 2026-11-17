@@ -89,18 +89,45 @@
             <span id="queue-state" class="pill">idle</span>
           </div>
           <p class="muted small">
-            The matchmaker seats you at an open lobby at your stake if one has room, or puts
-            strangers together at a table only they can join. Only those matchmade tables earn LMS.
+            Pick what you will play. You are seated at an open lobby in your range, or at a new
+            table with other players at the lowest stake you all accept. Only those new tables earn LMS.
           </p>
-          <div class="queue-controls">
-            <div class="field">
-              <label for="queue-tier">Table</label>
-              <select id="queue-tier"></select>
+          <div id="queue-form" class="queue-form">
+            <div class="queue-pick">
+              <span id="queue-stake-label" class="queue-pick-label">Stake · ETH</span>
+              <div id="queue-stakes" class="choice-row" role="group" aria-labelledby="queue-stake-label"></div>
+              <div id="queue-custom" class="range-inputs hidden">
+                <input id="queue-min-stake" type="text" inputmode="decimal" value="0.001" size="7" aria-label="Lowest stake (ETH)" />
+                <span aria-hidden="true">to</span>
+                <input id="queue-max-stake" type="text" inputmode="decimal" value="1" size="7" aria-label="Highest stake (ETH)" />
+                <span aria-hidden="true">ETH</span>
+              </div>
             </div>
-            <button id="join-queue" class="primary" disabled>Find a match</button>
-            <button id="leave-queue" class="ghost hidden">Leave queue</button>
+            <div class="queue-pick">
+              <span id="queue-seats-label" class="queue-pick-label">Table size</span>
+              <div class="seat-picker">
+                <button id="queue-any-seats" type="button" class="choice" aria-pressed="true">Any</button>
+                <div id="queue-seats" class="seat-bar" role="group" aria-labelledby="queue-seats-label"></div>
+              </div>
+              <span class="muted small">Tap a size, then another to pick a range.</span>
+            </div>
+            <div class="queue-go">
+              <div class="queue-summary">
+                <strong id="queue-summary-range"></strong>
+                <span id="queue-summary-win" class="muted small"></span>
+              </div>
+              <button id="join-queue" class="primary" disabled>Find a match</button>
+            </div>
           </div>
-          <p id="queue-status" class="muted small" role="status">Connect a wallet to queue.</p>
+          <div id="queue-waiting" class="queue-waiting hidden">
+            <span class="queue-radar" aria-hidden="true"></span>
+            <div class="queue-waiting-text">
+              <strong id="queue-waiting-range"></strong>
+              <span id="queue-waiting-meta" class="muted small"></span>
+            </div>
+            <button id="leave-queue" class="ghost">Leave</button>
+          </div>
+          <p id="queue-status" class="muted small" role="status">Connect a wallet to find a match.</p>
           <button id="notify-me" type="button" class="link small hidden">Notify me when a table is ready, even in another tab</button>
         </div>
 
@@ -113,8 +140,8 @@
           <div id="create-panel" class="create-lobby jump-target">
             <h3>Create a match</h3>
             <p class="muted small">
-              Share its invite link with friends. Players who find a match at the same stake and
-              seats can be seated in it too.
+              Share its invite link with friends. Players finding a match whose stake and seat
+              ranges include it can be seated in it too.
             </p>
             <div class="row">
               <label for="stake">Stake (ETH)</label>

@@ -83,12 +83,18 @@ describe('the status bar', () => {
       input({
         lobbies: { open: [target], live: [] },
         inTransit: new Set([target.matchId.toLowerCase()]),
-        queue: { stake: parseEther('0.001').toString(), seats: 4, waiting: 2 },
+        queue: {
+          minStake: parseEther('0.001').toString(),
+          maxStake: parseEther('0.01').toString(),
+          minSeats: 4,
+          maxSeats: 6,
+          waiting: 2,
+        },
         queuedSince: NOW * 1000 - 42_000,
       }),
     );
     expect(items.map((item) => item.kind)).toEqual(['transit', 'queue']);
-    expect(items[1]?.text).toBe('Queued for 4 seats at 0.001 ETH · 0:42');
+    expect(items[1]?.text).toBe('Queued for 0.001 – 0.01 ETH · 4 – 6 seats · 0:42');
   });
 
   it('formats a wait as a clock', () => {

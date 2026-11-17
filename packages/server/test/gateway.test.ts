@@ -672,47 +672,47 @@ describe('gateway matchmaking', () => {
   function queueing() {
     const matchmaker = new Matchmaker({
       port: { create: async () => `0x${'12'.repeat(32)}` },
-      tiers: [{ stake: STAKE, seats: 4 }],
       minSeats: 4,
+      maxSeats: 8,
       notify: (player, message) => gateway.notify(player, message),
     });
     const { socket, gateway } = harness({ matchmaker });
     return { socket, matchmaker };
   }
 
-  it('lists the tiers it runs in hello, and none without a matchmaker', () => {
-    expect(queueing().socket.last('hello')?.matchmaking).toEqual([{ stake: STAKE, seats: 4 }]);
-    expect(harness().socket.last('hello')?.matchmaking).toEqual([]);
+  it('says in hello whether it matchmakes', () => {
+    expect(queueing().socket.last('hello')?.matchmaking).toBe(true);
+    expect(harness().socket.last('hello')?.matchmaking).toBe(false);
   });
 
   it('queues the wallet, tells it how many are waiting, and takes it out when asked', async () => {
     const { socket, matchmaker } = queueing();
     await login(socket);
-    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
-    expect(socket.last('queued')).toEqual({ type: 'queued', stake: STAKE, seats: 4, waiting: 1 });
+    await socket.deliver({ type: 'queue', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
+    expect(socket.last('queued')).toEqual({ type: 'queued', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4, waiting: 1 });
 
     await socket.deliver({ type: 'dequeue' });
     expect(socket.last('dequeued')).toEqual({ type: 'dequeued' });
-    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+    expect(matchmaker.size).toBe(0);
   });
 
   it('takes the wallet out of the queue when its socket closes', async () => {
     const { socket, matchmaker } = queueing();
     await login(socket);
-    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    await socket.deliver({ type: 'queue', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
     socket.close();
-    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+    expect(matchmaker.size).toBe(0);
   });
 
-  it('refuses a tier it does not run, and a queue on a server with none', async () => {
+  it('refuses an empty range, and a queue on a server with none', async () => {
     const { socket } = queueing();
     await login(socket);
-    await socket.deliver({ type: 'queue', stake: '5', seats: 4 });
+    await socket.deliver({ type: 'queue', minStake: STAKE, maxStake: '5', minSeats: 4, maxSeats: 4 });
     expect(socket.last('error')?.code).toBe('BAD_QUEUE');
 
     const plain = harness().socket;
     await login(plain);
-    await plain.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    await plain.deliver({ type: 'queue', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
     expect(plain.last('error')?.code).toBe('UNAVAILABLE');
   });
 });
@@ -928,8 +928,8 @@ describe('gateway: what a page kept in memory, told again on login', () => {
   function queueing(open: LobbyInfo[] = []) {
     const matchmaker = new Matchmaker({
       port: { create: async () => TABLE },
-      tiers: [{ stake: STAKE, seats: 4 }],
       minSeats: 4,
+      maxSeats: 8,
       notify: (player, message) => gateway.notify(player, message),
     });
     const { socket, gateway, lobby } = harness({ matchmaker, directory: () => ({ open, live: [] }) });
@@ -944,18 +944,18 @@ describe('gateway: what a page kept in memory, told again on login', () => {
   it('tells a second tab where the wallet is queued, and keeps it queued until its last socket closes', async () => {
     const { socket, matchmaker, second } = queueing();
     await login(socket);
-    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    await socket.deliver({ type: 'queue', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
 
     const tab = second();
     await login(tab);
-    expect(tab.last('queued')).toEqual({ type: 'queued', stake: STAKE, seats: 4, waiting: 1 });
+    expect(tab.last('queued')).toEqual({ type: 'queued', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4, waiting: 1 });
 
     // The tab that queued closes first: the other still holds the place...
     socket.close();
-    expect(matchmaker.waiting(STAKE, 4)).toBe(1);
+    expect(matchmaker.size).toBe(1);
     // ...until it closes too, though it never sent `queue` itself.
     tab.close();
-    expect(matchmaker.waiting(STAKE, 4)).toBe(0);
+    expect(matchmaker.size).toBe(0);
   });
 
   it('tells a wallet again about the table the queue put it at, until it has staked', async () => {
@@ -963,8 +963,8 @@ describe('gateway: what a page kept in memory, told again on login', () => {
     const open = [lobby];
     const { socket, matchmaker, second } = queueing(open);
     await login(socket);
-    for (const other of others) matchmaker.join(other.address, STAKE, 4);
-    await socket.deliver({ type: 'queue', stake: STAKE, seats: 4 });
+    for (const other of others) matchmaker.join(other.address, { minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
+    await socket.deliver({ type: 'queue', minStake: STAKE, maxStake: STAKE, minSeats: 4, maxSeats: 4 });
     await matchmaker.tick();
     expect(socket.last('matched')?.matchId).toBe(TABLE);
 

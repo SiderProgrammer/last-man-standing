@@ -358,9 +358,6 @@ async function up() {
       // database keeps its lock and its archive to itself.
       ...(flags.db ? {} : { DATABASE_URL: '', ARCHIVE: 'memory' }),
       NODE_ENV: 'development',
-      MATCHMAKING_TIERS:
-        env.MATCHMAKING_TIERS ||
-        JSON.stringify([4, 6, 8].map((seats) => ({ stake: parseEther('0.001').toString(), seats }))),
       MATCHMAKING_FILL_AFTER_MS: env.MATCHMAKING_FILL_AFTER_MS || '15000',
       GATEWAY_LIMITS: env.GATEWAY_LIMITS || JSON.stringify({ connectRatePerIp: 50, connectBurstPerIp: 100, loginRatePerIp: 50, loginBurstPerIp: 100 }),
       // Every deployed spoke, so a wallet on any of them is offered a join.

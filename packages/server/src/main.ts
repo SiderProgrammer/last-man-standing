@@ -30,7 +30,7 @@ import { CrossChainWatcher, parseSpokes, viemCrossChain } from './chain/crossCha
 import { FeeKeeper, feeKeeperPolicy, viemFeeRouter } from './chain/feeKeeper.js';
 import { ProposalIndex, proposalsResponse, wantsFresh } from './chain/proposals.js';
 import { AnalystWorker } from './analyst/remote.js';
-import { Matchmaker, parseTiers, viemMatchmakerPort } from './lobby/matchmaker.js';
+import { Matchmaker, viemMatchmakerPort } from './lobby/matchmaker.js';
 import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
@@ -208,8 +208,8 @@ async function main(): Promise<void> {
   const matchmaker = matchmakerSender
     ? new Matchmaker({
         port: viemMatchmakerPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, escrow: config.escrow, sender: matchmakerSender }),
-        tiers: parseTiers(config.matchmakingTiers),
         minSeats: DEFAULT_RULES.minPlayers,
+        maxSeats: DEFAULT_RULES.maxPlayers,
         fillAfterMs: config.matchmakingFillAfterMs,
         notify: (player, message) => notify(player, message),
         lobbies: () => directory().open,
@@ -285,7 +285,7 @@ async function main(): Promise<void> {
   ];
   if (matchmaker) {
     timers.push(repeat(() => void matchmaker.tick(), 1_000));
-    console.log(`[server] matchmaking ${matchmaker.tiers.length} tiers`);
+    console.log('[server] matchmaking');
   }
 
   console.log(

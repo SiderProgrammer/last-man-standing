@@ -45,15 +45,8 @@ describe('what a table pays', () => {
     );
   });
 
-  it('adds the prize to each matchmaking tier once the terms are known', () => {
-    const tiers = [{ stake: parseEther('0.001').toString(), seats: 4 }];
-    expect(queuePanel(tiers, true, null).tiers[0]?.[1]).toBe('0.001 ETH · 4 seats');
-    expect(queuePanel(tiers, true, null, TERMS).tiers[0]?.[1]).toBe('0.001 ETH · 4 seats · Pot 0.004 · 1st 0.00228');
-  });
-
   it('turns the queue panel into "table ready" while a matched table waits for the stake', () => {
-    const tiers = [{ stake: parseEther('0.001').toString(), seats: 4 }];
-    const panel = queuePanel(tiers, true, null, TERMS, { stake: parseEther('0.001').toString(), seats: 4, closesIn: 130 });
+    const panel = queuePanel(true, true, null, { stake: parseEther('0.001').toString(), seats: 4, closesIn: 130 });
     expect(panel.pill).toBe('table ready');
     expect(panel.joinVisible).toBe(false);
     expect(panel.status).toBe('Your 4-seat table is ready. Stake 0.001 ETH in its row below to take your seat · 2m left.');

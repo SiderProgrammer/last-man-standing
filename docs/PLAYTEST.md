@@ -97,8 +97,8 @@ npm run testnet -- up                # server :8787 + dev client :5173, per-tab 
 ```
 
 `up` reads `.env`, forces `CHAIN_ID=84532`, keeps the archive in memory (`--db`
-uses `DATABASE_URL`), and sets a 60 s commit window, 4/6/8-seat tiers at
-0.001 ETH, and generous per-IP login limits. It fills in `SPOKES`,
+uses `DATABASE_URL`), and sets a 60 s commit window, a 15 s fill delay for
+short tables, and generous per-IP login limits. It fills in `SPOKES`,
 `AVATAR_COLLECTIONS` and the token routes from the registries.
 
 **Do not run two servers on one escrow with the same keys.** If the hosted
@@ -239,9 +239,11 @@ The rest are UI paths to click through.
 - [ ] Tab `?player=5&chain=spoke` → Winnings → **Collect to Arbitrum** (first click quotes, second signs). The server's relayer submits it on the hub, and Across fills it on Arbitrum.
 
 ### 8. Matchmaking and play-mining
-- [ ] UI: **Find a match** in two or more tabs on the same tier. `npm run play -- queue --seats 4 --players 3-4` adds bots to the same queue.
+- [ ] UI: **Find a match** in two or more tabs with overlapping stake and seat ranges; the table opens at the lowest stake all accept. `npm run play -- queue --stake 0.001 --seats 4 --players 3-4` adds bots that queue for exactly 0.001 ETH, 4 seats.
+- [ ] Ranges that do not overlap (0.001–0.002 ETH in one tab, 0.005–0.01 in another) are never put together.
+- [ ] Create a lobby at an odd stake (0.0037 ETH, 6 seats), then **Find a match** in another wallet with 0.001–0.01 ETH, 4–8 seats: it is sent to that lobby.
 - [ ] All bots: `queue --seats 8 --players 1-8`. The lobby is `matchmade`, and only its roster can join.
-- [ ] A short table: queue 4 for the 6-seat tier; it opens after 15 s (`MATCHMAKING_FILL_AFTER_MS`).
+- [ ] A short table: queue 4 players with 4–6 seats; it opens with 4 seats after 15 s (`MATCHMAKING_FILL_AFTER_MS`). Players who asked for exactly 6 never get a short one.
 - [ ] Play-mining counts only matchmade, settled matches, from the first full week after the deploy. Fork: `warp epoch` first, play a queue match, `warp 61m`, `finalize last`, `warp epoch`, then `rewards --claim` (0.5 LMS per seat at 0.001 ETH). After `warp 60d`, `rewards --release`. In the UI, the staking panel shows the same, with **Claim LMS** / **Release LMS**.
 - [ ] Testnet: play-mining pays from Thursday 12 Nov 2026 00:00 UTC (week 2967). A week can be claimed the moment it ends.
 

@@ -4,7 +4,6 @@ import type {
   AvatarCollectionInfo,
   AvatarEntry,
   LobbyInfo,
-  MatchmakingTier,
   MatchSummary,
   ServerMessage,
   SpokeInfo,
@@ -79,8 +78,8 @@ export interface AppState {
    * `crossChain` report, or by the seat showing up in the directory.
    */
   inTransit: ReadonlySet<string>;
-  /** The tiers the server matchmakes; empty when it runs no matchmaker. */
-  matchmaking: readonly MatchmakingTier[];
+  /** Whether the server matchmakes. */
+  matchmaking: boolean;
   /** This wallet's place in the matchmaking queue, or null when it is not in it. */
   queue: QueueSpot | null;
   /** When this wallet joined the queue, in browser milliseconds, for the clocks that show it. */
@@ -162,7 +161,7 @@ export const store = createStore<AppState>({
   lobbies: { open: [], live: [] },
   escrowPaused: false,
   inTransit: new Set(),
-  matchmaking: [],
+  matchmaking: false,
   queue: null,
   queuedSince: null,
   matched: new Set(),

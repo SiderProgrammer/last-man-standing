@@ -122,7 +122,7 @@ The mitigations are around the game rather than in it:
   play-mining: the matchmaker opens them with a roster from its queue, and only that
   roster may join. Private lobbies are still joined by id, so two wallets one person
   controls can sit at the same table on purpose; and wallets with one owner queueing
-  together in a quiet tier can still be matched with each other.
+  together in a quiet range can still be matched with each other.
 - **Detection from the public history.** Every move is published, so a pair that
   never strikes each other across many matches is visible after the fact. The
   analyst and the play-style records are the natural place to flag it. Not built.
@@ -263,7 +263,7 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `bots/bots.ts` | `BotDriver`: plays the house seats, with seed-derived salts |
 | **`lobby/`** | **Which matches exist, and what happens when one ends** |
 | `lobby/lobby.ts` | Room registry, indexed by match, by watching client and by seated wallet; creates practice lobbies, adopts on-chain matches, resumes them from their journal after a restart, holds a watch for a lobby still to open; finalises results through a retry queue; ticks every room's clock, isolating a room that throws so it cannot stall the others or take the process down |
-| `lobby/matchmaker.ts` | `Matchmaker`: a queue per tier, and a matchmade lobby opened with its roster once a tier has a table |
+| `lobby/matchmaker.ts` | `Matchmaker`: one queue of stake and table-size ranges; a matchmade lobby, at the lowest stake all accept, opened with its roster once their ranges make a table |
 | `lobby/store.ts` | Match archive, transcripts included: in memory, or the Postgres repository when `DATABASE_URL` is set |
 | `lobby/styles.ts` | Play styles by wallet, in memory or the Postgres repository |
 | `lobby/transcripts.ts` | `GET /transcripts/<hash>`: a staked match's transcript, by the hash the escrow stored |
@@ -373,7 +373,7 @@ start, and a second server is refused.
 | `screens/lobby.ts` | Practice (as a guest or a wallet), the staked-lobby directory, create and join, from the hub or a spoke |
 | `screens/statusBar.ts` | The bar under the header: a match to rejoin, a table waiting, a refund, a stake crossing chains, a queue place |
 | `screens/history.ts` | "Your matches": the wallet's finished matches, each reopening in the match screen |
-| `screens/queue.ts` | The matchmaking queue: pick a tier, wait, leave |
+| `screens/queue.ts` | The matchmaking queue: pick a stake range and a seat range, wait, leave |
 | `screens/discount.ts` | *On demand.* Paying part of a seat's fee in LMS: quote, permit, join |
 | `screens/zap.ts` | *On demand.* Paying a stake in a token through `ZapJoin` |
 | `screens/staking.ts` | *On demand* (`stakingPanel.ts`). Stake, unstake, claim, vesting and release, delegation |
@@ -839,7 +839,6 @@ variables. To exercise the same features against a running stack, see
 | `ATTESTOR_PK` | — | Attestor key, held by its own process; signs results, aborts and receipts, sends nothing |
 | `KEEPER_PK` | — | Sends lock, settle, abort, finalise, cancel and harvest. Without it, nothing reaches the chain |
 | `MATCHMAKER_PK` | — | Opens matchmade lobbies; without it there is no queue |
-| `MATCHMAKING_TIERS` | 0.001 ETH × 4 and × 8, 0.01 ETH × 4 | The queues, as JSON |
 | `MATCHMAKING_FILL_AFTER_MS` | `30000` | A short table opens once its first player has waited this long |
 | `READY_MS` | `30000` | How long a staked room waits for every player before round 1's clock starts |
 | `CONFIRMATIONS` | `3` | Blocks behind the head every log scan stops at |

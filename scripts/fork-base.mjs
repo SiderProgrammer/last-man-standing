@@ -259,13 +259,6 @@ const PLAYER_LIQUID_LMS = '50000';
 const DEMO_STAKER_BPS = 5_000;
 const DEMO_LMS_PER_ETH = parseEther('20000');
 
-const MATCHMAKING_TIERS = [
-  { stake: parseEther('0.001').toString(), seats: 4 },
-  { stake: parseEther('0.001').toString(), seats: 6 },
-  { stake: parseEther('0.001').toString(), seats: 8 },
-  { stake: parseEther('0.01').toString(), seats: 4 },
-];
-
 const roles = forkRoles();
 const players = forkPlayers();
 
@@ -985,7 +978,6 @@ async function main() {
     vrf: { coordinator: VRF_COORDINATOR, subId: subId.toString() },
     across: { hubPool: HUB_POOL, spokePool: first.pool, hubWeth: HUB_WETH, spokeWeth: first.weth, api: null },
     tokens,
-    tiers: MATCHMAKING_TIERS,
     roles,
     players,
   };
@@ -1016,7 +1008,6 @@ async function main() {
       COMMIT_MS: process.env.COMMIT_MS || '60000',
       REVEAL_MS: process.env.REVEAL_MS || '15000',
       CONFIRMATIONS: '1',
-      MATCHMAKING_TIERS: JSON.stringify(MATCHMAKING_TIERS),
       MATCHMAKING_FILL_AFTER_MS: '15000',
       // Eight tabs and a handful of bots, all from one IP.
       GATEWAY_LIMITS: JSON.stringify({ connectRatePerIp: 50, connectBurstPerIp: 100, loginRatePerIp: 50, loginBurstPerIp: 100 }),

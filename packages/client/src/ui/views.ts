@@ -13,7 +13,7 @@ import {
   type CrossChainEvent,
   type LobbyInfo,
   type LobbySeat,
-  type MatchmakingTier,
+  type QueueRange,
   type SpokeInfo,
   type ZapInfo,
   type ZapToken,
@@ -34,17 +34,15 @@ import { formatDuration } from './staking.js';
 export type Option = [value: string, label: string];
 
 /** Where this wallet is in the matchmaking queue, as the server last said. */
-export interface QueueSpot {
-  stake: string;
-  seats: number;
-  /** Wallets in that tier now, this one included. */
+export interface QueueSpot extends QueueRange {
+  /** Wallets queued whose ranges overlap this one's, this one included. */
   waiting: number;
 }
 
 export interface QueuePanel {
   visible: boolean;
-  /** The tiers, each `stake:seats`, labelled with the stake in ETH and the table size. */
-  tiers: Option[];
+  /** Which face the panel shows: the form, the search under way, or the table waiting for the stake. */
+  mode: 'form' | 'waiting' | 'ready';
   pill: string;
   joinVisible: boolean;
   joinDisabled: boolean;
@@ -171,7 +169,7 @@ export function statusItems(input: StatusInput): StatusItem[] {
   if (input.queue && input.queuedSince !== null) {
     items.push({
       kind: 'queue',
-      text: `Queued for ${input.queue.seats} seats at ${formatEther(BigInt(input.queue.stake))} ETH · ${clock(input.nowMs - input.queuedSince)}`,
+      text: `Queued for ${queueRangeText(input.queue)} · ${clock(input.nowMs - input.queuedSince)}`,
       action: 'Leave',
       matchId: null,
     });
@@ -185,33 +183,119 @@ export function clock(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-/** The tier a queue option stands for. */
-export function tierKey(tier: MatchmakingTier): string {
-  return `${tier.stake}:${tier.seats}`;
+/** A stake range and a seat range in words: "0.001 – 0.01 ETH · 4 – 8 seats", or "0.001 ETH · 4 seats". */
+export function queueRangeText(range: QueueRange): string {
+  const low = formatEther(BigInt(range.minStake));
+  const high = formatEther(BigInt(range.maxStake));
+  const stake = low === high ? `${low} ETH` : `${low} – ${high} ETH`;
+  const seats = range.minSeats === range.maxSeats ? `${range.minSeats} seats` : `${range.minSeats} – ${range.maxSeats} seats`;
+  return `${stake} · ${seats}`;
+}
+
+/** A stake range offered as one tap in Find a match. */
+export interface StakePreset {
+  minStake: bigint;
+  maxStake: bigint;
+  label: string;
 }
 
 /**
- * The matchmaking panel. Shown only when the server matchmakes: its tiers
- * are the only tables that earn play-mining, and the queue is the only way
+ * The stake ranges Find a match offers as one tap, from the smallest stake
+ * the config allows (`min`): any stake allowed, then exactly `min`, `min`
+ * to 10×, and 10× to 100×, each cut at the largest stake allowed, and none
+ * that would start above it. Without terms yet, 0.001 ETH stands in for
+ * `min`, and 100× that for the largest.
+ */
+export function stakePresets(terms: Pick<ProtocolTerms, 'minStake' | 'maxStake'> | null): StakePreset[] {
+  const min = terms && terms.minStake > 0n ? terms.minStake : 10n ** 15n;
+  const max = terms ? terms.maxStake : min * 100n;
+  const presets: StakePreset[] = [{ minStake: min, maxStake: max, label: 'Any' }];
+  for (const [low, high] of [
+    [min, min],
+    [min, min * 10n],
+    [min * 10n, min * 100n],
+  ] as const) {
+    if (low > max) continue;
+    const top = high < max ? high : max;
+    if (presets.some((preset) => preset.minStake === low && preset.maxStake === top)) continue;
+    const label = low === top ? formatEther(low) : `${formatEther(low)} – ${formatEther(top)}`;
+    presets.push({ minStake: low, maxStake: top, label });
+  }
+  return presets;
+}
+
+/**
+ * The seat range after a tap on `seats`: from every size, one size; from
+ * one size, the range between it and the one tapped; from a range, the one
+ * size tapped again.
+ */
+export function tapSeats(
+  current: { minSeats: number; maxSeats: number },
+  seats: number,
+  all: { minSeats: number; maxSeats: number },
+): { minSeats: number; maxSeats: number } {
+  const everything = current.minSeats === all.minSeats && current.maxSeats === all.maxSeats;
+  if (!everything && current.minSeats === current.maxSeats && current.minSeats !== seats) {
+    return { minSeats: Math.min(current.minSeats, seats), maxSeats: Math.max(current.minSeats, seats) };
+  }
+  return { minSeats: seats, maxSeats: seats };
+}
+
+/**
+ * What 1st place takes across a range, with every seat taken: from the
+ * cheapest, smallest table to the dearest, biggest one. Null without terms.
+ */
+export function queueWinText(range: QueueRange, terms: Pick<ProtocolTerms, 'feeBps' | 'payoutBps'> | null): string | null {
+  if (!terms || terms.payoutBps.length === 0) return null;
+  const first = (stake: string, seatCount: number) =>
+    prizeFor({ stake: BigInt(stake), seatCount, feeBps: terms.feeBps, payoutBps: terms.payoutBps }, 0);
+  const low = formatEth(first(range.minStake, range.minSeats));
+  const high = formatEth(first(range.maxStake, range.maxSeats));
+  return low === high ? `1st place takes ${low} ETH` : `1st place takes ${low} – ${high} ETH`;
+}
+
+export type QueueRangeInput = { ok: true; range: QueueRange } | { ok: false; error: string };
+
+/**
+ * The Find a match form's ranges, or why they are not ones. Each stake is
+ * read as the create form reads its own, within the stakes the config
+ * allows; the low end may not be above the high one.
+ */
+export function parseQueueRange(
+  minStake: string,
+  maxStake: string,
+  minSeats: number,
+  maxSeats: number,
+  terms: Pick<ProtocolTerms, 'minStake' | 'maxStake'> | null,
+): QueueRangeInput {
+  const low = parseStakeInput(minStake, terms);
+  if (!low.ok) return { ok: false, error: `Lowest stake: ${low.error}` };
+  const high = parseStakeInput(maxStake, terms);
+  if (!high.ok) return { ok: false, error: `Highest stake: ${high.error}` };
+  if (low.wei > high.wei) return { ok: false, error: 'The lowest stake is above the highest.' };
+  if (!Number.isInteger(minSeats) || !Number.isInteger(maxSeats)) return { ok: false, error: 'Pick a number of seats.' };
+  if (minSeats > maxSeats) return { ok: false, error: 'The fewest seats are more than the most.' };
+  return { ok: true, range: { minStake: low.wei.toString(), maxStake: high.wei.toString(), minSeats, maxSeats } };
+}
+
+/**
+ * The matchmaking panel. Shown only when the server matchmakes: its tables
+ * are the only ones that earn play-mining, and the queue is the only way
  * into them.
  */
 export function queuePanel(
-  tiers: readonly MatchmakingTier[],
+  matchmaking: boolean,
   connected: boolean,
   spot: QueueSpot | null,
-  terms: Pick<ProtocolTerms, 'feeBps' | 'payoutBps'> | null = null,
   /** A table the queue put this wallet at that still waits for its stake. */
   ready: { stake: string; seats: number; closesIn: number | null } | null = null,
 ): QueuePanel {
-  const options: Option[] = tiers.map((tier) => {
-    const prize = prizeSummary(tier.stake, tier.seats, terms);
-    return [tierKey(tier), `${formatEther(BigInt(tier.stake))} ETH · ${tier.seats} seats${prize ? ` · ${prize}` : ''}`];
-  });
-  const base = { visible: tiers.length > 0, tiers: options };
+  const base = { visible: matchmaking };
   if (ready) {
     const left = ready.closesIn !== null && ready.closesIn > 0 ? ` · ${formatDuration(ready.closesIn)} left` : '';
     return {
       ...base,
+      mode: 'ready',
       pill: 'table ready',
       joinVisible: false,
       joinDisabled: true,
@@ -223,24 +307,22 @@ export function queuePanel(
     const others = spot.waiting - 1;
     return {
       ...base,
-      pill: 'queued',
+      mode: 'waiting',
+      pill: 'searching',
       joinVisible: false,
       joinDisabled: true,
       leaveVisible: true,
-      status:
-        `Waiting for a ${spot.seats}-seat table at ${formatEther(BigInt(spot.stake))} ETH · ` +
-        (others <= 0 ? 'nobody else queued yet' : `${others} other${others === 1 ? '' : 's'} queued`),
+      status: others <= 0 ? 'Nobody else in your range yet' : `${others} other${others === 1 ? '' : 's'} in your range`,
     };
   }
   return {
     ...base,
+    mode: 'form',
     pill: 'idle',
     joinVisible: true,
     joinDisabled: !connected,
     leaveVisible: false,
-    status: connected
-      ? 'When a table fills, its lobby opens for exactly those players; stake into it to take your seat.'
-      : 'Connect a wallet to queue.',
+    status: connected ? '' : 'Connect a wallet to find a match.',
   };
 }
 

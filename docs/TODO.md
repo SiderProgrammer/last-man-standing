@@ -235,7 +235,7 @@ These are open questions, not bugs:
   current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
   in validation (1.09× under the old storm rules). See "Known risk: collusion" in
   `ARCHITECTURE.md`. Matchmaking now assigns the lobbies that earn play-mining, though
-  wallets with one owner queueing together in a quiet tier can still be matched with
+  wallets with one owner queueing together in a quiet range can still be matched with
   each other. Candidates still open: flagging seat pairs that never strike each other
   from the public history, and a payout schedule that pays a pact less.
 - **Idle players.** In a staked match one idle seat makes every round run the full 60 s,

@@ -178,14 +178,11 @@ function renderHeroNote(): void {
 
 /**
  * The create form's stake box starts at the cheapest table: the config's
- * minimum stake, or the cheapest tier the matchmaker runs. Only while the
- * player has not typed in it.
+ * minimum stake. Only while the player has not typed in it.
  */
 function defaultStake(): void {
   if (dom.stake.dataset.touched) return;
-  const cheapest =
-    app.terms?.minStake ??
-    app.matchmaking.reduce<bigint | null>((low, tier) => (low === null || BigInt(tier.stake) < low ? BigInt(tier.stake) : low), null);
+  const cheapest = app.terms?.minStake ?? null;
   if (cheapest !== null && cheapest > 0n) dom.stake.value = formatEther(cheapest);
   renderCreateForm();
 }
@@ -276,7 +273,7 @@ export function renderLobbies(): void {
           : !app.wallet
           ? 'No staked lobbies right now. Connect a wallet to open one, or start a practice match.'
           : app.escrow
-          ? app.matchmaking.length > 0
+          ? app.matchmaking
             ? 'No staked lobbies right now. Find a match, or open your own below.'
             : 'No staked lobbies right now. Open your own below.'
           : 'Server is running without an escrow: practice only.',
@@ -326,7 +323,7 @@ export function renderLobbies(): void {
       element(
         'li',
         'lobby-empty muted small',
-        app.matchmaking.length > 0
+        app.matchmaking
           ? 'No lobbies to join right now. Find a match above, or open your own below.'
           : 'No lobbies to join right now. Open your own below.',
       ),

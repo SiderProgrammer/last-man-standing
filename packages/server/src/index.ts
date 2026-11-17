@@ -22,7 +22,6 @@ export { MIGRATIONS, type Migration } from './db/migrations.js';
 export { openStorage, storageOn, type Storage } from './db/storage.js';
 export {
   Matchmaker,
-  parseTiers,
   viemMatchmakerPort,
   type MatchmakerOptions,
   type MatchmakerPort,

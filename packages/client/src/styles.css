@@ -323,6 +323,11 @@ button.tip:focus-visible::after {
   color: var(--warn);
 }
 
+/* A muted hint line that turns into a warning stays a warning. */
+.muted.warn-text {
+  color: var(--warn);
+}
+
 .field {
   display: grid;
   gap: 4px;
@@ -1016,8 +1021,174 @@ button.lock-in {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
 }
 
-.queue-panel .field select {
+.queue-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.queue-pick {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.queue-pick-label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* One-tap choices: stake ranges, and "Any" table size. */
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.choice {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+button.choice[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+}
+
+.queue-panel .range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 320px;
   width: 100%;
+}
+
+.queue-panel .range-inputs input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.seat-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The table sizes as one bar: the range picked lights up between its ends. */
+.seat-bar {
+  display: inline-flex;
+}
+
+.seat-bar button {
+  min-width: 42px;
+  padding: 6px 0;
+  border-radius: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seat-bar button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.seat-bar button:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.seat-bar button + button {
+  margin-left: -1px;
+}
+
+.seat-bar button.in-range {
+  position: relative;
+  z-index: 1;
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel-2));
+}
+
+.seat-bar button.edge {
+  z-index: 2;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
+}
+
+.queue-go {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.queue-summary {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-summary .warn-text {
+  font-weight: 400;
+}
+
+/* Queued: the search under way, in place of the form. */
+.queue-waiting {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-2));
+}
+
+.queue-waiting-text {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-radar {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: radar 1.6s ease-out infinite;
+}
+
+@keyframes radar {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-radar {
+    animation: none;
+  }
+}
+
+#queue-status:empty {
+  display: none;
 }
 
 .queue-panel #join-queue {
@@ -1555,18 +1726,6 @@ button.pill {
 }
 
 /* ----------------------------------------------------------------- lobby */
-
-.queue-controls {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.queue-controls .field {
-  flex: 1 1 260px;
-  margin: 0;
-}
 
 .queue-panel.ready {
   border-color: var(--accent);

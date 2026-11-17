@@ -1,5 +1,6 @@
 import {
   Action,
+  DEFAULT_RULES,
   MatchPhase,
   commitMove,
   isActionValue,
@@ -19,7 +20,7 @@ import {
   applyDelta,
   withRound,
   type LobbyInfo,
-  type MatchmakingTier,
+  type QueueRange,
   type PlayStyle,
   type ServerMessage,
 } from '@lms/api';
@@ -35,6 +36,7 @@ import { callBack, cue, setSound, soundOn } from '../ui/alerts.js';
 import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
 import { renderWinnings } from '../wallet/payouts.js';
 import { startPractice } from './lobby.js';
+import { chosenRange, queueFor } from './queue.js';
 import { element, fillSelect } from '../ui/dom.js';
 import { describeDraft, formatCountdown } from '../ui/format.js';
 import { gsap } from '../motion.js';
@@ -217,11 +219,11 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
     // own back button give way to it.
     dom.movePanel.classList.add('hidden');
     const practice = isPracticeTable(app.match.players);
-    // Practice: the same bots again. Staked: the queue for the same table.
-    const tier = practice ? null : tierOf(app.match.matchId, app.match.players.length);
-    againTier = tier;
+    // Practice: the same bots again. Staked: the queue, for a table like this one.
+    const range = practice ? null : rangeAfter(app.match.matchId);
+    againRange = range;
     dom.resultAgain.textContent = practice ? 'Play again' : 'Find another match';
-    dom.resultAgain.classList.toggle('hidden', practice ? !app.lastPractice : tier === null);
+    dom.resultAgain.classList.toggle('hidden', practice ? !app.lastPractice : range === null);
     showResultCard();
   }
   offerAnalysis(message.result.matchId);
@@ -245,22 +247,29 @@ function showEnded(state: PublicMatchState): void {
   dom.lockIn.textContent = lockInLabel(true, false, null);
 }
 
-/** The matchmaking tier "Find another match" queues for, set when a staked match ends. */
-let againTier: MatchmakingTier | null = null;
+/** The ranges "Find another match" queues for, set when a staked match ends. */
+let againRange: QueueRange | null = null;
 
 /**
- * The matchmaker's tier for a finished staked match: its stake, read from
- * the directory as it was while the match ran, and its table size. Null
- * when no tier matches, as for a private lobby's odd stake.
+ * What to queue for after a finished staked match: the ranges the player
+ * chose in Find a match, if its stake is in them; otherwise that match's
+ * stake exactly, at the table sizes they chose. Its stake is read from the
+ * directory as it was while the match ran. Null on a server that does not
+ * matchmake, or when the match is not known.
  */
-function tierOf(matchId: string, seats: number): MatchmakingTier | null {
+function rangeAfter(matchId: string): QueueRange | null {
+  if (!app.matchmaking) return null;
   const lobby = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === matchId) ?? tableSeen;
   if (!lobby || lobby.matchId !== matchId) return null;
-  // A short matchmade table has as many seats as players: it belongs to the
-  // smallest tier at its stake that seats it.
-  const size = Math.max(seats, lobby.maxSeats);
-  const fits = app.matchmaking.filter((tier) => tier.stake === lobby.stake && tier.seats >= size).sort((a, b) => a.seats - b.seats);
-  return fits[0] ?? null;
+  const chosen = chosenRange();
+  const stake = BigInt(lobby.stake);
+  if (chosen && BigInt(chosen.minStake) <= stake && stake <= BigInt(chosen.maxStake)) return chosen;
+  return {
+    minStake: lobby.stake,
+    maxStake: lobby.stake,
+    minSeats: chosen?.minSeats ?? DEFAULT_RULES.minPlayers,
+    maxSeats: chosen?.maxSeats ?? DEFAULT_RULES.maxPlayers,
+  };
 }
 
 /** The directory's entry for the match on screen, kept as it was when the match opened. */
@@ -849,8 +858,8 @@ export function wireMatchControls(): void {
     if (leaveMatchFor()) showScreen('lobby');
   };
   dom.resultAgain.onclick = () => {
-    if (againTier) {
-      net.send({ type: 'queue', stake: againTier.stake, seats: againTier.seats });
+    if (againRange) {
+      queueFor(againRange);
       leaveMatch();
       return;
     }

@@ -75,7 +75,7 @@ export type RequestErrorCode =
   | 'RELAY_REFUSED'
   /** The wallet has used today's relayed calls. Its own transactions still work. */
   | 'RELAY_QUOTA'
-  /** A matchmaking tier this server does not run, or a wallet already queued. */
+  /** A matchmaking range that is empty, or outside the table sizes a match can have. */
   | 'BAD_QUEUE'
   /** A failure with no specific code. The message says what happened. */
   | 'INTERNAL';
@@ -169,11 +169,11 @@ export type ClientMessage =
    */
   | { type: 'withdrawToChain'; id: string; withdrawal: WireWithdrawal; quote: WireBridgeQuote; signature: `0x${string}` }
   /**
-   * Joins the matchmaking queue for one of the tiers `hello` lists. Answered
-   * with `queued`, then `matched` once the queue has put a table together.
-   * One queue per wallet; joining another leaves the first.
+   * Joins the matchmaking queue, for any table whose stake and size fall in
+   * the ranges given. Answered with `queued`, then `matched` once the queue
+   * has put a table together. One place per wallet; queueing again replaces it.
    */
-  | { type: 'queue'; stake: string; seats: number }
+  | ({ type: 'queue' } & QueueRange)
   /** Leaves the matchmaking queue. Answered with `dequeued`. */
   | { type: 'dequeue' };
 
@@ -228,11 +228,11 @@ export type ServerMessage =
        */
       practiceReceiptSigner: `0x${string}` | null;
       /**
-       * The tiers this server matchmakes, each a stake in wei and a table
-       * size. Empty when it runs no matchmaker: every lobby is then one a
-       * player opened, joined by id, and none earns play-mining.
+       * Whether this server matchmakes. False when it runs no matchmaker:
+       * every lobby is then one a player opened, joined by id, and none
+       * earns play-mining.
        */
-      matchmaking: MatchmakingTier[];
+      matchmaking: boolean;
       /**
        * True when this server submits signed withdrawals to a spoke
        * (`withdrawToChain`), so a player who has no gas on the hub can still
@@ -372,8 +372,11 @@ export type ServerMessage =
    * the moment the room opens.
    */
   | { type: 'waiting'; matchId: `0x${string}` }
-  /** In the queue for this tier, with `waiting` wallets in it now, this one included. */
-  | { type: 'queued'; stake: string; seats: number; waiting: number }
+  /**
+   * In the queue for these ranges, with `waiting` wallets in it now whose
+   * ranges overlap them, this one included.
+   */
+  | ({ type: 'queued'; waiting: number } & QueueRange)
   | { type: 'dequeued' }
   /**
    * The queue put a table together, and the escrow holds a matchmade lobby
@@ -422,10 +425,16 @@ export interface ReviewedMatch {
   finishedAt: number;
 }
 
-/** A matchmaking queue: a stake in wei, as a decimal string, and a table size. */
-export interface MatchmakingTier {
-  stake: string;
-  seats: number;
+/**
+ * What a wallet in the matchmaking queue will play: any stake from
+ * `minStake` to `maxStake` (wei, as decimal strings) at a table of
+ * `minSeats` to `maxSeats` seats, both ends included.
+ */
+export interface QueueRange {
+  minStake: string;
+  maxStake: string;
+  minSeats: number;
+  maxSeats: number;
 }
 
 /** A `PlayerAvatars` deployment, as advertised to the client. */

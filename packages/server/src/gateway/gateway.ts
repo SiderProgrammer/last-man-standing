@@ -128,7 +128,7 @@ export interface GatewayOptions {
    */
   withdrawals?: ChainWithdrawals;
   /**
-   * The matchmaking queue. Omitted, `hello` lists no tiers, `queue` is
+   * The matchmaking queue. Omitted, `hello` says there is none, `queue` is
    * refused, and every lobby is one a player opened.
    */
   matchmaker?: Matchmaker;
@@ -293,7 +293,7 @@ export class Gateway {
       spokes: this.options.spokes ?? [],
       receiptSigner: this.options.receipts?.address ?? null,
       practiceReceiptSigner: this.options.practiceReceipts?.address ?? null,
-      matchmaking: [...(this.options.matchmaker?.tiers ?? [])],
+      matchmaking: Boolean(this.options.matchmaker),
       withdrawToChain: this.options.withdrawals !== undefined,
     });
 
@@ -484,7 +484,8 @@ export class Gateway {
         if (!matchmaker) throw new RequestError('UNAVAILABLE', 'this server runs no matchmaking');
         if (this.options.paused?.()) throw new RequestError('UNAVAILABLE', 'staked play is paused right now; the queue reopens when it resumes');
         // `queued` goes to every socket of the wallet, this one included.
-        matchmaker.join(address, message.stake, message.seats);
+        const { minStake, maxStake, minSeats, maxSeats } = message;
+        matchmaker.join(address, { minStake, maxStake, minSeats, maxSeats });
         session.queued = true;
         return;
       }
