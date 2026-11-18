@@ -285,7 +285,7 @@ export class Wallet {
   async createMatch(escrow: Address, stakeEth: string, seats: number): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: escrow,
       abi: gameEscrowAbi,
       functionName: 'createMatch',
@@ -297,7 +297,7 @@ export class Wallet {
   async join(escrow: Address, matchId: Hex, stakeWei: bigint): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: escrow,
       abi: gameEscrowAbi,
       functionName: 'join',
@@ -345,7 +345,7 @@ export class Wallet {
     await this.ensureChain(spokeChainId);
     const chain = viemChain(spokeChainId);
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: router,
       abi: spokeRouterAbi,
       functionName: 'join',
@@ -360,7 +360,7 @@ export class Wallet {
   async withdraw(escrow: Address): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: escrow,
       abi: gameEscrowAbi,
       functionName: 'withdraw',
@@ -434,7 +434,7 @@ export class Wallet {
   async cancelMatch(escrow: Address, matchId: Hex): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: escrow,
       abi: gameEscrowAbi,
       functionName: 'cancelMatch',
@@ -450,7 +450,7 @@ export class Wallet {
   async dispute(escrow: Address, matchId: Hex, evidenceHash: Hex): Promise<Hex> {
     const chain = await this.onHub();
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: escrow,
       abi: gameEscrowAbi,
       functionName: 'dispute',
@@ -479,7 +479,7 @@ export class Wallet {
   async mintAvatar(collection: Address): Promise<Hex> {
     const chain = viemChain(this.current);
     const { request } = await this.rpc.simulateContract({
-      account: this.address,
+      account: this.signer,
       address: collection,
       abi: playerAvatarsAbi,
       functionName: 'mint',

@@ -56,7 +56,7 @@ export async function approveToken(wallet: Wallet, token: Address, spender: Addr
   const chain = await wallet.onHub();
   const approve = (value: bigint) =>
     wallet.rpc.simulateContract({
-      account: wallet.address,
+      account: wallet.signer,
       address: token,
       abi: erc20Abi,
       functionName: 'approve',
@@ -85,7 +85,7 @@ export async function joinWithToken(wallet: Wallet,
 ): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: zap,
     abi: zapJoinAbi,
     functionName: 'joinWithToken',

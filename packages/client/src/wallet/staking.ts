@@ -49,7 +49,7 @@ export async function stake(wallet: Wallet, vault: Address, amount: bigint): Pro
   const lms = await wallet.rpc.readContract({ address: vault, abi: stakedLmsAbi, functionName: 'underlying' });
   const { deadline, v, r, s } = await signLmsPermit(wallet, lms, vault, amount);
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'depositWithPermit',
@@ -65,7 +65,7 @@ export async function stake(wallet: Wallet, vault: Address, amount: bigint): Pro
 export async function delegateVotes(wallet: Wallet, vault: Address, delegatee: Address): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'delegate',
@@ -78,7 +78,7 @@ export async function delegateVotes(wallet: Wallet, vault: Address, delegatee: A
 export async function requestUnstake(wallet: Wallet, vault: Address, amount: bigint): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'requestUnstake',
@@ -91,7 +91,7 @@ export async function requestUnstake(wallet: Wallet, vault: Address, amount: big
 export async function claimUnstaked(wallet: Wallet, vault: Address): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'claim',
@@ -142,7 +142,7 @@ async function endedEpochs(
 export async function claimPlayRewards(wallet: Wallet, distributor: Address, epochs: readonly bigint[]): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: distributor,
     abi: rewardsDistributorAbi,
     functionName: 'claim',
@@ -155,7 +155,7 @@ export async function claimPlayRewards(wallet: Wallet, distributor: Address, epo
 export async function claimRewards(wallet: Wallet, vault: Address): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vault,
     abi: stakedLmsAbi,
     functionName: 'claimRewards',
@@ -206,7 +206,7 @@ export async function vesting(wallet: Wallet, distributor: Address): Promise<Ves
 export async function releaseVested(wallet: Wallet, vestingAddress: Address, epochs: readonly bigint[]): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: vestingAddress,
     abi: rewardVestingAbi,
     functionName: 'release',

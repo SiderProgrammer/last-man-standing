@@ -64,7 +64,7 @@ export async function joinWithLms(
   const chain = await wallet.onHub();
   const { deadline, v, r, s } = await signLmsPermit(wallet, token, escrow, quote.lmsUsed);
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: escrow,
     abi: gameEscrowAbi,
     functionName: 'joinWithLmsPermit',

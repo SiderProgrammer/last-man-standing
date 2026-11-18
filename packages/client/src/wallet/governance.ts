@@ -88,7 +88,7 @@ export async function castVote(wallet: Wallet, governor: Address, proposalId: st
   const id = BigInt(proposalId);
   if (reason.trim()) {
     const { request } = await wallet.rpc.simulateContract({
-      account: wallet.address,
+      account: wallet.signer,
       address: governor,
       abi: lmsGovernorAbi,
       functionName: 'castVoteWithReason',
@@ -97,7 +97,7 @@ export async function castVote(wallet: Wallet, governor: Address, proposalId: st
     return wallet.client.writeContract({ ...request, chain });
   }
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: governor,
     abi: lmsGovernorAbi,
     functionName: 'castVote',
@@ -149,7 +149,7 @@ export async function proposalContext(
 export async function propose(wallet: Wallet, governor: Address, actions: readonly ProposalAction[], description: string): Promise<Hex> {
   const chain = await wallet.onHub();
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: governor,
     abi: lmsGovernorAbi,
     functionName: 'propose',
@@ -178,7 +178,7 @@ export async function advanceProposal(wallet: Wallet, governor: Address, proposa
   ] as const;
   if (step === 'queue') {
     const { request } = await wallet.rpc.simulateContract({
-      account: wallet.address,
+      account: wallet.signer,
       address: governor,
       abi: lmsGovernorAbi,
       functionName: 'queue',
@@ -187,7 +187,7 @@ export async function advanceProposal(wallet: Wallet, governor: Address, proposa
     return wallet.client.writeContract({ ...request, chain });
   }
   const { request } = await wallet.rpc.simulateContract({
-    account: wallet.address,
+    account: wallet.signer,
     address: governor,
     abi: lmsGovernorAbi,
     functionName: 'execute',
