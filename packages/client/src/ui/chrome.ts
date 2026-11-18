@@ -87,7 +87,8 @@ export function wireChrome(): void {
   };
   // Picking anything in the menu closes it.
   dom.topbarNav.addEventListener('click', (event) => {
-    if (event.target instanceof HTMLButtonElement) closeMenu();
+    // Not the chain chip: it opens the network list, inside this menu.
+    if (event.target instanceof HTMLButtonElement && event.target !== dom.chainLabel) closeMenu();
   });
   // The status bar sticks just under the header, whatever height it wraps to.
   const header = document.querySelector<HTMLElement>('.topbar');

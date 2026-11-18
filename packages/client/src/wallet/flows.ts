@@ -2,7 +2,8 @@ import { chainInfo } from '@lms/contracts';
 import { type AvatarCollectionInfo, type ServerMessage } from '@lms/api';
 import { app, dom, net, store } from '../context.js';
 import { showScreen, toast } from '../ui/chrome.js';
-import { avatarPanel, hubLabel, type AvatarStatus } from '../ui/views.js';
+import { avatarPanel, hubLabel, networkChoices, type AvatarStatus } from '../ui/views.js';
+import { element } from '../ui/dom.js';
 import { useMoveStoreFor } from '../game/salts.js';
 import { generatePrivateKey } from 'viem/accounts';
 import { KeyStore } from '../io/keystore.js';
@@ -29,7 +30,8 @@ export function wireWalletControls(): void {
   dom.mintAvatar.onclick = () => void mintAvatar();
   dom.forgetSession.onclick = () => void forgetGrant();
 
-  store.subscribe(['chainId', 'wallet', 'walletChainId', 'escrow', 'spokes'], renderHubLabel);
+  wireChainMenu();
+  store.subscribe(['chainId', 'wallet', 'walletChainId', 'escrow', 'spokes', 'avatarCollections'], renderHubLabel);
   store.subscribe(['wallet', 'grantKey'], renderSessionPanel);
   store.subscribe(['wallet', 'walletChainId', 'avatarCollections'], () => void renderAvatarPanel());
   store.subscribe(['wallet', 'walletChainId'], renderAccountAddress);
@@ -242,22 +244,90 @@ export function renderHubLabel(): void {
   dom.chainLabel.classList.toggle('warn', label.mismatch);
   dom.chainLabel.textContent = label.text;
   dom.chainLabel.title = label.title;
+  renderChainMenu();
+}
+
+// ------------------------------------------------------------ network picker
+
+/** The networks the chip offers, for a wallet that can be asked to switch; none otherwise. */
+function chainChoices() {
+  const wallet = app.wallet;
+  if (!wallet?.canSwitchChain) return [];
+  return networkChoices(app.chainId, wallet.chainId, Boolean(app.escrow), app.spokes, app.avatarCollections);
 }
 
 /**
- * Asks the wallet to move to the hub, for the panels that only work there:
- * staking and governance. Every panel listening to `walletChainId` redraws.
+ * The chain chip's list of networks. MetaMask keeps a network per site, so a
+ * switch in its own network list never reaches the page: this is the way to
+ * move the page's wallet, and it then follows like any other switch.
  */
-export async function switchToHub(): Promise<void> {
+function renderChainMenu(): void {
+  const choices = chainChoices();
+  dom.chainLabel.disabled = choices.length === 0;
+  if (dom.chainLabel.disabled) closeChainMenu();
+  if (choices.length > 0) dom.chainLabel.title = `${dom.chainLabel.title}\nClick to switch your wallet's network.`;
+
+  dom.chainMenu.replaceChildren(
+    ...choices.map((choice) => {
+      const item = element('button', '');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitemradio');
+      item.setAttribute('aria-checked', String(choice.current));
+      item.style.setProperty('--chain', choice.css);
+      item.append(element('span', 'dot'), element('strong', '', choice.current ? `${choice.name} ✓` : choice.name), element('span', 'note', choice.note));
+      item.onclick = () => {
+        closeChainMenu();
+        void switchWalletTo(choice.chainId);
+      };
+      return item;
+    }),
+  );
+}
+
+function openChainMenu(): void {
+  dom.chainMenu.classList.remove('hidden');
+  dom.chainLabel.setAttribute('aria-expanded', 'true');
+  (dom.chainMenu.querySelector<HTMLButtonElement>('[aria-checked="true"]') ?? dom.chainMenu.querySelector('button'))?.focus();
+}
+
+function closeChainMenu(): void {
+  dom.chainMenu.classList.add('hidden');
+  dom.chainLabel.setAttribute('aria-expanded', 'false');
+}
+
+function wireChainMenu(): void {
+  dom.chainLabel.onclick = () => (dom.chainMenu.classList.contains('hidden') ? openChainMenu() : closeChainMenu());
+  // Anywhere else closes it, and Escape hands focus back to the chip.
+  document.addEventListener('click', (event) => {
+    if (!(event.target instanceof Node) || !dom.chainLabel.parentElement?.contains(event.target)) closeChainMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || dom.chainMenu.classList.contains('hidden')) return;
+    closeChainMenu();
+    dom.chainLabel.focus();
+  });
+}
+
+/**
+ * Asks the wallet to move to `chainId`, adding the network first if it has
+ * never seen it. Every panel listening to `walletChainId` redraws.
+ */
+export async function switchWalletTo(chainId: number): Promise<void> {
   const wallet = app.wallet;
   if (!wallet) return toast('Connect a wallet first.', 'error');
+  if (!chainId) return toast('Not connected to the game server yet.', 'error');
   try {
-    await wallet.onHub();
+    await wallet.ensureChain(chainId);
   } catch (error) {
     toast(explainError(error), 'error');
   }
   // Also after a refusal: the wallet may have moved anyway, or not at all.
   store.set({ walletChainId: wallet.chainId });
+}
+
+/** `switchWalletTo` the hub, for the panels that only work there: staking and governance. */
+export function switchToHub(): Promise<void> {
+  return switchWalletTo(app.chainId);
 }
 
 // ------------------------------------------------------------------- avatars

@@ -8,6 +8,7 @@ import {
   lobbyAction,
   formatTokenAmount,
   hubLabel,
+  networkChoices,
   payWithOptions,
   planTokenJoin,
   crossChainNotice,
@@ -70,6 +71,29 @@ describe('chain chips', () => {
 
   it('renders nothing for an empty lobby', () => {
     expect(chainChips([])).toEqual([]);
+  });
+});
+
+describe('network picker', () => {
+  const OP_SEPOLIA = 11155420;
+  const spokes = [{ chainId: BASE_SEPOLIA, router: ZERO_ADDRESS }];
+
+  it('offers the hub, then each spoke, then avatar chains, each once', () => {
+    const avatars = [
+      { chainId: BASE_SEPOLIA, address: ZERO_ADDRESS },
+      { chainId: OP_SEPOLIA, address: ZERO_ADDRESS },
+    ];
+    const choices = networkChoices(SEPOLIA, BASE_SEPOLIA, true, spokes, avatars);
+    expect(choices.map((choice) => [choice.name, choice.note, choice.current])).toEqual([
+      ['Sepolia', 'Hub: matches, winnings, staking', false],
+      ['Base Sepolia', 'Stake from here', true],
+      ['OP Sepolia', 'Mint avatars', false],
+    ]);
+  });
+
+  it('offers nothing to a practice-only server', () => {
+    expect(networkChoices(SEPOLIA, BASE_SEPOLIA, false, spokes, [])).toEqual([]);
+    expect(networkChoices(0, BASE_SEPOLIA, true, spokes, [])).toEqual([]);
   });
 });
 

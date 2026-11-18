@@ -21,7 +21,10 @@
           <button id="nav-lobby" class="ghost hidden">Lobby</button>
           <button id="nav-rules" class="ghost">How to play</button>
           <button id="nav-governance" class="ghost hidden">Governance</button>
-          <span id="chain-label" class="pill">offline</span>
+          <span class="chain-picker">
+            <button id="chain-label" type="button" class="pill" aria-haspopup="menu" aria-expanded="false" aria-controls="chain-menu" disabled>offline</button>
+            <div id="chain-menu" class="chain-menu hidden" role="menu" aria-label="Switch network"></div>
+          </span>
         </nav>
         <button id="queue-chip" type="button" class="pill queue-chip hidden"></button>
         <button id="winnings-badge" type="button" class="pill winnings-badge hidden" title="Open Winnings"></button>

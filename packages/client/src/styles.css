@@ -896,6 +896,82 @@ button.lock-in {
   --chain: var(--warn);
 }
 
+/* The header's chain chip opens a list of the game's networks. With nothing
+   to switch to it is disabled, and reads as the plain label it then is. */
+.chain-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+#chain-label:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+#chain-label:not(:disabled)::after {
+  content: ' ▾';
+}
+
+.chain-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 20px 40px -16px var(--shadow);
+}
+
+.chain-menu.hidden {
+  display: none;
+}
+
+.chain-menu button {
+  --chain: var(--muted);
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  column-gap: 8px;
+  align-items: center;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  padding: 6px 8px;
+}
+
+.chain-menu button:hover:not(:disabled),
+.chain-menu button:focus-visible {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.chain-menu button[aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--chain) 60%, transparent);
+}
+
+/* Clicks land on the button itself, which is what closes the folded phone menu. */
+.chain-menu button > * {
+  pointer-events: none;
+}
+
+.chain-menu .dot {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chain);
+}
+
+.chain-menu .note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .chain-chips {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1592,6 +1668,24 @@ button.pill {
 
   #chain-label {
     text-align: center;
+    /* "Staking from Arbitrum Sepolia → Base Sepolia hub" is wider than a phone. */
+    white-space: normal;
+  }
+
+  .topbar-nav {
+    max-width: calc(100vw - 16px);
+  }
+
+  /* Inside the folded menu the network list opens in place, under the chip. */
+  .chain-picker {
+    flex-direction: column;
+  }
+
+  .chain-menu {
+    position: static;
+    min-width: 0;
+    margin-top: 6px;
+    box-shadow: none;
   }
 
   #connect {

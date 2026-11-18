@@ -416,6 +416,46 @@ export function hubLabel(
   };
 }
 
+/** One network the chain chip's picker offers. */
+export interface NetworkChoice {
+  chainId: number;
+  name: string;
+  /** What the game does there, under the name. */
+  note: string;
+  css: string;
+  /** The wallet is on it now. */
+  current: boolean;
+}
+
+/**
+ * The networks the chain chip offers to move the wallet to: the hub, each
+ * spoke a stake can come from, and each chain with an avatar collection. With
+ * no escrow the game is practice only and no network does anything a switch
+ * would help with, so it offers none.
+ *
+ * The wallet's own list cannot stand in for this: MetaMask keeps a network
+ * per site, and switching in its main network list leaves the site where it
+ * was. Only a `wallet_switchEthereumChain` from the page moves the page.
+ */
+export function networkChoices(
+  hubChainId: number,
+  walletChainId: number,
+  hasEscrow: boolean,
+  spokes: readonly SpokeInfo[],
+  avatarCollections: readonly AvatarCollectionInfo[],
+): NetworkChoice[] {
+  if (!hasEscrow || hubChainId === 0) return [];
+  const notes = new Map<number, string>([[hubChainId, 'Hub: matches, winnings, staking']]);
+  for (const spoke of spokes) if (!notes.has(spoke.chainId)) notes.set(spoke.chainId, 'Stake from here');
+  for (const collection of avatarCollections) {
+    if (!notes.has(collection.chainId)) notes.set(collection.chainId, 'Mint avatars');
+  }
+  return [...notes].map(([chainId, note]) => {
+    const info = chainInfo(chainId);
+    return { chainId, name: info.name, note, css: chainCss(info.color), current: chainId === walletChainId };
+  });
+}
+
 export interface AvatarStatus {
   equipped: bigint;
   minted: boolean;
