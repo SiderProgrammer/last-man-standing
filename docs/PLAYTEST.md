@@ -96,8 +96,11 @@ Then:
 npm run testnet -- up                # server :8787 + dev client :5173, per-tab burners
 ```
 
-`up` reads `.env`, forces `CHAIN_ID=84532`, keeps the archive in memory (`--db`
-uses `DATABASE_URL`), and sets a 60 s commit window, a 15 s fill delay for
+`up` reads `.env`, forces `CHAIN_ID=84532`, archives finished matches to
+`DATABASE_URL` so they stay replayable across restarts (`--memory`, or no
+`DATABASE_URL`, keeps them in memory; use it while a hosted server holds that
+database, as a second server on one database is refused at start), and sets a
+60 s commit window, a 15 s fill delay for
 short tables, and generous per-IP login limits. It fills in `SPOKES`,
 `AVATAR_COLLECTIONS` and the token routes from the registries.
 

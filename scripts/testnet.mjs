@@ -14,11 +14,12 @@
  *                                    OP Sepolia and P4 on Sepolia in one run.
  *                                    Prints the plan; sends only with --yes.
  *   doctor                           checks everything a staked match needs, and says what is missing
- *   up [--commit-ms 60000] [--db] [--relay] [--client-only --ws wss://…]
+ *   up [--commit-ms 60000] [--memory] [--relay] [--client-only --ws wss://…]
  *                                    runs the game server and a dev client against testnet,
  *                                    with one burner per tab: http://localhost:5173/?player=N
  *                                    (&chain=arb|op|eth for a spoke), and every deployed spoke
- *                                    in the server's SPOKES. --relay also fills the players'
+ *                                    in the server's SPOKES. It archives to DATABASE_URL;
+ *                                    --memory keeps the archive in memory. --relay also fills the players'
  *                                    spoke joins from DEPLOYER_PK, which Across's testnet
  *                                    relayers leave unfilled (docs/ACROSS.md).
  *
@@ -349,14 +350,16 @@ async function up() {
   if (!flags['client-only']) {
     const hub = createPublicClient({ transport: http(profile.hub.rpc) });
     const zap = C.zapJoin ? await liveZapTokens(hub) : [];
+    const archiveToDb = !flags.memory && Boolean(env.DATABASE_URL);
     const serverEnv = {
       ...env,
       CHAIN_ID: String(TESTNET.hubChainId),
       COMMIT_MS: String(flags['commit-ms'] ?? 60000),
       REVEAL_MS: String(flags['reveal-ms'] ?? 15000),
-      // Local play: in memory, unless --db, so a hosted server on the same
-      // database keeps its lock and its archive to itself.
-      ...(flags.db ? {} : { DATABASE_URL: '', ARCHIVE: 'memory' }),
+      // Archives to DATABASE_URL, so finished matches survive a restart and
+      // stay replayable. --memory (or no DATABASE_URL) keeps them in memory,
+      // for when a hosted server holds that database's instance lock.
+      ...(archiveToDb ? {} : { DATABASE_URL: '', ARCHIVE: 'memory' }),
       NODE_ENV: 'development',
       MATCHMAKING_FILL_AFTER_MS: env.MATCHMAKING_FILL_AFTER_MS || '15000',
       GATEWAY_LIMITS: env.GATEWAY_LIMITS || JSON.stringify({ connectRatePerIp: 50, connectBurstPerIp: 100, loginRatePerIp: 50, loginBurstPerIp: 100 }),
@@ -377,7 +380,7 @@ async function up() {
       serverEnv.V4_QUOTER = '';
       serverEnv.ZAP_TOKENS = '';
     }
-    console.log(`[testnet] server on :${wsPort} against ${profile.hub.name}${flags.db ? ' (archiving to DATABASE_URL)' : ' (archive in memory)'}, commit ${serverEnv.COMMIT_MS} ms`);
+    console.log(`[testnet] server on :${wsPort} against ${profile.hub.name}${archiveToDb ? ' (archiving to DATABASE_URL)' : ' (archive in memory)'}, commit ${serverEnv.COMMIT_MS} ms`);
     children.push(start('server', ['node_modules/tsx/dist/cli.mjs', 'watch', '--clear-screen=false', 'packages/server/src/main.ts'], serverEnv));
   }
 
