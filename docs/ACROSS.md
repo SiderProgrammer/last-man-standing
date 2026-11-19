@@ -64,7 +64,7 @@ Tried on 2026-11-12, from OP Sepolia into a Base Sepolia lobby, with
   0.001 ETH plus a 0.0000043 ETH fee), and Across's API indexed it with the right
   recipient, output and message.
 - **No testnet relayer filled it.** It stayed `pending` past the lobby's 10-minute join
-  window and the 10-minute lock grace after it. Over the same hours, Across's testnet relayers did fill deposits into Base
+  window. Over the same hours, Across's testnet relayers did fill deposits into Base
   Sepolia from Sepolia and Arbitrum Sepolia, all with an empty message. Ours was the only
   one with a message and the only one left unfilled. That points to the testnet
   relayers skipping message deposits, not to a fill that would fail.
@@ -88,6 +88,10 @@ pools, the receiver and the escrow. The one thing still not seen is a fill by Ac
 own testnet relayers, which looks like their choice, not ours. Whether mainnet relayers
 fill these deposits promptly is not measured either; the fork tests in
 `AcrossFork.t.sol` prove the mainnet pools accept and fill them. The local stack and the unit tests keep using `MockAcrossSpokePool`.
+
+Since then the server fills these deposits itself when it runs with `FILLER_PK`
+(`packages/server/src/chain/spokeFiller.ts`), for any wallet, through the same
+`fillRelay` on the hub pool. The steps below fill one by hand instead.
 
 To do it again:
 

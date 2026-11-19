@@ -37,10 +37,12 @@ import {NothingToWithdraw, TransferFailed, ZeroAddress} from "../Errors.sol";
 ///          Each staker collects theirs with `claimRewards`.
 ///        - **Commits.** Leaving takes `cooldown`. `requestUnstake` burns the
 ///          sLMS at once — so it stops voting and stops earning — and
-///          `claim` returns the LMS once the cooldown has passed. A voter is
-///          therefore still exposed when the proposal they voted for executes,
-///          which is what slashing would otherwise be for. `Deploy` checks that
-///          `cooldown` outlasts the voting period plus the timelock delay.
+///          `claim` returns the LMS once the cooldown has passed. A voter who
+///          unstakes is therefore still exposed when the proposal they voted
+///          for executes, which is what slashing would otherwise be for.
+///          `Deploy` checks that `cooldown` outlasts the voting period plus the
+///          timelock delay. sLMS itself transfers freely, so a voter who sells
+///          it instead is not held: the cooldown binds unstaking only.
 ///
 ///      Rewards are streamed, Synthetix-style. Paying a harvest out the moment
 ///      it arrived would let anyone stake, call the permissionless `harvest`

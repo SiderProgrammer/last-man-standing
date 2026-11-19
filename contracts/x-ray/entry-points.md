@@ -2,6 +2,8 @@
 
 > Last Man Standing | 77 entry points | 29 permissionless | 23 role-gated | 25 admin-only
 
+> **Snapshot of commit `90efcbe` (3 Nov 2026), not kept up to date.** Later commits changed what it describes: `withdrawToBridge` now stops during a pause, `MultisigPhase` refuses a call that would only be ready after `phaseEnd` and cancels what the Safe left queued when it retires, and line numbers have moved. Where this disagrees with `contracts/src`, the code is right; [fizz_data/invariant-context.md](../fizz_data/invariant-context.md) lists the known differences.
+
 Inherited OpenZeppelin entry points are not counted:
 - `Ownable2Step.transferOwnership`, `acceptOwnership` and `renounceOwnership` on every owned contract.
 - `Governor.propose`, `castVote*`, `queue`, `execute` and `cancel` on `LmsGovernor`.

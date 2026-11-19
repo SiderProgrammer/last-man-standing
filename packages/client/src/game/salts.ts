@@ -34,7 +34,7 @@ export function freshSalt(): `0x${string}` {
   crypto.getRandomValues(bytes);
   // viem's encoding, byte for byte what the hand-rolled loop produced. The
   // format is load-bearing — a salt that round-trips differently cannot open
-  // its own commitment after a refresh — so `salts.test.ts` pins it.
+  // its own commitment after a refresh — so the "salt encoding" test in `wallet.test.ts` pins it.
   return toHex(bytes);
 }
 

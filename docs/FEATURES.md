@@ -154,7 +154,10 @@ match: `seed = keccak256(abi.encode(randomness, matchId))`.
 - **Drawn after the lobby closes**, so nobody picks moves or seats against
   rolls they know.
 - **VRF v2.5, paid in native ETH**, on a subscription the Safe owns; only
-  registered consumers may request, or anyone could drain it.
+  registered consumers may request, or anyone could drain it. The escrow
+  still requests a seed for every lobby that locks, so whoever fills and locks
+  their own private lobby spends one request; what holds that back is the gas
+  and the fee the match pays, not a rule.
 - **The callback never reverts.** VRF does not retry, so the word is stored
   first and `deliver` retries delivery; a dead request is refunded by
   `cancelMatch` past the deadline.
@@ -195,6 +198,11 @@ relayer on hub  → fills exactly the stake in WETH, then handleV3AcrossMessage
   the hub; an unroutable fill stays in the receiver for the timelock to
   `recover`. A revert would leave the deposit waiting, and on testnet maybe
   never refunded.
+- **The server can be the relayer.** Across's testnet relayers skip these
+  deposits, so with `FILLER_PK` set the server fills them itself through the
+  hub's own pool (`chain/spokeFiller.ts`), for any wallet, within caps on the
+  stake, fills per wallet and a gas reserve. On mainnet `FILLER_DELAY_MS`
+  gives Across's relayers first go.
 - **The way back out.** A player signs a `Withdrawal` (no chain id in its
   domain, so a spoke wallet can sign it) and the server's relayer submits
   `withdrawToChainFor`, bridging the whole balance to the chain and address
@@ -339,7 +347,9 @@ of it votes; governance starts with the players. There is no sale.
   after a proposal appears cannot vote on it.
 - **A cooldown instead of slashing.** `requestUnstake` burns the sLMS at once;
   the LMS follows after a cooldown that must outlast `votingPeriod + delay`,
-  so whoever voted is still staked when the proposal executes.
+  so a voter who unstakes is still exposed when the proposal executes. sLMS
+  itself transfers freely, though: a voter can sell it after the snapshot
+  without waiting, so the cooldown binds unstaking, not every way out.
 - **Fees are paid in ETH, not used to buy LMS**: nothing to sandwich, price or
   trust.
 - **Rewards stream over a week**, Synthetix-style, so staking just before a
@@ -355,7 +365,9 @@ earns nothing). Each week has a budget, falling by a quarter a year; a player
 who paid 1% of a week's fees gets 1% of it, capped per ETH of fees and per
 wallet. Fees, not wins, because wins are zero-sum and one person can arrange
 them; fees are a real cost. A week is claimable once it ends, into
-`RewardVesting`; released LMS is staked to vote. The README's
+`RewardVesting`; released LMS is staked to vote. Claims close a year after the
+program's last week (`claimsCloseAt()`), and only then may governance sweep
+what is left. The README's
 [wash-trading economics](../README.md#wash-trading-economics) works through
 what the caps buy.
 
@@ -466,7 +478,9 @@ An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
 Settlement hashing (`SettlementLib`), signature recovery (`SignatureLib`, over
 OpenZeppelin's `ECDSA`), the consensus hashes (`HashLib`) and the seat-set check
 are plain Solidity. Yul versions saved about 1k gas on a four-seat settlement
-(0.1%), which did not pay for the review burden, so they were removed.
+(0.1%), which did not pay for the review burden, so they were removed. The one
+`assembly` block left is three lines in `SessionKeyDelegate` that point its
+storage at a fixed slot, as a 7702 delegate must.
 `contracts/.gas-snapshot` is committed and CI fails on drift.
 
 ---

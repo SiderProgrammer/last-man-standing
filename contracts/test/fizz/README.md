@@ -3,6 +3,7 @@
 ## What Is Here
 
 - `Base.sol`: shared setup, deployed contract references, actors, helpers, and ghost state
+- `Actor.sol`: the account each fuzzed caller acts through (its `receive()` is empty, so it never re-enters)
 - `Snapshots.sol`: before/after state capture used by properties
 - `Properties.sol`: global and function-specific invariants
 - `handlers/`: protocol actions exposed to the fuzzers
@@ -31,7 +32,7 @@ Base (is StringUtils, Clamp, Deployer, Math)
 
 ## How To Run
 
-From the project root:
+From `contracts/`, the Foundry project root:
 
 ```bash
 forge build

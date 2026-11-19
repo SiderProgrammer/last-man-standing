@@ -72,9 +72,9 @@ Features that have only run against mocks, or once by hand:
 
 - **Avatars.** `PlayerAvatars` is deployed on Base Sepolia and every testnet spoke, and
   avatars were minted on Base and Arbitrum in the 11 Nov fork playtest. Not yet seen: an
-  avatar minted on testnet showing in a testnet match. The deployed collections point at
-  the placeholder base URI, so none has art yet: pin the art and redeploy with
-  `DeployAvatars` ([TESTNET.md](TESTNET.md#2a-avatar-art)).
+  avatar minted on testnet showing in a testnet match. The collections were redeployed
+  with the pinned art on every testnet chain on 14 Nov
+  ([TESTNET.md](TESTNET.md#2a-avatar-art)).
 - **One-click play** ran on the fork once while the playtest tools were built (a relayed
   join; [PLAYTEST.md](PLAYTEST.md) §10), but could not be turned on in the 11 Nov
   playtest because the fork's clock had been warped. Deferred with 1.1: the burner is for
@@ -184,7 +184,8 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
 ## 4. Tooling and process
 
 - **Fuzz campaign, before the first deploy.** The Medusa suite in `contracts/test/fizz`
-  last passed 134 of 134, but in a 20-minute run of 2,884 sequences, which
+  last passed 134 of 134 on 4 Nov, before the 5 Nov changes to `GameEscrow`,
+  `MultisigPhase` and the handlers, so rerun it first. That was a 20-minute run of 2,884 sequences, which
   [its report](../contracts/fizz_data/report.md) calls a weak clean result. Still open:
   the 7 unimplemented properties (GL-17, SP-03, SP-22, SP-31, SP-36, SP-37, SP-38), with
   SP-36 needing a hostile-recipient actor; and an overnight run that keeps any
@@ -200,10 +201,11 @@ The contracts cannot be upgraded, so a fix means a config change or a new deploy
   rendering are untested; all of them need a browser rather than node.
 - **Chaos testing** ([CHAOS_TESTING.md](CHAOS_TESTING.md)): no chain-side chaos (RPC
   faults, reorgs), and no Across fills that come late or never.
-- **Load testing** ([LOAD_TESTING.md](LOAD_TESTING.md)): one process tops out around
-  440 rounds/s (~1,000–1,500 practice players); past that it collapses into a reconnect
-  storm. Open: load shedding, cheaper house-bot hashing, sharding by `matchId`, and a run
-  from separate generator hosts at 10k.
+- **Load testing** ([LOAD_TESTING.md](LOAD_TESTING.md)): on 18 Oct one process topped out
+  around 440 rounds/s (~1,000–1,500 practice players), and past that it collapsed into a
+  reconnect storm. That predates signed moves, receipts and the journal, so the limit
+  today is lower and unmeasured. Open: a fresh baseline, load shedding, cheaper house-bot
+  hashing, sharding by `matchId`, and a run from separate generator hosts at 10k.
 
 ---
 

@@ -6,7 +6,7 @@ import { errorMessage } from '@lms/api';
  * `parse` turns down (returns null for) is dropped with a warning.
  *
  * For the settings the server still runs without — avatar collections,
- * spokes, zap tokens, matchmaking tiers — where a typo must not stop matches
+ * spokes, zap tokens — where a typo must not stop matches
  * from being played or settled.
  *
  * @param name The variable, for the warnings.

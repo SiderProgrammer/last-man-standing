@@ -2,6 +2,8 @@
 
 > Last Man Standing (LMS) | 2,527 nSLOC in scope (2,959 incl. mocks, interfaces, vendor) | 90efcbe (`master`) | Foundry | 03/11/26
 
+> **Snapshot of commit `90efcbe` (3 Nov 2026), not kept up to date.** Later commits changed what it describes: `withdrawToBridge` now stops during a pause, `MultisigPhase` refuses a call that would only be ready after `phaseEnd` and cancels what the Safe left queued when it retires, and line numbers have moved. Where this disagrees with `contracts/src`, the code is right; [fizz_data/invariant-context.md](../fizz_data/invariant-context.md) lists the known differences.
+
 ---
 
 ## 1. Protocol Overview

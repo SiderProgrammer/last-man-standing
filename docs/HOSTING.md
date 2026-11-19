@@ -106,8 +106,9 @@ results already proposed.
 Render's free-tier page does not state CPU or RAM. Third-party guides give 512 MB and
 as little as 0.1 CPU, so check the dashboard.
 
-The server is several Node processes on one instance: the main one, the attestor, a
-signature verification pool and, if enabled, the analyst. The numbers in
+The server is two Node processes on one instance, the main one and the attestor, and
+the main one also runs worker threads: the signature verification pool and, if
+enabled, the analyst. The numbers in
 [LOAD_TESTING.md](LOAD_TESTING.md) came from a developer machine and **do not apply
 here.** Expect far fewer players, and possibly late rounds on a slow CPU. Running out of
 memory is another restart. Before the demo, run a small load test against the deployed
@@ -147,12 +148,13 @@ is unreachable.
 
 ### Keys
 
-`ATTESTOR_PK`, `KEEPER_PK`, `SESSION_RELAYER_PK` and `MATCHMAKER_PK` all sit in one
-service's environment. Anyone with access to the Render account can read them. Whoever
+`ATTESTOR_PK`, `KEEPER_PK`, `SESSION_RELAYER_PK`, `MATCHMAKER_PK` and, if set,
+`FILLER_PK` all sit in one service's environment. Anyone with access to the Render account can read them. Whoever
 holds the attestor key can sign results, leaving only the guardian's veto, inside a
 1-hour window that nobody is watching yet ([TODO.md](TODO.md), 3.1).
 
-Keep the keeper and relayer funded with little more than gas, use a strong login with
+Keep the keeper and relayer funded with little more than gas, and the filler with
+only what a day of fills needs, use a strong login with
 two-factor on the Render account, and keep the Safe and guardian keys off Render entirely.
 
 ### Other limits

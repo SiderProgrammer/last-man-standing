@@ -1,5 +1,12 @@
 # 🔐 Security Review — last-man-standing
 
+> **Status as of 19 Nov 2026.** This is an AI-assisted review of the code on 3 Nov, not an independent audit, and the findings below are as it wrote them. Since then:
+>
+> - **Fixed:** 1 and 2 (`harvest` splits whatever the router holds), 3 (the player signs the whole Across quote, not just `maxFee`), 4 (the guardian ends only its own pause), 5 and 8 (`MultisigPhase` refuses any LMS move), 6 (`ATTESTOR` is required off a local node), 10 (`withdrawFor` is the account's own).
+> - **Unchanged in the code, and described in the docs** (README threat model, FEATURES): 7 (anyone who fills and locks a lobby spends one VRF request), 9 (the Safe can spend the treasury's ETH during its phase) and 11 (a leaked session key can join lobbies within its caps).
+> - **Unchanged in the code, and described as a known limit:** 12 (sLMS transfers freely, so the unstake cooldown does not hold a voter who sells).
+
+
 ---
 
 ## Scope

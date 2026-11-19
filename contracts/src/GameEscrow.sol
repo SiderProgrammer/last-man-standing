@@ -877,10 +877,11 @@ contract GameEscrow is EIP712, PullPayable, ExpiringPause, IRandomnessConsumer, 
     // --- Governance --------------------------------------------------------
 
     /// @dev The guardian pauses at once, for a week at most; see
-    ///      `ExpiringPause`. A pause halts new lobbies, joins, locking and
-    ///      settlement. `finalize`, `veto`, `cancelMatch` and withdrawals are
-    ///      never paused: a pause must never trap player funds or hold a result
-    ///      that has survived its challenge window.
+    ///      `ExpiringPause`. A pause halts new lobbies, joins, locking,
+    ///      settlement and `withdrawToBridge`. `finalize`, `veto`,
+    ///      `cancelMatch`, `withdraw` and `withdrawFor` are never paused: a
+    ///      pause must never trap player funds or hold a result that has
+    ///      survived its challenge window.
     function _isGuardian(address account) internal view override returns (bool) {
         return account == config.guardian();
     }

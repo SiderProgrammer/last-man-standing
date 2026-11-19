@@ -100,8 +100,8 @@ npm run testnet -- up                # server :8787 + dev client :5173, per-tab 
 `DATABASE_URL` so they stay replayable across restarts (`--memory`, or no
 `DATABASE_URL`, keeps them in memory; use it while a hosted server holds that
 database, as a second server on one database is refused at start), and sets a
-60 s commit window, a 15 s fill delay for
-short tables, and generous per-IP login limits. It fills in `SPOKES`,
+60 s commit window, a 15 s wait before the queue opens a short table
+(`MATCHMAKING_FILL_AFTER_MS`), and generous per-IP login limits. It fills in `SPOKES`,
 `AVATAR_COLLECTIONS` and the token routes from the registries.
 
 **Do not run two servers on one escrow with the same keys.** If the hosted
@@ -238,10 +238,10 @@ The rest are UI paths to click through.
 ### 6. Every way to pay a stake
 - [ ] ETH: the default.
 - [ ] Tokens: in the lobby, **Pay with** USDC / USDT / DAI / cbBTC; or `join last --players 2 --token USDC`. The first token join costs an approval first.
-- [ ] LMS discount: tick **Pay part of the fee in LMS**; or `join last --players 4 --lms 1000`. Then 1 LMS covers half of a 0.001 ETH stake's fee. It is burned at settlement and refunded on a cancel or veto.
+- [ ] LMS discount: tick **Pay part of the fee in LMS**; or `join last --players 4 --lms 1000`. At the fork's 20,000 LMS per ETH, 0.5 LMS covers half of a 0.001 ETH stake's fee, the most a seat may discount, and only that 0.5 LMS is taken. It is burned at settlement and refunded on a cancel or veto.
 - [ ] From Arbitrum: tab `?player=5&chain=spoke` → **Stake from ARB**; or `join last --players 5 --from spoke`. The seat shows an ARB badge.
 - [ ] Create from Arbitrum: tab `?player=5&chain=spoke` → **Create & stake … from Arbitrum**. The server opens the lobby on the hub (no wallet prompt), its row shows under "Yours" with **Stake from ARB**; stake, and the seat shows an ARB badge. A second create before staking is refused until the first is staked into or 10 min pass.
-- [ ] Testnet: Across's real fee is quoted and paid, and fills take about a minute. To see a refund, stake from the spoke into a lobby that fills first: the stake is credited on the hub.
+- [ ] Testnet: Across's real fee is quoted and paid, and the server's filler fills the deposit within seconds (without a filler it waits for Across's relayers, which skip these). To see a refund, stake from the spoke into a lobby that fills first: the stake is credited on the hub.
 
 ### 7. Collecting to the spoke
 - [ ] Tab `?player=5&chain=spoke` → Winnings → **Collect to Arbitrum** (first click quotes, second signs). The server's relayer submits it on the hub, and Across fills it on Arbitrum.

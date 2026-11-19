@@ -55,6 +55,12 @@ and the generator (4–6 workers), practice mode, 3 house bots per player,
 The loop-lag and RSS columns came from the server's Prometheus endpoint, which
 has since been removed; rerunning these today reports only the client-side columns.
 
+**These numbers predate the current server.** Since this run the rules changed
+(23 Oct), every commit and reveal became a signed message the server verifies
+(30 Oct), and staked commits gained a signed receipt and a journal write. Each
+of those adds work per move, so treat the figures below, and the ~440 rounds/s
+ceiling in "What it found", as an upper bound until they are measured again.
+
 | Players | Mode | Connected | Login p99 | Reveal→round p50 / p99 | Peak loop lag | Peak RSS |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1,000 | play, inline verify | 100% | 2,163 ms | 51 / 386 ms | 245 ms | 149 MB |

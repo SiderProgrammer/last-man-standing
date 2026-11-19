@@ -72,7 +72,15 @@ and what stands in the way:
   players can leave first. On testnet one person holds all three keys.
 - **Someone buying governance** needs vested LMS, staked, at the proposal's
   snapshot, enough to clear a 1M-sLMS quorum floor, and the same timelock
-  delay. The fee is capped at 10% in the contract, whatever passes.
+  delay. The fee is capped at 10% in the contract, whatever passes. sLMS is
+  an ordinary transferable token, so a voter can sell it right after the
+  snapshot: the unstake cooldown holds back only stake that is unstaked, not
+  sLMS that changes hands.
+- **Someone spending the VRF subscription.** Only the escrow can request a
+  seed, but anyone can open a private lobby, fill it with their own wallets
+  and lock it, and each lock bills one VRF request to the Safe's
+  subscription. It costs them gas and the match's fee once it settles, not
+  nothing; nothing else limits it.
 - **Script in the player's page** could use the session key: sign moves for a
   day, and with one-click play on, stake up to 0.05 ETH a join and 0.25 ETH in
   all into lobbies — never withdraw to anyone else. The key is sealed in
@@ -258,7 +266,7 @@ two coincide.
 | Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
 | Safe | A 2-of-3 multisig. On testnet and the mainnet demo all three keys are the owner's, on separate devices; **real use needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
 | Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which cancels what the Safe left pending and renounces both roles. | Schedule a call that is only ready after `phaseEnd`; be extended, or stopped from retiring, by anyone — the Safe included. |
-| VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be spent by anyone but a registered consumer. |
+| VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be requested from by anything but a registered consumer. Anyone who fills and locks a lobby still makes the escrow request one seed (see the threat model). |
 | Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
 | Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
 | Operator | Runs the game server, and the keys below | Plays each match; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal, or by restarting the server; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
@@ -268,9 +276,10 @@ two coincide.
 | Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
 | Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
 | Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, and players' signed withdrawals to a spoke, and opens lobbies for players on a spoke, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, exceed a session's caps, bridge a balance anywhere its owner did not sign for, or seat anyone in a lobby it opened. |
+| Filler | The server's optional `FILLER_PK`, holding the ETH it fills with | Fills players' spoke stakes on the hub through the hub's own Across pool, as a relayer would, when Across's relayers do not: up to `FILLER_MAX_STAKE_WEI` a stake and `FILLER_PER_DAY` fills per wallet, keeping `FILLER_RESERVE_WEI` back. | Seat anyone the deposit did not name, or fill for a lobby that would not seat the stake. On testnet each fill costs it the stake, which Across may never repay. |
 
-The server's four keys are four addresses: it refuses to start if two of them
-are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
+The server's job keys (the four above, and the filler's when it is set) are
+separate addresses: it refuses to start if two of them are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
 the guardian and the timelock. Each signs through a `Signer` interface, which
 is where a KMS would plug in; today every key is in the server's memory.
 
@@ -338,7 +347,8 @@ which is what makes a match replayable by a third party.
 
 ### What you need
 
-- **Node.js 20 or newer**, with npm, and **Git**.
+- **Node.js 22.9 or newer**, with npm, and **Git**. The server's scripts load
+  `.env` with `--env-file-if-exists`, which older Node does not have.
 - **[Foundry](https://getfoundry.sh)** (`forge`, `anvil`, `cast`) on `PATH`, for
   everything staked. Practice mode alone runs without it.
 - Optional: a free **Alchemy API key**, so the forks below read from an archive

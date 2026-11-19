@@ -49,8 +49,9 @@ For every seed:
 - **No unexpected errors.** Only the errors a drop legitimately causes (a
   stale move refused by its aim, a move after its window, a match that no
   longer exists) are allowed.
-- **Settlement.** A staked table settles on its first successful attempt, at
-  most once, within three attempts, or is left to refund.
+- **Settlement.** A staked table is archived and settles, on its first
+  successful attempt and never again after it, while the relayer fails half
+  its calls.
 
 ## What it found
 
@@ -68,12 +69,13 @@ Each of these was a failing seed before its fix.
 3. **Stale moves were taken for the current round.** Commit and reveal frames
    named neither match nor round. A commit computed for an earlier round,
    delayed in flight or flushed from the offline queue, was accepted as the
-   current round's and could then never be opened. Moves now carry an
-   optional `matchId` and `round` (`MoveAim`), and the server refuses a
+   current round's and could then never be opened. Every commit and reveal
+   now names its `matchId` and `round` (`MoveAim`), and the server refuses a
    mismatch with an error naming the round.
 4. **A failed settlement was never resubmitted.** One RPC timeout meant the
    stakes waited for the escrow's refund deadline. `Lobby` now retries with
-   backoff (2 s, then 10 s by default).
+   backoff (2 s, 10 s, 30 s, then every 60 s by default) for up to an hour,
+   the settle window, before leaving the match to its refund.
 5. **A malformed WebSocket frame crashed the process** (found while
    load-testing, see `docs/LOAD_TESTING.md`). An `error` event with no
    listener is thrown by Node.

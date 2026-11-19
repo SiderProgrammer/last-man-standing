@@ -99,7 +99,7 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     help:
       'How long unstaking takes, 1 to 30 days. Keep it longer than the voting period plus the ' +
       'timelock delay, or voters could leave before their proposal executes.',
-    fields: [{ name: 'days', label: 'Cooldown (days)', placeholder: '7' }],
+    fields: [{ name: 'days', label: 'Cooldown (days)', placeholder: '10' }],
   },
   {
     id: 'votingPeriod',

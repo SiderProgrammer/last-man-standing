@@ -70,7 +70,8 @@ can re-derive it.
 The numbers are not hand-picked. They came out of a search over action sets and
 rule values, then a validation pass (an exact game-theory solve of the 1v1 duel,
 a gauntlet of rule-based strategies, an exploiter search, per-lobby-size and
-per-seat checks). `npm run sim` re-checks the result on the real engine: every
+per-seat checks). That search and validation ran outside this repository and are
+not reproduced here. `npm run sim` re-checks the result on the real engine: every
 mindless strategy (always Strike, always Guard when it can, always Charge when it
 can) must win less than its share and lose money under the payout schedule.
 
@@ -112,7 +113,8 @@ Practice lets the player pick easy, normal or hard.
 ### Known risk: collusion
 
 Two seats that never strike each other and share their moves out of band have an edge
-no rule can see. In the validation runs, two colluding hard bots in a lobby of hard
+no rule can see. In the validation runs (outside this repository; `npm run sim` has
+no collusion mode), two colluding hard bots in a lobby of hard
 bots won 1.74× as often as two honest ones and made +0.46 stake per seat. Under the
 old storm rules the same pair got only 1.09× — not because those rules resisted
 collusion, but because the storm decided matches and play barely did. Any rule set
@@ -184,8 +186,8 @@ deterministic and independently testable.
 | File | Responsibility |
 | --- | --- |
 | `game/types.ts` | `Action`, `Seat`, `PlayerState`, `RoundRecord`, `MatchPhase`, `MatchResult`, `PublicMatchState`, `MatchErrorCode` |
-| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, the cooldowns (`isLegalAction`), strike, charge and stall arithmetic |
-| `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `drawBps`, `deriveMatchId`, `hashRules` |
+| `game/rules.ts` | `Rules`, `DEFAULT_RULES`, `assertValidRules`, `hashRules`, the cooldowns (`isLegalAction`), strike, charge and stall arithmetic |
+| `game/hash.ts` | `commitMove`, `hashRound`, `historySeed`, `chainHistory`, `commitmentSetHash`, `roundSeed`, `draw` and `drawBps`, `deriveMatchId` |
 | `game/transcript.ts` | The archived `Transcript` and `hashTranscript`, which the attestors sign the hash of |
 | `eip712/result.ts` | `MatchResult` and `MatchAbort` typed data and domain |
 | `eip712/moves.ts` | The session grant, signed commits and reveals, and the server's commit receipt |
@@ -299,6 +301,7 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `chain/sessionRelay.ts` | Submits and pays for joins and withdrawals a player's session key signed, under a daily quota |
 | `chain/chainWithdrawals.ts` | Submits a player's signed withdrawal to a spoke (`withdrawToChainFor`) and pays the hub gas |
 | `chain/lobbyOpener.ts` | Opens a lobby on the hub (`createMatch`) for a player on a spoke and pays the gas, one waiting lobby per wallet, on the relay quota |
+| `chain/spokeFiller.ts` | `SpokeFiller`: watches each spoke's Across pool for deposits to the receiver and fills them on the hub from `FILLER_PK`, as a relayer would, within its stake, per-wallet and reserve caps |
 | `chain/crossChain.ts` | `SPOKES`, and `CrossChainWatcher`: tells a player on a spoke what their join became on the hub, a seat or a credit |
 | `chain/zap.ts` | `ZAP_TOKENS`: the tokens players may pay with, and each one's v4 route |
 | `chain/feeKeeper.ts` | Harvests `FeeRouter` on a timer, once there is more than `minHarvest` |
@@ -878,6 +881,7 @@ variables. To exercise the same features against a running stack, see
 | `SESSION_DELEGATE` | registry | `SessionKeyDelegate` for one-click play. Offered only with `RPC_URL`, an escrow and `SESSION_RELAYER_PK` |
 | `SESSION_RELAYER_PK` | — | Pays relayed gas. Its own key, holding only gas money |
 | `RELAY_QUOTA_PER_DAY` | 20 | Relayed calls per wallet per UTC day: session calls, withdrawals to a spoke and lobbies opened for a spoke wallet together |
+| `FILLER_PK` | — | Fills players' spoke stakes on the hub when Across's relayers do not. Its own key; each fill spends the stake. Capped by `FILLER_MAX_STAKE_WEI`, `FILLER_PER_DAY`, `FILLER_RESERVE_WEI`; `FILLER_DELAY_MS` leaves deposits to Across first |
 | `AVATAR_COLLECTIONS` | — | `PlayerAvatars` deployments as JSON: `chainId`, `address`, `rpcUrl` per chain |
 | `IPFS_GATEWAY` | `https://ipfs.filebase.io/ipfs/` | Prefix `ipfs://` is rewritten to when fetching metadata |
 | `VITE_WS_URL` | current host `:8787` | Server the browser client connects to |

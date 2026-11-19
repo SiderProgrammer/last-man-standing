@@ -160,7 +160,7 @@ export class SessionRelay {
 /**
  * Why a call would revert, for the player: the delegate's or the escrow's
  * error name where viem decoded one (`ValueCapExceeded`, `SessionExpired`,
- * `MatchFull`), and the first line of the message otherwise.
+ * `LobbyFull`), and the first line of the message otherwise.
  */
 export function revertReason(error: unknown): string {
   if (error instanceof RevertedError && error.cause) return revertReason(error.cause);

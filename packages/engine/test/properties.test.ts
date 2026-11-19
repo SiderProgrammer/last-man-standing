@@ -134,7 +134,7 @@ describe('engine invariants', () => {
   });
 
   it('rejects a replay whose salts were swapped', () => {
-    // Salts decide the rolls, so a history that keeps every move but changes
+    // Salts are part of every round hash, so a history that keeps every move but changes
     // one salt is a different match and must not verify.
     const setup = setupFor(4, 'salt-tamper');
     const { match, moveLog } = playMatch(setup, randomStrategy(new Prng(bytes32('salt-tamper'))));

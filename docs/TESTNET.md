@@ -96,6 +96,11 @@ URI is set in the constructor, and changing it later on the hub takes a governan
 proposal. The art is 100 DiceBear "Pixel Art" faces (CC0), drawn from the token id,
 so a re-run makes the same files and the same CIDs.
 
+This is already done: the art is pinned, its metadata CID is in
+`contracts/script/AvatarArt.sol`, every deploy script uses it when
+`AVATAR_BASE_URI` is blank, and the testnet collections were redeployed with it on
+14 Nov. The steps below are for new art.
+
 1. `npm run avatars -- images` writes `dist/avatars/images/1.svg … 100.svg`.
 2. Upload that folder **as a folder** to a pinning service (Pinata, Filebase, …) and
    copy its CID.
@@ -131,7 +136,9 @@ resolved to "no picture". A dedicated gateway is better still; change both toget
 
 The server needs four keys, each its own, and refuses to start if two are the
 same: `ATTESTOR_PK` (the `ATTESTOR` address), `KEEPER_PK` and `SESSION_RELAYER_PK`
-(gas money only), and `MATCHMAKER_PK` (the `MATCHMAKER` address). Then:
+(gas money only), and `MATCHMAKER_PK` (the `MATCHMAKER` address). A fifth,
+`FILLER_PK`, is optional and must also be its own; it fills spoke stakes (step 4).
+Then:
 
 ```bash
 SPOKES='[{"chainId":421614,"router":"0x…"},{"chainId":11155420,"router":"0x…"},{"chainId":11155111,"router":"0x…"}]'

@@ -2,6 +2,8 @@
 
 > Last Man Standing | 46 guards | 54 inferred (37 single-contract, 13 cross-contract, 4 economic) | 14 not enforced on-chain
 
+> **Snapshot of commit `90efcbe` (3 Nov 2026), not kept up to date.** Later commits changed what it describes: `withdrawToBridge` now stops during a pause, `MultisigPhase` refuses a call that would only be ready after `phaseEnd` and cancels what the Safe left queued when it retires, and line numbers have moved. Where this disagrees with `contracts/src`, the code is right; [fizz_data/invariant-context.md](../fizz_data/invariant-context.md) lists the known differences.
+
 ---
 
 ## 1. Enforced Guards (Reference)
