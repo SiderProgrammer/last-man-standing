@@ -146,6 +146,8 @@ function testnetProfile(options = {}) {
       keeper: roleFromKey('KEEPER_PK'),
       matchmaker: roleFromKey('MATCHMAKER_PK'),
       sessionRelayer: roleFromKey('SESSION_RELAYER_PK'),
+      // Spends its own ETH filling spoke stakes: fund it well beyond gas.
+      filler: roleFromKey('FILLER_PK'),
       // Optional: only for `veto`, `dismiss` and `pause` from the command line.
       guardian: roleFromKey('GUARDIAN_PK') ?? (env.GUARDIAN ? { address: env.GUARDIAN, key: null } : null),
       safe: env.SAFE ? { address: env.SAFE, key: null } : null,

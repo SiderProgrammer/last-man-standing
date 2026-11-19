@@ -22,8 +22,8 @@ The scripts pick one with `--from arb|op|eth` (`npm run play`) or `--spoke-chain
 
 Across documents its testnet as unreliable: fills take about a minute, and an
 unfilled deposit is **not** refunded. In practice its testnet relayers left our join
-deposit (which carries a message) unfilled, so fill joins yourself with `--relay`
-(below). Use small amounts. See [ACROSS.md](ACROSS.md) for what was checked about
+deposit (which carries a message) unfilled, so the server fills them itself from
+`FILLER_PK` (below). Use small amounts. See [ACROSS.md](ACROSS.md) for what was checked about
 Across, and what was not.
 
 ## Before you start
@@ -153,9 +153,14 @@ prices each join and is added to the page's Content-Security-Policy.
 2. Switch the wallet to Arbitrum Sepolia. The chip reads
    "Staking from Arbitrum Sepolia → Base Sepolia hub".
 3. **Stake from ARB**, then **Pay … + … fee**. The row reads *In transit…*.
-4. Fill the deposit: run the stack with `npm run testnet -- up --relay`, or
-   `npm run play -- relay <spoke tx> --from arb --net testnet`. Both fill from
-   `DEPLOYER_PK`, which pays the stake on Base Sepolia and may never be repaid.
+4. The server fills the deposit within a few seconds, for any wallet, when it runs
+   with `FILLER_PK` and each `SPOKES` entry names its `rpcUrl` (`npm run testnet -- up`
+   adds the URLs; `up --relay` lends the filler `DEPLOYER_PK` if `FILLER_PK` is unset).
+   The filler pays the stake on Base Sepolia, which may never be repaid, so fund it
+   (`npm run testnet -- fund` tops it up with the other roles) and keep stakes small:
+   it skips stakes over `FILLER_MAX_STAKE_WEI`, more than `FILLER_PER_DAY` fills per
+   wallet, and lobbies that would not seat the stake. By hand instead:
+   `npm run play -- relay <spoke tx> --from arb --net testnet`, from `DEPLOYER_PK`.
    Once it is filled, the client says the seat was taken and the lobby shows an ARB chip.
 5. To see a refund, join a lobby that will fill before the deposit is filled;
    the client says why, and the stake is collectable on the hub.

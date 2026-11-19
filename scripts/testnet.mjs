@@ -19,9 +19,10 @@
  *                                    with one burner per tab: http://localhost:5173/?player=N
  *                                    (&chain=arb|op|eth for a spoke), and every deployed spoke
  *                                    in the server's SPOKES. It archives to DATABASE_URL;
- *                                    --memory keeps the archive in memory. --relay also fills the players'
- *                                    spoke joins from DEPLOYER_PK, which Across's testnet
- *                                    relayers leave unfilled (docs/ACROSS.md).
+ *                                    --memory keeps the archive in memory. With FILLER_PK set the
+ *                                    server fills every wallet's spoke stakes, which Across's testnet
+ *                                    relayers leave unfilled (docs/ACROSS.md); --relay lends it
+ *                                    DEPLOYER_PK for that when FILLER_PK is unset.
  *
  * Then play with `npm run play -- <command> --net testnet`.
  */
@@ -32,7 +33,6 @@ import { createPublicClient, createWalletClient, formatEther, http, parseAbi, pa
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { protocolConfigAbi } from '@lms/contracts';
 
-import { acrossFillAbi, fillDeposit, toBytes32 } from './lib/acrossFill.mjs';
 import { TESTNET, TESTNET_ACCOUNTS, loadProfile, readDotEnv, testnetPlayers } from './lib/profile.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -157,7 +157,7 @@ async function fund() {
     const client = createPublicClient({ transport: http(rpc) });
     const recipients = players.filter((p) => !only || only.has(p.n)).map((p) => ({ label: `P${p.n}`, address: p.address, target: targets[kind] }));
     if (kind === 'hub') {
-      for (const role of ['keeper', 'matchmaker', 'sessionRelayer']) {
+      for (const role of ['keeper', 'matchmaker', 'sessionRelayer', 'filler']) {
         const r = profile.roles[role];
         if (r) recipients.push({ label: role, address: r.address, target: targets.roles });
       }
@@ -346,6 +346,9 @@ async function up() {
   const wsPort = Number(env.WS_PORT || 8787);
   const ws = flags.ws ?? `ws://localhost:${wsPort}`;
   const children = [];
+  if (flags.relay && !env.FILLER_PK && !profile.roles.deployer?.key) {
+    throw new Error('`up --relay` has the server fill from DEPLOYER_PK when FILLER_PK is unset: set one in .env.');
+  }
 
   if (!flags['client-only']) {
     const hub = createPublicClient({ transport: http(profile.hub.rpc) });
@@ -363,8 +366,11 @@ async function up() {
       NODE_ENV: 'development',
       MATCHMAKING_FILL_AFTER_MS: env.MATCHMAKING_FILL_AFTER_MS || '15000',
       GATEWAY_LIMITS: env.GATEWAY_LIMITS || JSON.stringify({ connectRatePerIp: 50, connectBurstPerIp: 100, loginRatePerIp: 50, loginBurstPerIp: 100 }),
-      // Every deployed spoke, so a wallet on any of them is offered a join.
-      SPOKES: env.SPOKES || JSON.stringify(profile.spokes.filter((s) => s.contracts.spokeRouter).map((s) => ({ chainId: s.chainId, router: s.contracts.spokeRouter }))),
+      // Every deployed spoke, so a wallet on any of them is offered a join,
+      // with its RPC, which the server's filler reads deposits from.
+      SPOKES: env.SPOKES || JSON.stringify(profile.spokes.filter((s) => s.contracts.spokeRouter).map((s) => ({ chainId: s.chainId, router: s.contracts.spokeRouter, rpcUrl: s.rpc }))),
+      // The server fills spoke stakes from FILLER_PK; --relay lends it DEPLOYER_PK when that is unset.
+      FILLER_PK: env.FILLER_PK || (flags.relay ? profile.roles.deployer?.key ?? '' : ''),
       AVATAR_COLLECTIONS:
         env.AVATAR_COLLECTIONS ||
         JSON.stringify([
@@ -404,8 +410,9 @@ async function up() {
     const tabs = ['?player=1', ...profile.spokes.slice(0, 3).map((s, i) => `?player=${i + 2}&chain=${s.alias}`)];
     console.log(`[testnet] one seat per chain: ${tabs.map((t) => `http://localhost:${clientPort}/${t}`).join('  ')}`);
   }
-  if (flags.relay) await startRelayer(profile, players);
-  else if (profile.spokes.length) console.log("[testnet] no --relay: spoke joins wait for Across's testnet relayers, which skip them (docs/ACROSS.md)");
+  if (!flags['client-only'] && profile.spokes.length && !env.FILLER_PK && !flags.relay) {
+    console.log("[testnet] no FILLER_PK and no --relay: spoke stakes wait for Across's testnet relayers, which skip them (docs/ACROSS.md)");
+  }
   const stop = () => {
     for (const child of children) {
       if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
@@ -415,90 +422,6 @@ async function up() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-}
-
-// -------------------------------------------------------------------- relay
-
-/** Spoke blocks a relayer looks back at start, so a join made just before is not missed. */
-const RELAY_LOOKBACK_BLOCKS = 300n;
-const RELAY_POLL_MS = 4_000;
-
-/**
- * `up --relay`: watches every spoke's Across SpokePool for joins the test
- * players make to the hub's `BridgeJoinReceiver`, and fills each one from
- * DEPLOYER_PK, one at a time. Anyone else's deposit is left alone, so a
- * stranger cannot spend the deployer's ETH. Each fill costs the relayer the
- * stake: Across's testnet may never repay it.
- */
-async function startRelayer(profile, players) {
-  const relayer = profile.roles.deployer;
-  if (!relayer?.key) throw new Error('`up --relay` fills from DEPLOYER_PK: set it in .env.');
-  const receiver = profile.contracts.bridgeReceiver;
-  if (!receiver) throw new Error('The hub registry has no bridgeReceiver: nothing to relay to.');
-  if (profile.spokes.length === 0) throw new Error('No spoke is deployed: nothing to relay.');
-
-  const hubChainId = TESTNET.hubChainId;
-  const hub = createPublicClient({ transport: http(profile.hub.rpc) });
-  const wallet = createWalletClient({ account: privateKeyToAccount(relayer.key), chain: chain(hubChainId, profile.hub.name, profile.hub.rpc), transport: http(profile.hub.rpc) });
-  const send = async (request, label) => {
-    const { request: prepared } = await hub.simulateContract({ account: wallet.account, ...request });
-    const hash = await wallet.writeContract(prepared);
-    const receipt = await hub.waitForTransactionReceipt({ hash });
-    if (receipt.status !== 'success') throw new Error(`${label} reverted: ${hash}`);
-    console.log(`[relay] ${label}  tx ${hash}`);
-    return receipt;
-  };
-
-  const byDepositor = new Map(players.map((p) => [toBytes32(p.address), `P${p.n}`]));
-  const recipient = toBytes32(receiver);
-  const seen = new Set();
-  let fills = Promise.resolve();
-
-  const balance = await hub.getBalance({ address: relayer.address });
-  console.log(`[relay] filling the players' spoke joins from ${relayer.address} (${formatEther(balance)} ETH on ${profile.hub.name}; each fill costs the stake)`);
-
-  for (const spoke of profile.spokes) {
-    const client = createPublicClient({ transport: http(spoke.rpc) });
-    let cursor = null;
-    let busy = false;
-    const tick = async () => {
-      const head = await client.getBlockNumber();
-      if (cursor === null) cursor = head > RELAY_LOOKBACK_BLOCKS ? head - RELAY_LOOKBACK_BLOCKS : 0n;
-      while (cursor <= head) {
-        const to = cursor + 999n < head ? cursor + 999n : head;
-        const logs = await client.getContractEvents({
-          address: spoke.contracts.acrossSpokePool,
-          abi: acrossFillAbi,
-          eventName: 'FundsDeposited',
-          args: { destinationChainId: BigInt(hubChainId) },
-          fromBlock: cursor,
-          toBlock: to,
-        });
-        for (const { args: d } of logs) {
-          const who = byDepositor.get(d.depositor.toLowerCase());
-          if (!who || d.recipient.toLowerCase() !== recipient) continue;
-          const key = `${spoke.chainId}:${d.depositId}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          console.log(`[relay] ${who} staked ${formatEther(d.inputAmount)} ETH on ${spoke.name} (deposit ${d.depositId}): filling`);
-          fills = fills.then(() =>
-            fillDeposit({ hub, send, relayer: relayer.address, d, originChainId: spoke.chainId, hubChainId, hubPool: profile.across.hubPool, hubWeth: profile.across.hubWeth }).catch((error) =>
-              // Already filled (by `play --relay`, or by Across after all) lands here too.
-              console.log(`[relay] deposit ${d.depositId} from ${spoke.name} not filled: ${error.shortMessage ?? error.message}`),
-            ),
-          );
-        }
-        cursor = to + 1n;
-      }
-    };
-    setInterval(() => {
-      if (busy) return;
-      busy = true;
-      tick()
-        .catch((error) => console.log(`[relay] ${spoke.name} poll failed: ${error.shortMessage ?? error.message}`))
-        .finally(() => (busy = false));
-    }, RELAY_POLL_MS);
-  }
 }
 
 // --------------------------------------------------------------------- main

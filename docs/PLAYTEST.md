@@ -7,7 +7,7 @@ Two environments, the same tools:
 | Chains | hub Base (8453); spokes Arbitrum One (42161), OP Mainnet (10), Ethereum (1); all forked locally | hub Base Sepolia (84532); spokes Arbitrum Sepolia (421614), OP Sepolia (11155420), Sepolia (11155111) |
 | Deploy | `Deploy.s.sol` / `DeploySpoke.s.sol` on their **production path**, run fresh on every start | the committed `contracts/deployments/<chainId>.json` |
 | Randomness | Chainlink's real Base VRF coordinator and a real subscription; the script delivers each answer as the coordinator does | Chainlink VRF on Base Sepolia |
-| Across | the real SpokePools on every fork; the script plays the relayer (fills after 5 s, no fee) | Across's real testnet pools; `up --relay` fills the joins from `DEPLOYER_PK`, since Across's testnet relayers skip them |
+| Across | the real SpokePools on every fork; the script plays the relayer (fills after 5 s, no fee) | Across's real testnet pools; the server fills every wallet's joins from `FILLER_PK` (`up --relay` lends it `DEPLOYER_PK`), since Across's testnet relayers skip them |
 | Tokens | every token with a live Uniswap v4 route at the fork block (USDC, USDT, DAI, cbBTC) | USDC, if a v4 route prices (`doctor` says) |
 | Time | `npm run play -- warp 1h` moves every chain | real time only |
 | Players | 8 anvil test accounts, 10,000 ETH on every chain, tokens, 50k LMS, 300k sLMS | 8 generated keys, funded from your deployer |
@@ -136,17 +136,20 @@ http://localhost:5173/?player=4&chain=eth
 the same lobby: open one with `npm run play -- create --stake 0.001 --seats 4 --as 1
 --net testnet`. It shows in every tab's lobby list, or add `&lobby=<id>` to a tab's address to
 highlight it. P1 joins on Base Sepolia.
-The others pay the stake plus Across's fee on their own chain, and `up --relay`
-fills each deposit on the hub (`[relay] P3 staked … on OP Sepolia`). The seat
-shows its chain's badge. `npm run play -- status last --net testnet` lists each
-seat's origin.
+The others pay the stake plus Across's fee on their own chain, and the server's
+filler fills each deposit on the hub (`[filler] filled deposit 11155420:… for 0x…`).
+The seat shows its chain's badge. `npm run play -- status last --net testnet`
+lists each seat's origin.
 
-Every `--relay` fill costs `DEPLOYER_PK` the stake on Base Sepolia, because
-Across's testnet may never repay it: keep about 0.001 ETH per spoke join there.
-`up --relay` fills only deposits from the players in `.testnet-accounts.json` to
-the hub's `BridgeJoinReceiver`, so nobody else can spend it. Without `--relay`,
-a spoke join waits for Across's relayers, which left the one such join tried
-unfilled (docs/ACROSS.md). It expires after two hours, and its ETH is lost.
+The filler is the server's (`chain/spokeFiller.ts`), so it fills any wallet's
+stake, not only the test players': set `FILLER_PK` in `.env`, or `up --relay`
+lends it `DEPLOYER_PK`. Every fill costs that key the stake on Base Sepolia,
+because Across's testnet may never repay it: keep about 0.001 ETH per spoke
+join there, plus the 0.005 ETH it keeps for gas. It skips stakes over
+`FILLER_MAX_STAKE_WEI` (0.01 ETH), more than `FILLER_PER_DAY` (10) from one
+wallet, and lobbies that would not seat the stake. Without a filler, a spoke
+join waits for Across's relayers, which leave these deposits unfilled
+(docs/ACROSS.md). It expires after two hours, and its ETH is lost.
 
 ## The `play` CLI
 

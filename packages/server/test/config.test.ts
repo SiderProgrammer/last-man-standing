@@ -164,6 +164,8 @@ describe('server configuration', () => {
     expect(() => loadConfig({ SESSION_RELAYER_PK: pk, MATCHMAKER_PK: pk.toUpperCase().replace('0X', '0x') })).toThrow(
       /SESSION_RELAYER_PK, MATCHMAKER_PK are the same key/,
     );
+    // The filler spends its own ETH on stakes, so a drained one must not stop relaying.
+    expect(() => loadConfig({ SESSION_RELAYER_PK: pk, FILLER_PK: pk })).toThrow(/SESSION_RELAYER_PK, FILLER_PK are the same key/);
     const distinct = loadConfig({
       ATTESTOR_PK: pk,
       KEEPER_PK: `0x${'33'.repeat(32)}`,

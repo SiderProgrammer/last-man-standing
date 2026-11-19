@@ -69,6 +69,22 @@ export {
   type LobbyOpenerOptions,
   type LobbyOpenerPort,
 } from './chain/lobbyOpener.js';
+export {
+  DEFAULT_SPOKE_FILLER_POLICY,
+  SpokeFiller,
+  decodeJoin,
+  fromBytes32,
+  spokeFillerPolicy,
+  spokeRpcs,
+  toBytes32,
+  viemSpokeFiller,
+  type FillerHubPort,
+  type FillerLobby,
+  type SpokeDeposit,
+  type SpokeDepositSource,
+  type SpokeFillerOptions,
+  type SpokeFillerPolicy,
+} from './chain/spokeFiller.js';
 export { keySigner, signerAccount, type Signer } from './chain/signer.js';
 export {
   AttestationRefused,

@@ -35,6 +35,7 @@ import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
 import { LobbyOpener, viemLobbyOpenerPort } from './chain/lobbyOpener.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
+import { SpokeFiller, spokeFillerPolicy, spokeRpcs, viemSpokeFiller } from './chain/spokeFiller.js';
 import { repeat } from './util/poll.js';
 
 const TICK_MS = 250;
@@ -278,6 +279,8 @@ async function main(): Promise<void> {
         clients: gateway.connections,
         onChain: config.onChain,
         lobbies: { open: lobbies.open.length, live: lobbies.live.length },
+        // Read when asked, which is after `listen`, so after it is assigned.
+        filler: filler ? { address: fillerSender?.address, waiting: filler.waiting } : null,
         analyst: analyst
           ? {
               model: config.analyst.model,
@@ -328,6 +331,37 @@ async function main(): Promise<void> {
     console.log(`[server] spokes on chains ${spokes.map((s) => s.chainId).join(', ')}`);
   }
 
+  // Fills stakes from a spoke on the hub with its own ETH, which Across's
+  // testnet relayers leave unfilled. Needs its key and a spoke RPC to read.
+  let filler: SpokeFiller | null = null;
+  const fillerSender = config.onChain && spokes.length > 0 ? senderFor(config.fillerPk, 'filler') : null;
+  if (fillerSender) {
+    const fillable = spokeRpcs(config.spokes, spokes);
+    const ports = fillable.length
+      ? await viemSpokeFiller({
+          hubRpcUrl: config.rpcUrl,
+          hubChainId: config.chainId,
+          escrow: config.escrow,
+          sender: fillerSender,
+          spokes: fillable,
+        }).catch((error: unknown) => {
+          console.error('[filler] could not start:', errorMessage(error));
+          return null;
+        })
+      : null;
+    if (ports) {
+      const policy = spokeFillerPolicy(config.filler);
+      filler = new SpokeFiller({ ...ports, policy, confirmations: config.confirmations });
+      filler.start(config.fillerPollMs);
+      console.log(
+        `[server] filling spoke stakes up to ${policy.maxStake} wei from ${fillerSender.address} ` +
+          `on chains ${ports.sources.map((s) => s.chainId).join(', ')}`,
+      );
+    } else {
+      console.warn('[filler] FILLER_PK is set but no SPOKES entry names a usable rpcUrl: nothing filled');
+    }
+  }
+
   // Harvests fees on a timer so they reach stakers. Holds no authority:
   // `harvest` is open to anyone and pays only where the router already sends.
   let feeKeeper: FeeKeeper | null = null;
@@ -362,6 +396,7 @@ async function main(): Promise<void> {
     bridge?.stop();
     feeKeeper?.stop();
     crossChain?.stop();
+    filler?.stop();
     proposals?.stop();
     for (const stop of timers) stop();
     wss.close();

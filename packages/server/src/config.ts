@@ -135,6 +135,12 @@ const ENV = z.object({
   MATCHMAKING_FILL_AFTER_MS: whole(30_000),
   RELAY_QUOTA_PER_DAY: whole(20),
   SPOKES: text(),
+  FILLER_PK: privateKey,
+  FILLER_MAX_STAKE_WEI: bigint,
+  FILLER_PER_DAY: variable(z.string().regex(/^\d+$/, 'must be a whole number').transform(Number).optional()),
+  FILLER_RESERVE_WEI: bigint,
+  FILLER_DELAY_MS: variable(z.string().regex(/^\d+$/, 'must be a whole number').transform(Number).optional()),
+  FILLER_POLL_MS: whole(4_000, 1),
   CROSS_CHAIN_FROM_BLOCK: bigint,
   CONFIRMATIONS: whole(3),
   ZAP_JOIN: address,
@@ -200,6 +206,7 @@ export function loadConfig(
     KEEPER_PK: e.KEEPER_PK,
     SESSION_RELAYER_PK: e.SESSION_RELAYER_PK,
     MATCHMAKER_PK: e.MATCHMAKER_PK,
+    FILLER_PK: e.FILLER_PK,
   }).flatMap(([name, key]) => (key ? [[name, key.toLowerCase()] as const] : []));
   const shared = keys.filter(([, key], i) => keys.some(([, other], j) => j !== i && other === key));
   if (shared.length > 0) {
@@ -307,6 +314,21 @@ export function loadConfig(
      * See `chain/crossChain.ts`.
      */
     spokes: e.SPOKES,
+    /**
+     * Fills players' spoke stakes on the hub from its own ETH, as an Across
+     * relayer would, for the spokes whose `SPOKES` entry names an `rpcUrl`.
+     * For testnet, where Across's relayers leave these deposits unfilled.
+     * Unset, stakes from a spoke wait for Across. See `chain/spokeFiller.ts`.
+     */
+    fillerPk: e.FILLER_PK,
+    /** Overrides for `DEFAULT_SPOKE_FILLER_POLICY`. Unset keeps the default. */
+    filler: {
+      maxStake: e.FILLER_MAX_STAKE_WEI,
+      perDay: e.FILLER_PER_DAY,
+      reserve: e.FILLER_RESERVE_WEI,
+      delayMs: e.FILLER_DELAY_MS,
+    },
+    fillerPollMs: e.FILLER_POLL_MS,
     /** The escrow's deploy block, from the registry: no scan of its events starts before it. */
     escrowFromBlock: fromBlock,
     /**

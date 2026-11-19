@@ -4,8 +4,8 @@
  * Across's testnet relayers leave deposits that carry a message unfilled
  * (docs/ACROSS.md), and every spoke join carries one, so on testnet a join
  * from a spoke lands only if we fill it. `npm run play -- join --relay` and
- * `npm run play -- relay` fill one deposit; `npm run testnet -- up --relay`
- * fills every join the test players make, from any spoke.
+ * `npm run play -- relay` fill one deposit; the server's filler
+ * (`packages/server/src/chain/spokeFiller.ts`) fills every wallet's joins.
  */
 import { erc20Abi, formatEther } from 'viem';
 
