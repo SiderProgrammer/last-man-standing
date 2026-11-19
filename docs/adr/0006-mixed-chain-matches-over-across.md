@@ -29,3 +29,8 @@ Stargate v2 was ruled out: it has no Base Sepolia deployment.
   deposits not refunded), so the main testnet flow uses mock pools and a local
   relayer, and the real integration is proven by fork tests against mainnet
   SpokePools. A live testnet join is an optional demo.
+
+**Update, 2026-11-13:** the testnet deployment uses Across's real pools, not mocks.
+Its relayers skip deposits that carry a message, so joins there are filled with our
+own key (`--relay`); see [ACROSS.md](../ACROSS.md#the-live-testnet-deposit). The
+local stack and the unit tests still use `MockAcrossSpokePool`.

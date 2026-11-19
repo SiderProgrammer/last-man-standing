@@ -60,9 +60,12 @@ cannot guard now. Charging cannot stack either, so a loaded seat has to swing be
 it can load again.
 
 Every roll in a round — each Guard's pick of which striker to block, each tiebreak —
-comes from `roundSeed(matchSeed, round, salts)`, where `salts` are the salts every
-player revealed that round. Nobody can compute a roll until every reveal is in, and
-the salts are published with the round so anyone can re-derive it.
+comes from `roundSeed(matchSeed, round, commitmentSet)`, where `commitmentSet` is the
+hash of every seat's commitment that round, in seat order. Each commitment hides a
+fresh salt, so nobody can compute a roll until the commit window closes, and from
+then on the rolls are fixed: a reveal that is withheld or dropped changes only that
+seat's move, never the dice. The commitments are published with the round so anyone
+can re-derive it.
 
 The numbers are not hand-picked. They came out of a search over action sets and
 rule values, then a validation pass (an exact game-theory solve of the 1v1 duel,
@@ -136,7 +139,9 @@ the commit window a player publishes only
 keccak256(abi.encode(matchId, round, seat, action, target, salt))
 ```
 
-The server physically cannot read a move until the reveal window opens. Because the
+The server cannot read a move until the reveal window opens, unless the player turns on
+"reveal for me if I disconnect", which hands the server the move with its commit (see
+[Trust model](#trust-model)). Because the
 match id, round number and seat are inside the hash, a commitment cannot be replayed in
 a later round or claimed by another seat, and the target is forced to zero for every
 action but Strike so the hash does not leak whether you intended to strike.
@@ -163,12 +168,14 @@ packages/api        wire messages and DTOs between browser and server
 packages/engine     pure resolution kernel + match state machine + replay
 packages/server     WebSocket gateway, rooms, chain bridge, attestor, archive
 packages/client     PixiJS arena, wallet session, history and reads panels
-contracts/          escrow, config, libraries, adapters
+packages/harness    headless bot clients for load and chaos testing
+contracts/          escrow, config, governance and token, libraries, adapters, periphery
 ```
 
 The dependency direction is strictly one-way: `consensus` depends on nothing of ours,
 `contracts` on `consensus`, and `api` on both; the engine knows only `consensus` and
-nothing about the network; the server knows nothing about rendering. Everything that
+nothing about the network; the server knows nothing about rendering; the harness uses
+only `consensus` and `api`, speaking the same wire protocol as the browser. Everything that
 decides who gets paid lives in `consensus` + `engine` + the Solidity, all of which are
 deterministic and independently testable.
 
@@ -536,9 +543,10 @@ winner is crowned after the final round.
 
 | Contract | Role |
 | --- | --- |
-| `PullPayable` | Base for both escrows: credited balances, `totalOwed`, pull-based `withdraw` |
+| `PullPayable` | Base for `GameEscrow`: credited balances, `totalOwed`, pull-based `withdraw` |
+| `ExpiringPause` | Base for `GameEscrow`: the guardian's pause that ends on its own after 7 days unless governance extends it |
 | `Errors` | The errors several contracts raise identically, hoisted to file level |
-| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, the bridge receiver, emergency guardian. Owned by a `TimelockController` whose proposer is a Safe. |
+| `ProtocolConfig` | Every governable parameter: fees, seat ranges, stake bounds, windows, payout schedule, rules hash, oracle, attestor set and threshold, the bridge receiver, emergency guardian. Owned by a `TimelockController` that `LmsGovernor` proposes to, and the Safe too through `MultisigPhase` until its end date. |
 | `GameEscrow` | The hub. Takes stakes, locks the lobby, requests the seed, accepts a quorum-signed result, credits payouts. |
 | `SpokeRouter` | Spoke chain: deposits a stake into Across with a join message for the hub. Ownerless; holds nothing. |
 | `BridgeJoinReceiver` | Hub: takes Across fills and seats the player through `GameEscrow.bridgeJoin`, or credits them; bridges a balance home on a signed `withdrawToChainFor`. Owned by the timelock. |
@@ -546,6 +554,15 @@ winner is crowned after the final round.
 | `PlayerAvatars` | Cosmetic ERC-721 avatars. Deployed independently per chain, never bridged. |
 | `SessionKeyDelegate` | EIP-7702 delegate: a session key may `join` and `withdrawFor` on the escrow, under caps; ERC-1271 for the root key only. |
 | `ChainlinkVrfAdapter` | Presents a VRF v2.5 subscription as `IRandomnessOracle`. |
+| `governance/LmsToken` | The fixed-supply ERC-20 with permit. Holding it gives no votes. |
+| `governance/StakedLms` | LMS → sLMS one for one; sLMS votes and earns the stakers' share of fees in ETH. |
+| `governance/LmsGovernor` | OpenZeppelin Governor over sLMS votes, proposing to the timelock, with a quorum floor. |
+| `governance/MultisigPhase` | Holds the Safe's proposer and canceller roles on the timelock until a fixed `phaseEnd`. |
+| `governance/FeeRouter` | The escrow's treasury: splits fees between the stakers and the timelock. |
+| `governance/RewardsDistributor`, `RewardVesting` | Play-mining: each week's LMS budget split by fees paid, vesting over six months. |
+| `governance/LiquidityReserve` | Holds the liquidity share of LMS; pays only a recipient the timelock approves. |
+
+The token, staking and play-mining are described in [FEATURES.md](FEATURES.md#token-staking-and-play-mining).
 
 **Match lifecycle on-chain**
 

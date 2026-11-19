@@ -240,10 +240,13 @@ These are open questions, not bugs:
   wallets with one owner queueing together in a quiet range can still be matched with
   each other. Candidates still open: flagging seat pairs that never strike each other
   from the public history, and a payout schedule that pays a pact less.
-- **Idle players.** In a staked match one idle seat makes every round run the full 60 s,
-  with no penalty: 4 idle rounds in practice left the idle seat at 100 HP. A missed
-  timer means "no action" and a match ends after 30 rounds, so one idle seat can stretch
-  a staked match to about 30 minutes. Auto-guard, or drop a seat after N missed rounds?
+- **Idle players.** One idle seat makes every round wait out the whole commit window,
+  with no penalty: 4 idle rounds in practice left the idle seat at 100 HP. A seat that
+  never commits does not hold up the reveal, so a round costs the commit window plus the
+  replay hold: about 23 s with the server's defaults (20 s + 2.5 s), about 63 s under the
+  playtest scripts' 60 s window. A missed timer means "no action" and a match ends after
+  30 rounds, so one idle seat can stretch a staked match to about 11 minutes by default,
+  or about 30 on the playtest stacks. Auto-guard, or drop a seat after N missed rounds?
 - **No way out of a lobby that does not fill.** Once staked, a player gets the stake
   back only through `cancelMatch` after the join window (`GameEscrow.sol:824`). Should
   players be able to leave an unfilled lobby?

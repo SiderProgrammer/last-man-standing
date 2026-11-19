@@ -1,4 +1,4 @@
-# Playtesting every feature from 4, 6 or 8 accounts
+# Playtesting every feature from 4 to 8 accounts
 
 Two environments, the same tools:
 
@@ -200,13 +200,14 @@ These were run end to end on the fork while the tools were being built:
 The rest are UI paths to click through.
 
 ### 1. Practice and login
-- [ ] Tab P1 → **Connect wallet** → session key **on**. Start a practice match against 3, 5 and 7 bots, on each difficulty.
+- [ ] Tab P1 → **Connect wallet** → session key **on**. Start a practice match against each number of bots from 3 to 7, on each difficulty.
 - [ ] Refresh mid-round: no wallet prompt (the stored grant logs in), and the round is not lost.
 - [ ] **Forget key**, then reconnect: a new grant is signed.
 
 ### 2. A staked match, every table size
 - [ ] `npm run play -- table --seats 4 --humans 1`, then in tab P1 **Stake** on the lobby → **Enter** → play.
 - [ ] Repeat with `--seats 6 --humans 2` and `--seats 8 --humans 3`, one tab per human.
+- [ ] **Create & stake** offers every table size from 4 to 8: open a 5- and a 7-seat lobby from the UI and fill them with `join last`.
 - [ ] All bots: `npm run play -- table --seats 8 --humans 0`.
 - [ ] Watch the server log: `locking …`, `[vrf] seeded …`, `opened room …`, then the result is proposed.
 - [ ] `npm run play -- status last`: Proposed, with the ranking and the transcript hash.
@@ -268,7 +269,7 @@ The rest are UI paths to click through.
 ### 10. One-click play (EIP-7702) and avatars
 - [ ] Burner tab → **Turn on** one-click play (one transaction). Then joins and **Collect** go through without a prompt, and the server pays the gas, up to `RELAY_QUOTA_PER_DAY`: the player's ETH drops by exactly the stake.
 - [ ] Fork: do this **before any `warp`**. The session's `validUntil` comes from the browser's clock, so once the chain is ahead of it, `grantSession` reverts (`InvalidSession`). Restart the fork to get the clocks back together.
-- [ ] **Mint avatar** on Base (tab `?player=N`) and on Arbitrum (`&chain=spoke`). Each seat wears the avatar from the chain it staked from.
+- [ ] **Mint random avatar** on Base (tab `?player=N`) and on Arbitrum (`&chain=spoke`). Each seat wears the avatar from the chain it staked from.
 
 ### 11. Cancellations
 - [ ] An under-filled lobby: `create --seats 4`, `join last --players 1`, then wait 10 min (fork: `warp 11m`) → `cancel last` → `withdraw --players 1`.

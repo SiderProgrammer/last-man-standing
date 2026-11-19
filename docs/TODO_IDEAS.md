@@ -1,4 +1,5 @@
-test all 4 chains with a real wallet(testnet) + 3 bots
+test Match creation and Collect balance button
+test all features
 record video
 host the game
 update README, docs

@@ -514,7 +514,9 @@ npm run sim                 # bot matches under the current rules; fails if bala
 npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of the above, plus
+CI (`.github/workflows/ci.yml`) runs all of the above except
+`check:one-click`, which is run by hand. For the ABIs it checks that the committed
+ones are current instead of regenerating them. On top of that it runs
 `forge fmt --check`, a coverage report and Slither. The coverage job fails if any
 contract that moves value has under 90% of its branches covered
 (`scripts/coverage-gate.mjs` lists them). Slither fails only on findings

@@ -271,8 +271,12 @@ Safe --> MultisigPhase --proposes, cancels---------+  the delay has passed)    B
 
 - **Token vote behind a timelock.** Whoever owns the config can swap the
   oracle (and choose seeds) or the attestors (and sign results), so no single
-  key can; the delay makes every change public before it lands. The deploy
-  script refuses a delay shorter than `joinWindow + settleWindow`.
+  key can; the delay makes every change public before it lands. The delay must
+  outlast a whole match, `matchLifetime()`: join window, lock grace, seed
+  timeout, settle window, challenge window and a dispute (about 51 h by
+  default). The deploy script checks it, and `ProtocolConfig` checks it again
+  whenever a window or its owner changes, so a queued change never reaches a
+  match that was already open.
 - **The Safe's powers end on a date written into `MultisigPhase`** (a year by
   default, two at most). After `phaseEnd` anyone calls `retire()`, which also
   cancels anything the Safe left pending, because timelock calls never expire;

@@ -63,8 +63,8 @@ Tried on 2026-11-12, from OP Sepolia into a Base Sepolia lobby, with
 - The deposit went out (OP Sepolia tx `0xe856e944…d04c`, deposit id 1000545,
   0.001 ETH plus a 0.0000043 ETH fee), and Across's API indexed it with the right
   recipient, output and message.
-- **No testnet relayer filled it.** It stayed `pending` past the lobby's 20-minute join
-  window. Over the same hours, Across's testnet relayers did fill deposits into Base
+- **No testnet relayer filled it.** It stayed `pending` past the lobby's 10-minute join
+  window and the 10-minute lock grace after it. Over the same hours, Across's testnet relayers did fill deposits into Base
   Sepolia from Sepolia and Arbitrum Sepolia, all with an empty message. Ours was the only
   one with a message and the only one left unfilled. That points to the testnet
   relayers skipping message deposits, not to a fill that would fail.
