@@ -144,6 +144,11 @@ export interface GatewayOptions {
   spokes?: SpokeInfo[];
   /** Staking vault and governor. Null or omitted hides the staking panel. */
   staking?: StakingInfo | null;
+  /**
+   * Told of every wallet that signs in, to give it testnet LMS: see
+   * `chain/faucet.ts`. Omitted, nobody is dripped.
+   */
+  faucet?: { onLogin(address: `0x${string}`): void };
   /** Finished matches, for `history` and `review`. Omitted, both answer that there is no archive. */
   archive?: MatchArchive;
   /**
@@ -627,6 +632,7 @@ export class Gateway {
     session.grant = grant;
     session.send({ type: 'authed', address: message.address });
     this.resume(session, message.address);
+    this.options.faucet?.onLogin(message.address);
   }
 
   /**

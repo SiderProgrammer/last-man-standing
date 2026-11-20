@@ -56,6 +56,15 @@ on Base Sepolia's SpokePool, owned by the timelock, and names it in the config.
 that can open the lobbies that earn play-mining. `--verify` verifies every
 contract on the explorer.
 
+Off Base mainnet the script also deploys an `LmsFaucet` holding 10M LMS (10% of
+the supply, out of the timelock's 30%, which keeps 20%). It gives each wallet one
+scoop, 10,000 LMS to hold and 40,000 staked as sLMS, for 200 wallets in all.
+The server drips every wallet that signs in with some Base Sepolia ETH, from
+`SESSION_RELAYER_PK`; a guest, or a wallet with no ETH yet, gets nothing until it
+signs in with some. `npm run testnet -- fund` drips the generated players too,
+and `doctor` says how many scoops are left. A deploy made before the faucet
+existed has none: players there get LMS only by play-mining.
+
 The script writes `contracts/deployments/84532.json`: every address it created
 (the receiver as `bridgeReceiver`) and the block to start scanning logs from.
 Commit it. The server reads it for `CHAIN_ID=84532`, so its escrow, governor

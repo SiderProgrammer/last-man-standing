@@ -42,6 +42,12 @@ export interface StakingInfo {
    * servers; absent or null hides the claim.
    */
   rewards?: `0x${string}` | null;
+  /**
+   * `LmsFaucet` this server drips testnet LMS from, to every wallet that signs
+   * in with ETH on the hub. Absent or null when it drips none: on Base
+   * mainnet, or without a relayer key.
+   */
+  faucet?: `0x${string}` | null;
 }
 
 /**

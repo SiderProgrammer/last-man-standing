@@ -28,6 +28,7 @@ import {FeeRouter} from "../src/governance/FeeRouter.sol";
 import {RewardsDistributor} from "../src/governance/RewardsDistributor.sol";
 import {MultisigPhase} from "../src/governance/MultisigPhase.sol";
 import {LiquidityReserve} from "../src/governance/LiquidityReserve.sol";
+import {LmsFaucet} from "../src/governance/LmsFaucet.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /// @notice Hub deploy, on Base or Base Sepolia: token-governed config,
@@ -54,7 +55,8 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 ///      share to `StakedLms` as ETH and forwards the rest to the timelock.
 ///
 ///      LMS: split between play-mining, the timelock, the team's vesting
-///      wallet and the liquidity reserve; see `_distribute`.
+///      wallet and the liquidity reserve, and off Base mainnet a faucet that
+///      gives testers LMS to stake; see `_distribute`.
 ///
 ///      The deployer holds no role and no tokens once `run` returns.
 ///
@@ -112,6 +114,11 @@ contract Deploy is Registry, AcrossBook {
     uint256 private constant PLAY_MINING_BPS = 5_000;
     uint256 private constant TEAM_BPS = 1_500;
     uint256 private constant LIQUIDITY_BPS = 500;
+    /// @dev Off Base mainnet only, out of the timelock's share: see `_faucetBps`.
+    uint256 private constant FAUCET_BPS = 1_000;
+    /// @dev Each scoop: 10,000 LMS to hold, and 40,000 staked as sLMS.
+    uint256 private constant FAUCET_LIQUID = 10_000e18;
+    uint256 private constant FAUCET_STAKED = 40_000e18;
     uint64 private constant TEAM_CLIFF = 365 days;
     uint64 private constant TEAM_VESTING = 3 * 365 days;
 
@@ -140,6 +147,8 @@ contract Deploy is Registry, AcrossBook {
         RewardsDistributor rewards;
         VestingWallet teamVesting;
         LiquidityReserve liquidityReserve;
+        /// @dev Testers' LMS. Zero on Base mainnet.
+        LmsFaucet faucet;
         /// @dev Holds the Safe's timelock roles until its fixed end date.
         MultisigPhase multisigPhase;
         address safe;
@@ -238,6 +247,7 @@ contract Deploy is Registry, AcrossBook {
         _entry("rewardVesting", address(deployment.rewards.vesting()));
         _entry("teamVesting", address(deployment.teamVesting));
         _entry("liquidityReserve", address(deployment.liquidityReserve));
+        _entry("lmsFaucet", address(deployment.faucet));
         _entry("multisigPhase", address(deployment.multisigPhase));
         _entry("safe", deployment.safe);
         _entry("guardian", deployment.guardian);
@@ -546,11 +556,16 @@ contract Deploy is Registry, AcrossBook {
     ///         5%  liquidity       a LiquidityReserve: the Safe sends it to a pool the timelock approves
     ///         5%  reserve         the timelock, with the treasury
     ///
+    ///      Off Base mainnet, 10% of it goes to an `LmsFaucet` instead of the
+    ///      timelock, which then holds 20%: testers get LMS to stake and vote
+    ///      with without waiting months for play-mining to vest.
+    ///
     ///      None of the tokens the timelock, the distributor, the vesting
-    ///      wallet or the reserve holds is staked, so none of them votes:
-    ///      governance starts with the players, as play-mining pays them. The
-    ///      vesting wallet, the distributor and the reserve have no way to
-    ///      stake; the timelock could only by a proposal.
+    ///      wallet, the reserve or the faucet holds is staked, so none of them
+    ///      votes: governance starts with the players, as play-mining (or on a
+    ///      testnet, the faucet) pays them. The vesting wallet, the
+    ///      distributor and the reserve have no way to stake, and the faucet
+    ///      stakes only for others; the timelock could only by a proposal.
     function _distribute(Deployment memory deployment, address deployer) private {
         LmsToken lms = deployment.lms;
         uint256 supply = lms.totalSupply();
@@ -570,9 +585,22 @@ contract Deploy is Registry, AcrossBook {
         );
         uint256 liquidity = _share(lms, address(deployment.liquidityReserve), LIQUIDITY_BPS);
 
-        // Treasury and reserve, and the rounding of the other three.
-        lms.transfer(address(deployment.timelock), supply - play - team - liquidity);
+        uint256 faucet;
+        uint256 faucetBps = _faucetBps();
+        if (faucetBps != 0) {
+            deployment.faucet = new LmsFaucet(lms, deployment.stakedLms, FAUCET_LIQUID, FAUCET_STAKED);
+            faucet = _share(lms, address(deployment.faucet), faucetBps);
+        }
+
+        // Treasury and reserve, and the rounding of the others.
+        lms.transfer(address(deployment.timelock), supply - play - team - liquidity - faucet);
         assert(lms.balanceOf(deployer) == 0);
+    }
+
+    /// @dev The faucet's share: none on Base mainnet, where LMS reaches
+    ///      players only by play-mining. Virtual so a test can see either.
+    function _faucetBps() internal view virtual returns (uint256) {
+        return block.chainid == BASE_CHAIN_ID ? 0 : FAUCET_BPS;
     }
 
     /// @dev Sends `to` its `bps` of the LMS supply, and returns how much that was.

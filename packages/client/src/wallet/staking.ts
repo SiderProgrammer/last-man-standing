@@ -1,6 +1,13 @@
 import type { Address, Hex } from 'viem';
-import { claimableEpochRange, lmsTokenAbi, rewardVestingAbi, rewardsDistributorAbi, stakedLmsAbi } from '@lms/contracts';
-import type { PlayRewards, StakingPosition, Vesting } from '../ui/staking.js';
+import {
+  claimableEpochRange,
+  lmsFaucetAbi,
+  lmsTokenAbi,
+  rewardVestingAbi,
+  rewardsDistributorAbi,
+  stakedLmsAbi,
+} from '@lms/contracts';
+import type { FaucetState, PlayRewards, StakingPosition, Vesting } from '../ui/staking.js';
 import { signLmsPermit } from './permit.js';
 import type { Wallet } from './wallet.js';
 
@@ -36,6 +43,23 @@ export async function stakingPosition(wallet: Wallet, vault: Address): Promise<S
     pending: { assets: pendingAssets, unlockAt: Number(unlockAt) },
     chainTime: Number(block.timestamp),
   };
+}
+
+/**
+ * Where this wallet stands with the testnet faucet: whether it was paid, what
+ * a scoop is, how many are left, and its ETH on the hub, which the server
+ * needs to see before it drips.
+ */
+export async function faucetState(wallet: Wallet, faucet: Address): Promise<FaucetState> {
+  const at = { address: faucet, abi: lmsFaucetAbi } as const;
+  const [dripped, liquid, staked, scoopsLeft, eth] = await Promise.all([
+    wallet.rpc.readContract({ ...at, functionName: 'dripped', args: [wallet.address] }),
+    wallet.rpc.readContract({ ...at, functionName: 'liquidAmount' }),
+    wallet.rpc.readContract({ ...at, functionName: 'stakedAmount' }),
+    wallet.rpc.readContract({ ...at, functionName: 'scoopsLeft' }),
+    wallet.rpc.getBalance({ address: wallet.address }),
+  ]);
+  return { dripped, liquid, staked, scoopsLeft, eth };
 }
 
 /**

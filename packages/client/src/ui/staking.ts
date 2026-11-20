@@ -170,6 +170,36 @@ function playRewardsLine(
   };
 }
 
+/** A wallet's standing with the testnet faucet, as `wallet/staking.ts` reads it. */
+export interface FaucetState {
+  /** The faucet has paid this wallet: it never will again. */
+  dripped: boolean;
+  /** LMS a scoop sends, in wei. */
+  liquid: bigint;
+  /** LMS a scoop stakes for the wallet, in wei. */
+  staked: bigint;
+  scoopsLeft: bigint;
+  /** The wallet's ETH on the hub, in wei: the server drips only a wallet with some. */
+  eth: bigint;
+}
+
+/**
+ * How to get testnet LMS, or where the drip is. Empty when there is no faucet
+ * or it could not be read. The server drips on sign-in, so a wallet without
+ * ETH is told to get some and sign in again, and one with ETH that has not
+ * been paid yet is being paid now.
+ */
+export function faucetLine(state: FaucetState | null, hubName: string): string {
+  if (!state) return '';
+  const scoop = `${formatLms(state.liquid, 0)} LMS and ${formatLms(state.staked, 0)} staked`;
+  if (state.dripped) return `Testnet faucet: you got your ${scoop}.`;
+  if (state.scoopsLeft === 0n) return 'Testnet faucet: empty. Play staked matches to earn LMS instead.';
+  if (state.eth === 0n) {
+    return `Free testnet LMS: get some ${hubName} ETH, then reload the page to receive ${scoop}, once per wallet.`;
+  }
+  return `Sending your free testnet LMS: ${scoop}… If nothing arrives in a minute, reload the page.`;
+}
+
 /**
  * Claimed rewards on their way to being spendable. Vesting LMS carries no
  * vote; only once released, and then staked, does it count, which the line

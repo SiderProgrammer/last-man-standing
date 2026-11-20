@@ -13,4 +13,5 @@ export { rewardVestingAbi } from './abis/RewardVesting.js';
 export { stakedLmsAbi } from './abis/StakedLms.js';
 export { lmsTokenAbi } from './abis/LmsToken.js';
 export { lmsGovernorAbi } from './abis/LmsGovernor.js';
+export { lmsFaucetAbi } from './abis/LmsFaucet.js';
 export { timelockControllerAbi } from './abis/TimelockController.js';

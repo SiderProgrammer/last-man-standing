@@ -325,6 +325,7 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (timelock)    [100
 | `RewardVesting` | Holds each (player, week) tranche, vesting linearly over six months. Cannot stake, so vesting LMS never votes. |
 | `MultisigPhase` | The Safe's timelock roles, until `phaseEnd`. |
 | `LiquidityReserve` | The 5% liquidity share. Cannot stake or delegate; pays only a recipient the timelock approves. |
+| `LmsFaucet` | Off Base mainnet only: 10% of the supply, paid out once per wallet as 10,000 LMS plus 40,000 staked for it. The server drips each wallet that signs in with ETH on the hub. |
 
 | Setting | Default | Env |
 | --- | --- | --- |
@@ -341,7 +342,9 @@ GameEscrow --fees--> FeeRouter --harvest (anyone)--> treasury (timelock)    [100
 **Supply.** 50% play-mining over four years, 25% treasury (the timelock), 15%
 team (a year's cliff, then three years linear), 5% liquidity
 (`LiquidityReserve`), 5% reserve (the timelock). None of it is staked, so none
-of it votes; governance starts with the players. There is no sale.
+of it votes; governance starts with the players. There is no sale. Off Base
+mainnet, 10% goes to `LmsFaucet` out of the timelock's share, so testers can
+stake and vote at once.
 
 - **Only staked tokens vote**, read at the proposal's snapshot, so stake bought
   after a proposal appears cannot vote on it.

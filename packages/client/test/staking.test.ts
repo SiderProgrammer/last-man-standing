@@ -4,6 +4,7 @@ import { claimableEpochRange } from '@lms/contracts';
 import { type StakingInfo } from '@lms/api';
 import {
   cooldownRestartWarning,
+  faucetLine,
   formatDuration,
   formatLms,
   httpOrigin,
@@ -295,5 +296,40 @@ describe('staking wording', () => {
 
   it('takes a decimal comma in an LMS amount', () => {
     expect(parseLms('0,5')).toBe(E18 / 2n);
+  });
+});
+
+describe('faucetLine', () => {
+  const state = (overrides = {}) => ({
+    dripped: false,
+    liquid: 10_000n * E18,
+    staked: 40_000n * E18,
+    scoopsLeft: 200n,
+    eth: 10n ** 15n,
+    ...overrides,
+  });
+
+  it('says nothing without a faucet', () => {
+    expect(faucetLine(null, 'Base Sepolia')).toBe('');
+  });
+
+  it('tells a wallet with no hub ETH how to get its scoop', () => {
+    expect(faucetLine(state({ eth: 0n }), 'Base Sepolia')).toBe(
+      'Free testnet LMS: get some Base Sepolia ETH, then reload the page to receive 10,000 LMS and 40,000 staked, once per wallet.',
+    );
+  });
+
+  it('says the scoop is on its way to a wallet with ETH that is not paid yet', () => {
+    expect(faucetLine(state(), 'Base Sepolia')).toMatch(/^Sending your free testnet LMS: 10,000 LMS and 40,000 staked…/);
+  });
+
+  it('says a paid wallet got it, even once the jar is empty', () => {
+    expect(faucetLine(state({ dripped: true, scoopsLeft: 0n }), 'Base Sepolia')).toBe(
+      'Testnet faucet: you got your 10,000 LMS and 40,000 staked.',
+    );
+  });
+
+  it('says when the jar is empty', () => {
+    expect(faucetLine(state({ scoopsLeft: 0n }), 'Base Sepolia')).toMatch(/^Testnet faucet: empty/);
   });
 });

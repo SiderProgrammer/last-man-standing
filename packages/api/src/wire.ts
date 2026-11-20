@@ -347,6 +347,12 @@ export type ServerMessage =
    * refunded there, or parked to be retried. Sent only to that player.
    */
   | { type: 'crossChain'; event: CrossChainEvent }
+  /**
+   * The testnet faucet paid this wallet, on its first sign-in with ETH on the
+   * hub: `liquid` LMS sent, and `staked` LMS staked for it, both in wei.
+   * Sent only to that wallet. Never on Base mainnet, which has no faucet.
+   */
+  | { type: 'dripped'; liquid: string; staked: string; tx: `0x${string}` }
   /** What the analyst is doing now, e.g. "Reading round 4". Progress only; `analysis.done` carries the answer. */
   | { type: 'analysis.step'; matchId: `0x${string}`; step: string }
   /** The finished analysis, its key moments already checked against the history. */

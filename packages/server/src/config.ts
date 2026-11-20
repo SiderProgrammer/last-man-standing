@@ -151,6 +151,7 @@ const ENV = z.object({
   HARVEST_MIN_WEI: bigint,
   STAKED_LMS: address,
   REWARDS_DISTRIBUTOR: address,
+  LMS_FAUCET: address,
   GOVERNOR_ADDRESS: address,
   GOVERNOR_FROM_BLOCK: bigint,
   ANALYST_ENABLED: flag(true),
@@ -359,6 +360,13 @@ export function loadConfig(
     stakedLms: e.STAKED_LMS ?? deployed('stakedLms'),
     /** `RewardsDistributor` on the hub chain. Blank hides the play-mining claim. */
     rewardsDistributor: e.REWARDS_DISTRIBUTOR ?? deployed('rewardsDistributor'),
+    /**
+     * `LmsFaucet` on the hub chain, which `Deploy.s.sol` funds off Base
+     * mainnet. With `SESSION_RELAYER_PK` set, every wallet that signs in with
+     * ETH on the hub gets its scoop of LMS once. Blank, or on Base mainnet
+     * where there is none, nothing is dripped. See `chain/faucet.ts`.
+     */
+    lmsFaucet: e.LMS_FAUCET ?? deployed('lmsFaucet'),
     /** `LmsGovernor` on the hub chain. Blank hides the governance screen. */
     governor: e.GOVERNOR_ADDRESS ?? deployed('governor'),
     /** First block to look for proposals in: the governor's deployment block. */

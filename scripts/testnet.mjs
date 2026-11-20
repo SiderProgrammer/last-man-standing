@@ -9,7 +9,8 @@
  *   fund [--hub 0.01] [--spoke 0.005] [--spoke-players 1-2 | arb:2,op:3,eth:4] [--roles 0.02] [--yes]
  *                                    tops every player up to --hub / --spoke ETH, and the
  *                                    server's keeper, matchmaker and relayer keys to --roles
- *                                    on Base Sepolia, from FUNDER_PK (default DEPLOYER_PK).
+ *                                    on Base Sepolia, from FUNDER_PK (default DEPLOYER_PK),
+ *                                    and drips each player its LMS from the deploy's faucet.
  *                                    `arb:2,op:3,eth:4` funds P2 on Arbitrum Sepolia, P3 on
  *                                    OP Sepolia and P4 on Sepolia in one run.
  *                                    Prints the plan; sends only with --yes.
@@ -31,7 +32,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, createWalletClient, formatEther, http, parseAbi, parseEther, zeroAddress } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { protocolConfigAbi } from '@lms/contracts';
+import { lmsFaucetAbi, protocolConfigAbi } from '@lms/contracts';
 
 import { TESTNET, TESTNET_ACCOUNTS, loadProfile, readDotEnv, testnetPlayers } from './lib/profile.mjs';
 
@@ -168,9 +169,12 @@ async function fund() {
     }
   }
 
-  if (plan.length === 0) return console.log('Everyone already has at least the target. Nothing to send.');
+  const drips = await faucetDrips(profile, players);
+
+  if (plan.length === 0 && drips.length === 0) return console.log('Everyone already has at least the target, and their LMS. Nothing to send.');
   console.log(`From ${funder.address}:`);
   for (const step of plan) console.log(`  ${step.name.padEnd(17)} ${step.label.padEnd(15)} ${step.address}  ${formatEther(step.balance)} → +${formatEther(step.amount)} ETH`);
+  for (const p of drips) console.log(`  ${profile.hub.name.padEnd(17)} ${`P${p.n}`.padEnd(15)} ${p.address}  its scoop of LMS from the faucet`);
   for (const { side, name, rpc } of sides) {
     const total = plan.filter((s) => s.side === side).reduce((sum, s) => sum + s.amount, 0n);
     const have = await createPublicClient({ transport: http(rpc) }).getBalance({ address: funder.address });
@@ -184,6 +188,30 @@ async function fund() {
     await createPublicClient({ transport: http(step.rpc) }).waitForTransactionReceipt({ hash });
     console.log(`  sent ${formatEther(step.amount)} ETH to ${step.label} on ${step.name}: ${hash}`);
   }
+  if (drips.length > 0) {
+    const { hub } = profile;
+    const wallet = createWalletClient({ account: funder, chain: chain(hub.chainId, hub.name, hub.rpc), transport: http(hub.rpc) });
+    const client = createPublicClient({ transport: http(hub.rpc) });
+    for (const p of drips) {
+      const hash = await wallet.writeContract({ address: profile.contracts.lmsFaucet, abi: lmsFaucetAbi, functionName: 'drip', args: [p.address] });
+      await client.waitForTransactionReceipt({ hash });
+      console.log(`  dripped LMS to P${p.n}: ${hash}`);
+    }
+  }
+}
+
+/**
+ * The players the hub's `LmsFaucet` has not paid yet. The server drips every
+ * wallet that signs in with ETH; this covers players that only ever play from
+ * `npm run play`, which never signs in. Empty when the deploy has no faucet.
+ */
+async function faucetDrips(profile, players) {
+  const faucet = profile.contracts.lmsFaucet;
+  if (!faucet) return [];
+  const client = createPublicClient({ transport: http(profile.hub.rpc) });
+  const paid = await Promise.all(players.map((p) => client.readContract({ address: faucet, abi: lmsFaucetAbi, functionName: 'dripped', args: [p.address] })));
+  const left = await client.readContract({ address: faucet, abi: lmsFaucetAbi, functionName: 'scoopsLeft' });
+  return players.filter((_, i) => !paid[i]).slice(0, Number(left));
 }
 
 // ------------------------------------------------------------------- doctor
@@ -296,6 +324,16 @@ async function doctor() {
     else warn('LMS fee discount off');
   } catch {
     // Older config.
+  }
+  if (!C.lmsFaucet) warn('no LMS faucet in this deploy: players get LMS only by play-mining (redeploy for one)');
+  else {
+    try {
+      const left = await hub.readContract({ address: C.lmsFaucet, abi: lmsFaucetAbi, functionName: 'scoopsLeft' });
+      if (left > 0n) ok(`LMS faucet: ${left} wallets left to drip`);
+      else warn('LMS faucet is empty: new wallets get no LMS');
+    } catch (error) {
+      bad(`could not read the LMS faucet: ${error.shortMessage ?? error.message}`);
+    }
   }
   warn('governance, vesting and unstaking need days of real time on testnet: test them on the fork');
 

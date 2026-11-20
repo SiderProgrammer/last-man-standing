@@ -564,6 +564,7 @@ winner is crowned after the final round.
 | `governance/FeeRouter` | The escrow's treasury: splits fees between the stakers and the timelock. |
 | `governance/RewardsDistributor`, `RewardVesting` | Play-mining: each week's LMS budget split by fees paid, vesting over six months. |
 | `governance/LiquidityReserve` | Holds the liquidity share of LMS; pays only a recipient the timelock approves. |
+| `governance/LmsFaucet` | Off Base mainnet only: testers' LMS, one scoop per wallet, part of it staked for them. Dripped by `server/src/chain/faucet.ts` on sign-in. |
 
 The token, staking and play-mining are described in [FEATURES.md](FEATURES.md#token-staking-and-play-mining).
 
@@ -850,7 +851,7 @@ One Foundry suite per feature, to read a path with full call traces
 | Chainlink VRF adapter (mock / the Base Sepolia coordinator) | `ChainlinkVrfAdapterTest` / `VrfBaseSepoliaForkTest` |
 | The L2 sequencer feed (mock / Chainlink's on Base) | `SequencerUptimeTest` / `SequencerFeedForkTest` |
 | Governance parameters, guardian | `ProtocolConfigTest` |
-| Token, staking, rewards, governor, multisig phase | `LmsGovernorTest`, `StakedLmsTest`, `RewardsDistributorTest`, `FeeRouterTest`, `LmsDiscountTest`, `MultisigPhaseTest`, `LiquidityReserveTest`, and the `StakedLms` and rewards invariants |
+| Token, staking, rewards, governor, multisig phase | `LmsGovernorTest`, `StakedLmsTest`, `RewardsDistributorTest`, `FeeRouterTest`, `LmsDiscountTest`, `MultisigPhaseTest`, `LiquidityReserveTest`, `LmsFaucetTest`, and the `StakedLms` and rewards invariants |
 | The real deploy: Safe → timelock → config, guardian; spokes | `DeployTest`, `DeploySpokeTest` |
 | EIP-7702 session keys | `SessionKeyDelegateTest` |
 | Avatars | `PlayerAvatarsTest` |

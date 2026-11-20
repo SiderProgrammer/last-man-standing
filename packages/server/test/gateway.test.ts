@@ -134,6 +134,7 @@ interface Extras {
   chainTime: () => number | null;
   opener: LobbyOpener;
   paused: () => boolean;
+  faucet: NonNullable<GatewayOptions['faucet']>;
 }
 
 function harness(extras: Partial<Extras> = {}) {
@@ -164,6 +165,7 @@ function harness(extras: Partial<Extras> = {}) {
     ...(extras.chainTime ? { chainTime: extras.chainTime } : {}),
     ...(extras.opener ? { opener: extras.opener } : {}),
     ...(extras.paused ? { paused: extras.paused } : {}),
+    ...(extras.faucet ? { faucet: extras.faucet } : {}),
   });
   const socket = new FakeSocket();
   gateway.accept(socket);
@@ -187,6 +189,16 @@ describe('gateway', () => {
     const { socket } = harness();
     await login(socket);
     expect(socket.last('authed')?.address).toBe(account.address);
+  });
+
+  it('tells the faucet of a signed-in wallet, and never of a failed login', async () => {
+    const signedIn: string[] = [];
+    const faucet = { onLogin: (address: string) => void signedIn.push(address) };
+    const { socket } = harness({ faucet });
+    await socket.deliver({ type: 'auth', address: account.address, signature: await account.signMessage({ message: 'wrong' }) });
+    expect(signedIn).toEqual([]);
+    await login(socket);
+    expect(signedIn).toEqual([account.address]);
   });
 
   it('rejects a signature over a different nonce', async () => {

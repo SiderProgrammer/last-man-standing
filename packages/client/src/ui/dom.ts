@@ -97,6 +97,8 @@ export function queryDom(doc: Document = document) {
     vestingStatus: el<HTMLSpanElement>('vesting-status'),
     releaseVested: el<HTMLButtonElement>('release-vested'),
     stakingSummary: el<HTMLSpanElement>('staking-summary'),
+    faucetRow: el<HTMLDivElement>('faucet-row'),
+    faucetStatus: el<HTMLSpanElement>('faucet-status'),
     stakingAmount: el<HTMLInputElement>('staking-amount'),
     stakingMax: el<HTMLButtonElement>('staking-max'),
     stakeLms: el<HTMLButtonElement>('stake-lms'),

@@ -34,6 +34,7 @@ const CONTRACTS = {
   StakedLms: 'stakedLmsAbi',
   LmsToken: 'lmsTokenAbi',
   LmsGovernor: 'lmsGovernorAbi',
+  LmsFaucet: 'lmsFaucetAbi',
   // OpenZeppelin's, deployed as is: generated so proposals to it decode.
   TimelockController: 'timelockControllerAbi',
 };

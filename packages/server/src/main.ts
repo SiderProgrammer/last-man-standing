@@ -35,6 +35,7 @@ import { DEFAULT_RULES } from '@lms/consensus';
 import { ChainWithdrawals, viemWithdrawalPort } from './chain/chainWithdrawals.js';
 import { LobbyOpener, viemLobbyOpenerPort } from './chain/lobbyOpener.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
+import { Faucet, viemFaucetPort } from './chain/faucet.js';
 import { SpokeFiller, spokeFillerPolicy, spokeRpcs, viemSpokeFiller } from './chain/spokeFiller.js';
 import { repeat } from './util/poll.js';
 
@@ -214,6 +215,17 @@ async function main(): Promise<void> {
         })
       : null;
 
+  // Testnet LMS for every wallet that signs in with ETH, with the session
+  // relayer's gas. Needs a key and a faucet, which Base mainnet never has.
+  const faucet =
+    relaySender && config.lmsFaucet !== ZERO_ADDRESS
+      ? new Faucet({
+          port: viemFaucetPort({ rpcUrl: config.rpcUrl, chainId: config.chainId, faucet: config.lmsFaucet, sender: relaySender }),
+          notify: (player, message) => notify(player, message),
+        })
+      : null;
+  if (faucet) console.log(`[server] dripping testnet LMS from ${config.lmsFaucet}`);
+
   // Reads finished matches from the archive and nothing else, in a worker
   // thread of its own; see `analyst/analyst.ts`.
   const analyst = config.analyst.enabled ? analystWorker(archive, styles) : undefined;
@@ -253,11 +265,12 @@ async function main(): Promise<void> {
     ...(relay ? { relay } : {}),
     ...(withdrawals ? { withdrawals } : {}),
     ...(opener ? { opener } : {}),
+    ...(faucet ? { faucet } : {}),
     ...(analyst ? { analyst } : {}),
     zap,
     spokes,
     ...(matchmaker ? { matchmaker } : {}),
-    staking: stakingInfo(proposals !== null),
+    staking: stakingInfo(proposals !== null, faucet !== null),
     limits: {
       ...config.gatewayLimits,
       maxConnections: config.maxConnections,
@@ -447,9 +460,10 @@ function analystWorker(archive: MatchArchive, styles: StyleBook): AnalystWorker 
 
 /**
  * What `hello` says about staking: null hides the panel. The governor is
- * named only when its proposals are indexed, since the client cannot list them.
+ * named only when its proposals are indexed, since the client cannot list them;
+ * the faucet only when this server drips from it.
  */
-function stakingInfo(proposalsIndexed: boolean): StakingInfo | null {
+function stakingInfo(proposalsIndexed: boolean, dripping: boolean): StakingInfo | null {
   if (config.stakedLms === ZERO_ADDRESS) return null;
   const configured = (address: `0x${string}`) => (address !== ZERO_ADDRESS ? address : null);
   return {
@@ -457,6 +471,7 @@ function stakingInfo(proposalsIndexed: boolean): StakingInfo | null {
     governor: proposalsIndexed ? config.governor : null,
     feeRouter: configured(config.feeRouter),
     rewards: configured(config.rewardsDistributor),
+    faucet: dripping ? config.lmsFaucet : null,
   };
 }
 

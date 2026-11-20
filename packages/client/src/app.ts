@@ -6,7 +6,7 @@ import { syncChainClock } from './io/chainClock.js';
 import { hideLoader, showLoadProgress } from './screens/loading.js';
 import { onCrossChain, onLobbies, onMatched, onWaiting, wireLobbyControls } from './screens/lobby.js';
 import { onDequeued, onQueued, wireQueueControls } from './screens/queue.js';
-import { refreshStaking, wireStakingPanel } from './screens/stakingPanel.js';
+import { refreshStaking, refreshStakingAfterDrip, wireStakingPanel } from './screens/stakingPanel.js';
 import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
   onAvatars,
@@ -33,7 +33,7 @@ import { wireTxTray } from './ui/txTray.js';
 import { wireStatusBar } from './screens/statusBar.js';
 import { queryDom } from './ui/dom.js';
 import { short } from './ui/format.js';
-import { httpOrigin } from './ui/staking.js';
+import { formatLms, httpOrigin } from './ui/staking.js';
 import {
   authenticate,
   onAuthed,
@@ -156,6 +156,15 @@ const HANDLERS: Handlers = {
   history: onHistory,
   review: onReview,
   crossChain: (message) => onCrossChain(message.event),
+  // The testnet faucet paid this wallet on sign-in: show it in the staking panel.
+  dripped: (message) => {
+    toast(
+      `Testnet LMS for you: ${formatLms(BigInt(message.liquid), 0)} LMS in your wallet, ` +
+        `${formatLms(BigInt(message.staked), 0)} staked so you can vote and earn fees.`,
+      'success',
+    );
+    refreshStakingAfterDrip();
+  },
   matched: (message) => {
     onDequeued();
     onMatched(message);

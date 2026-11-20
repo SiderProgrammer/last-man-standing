@@ -26,3 +26,8 @@ export function wireStakingPanel(): void {
 export function refreshStaking(): void {
   if (app.wallet) void panel?.then((module) => module.renderStakingPanel());
 }
+
+/** After the faucet paid this wallet: reads again until the panel shows the new LMS. */
+export function refreshStakingAfterDrip(): void {
+  if (app.wallet) void panel?.then((module) => module.refreshAfterDrip());
+}

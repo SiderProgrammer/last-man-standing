@@ -5,10 +5,12 @@ import { app, dom, store } from '../context.js';
 import { toast } from '../ui/chrome.js';
 import {
   cooldownRestartWarning,
+  faucetLine,
   formatLms,
   parseDelegatee,
   parseLms,
   stakingPanel,
+  type FaucetState,
   type PlayRewards,
   type StakingPosition,
   type Vesting,
@@ -31,7 +33,14 @@ import { explainError } from '../ui/errors.js';
 let position: StakingPosition | null = null;
 let playRewards: PlayRewards | null = null;
 let vesting: Vesting | null = null;
+let faucet: FaucetState | null = null;
 let busy = false;
+/**
+ * Renders overlap (a login, a store change, a drip and the timer can each
+ * start one), and each paints after its reads come back: only the latest
+ * started may paint, so a slow, older read never paints over a newer one.
+ */
+let renders = 0;
 
 export function wireStakingControls(): void {
   dom.stakingMax.onclick = () => {
@@ -49,7 +58,22 @@ export function wireStakingControls(): void {
   store.subscribe(['wallet', 'walletChainId', 'chainId', 'staking'], () => void renderStakingPanel());
 }
 
+/**
+ * After the faucet paid this wallet: reads again until the panel shows it.
+ * The wallet's node can trail the server's by a block or two, so the first
+ * read may still see the wallet unpaid; it gives up after about ten seconds,
+ * and the panel's own timer catches up from there.
+ */
+export async function refreshAfterDrip(): Promise<void> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await renderStakingPanel();
+    if (faucet?.dripped) return;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+}
+
 export async function renderStakingPanel(): Promise<void> {
+  const render = ++renders;
   const wallet = app.wallet;
   const info = app.staking;
   let error: string | null = null;
@@ -63,7 +87,6 @@ export async function renderStakingPanel(): Promise<void> {
     // The vault lives on the hub. A wallet on a spoke plays from there
     // perfectly well, but stakes LMS on the hub: say so up front, with the
     // one button that fixes it, rather than leave every control greyed out.
-    position = null;
     error = `Switch to ${hub} to stake.`;
     dom.stakingWrongChainText.textContent = wallet.canSwitchChain
       ? `Your wallet is on ${chainInfo(wallet.chainId).name}. LMS is staked, claimed and voted with on ${hub}.`
@@ -71,37 +94,53 @@ export async function renderStakingPanel(): Promise<void> {
     dom.stakingSwitch.textContent = `Switch to ${hub}`;
     dom.stakingSwitch.classList.toggle('hidden', !wallet.canSwitchChain);
   } else if (guest) {
-    position = null;
-    error = 'Connect a wallet to stake LMS.';
-  } else if (wallet && info) {
+    error = info?.faucet
+      ? `Connect a wallet to stake LMS. On testnet, a wallet with ${hub} ETH gets free LMS the first time it signs in.`
+      : 'Connect a wallet to stake LMS.';
+  }
+
+  // Read into locals, and kept only if no newer render started meanwhile.
+  let read: StakingPosition | null = null;
+  if (!error && wallet && info) {
     try {
-      position = await stakingCalls.stakingPosition(wallet, info.vault);
+      read = await stakingCalls.stakingPosition(wallet, info.vault);
     } catch (err) {
-      position = null;
       // Almost always a wallet pointed at a chain the vault is not on.
       error = `Could not read your stake: ${explainError(err)}`;
     }
-  } else {
-    position = null;
   }
 
-  playRewards = null;
-  vesting = null;
-  if (wallet && !guest && info?.rewards && !error) {
-    const distributor = info.rewards;
-    // The stake read fine, so a failure here is the distributor's or the
-    // vesting contract's alone: show the rest.
-    [playRewards, vesting] = await Promise.all([
-      stakingCalls.playRewards(wallet, distributor).catch((err: unknown) => {
-        console.warn('[staking] could not read play rewards', err);
-        return null;
-      }),
-      stakingCalls.vesting(wallet, distributor).catch((err: unknown) => {
-        console.warn('[staking] could not read vesting', err);
-        return null;
-      }),
-    ]);
-  }
+  // The stake read fine, so a failure here is the distributor's, the vesting
+  // contract's or the faucet's alone: show the rest.
+  const extras = wallet && !guest && info && !error;
+  const [readRewards, readVesting, readFaucet] = await Promise.all([
+    extras && info.rewards
+      ? stakingCalls.playRewards(wallet, info.rewards).catch((err: unknown) => {
+          console.warn('[staking] could not read play rewards', err);
+          return null;
+        })
+      : null,
+    extras && info.rewards
+      ? stakingCalls.vesting(wallet, info.rewards).catch((err: unknown) => {
+          console.warn('[staking] could not read vesting', err);
+          return null;
+        })
+      : null,
+    extras && info.faucet
+      ? stakingCalls.faucetState(wallet, info.faucet).catch((err: unknown) => {
+          console.warn('[staking] could not read the faucet', err);
+          return null;
+        })
+      : null,
+  ]);
+  if (render !== renders) return;
+  position = read;
+  playRewards = readRewards;
+  vesting = readVesting;
+  faucet = readFaucet;
+
+  dom.faucetStatus.textContent = faucetLine(faucet, hub);
+  dom.faucetRow.classList.toggle('hidden', !dom.faucetStatus.textContent);
 
   const view = stakingPanel({
     info,

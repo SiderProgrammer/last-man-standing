@@ -10,7 +10,7 @@ Two environments, the same tools:
 | Across | the real SpokePools on every fork; the script plays the relayer (fills after 5 s, no fee) | Across's real testnet pools; the server fills every wallet's joins from `FILLER_PK` (`up --relay` lends it `DEPLOYER_PK`), since Across's testnet relayers skip them |
 | Tokens | every token with a live Uniswap v4 route at the fork block (USDC, USDT, DAI, cbBTC) | USDC, if a v4 route prices (`doctor` says) |
 | Time | `npm run play -- warp 1h` moves every chain | real time only |
-| Players | 8 anvil test accounts, 10,000 ETH on every chain, tokens, 50k LMS, 300k sLMS | 8 generated keys, funded from your deployer |
+| Players | 8 anvil test accounts, 10,000 ETH on every chain, tokens, 50k LMS, 300k sLMS | 8 generated keys, funded from your deployer; every wallet with hub ETH gets 10k LMS and 40k sLMS from the faucet once |
 | Start | `npm run fork:base` | `npm run testnet -- up` |
 
 Every seat can be a browser tab (`/?player=N` signs with player N's key, no
@@ -253,7 +253,7 @@ The rest are UI paths to click through.
 - [ ] All bots: `queue --seats 8 --players 1-8`. The lobby is `matchmade`, and only its roster can join.
 - [ ] A short table: queue 4 players with 4–6 seats; it opens with 4 seats after 15 s (`MATCHMAKING_FILL_AFTER_MS`). Players who asked for exactly 6 never get a short one.
 - [ ] Play-mining counts only matchmade, settled matches, from the first full week after the deploy. Fork: `warp epoch` first, play a queue match, `warp 61m`, `finalize last`, `warp epoch`, then `rewards --claim` (0.5 LMS per seat at 0.001 ETH). After `warp 60d`, `rewards --release`. In the UI, the staking panel shows the same, with **Claim LMS** / **Release LMS**.
-- [ ] Testnet: play-mining pays from Thursday 12 Nov 2026 00:00 UTC (week 2967). A week can be claimed the moment it ends.
+- [ ] Testnet: play-mining pays from Thursday 26 Nov 2026 00:00 UTC (week 2969, the deploy of 20 Nov). A week can be claimed the moment it ends, so the first claim is on 3 Dec.
 
 ### 9. Staking and governance
 - [ ] Staking panel: stake, unstake (10-day cooldown; fork: `warp 10d`), delegate. **Claim ETH**: the keeper harvests fees every 10 s on the fork, and they stream to stakers.
@@ -267,7 +267,8 @@ The rest are UI paths to click through.
   npm run play -- warp 3d
   npm run play -- gov execute --bps 6000              # stakers' share is now 60%
   ```
-- [ ] Testnet: players hold no sLMS and voting takes 1 + 5 + 3 days. Test the Safe's route through `MultisigPhase` from the Safe app instead.
+- [ ] Testnet faucet: sign in with a new wallet that holds some Base Sepolia ETH. A toast says 10,000 LMS and 40,000 staked arrived, and the staking panel shows them. A reload does not drip again; a guest, or a wallet with no ETH, gets nothing.
+- [ ] Testnet: each wallet's 40k sLMS is under the 100k proposal threshold, 25 of them reach the 1M quorum floor, and voting takes 1 + 5 + 3 days. Test the Safe's route through `MultisigPhase` from the Safe app instead.
 
 ### 10. One-click play (EIP-7702) and avatars
 - [ ] Burner tab → **Turn on** one-click play (one transaction). Then joins and **Collect** go through without a prompt, and the server pays the gas, up to `RELAY_QUOTA_PER_DAY`: the player's ETH drops by exactly the stake.

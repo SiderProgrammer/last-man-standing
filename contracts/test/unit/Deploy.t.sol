@@ -36,6 +36,10 @@ contract DeployHarness is Deploy {
     function attestors(address deployer) external view returns (address[] memory) {
         return _attestors(deployer);
     }
+
+    function faucetBps() external view returns (uint256) {
+        return _faucetBps();
+    }
 }
 
 /// @dev Runs the real deploy script and checks where authority ends up. The
@@ -121,15 +125,41 @@ contract DeployTest is Test {
         assertEq(address(d.feeRouter.vault()), address(d.stakedLms));
     }
 
-    function test_supplyIsSplitAcrossTheFiveBuckets() public view {
+    /// @dev Off Base mainnet, as here, the faucet takes 10% of the timelock's 30%.
+    function test_supplyIsSplitAcrossTheFiveBuckets_andTheFaucet() public view {
         assertEq(d.lms.totalSupply(), 100_000_000e18);
         assertEq(d.lms.balanceOf(address(d.rewards)), 50_000_000e18, "play-mining");
-        assertEq(d.lms.balanceOf(address(d.timelock)), 30_000_000e18, "treasury and reserve");
+        assertEq(d.lms.balanceOf(address(d.timelock)), 20_000_000e18, "treasury and reserve, less the faucet");
         assertEq(d.lms.balanceOf(address(d.teamVesting)), 15_000_000e18, "team");
         assertEq(d.lms.balanceOf(address(d.liquidityReserve)), 5_000_000e18, "liquidity");
+        assertEq(d.lms.balanceOf(address(d.faucet)), 10_000_000e18, "faucet");
         assertEq(d.lms.balanceOf(safe), 0, "the Safe holds none of it itself");
         assertEq(d.lms.balanceOf(deployer), 0);
-        assertEq(d.stakedLms.totalSupply(), 0, "nobody votes until play-mining pays: no seed either");
+        assertEq(d.stakedLms.totalSupply(), 0, "nobody votes until someone is paid: no seed either");
+    }
+
+    function test_faucetScoopIsTenThousandLiquidAndFortyThousandStaked_forTwoHundredWallets() public {
+        assertEq(address(d.faucet.lms()), address(d.lms));
+        assertEq(address(d.faucet.vault()), address(d.stakedLms));
+        assertEq(d.faucet.liquidAmount(), 10_000e18);
+        assertEq(d.faucet.stakedAmount(), 40_000e18);
+        assertEq(d.faucet.scoopsLeft(), 200);
+
+        address tester = makeAddr("tester");
+        d.faucet.drip(tester);
+        assertEq(d.lms.balanceOf(tester), 10_000e18);
+        assertEq(d.stakedLms.getVotes(tester), 40_000e18);
+    }
+
+    /// @dev On Base mainnet LMS reaches players only by play-mining: the
+    ///      timelock keeps its whole 30%, and there is no faucet.
+    function test_noFaucetOnBaseMainnet() public {
+        DeployHarness harness = new DeployHarness();
+        assertEq(harness.faucetBps(), 1_000);
+        vm.chainId(8453);
+        assertEq(harness.faucetBps(), 0);
+        vm.chainId(84_532);
+        assertEq(harness.faucetBps(), 1_000, "Base Sepolia has one");
     }
 
     function test_liquidityReserveIsTheSafes_toReleaseWhereTheTimelockApproves() public view {
@@ -419,6 +449,7 @@ contract DeployTest is Test {
         assertEq(deployment.acrossSpokePool, baseSepoliaPool);
         assertEq(deployment.bridgeReceiver.spokePool(), baseSepoliaPool);
         assertEq(deployment.config.bridgeReceiver(), address(deployment.bridgeReceiver));
+        assertEq(deployment.lms.balanceOf(address(deployment.faucet)), 10_000_000e18, "testers get LMS");
     }
 
     /// @dev `MOCKS=true` off a local node must be refused.
@@ -459,7 +490,8 @@ contract DeployTest is Test {
         );
         assertEq(vm.parseJsonAddress(json, ".contracts.rewardVesting"), address(deployment.rewards.vesting()));
         assertEq(vm.parseJsonAddress(json, ".contracts.matchmaker"), deployment.matchmaker);
-        assertEq(vm.parseJsonKeys(json, ".contracts").length, 22);
+        assertEq(vm.parseJsonAddress(json, ".contracts.lmsFaucet"), address(deployment.faucet));
+        assertEq(vm.parseJsonKeys(json, ".contracts").length, 23);
         assertFalse(vm.exists("deployments/31337.json"));
     }
 

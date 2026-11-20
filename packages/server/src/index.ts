@@ -55,6 +55,7 @@ export {
   type RelayPort,
   type SessionRelayOptions,
 } from './chain/sessionRelay.js';
+export { Faucet, viemFaucetPort, type DripOutcome, type FaucetOptions, type FaucetPort } from './chain/faucet.js';
 export {
   ChainWithdrawals,
   viemWithdrawalPort,
