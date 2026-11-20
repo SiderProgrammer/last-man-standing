@@ -2,10 +2,10 @@
   "chainId": 421614,
   "contracts": {
     "acrossSpokePool": "0x7E63A5f1a8F0B4d0934B2f2327DAED3F6bb2ee75",
-    "avatars": "0xba03F8EfB0Ed787d8DCd664cD9E4d4479ed05E33",
+    "avatars": "0xAeBC6399e9d51680Fb99D136ceED3AFb09dBfB51",
     "owner": "0xbf8Bc2B42Bd9465f3465692eA36B53a08959A75b",
-    "spokeRouter": "0x96b49DF496db35b9d78B817c4E76d0BE46A4Ff6C",
+    "spokeRouter": "0xb6937a4EbFd1057F406e33F0E14fecd4f1972b4b",
     "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73"
   },
-  "deployBlock": 12100296
+  "deployBlock": 12175338
 }
