@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, getAddress, type Address, type Hex } from 'viem';
 import {
+  AdaptiveLogRange,
   DEFAULT_SPOKE_FILLER_POLICY,
   RevertedError,
+  narrowerRange,
   SpokeFiller,
   decodeJoin,
   spokeRpcs,
@@ -140,6 +142,52 @@ describe('SpokeFiller', () => {
     expect(source.reads.at(-1)).toEqual([10_001n, 10_500n]);
   });
 
+  it("narrows to the range a stingy RPC suggests, keeps it, and still finds every deposit", async () => {
+    const { source, hub, filler } = setup();
+    const d = deposit();
+    source.at(8_005n, d);
+    let refusals = 0;
+    const read = source.deposits.bind(source);
+    source.deposits = async (from, to) => {
+      if (to - from + 1n > 10n) {
+        refusals += 1;
+        source.reads.push([from, to]);
+        throw new Error(
+          `HTTP request failed.\nDetails: Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. ` +
+            `Based on your parameters, this block range should work: [0x${from.toString(16)}, 0x${(from + 9n).toString(16)}].`,
+        );
+      }
+      return read(from, to);
+    };
+
+    await filler.tick();
+    source.headBlock = 10_015n;
+    await filler.tick();
+
+    expect(refusals).toBe(1);
+    expect(hub.filled).toEqual([d]);
+    expect(source.reads.at(-1)).toEqual([10_011n, 10_015n]);
+  });
+
+  it('leaves a scan that fails for another reason to retry next tick', async () => {
+    const { source, filler } = setup();
+    const read = source.deposits.bind(source);
+    let down = true;
+    source.deposits = async (from, to) => {
+      if (down) throw new Error('fetch failed');
+      return read(from, to);
+    };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await filler.tick();
+    down = false;
+    await filler.tick();
+
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(source.reads[0]).toEqual([8_000n, 8_999n]);
+    error.mockRestore();
+  });
+
   it('skips a stake over the cap, and a message that is not a join', async () => {
     const { source, hub, filler } = setup({ maxStake: STAKE });
     source.at(9_990n, deposit({ outputAmount: STAKE + 1n }), deposit({ message: '0x1234' }));
@@ -250,6 +298,42 @@ describe('SpokeFiller', () => {
     await filler.tick();
     expect(filler.waiting).toBe(0);
     error.mockRestore();
+  });
+});
+
+describe('narrowerRange', () => {
+  it("takes the width an Alchemy refusal suggests, even nested in viem's cause", () => {
+    const refusal = Object.assign(new Error('JSON is not a valid request object.'), {
+      cause: { details: 'Under the Free tier plan ... this block range should work: [0x13b8a387, 0x13b8a390].' },
+    });
+    expect(narrowerRange(refusal, 1_000n)).toBe(10n);
+  });
+
+  it('halves on a range refusal without a hint, down to one block', () => {
+    expect(narrowerRange(new Error('query returned more than 10000 results'), 1_000n)).toBe(500n);
+    expect(narrowerRange(new Error('block range is too wide'), 1n)).toBeNull();
+  });
+
+  it('is null for errors that are not about the range', () => {
+    expect(narrowerRange(new Error('fetch failed'), 1_000n)).toBeNull();
+    expect(narrowerRange(new Error('rate limit: 429 Too Many Requests'), 1_000n)).toBeNull();
+  });
+});
+
+describe('AdaptiveLogRange', () => {
+  it('reads every block once, in order, after narrowing', async () => {
+    const reads: Array<[bigint, bigint]> = [];
+    const narrowed: bigint[] = [];
+    const range = new AdaptiveLogRange(100n, (size) => narrowed.push(size));
+    const blocks = await range.read(1n, 120n, async (from, to) => {
+      if (to - from + 1n > 30n) throw new Error('exceed maximum block range: 30');
+      reads.push([from, to]);
+      return [from];
+    });
+    expect(narrowed).toEqual([50n, 25n]);
+    expect(range.chunk).toBe(25n);
+    expect(blocks).toEqual([1n, 26n, 51n, 76n, 101n]);
+    expect(reads.at(-1)).toEqual([101n, 120n]);
   });
 });
 

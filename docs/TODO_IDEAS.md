@@ -1,4 +1,5 @@
-test Match creation and Collect balance button
+test Match creation from 4 chains (test server filler)
+drip 2 more wallets and delegate voting power to make proposal to lower governance proposal cost to 30.000
 test all features
 record video
 host the game

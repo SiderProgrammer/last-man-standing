@@ -4,7 +4,7 @@ import { bridgeJoinReceiverAbi, gameEscrowAbi, spokeRouterAbi } from '@lms/contr
 import { errorMessage, type SpokeInfo } from '@lms/api';
 import { DailyQuota } from './sessionRelay.js';
 import { RevertedError, type TxSender } from './txSender.js';
-import { chunkedLogs, confirmedHead } from './logs.js';
+import { AdaptiveLogRange, confirmedHead } from './logs.js';
 import { readClient } from './viem.js';
 import { fieldsOf } from '../util/envList.js';
 import { exclusive, repeat } from '../util/poll.js';
@@ -109,7 +109,7 @@ export function spokeFillerPolicy(overrides: {
 const OPEN = 1;
 /** Spoke blocks read back at start, so a deposit made while the server was down is still filled. */
 export const FILLER_LOOKBACK_BLOCKS = 2_000n;
-/** Spoke RPCs on free tiers serve narrow log ranges. */
+/** The log range first asked of each spoke; `AdaptiveLogRange` narrows it for an RPC that refuses. */
 const SPOKE_LOG_CHUNK = 1_000n;
 /** A fill that fails without a revert (an RPC error) is tried this many times in all. */
 const MAX_TRIES = 3;
@@ -138,6 +138,7 @@ type Outcome = 'done' | 'wait';
 
 export class SpokeFiller {
   private readonly cursors = new Map<number, bigint>();
+  private readonly ranges = new Map<number, AdaptiveLogRange>();
   private readonly queue: Pending[] = [];
   private readonly seen = new Set<string>();
   private readonly quota: DailyQuota;
@@ -188,16 +189,23 @@ export class SpokeFiller {
     if (latest === null) return;
     const from = this.cursors.get(source.chainId) ?? (latest > FILLER_LOOKBACK_BLOCKS ? latest - FILLER_LOOKBACK_BLOCKS : 0n);
     if (from > latest) return;
-    await chunkedLogs(
-      from,
-      latest,
-      async (start, end) => {
-        for (const deposit of await source.deposits(start, end)) this.found(deposit);
-        this.cursors.set(source.chainId, end + 1n);
-        return [];
-      },
-      SPOKE_LOG_CHUNK,
-    );
+    await this.rangeFor(source.chainId).read(from, latest, async (start, end) => {
+      for (const deposit of await source.deposits(start, end)) this.found(deposit);
+      this.cursors.set(source.chainId, end + 1n);
+      return [];
+    });
+  }
+
+  /** Each spoke's own range: one stingy RPC must not slow the others. */
+  private rangeFor(chainId: number): AdaptiveLogRange {
+    let range = this.ranges.get(chainId);
+    if (!range) {
+      range = new AdaptiveLogRange(SPOKE_LOG_CHUNK, (size) =>
+        console.log(`[filler] chain ${chainId}: its RPC refuses wide log ranges, reading ${size} blocks at a time`),
+      );
+      this.ranges.set(chainId, range);
+    }
+    return range;
   }
 
   private found(deposit: SpokeDeposit): void {
