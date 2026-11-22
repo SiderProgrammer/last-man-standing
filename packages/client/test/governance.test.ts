@@ -164,6 +164,13 @@ describe('proposal lifecycle and plain words', () => {
     );
     expect(zeroGuardian.text).toBe('Remove the emergency guardian');
     expect(zeroGuardian.warnings[0]).toMatch(/nobody can pause/);
+    const threshold = (amount: bigint) =>
+      plainCall(encodeFunctionData({ abi: governableAbi, functionName: 'setProposalThreshold', args: [amount] }), null);
+    expect(threshold(20_000n * E18)).toEqual({
+      text: 'Let any wallet with 20,000 sLMS of voting power make proposals',
+      warnings: [],
+    });
+    expect(threshold(0n).warnings[0]).toMatch(/no stake at all/);
   });
 
   it('says only what a setParams changes, against the parameters now', () => {

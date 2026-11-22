@@ -4,3 +4,4 @@
 - history/reads tab
 - disable match joining/creation until current match finished
 - shorter commit time
+- set voting period 1 day and proposal threshold to 30k

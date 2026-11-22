@@ -1,5 +1,3 @@
-drip 2 more wallets and delegate voting power to make proposal to lower governance proposal cost to 30.000
-test all features
 record video
 host the game
 update README, docs

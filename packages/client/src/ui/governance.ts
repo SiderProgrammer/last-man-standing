@@ -338,6 +338,11 @@ export function plainCall(calldata: string, current: ProtocolParams | null): { t
       return { text: `Make unstaking take ${days(args[0])}`, warnings: [] };
     case 'setVotingPeriod':
       return { text: `Make votes last ${days(args[0])}`, warnings: [] };
+    case 'setProposalThreshold':
+      return {
+        text: `Let any wallet with ${formatLms(args[0] as bigint)} sLMS of voting power make proposals`,
+        warnings: args[0] === 0n ? ['Anyone could make proposals, with no stake at all.'] : [],
+      };
     case 'unpause':
       return { text: 'Resume play after a pause', warnings: [] };
     case 'setBridgeReceiver':

@@ -138,6 +138,31 @@ describe('proposal text', () => {
   });
 });
 
+describe('proposalThreshold', () => {
+  const supply = { ...CONTEXT, lmsSupply: 100_000_000n * 10n ** 18n };
+
+  it('sets the governor threshold in whole sLMS, commas allowed', () => {
+    expect(described('proposalThreshold', { amount: '20000' })).toBe(
+      'LmsGovernor.setProposalThreshold(20000000000000000000000)',
+    );
+    expect(described('proposalThreshold', { amount: '20,000' })).toBe(
+      'LmsGovernor.setProposalThreshold(20000000000000000000000)',
+    );
+  });
+
+  it('refuses zero, fractions and malformed numbers', () => {
+    expect(error('proposalThreshold', { amount: '0' })).toMatch(/At least 1 sLMS/);
+    expect(error('proposalThreshold', { amount: '20000.5' })).toBe('Enter a whole number of sLMS.');
+    expect(error('proposalThreshold', { amount: '20,00' })).toBe('Enter a whole number of sLMS.');
+    expect(error('proposalThreshold', { amount: '' })).toBe('Enter a whole number of sLMS.');
+  });
+
+  it('refuses a threshold above the supply, which nobody could ever reach again', () => {
+    expect(buildAction('proposalThreshold', { amount: '100000000' }, supply)).toMatchObject({ ok: true });
+    expect(error('proposalThreshold', { amount: '100000001' }, supply)).toMatch(/nobody could ever propose again/);
+  });
+});
+
 describe('resume play', () => {
   it('is refused while play is not paused, since it would revert when executed', () => {
     expect(buildAction('unpause', {}, { ...CONTEXT, paused: false })).toMatchObject({ ok: false });

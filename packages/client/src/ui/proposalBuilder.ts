@@ -24,6 +24,8 @@ export interface ProposalContext {
   params: ProtocolParams | null;
   /** Whether the escrow is paused now; unknown when omitted. */
   paused?: boolean;
+  /** The LMS supply, in wei: the most sLMS that could ever exist. Unknown when omitted. */
+  lmsSupply?: bigint;
 }
 
 export interface TemplateField {
@@ -108,6 +110,15 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     fields: [{ name: 'days', label: 'Voting period (days)', placeholder: '5' }],
   },
   {
+    id: 'proposalThreshold',
+    label: 'Proposal threshold',
+    help:
+      'The sLMS voting power a wallet must hold to make a proposal. Nothing is spent: it is only checked ' +
+      'when proposing, and proposals already made are unaffected. Set it out of reach and nobody can ' +
+      'propose again, not even to lower it.',
+    fields: [{ name: 'amount', label: 'Threshold (sLMS)', placeholder: '20000' }],
+  },
+  {
     id: 'unpause',
     label: 'Resume play',
     help: 'Ends a pause now. A guardian pause also ends by itself after a week.',
@@ -190,6 +201,18 @@ export function buildAction(templateId: string, values: Record<string, string>, 
       const days = wholeDays(field('days'), 1, 30);
       if (typeof days === 'string') return { ok: false, error: days };
       return call(context.governor, 'No governor.', encode('setVotingPeriod', [days * DAY]));
+    }
+    case 'proposalThreshold': {
+      const text = field('amount');
+      if (!/^\d+$|^\d{1,3}(,\d{3})+$/.test(text)) return { ok: false, error: 'Enter a whole number of sLMS.' };
+      const threshold = parseEther(text.replaceAll(',', ''));
+      // The governor takes any value; zero lets anyone propose, with no stake at all.
+      if (threshold === 0n) return { ok: false, error: 'At least 1 sLMS, or anyone could propose with no stake at all.' };
+      // Above the supply nobody could ever propose again, so no proposal could lower it back.
+      if (context.lmsSupply !== undefined && threshold > context.lmsSupply) {
+        return { ok: false, error: 'More than all the LMS there is: nobody could ever propose again.' };
+      }
+      return call(context.governor, 'No governor.', encode('setProposalThreshold', [threshold]));
     }
     case 'unpause':
       // Executed against an escrow that is not paused, the whole proposal reverts.

@@ -4,6 +4,7 @@ import {
   descriptionHash,
   gameEscrowAbi,
   lmsGovernorAbi,
+  lmsTokenAbi,
   protocolConfigAbi,
   stakedLmsAbi,
   type ProposalStateValue,
@@ -119,15 +120,16 @@ export async function proposalContext(
   known: Pick<ProposalContext, 'vault' | 'feeRouter' | 'escrow'>,
 ): Promise<{ context: ProposalContext; power: bigint; threshold: bigint }> {
   const at = { address: governor, abi: lmsGovernorAbi } as const;
-  const [timelock, threshold, clock, config] = await Promise.all([
+  const [timelock, threshold, clock, config, lms] = await Promise.all([
     wallet.rpc.readContract({ ...at, functionName: 'timelock' }),
     wallet.rpc.readContract({ ...at, functionName: 'proposalThreshold' }),
     wallet.rpc.readContract({ ...at, functionName: 'clock' }),
     known.escrow
       ? wallet.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'config' })
       : Promise.resolve(null),
+    wallet.rpc.readContract({ address: known.vault, abi: stakedLmsAbi, functionName: 'underlying' }),
   ]);
-  const [power, params, paused] = await Promise.all([
+  const [power, params, paused, lmsSupply] = await Promise.all([
     clock > 0
       ? wallet.rpc.readContract({ ...at, functionName: 'getVotes', args: [wallet.address, BigInt(clock - 1)] })
       : Promise.resolve(0n),
@@ -137,9 +139,18 @@ export async function proposalContext(
     known.escrow
       ? wallet.rpc.readContract({ address: known.escrow, abi: gameEscrowAbi, functionName: 'paused' })
       : Promise.resolve(undefined),
+    wallet.rpc.readContract({ address: lms, abi: lmsTokenAbi, functionName: 'totalSupply' }),
   ]);
   return {
-    context: { governor, timelock, config, params: params as ProtocolParams | null, ...known, ...(paused !== undefined ? { paused } : {}) },
+    context: {
+      governor,
+      timelock,
+      config,
+      params: params as ProtocolParams | null,
+      ...known,
+      ...(paused !== undefined ? { paused } : {}),
+      lmsSupply,
+    },
     power,
     threshold,
   };
