@@ -1023,7 +1023,7 @@ async function paySpokeJoin(
         'relayer fills it, usually within a minute; you will be told when it is seated.',
     );
   } catch (error) {
-    toast(spokeQuoteError(explainError(error), spoke.chainId), 'error');
+    toast(spokeQuoteError(explainError(error), spoke.chainId, 'send'), 'error');
     idleSpokeButton(button, lobby, spoke);
   }
 }

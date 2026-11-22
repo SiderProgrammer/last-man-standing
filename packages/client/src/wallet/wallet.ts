@@ -353,8 +353,24 @@ export class Wallet {
       // that is the same on the hub: an EOA, delegated or not.
       args: [matchId, ZERO_ADDRESS, quote],
       value,
+      ...(await this.feesWithHeadroom()),
     });
     return this.client.writeContract({ ...request, chain });
+  }
+
+  /**
+   * A fee cap of twice the current base fee, read from the chain the wallet is
+   * on. Left to itself, a wallet may cap fees at exactly the base fee
+   * Arbitrum's `eth_gasPrice` reports, and a node refuses the transaction if
+   * the base fee rises at all before it lands. The cap costs nothing: only
+   * the base fee and the tip are charged. A chain without EIP-1559 is left to
+   * the wallet.
+   */
+  private async feesWithHeadroom(): Promise<{ maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint }> {
+    const { baseFeePerGas } = await this.rpc.getBlock();
+    if (baseFeePerGas == null) return {};
+    const maxPriorityFeePerGas = await this.rpc.estimateMaxPriorityFeePerGas();
+    return { maxFeePerGas: baseFeePerGas * 2n + maxPriorityFeePerGas, maxPriorityFeePerGas };
   }
 
   async withdraw(escrow: Address): Promise<Hex> {

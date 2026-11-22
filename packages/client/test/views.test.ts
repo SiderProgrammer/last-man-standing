@@ -155,6 +155,7 @@ describe('spoke joins', () => {
       'This stake is below what Across will bridge from Base Sepolia.',
     );
     expect(spokeQuoteError('boom\nmore detail', BASE_SEPOLIA)).toBe('Could not price the join from Base Sepolia: boom');
+    expect(spokeQuoteError('boom\nmore detail', BASE_SEPOLIA, 'send')).toBe('Could not send the join from Base Sepolia: boom');
   });
 
   it('tells the player how their join landed', () => {
