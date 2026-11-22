@@ -6,7 +6,6 @@ import { showScreen, toast } from '../ui/chrome.js';
 import { formatDuration } from '../ui/staking.js';
 import {
   collectHomePlan,
-  formatEth,
   pendingPrizesText,
   prizeFor,
   spokeFor,
@@ -44,23 +43,14 @@ export async function renderWinnings(): Promise<void> {
   const draw = ++winningsDraw;
   const wallet = app.wallet;
   const escrow = app.escrow;
-  const buttons = [dom.collect, dom.resultCollect];
-
-  /** The balance pill, the status line, what the buttons say, and whether there is anything to collect. */
+  /** The balance pill, the status line, what the button says, and whether there is anything to collect. */
   const show = (pill: string, status: string, open: boolean, label = 'Collect', owed: bigint | null = null) => {
     if (draw !== winningsDraw) return;
     dom.winnings.textContent = pill;
     dom.collect.disabled = !open;
-    // A spectator's result panel is not about their money.
-    dom.resultCollect.classList.toggle('hidden', !open || app.you === null);
     dom.collectStatus.textContent = status;
-    for (const button of buttons) {
-      button.textContent = label;
-      button.onclick = () => void collectWinnings();
-    }
-    // On the result panel the balance sits under one match's prize, and is
-    // not that prize: an older balance would read as this match's winnings.
-    if (open && owed !== null) dom.resultCollect.textContent = `Collect your balance (${formatEth(owed)} ETH)`;
+    dom.collect.textContent = label;
+    dom.collect.onclick = () => void collectWinnings();
     if (app.owed !== owed) store.set({ owed });
   };
   const disable = (status: string, pill = '–', owed: bigint | null = null) => show(pill, status, false, 'Collect', owed);
@@ -169,7 +159,6 @@ export async function collectWinnings(): Promise<void> {
   }
 
   dom.collect.disabled = true;
-  dom.resultCollect.disabled = true;
   try {
     if (!(canRelay() && (await collectByRelay()))) {
       dom.collectStatus.textContent = 'Confirm in your wallet…';
@@ -181,8 +170,6 @@ export async function collectWinnings(): Promise<void> {
   } catch (error) {
     toast(explainError(error), 'error');
     await renderWinnings();
-  } finally {
-    dom.resultCollect.disabled = false;
   }
 }
 

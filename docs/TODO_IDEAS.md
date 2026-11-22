@@ -1,5 +1,5 @@
-record video
 host the game
+record video
 update README, docs
 test freshly cloned repo
 

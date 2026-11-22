@@ -17,7 +17,8 @@ import { explainError } from '../ui/errors.js';
 
 /**
  * The result panel: the final ranking, whether this browser could reproduce
- * it, how it settled on-chain, and the button that collects the payout.
+ * it, how it settled on-chain, and what this seat won. Collecting is the
+ * lobby's: the balance there is not this match's alone.
  */
 
 let verification: Verification | null = null;

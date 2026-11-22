@@ -35,14 +35,12 @@ const QUOTE_TTL_MS = 30_000;
 /** How long the signed withdrawal stays valid on the hub, in seconds. */
 const WITHDRAWAL_SECONDS = 10 * 60;
 
-const buttons = () => [dom.collect, dom.resultCollect];
-
 export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
   const wallet = app.wallet;
   if (!wallet) return;
   const name = chainInfo(spoke.chainId).name;
 
-  for (const button of buttons()) button.disabled = true;
+  dom.collect.disabled = true;
   dom.collectStatus.textContent = 'Reading your balance…';
   try {
     const balance = await requestBalance();
@@ -92,14 +90,12 @@ export async function quoteCollectHome(spoke: SpokeInfo): Promise<void> {
     };
     dom.collectStatus.textContent = plan.detail;
     const expiry = setTimeout(() => void renderWinnings(), QUOTE_TTL_MS);
-    for (const button of buttons()) {
-      button.textContent = plan.label;
-      button.disabled = false;
-      button.onclick = () => {
-        clearTimeout(expiry);
-        void collectHome(name, balance.receiver, withdrawal, priced.quote);
-      };
-    }
+    dom.collect.textContent = plan.label;
+    dom.collect.disabled = false;
+    dom.collect.onclick = () => {
+      clearTimeout(expiry);
+      void collectHome(name, balance.receiver, withdrawal, priced.quote);
+    };
   } catch (error) {
     toast(`Could not price bringing your winnings to ${name}: ${explainError(error)}`, 'error');
     await renderWinnings();
@@ -114,7 +110,7 @@ async function collectHome(
 ): Promise<void> {
   const wallet = app.wallet;
   if (!wallet) return;
-  for (const button of buttons()) button.disabled = true;
+  dom.collect.disabled = true;
   try {
     dom.collectStatus.textContent = 'Sign the withdrawal in your wallet…';
     const signature = await wallet.client.signTypedData({ account: wallet.signer, ...withdrawalTypedData(receiver, withdrawal, quote) });
@@ -130,7 +126,7 @@ async function collectHome(
   } catch (error) {
     toast(error instanceof RelayError ? `Withdrawal refused: ${error.message}` : explainError(error), 'error');
   } finally {
-    for (const button of buttons()) button.onclick = () => void collectWinnings();
+    dom.collect.onclick = () => void collectWinnings();
     await renderWinnings();
   }
 }

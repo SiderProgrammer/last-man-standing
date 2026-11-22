@@ -179,7 +179,6 @@ export function queryDom(doc: Document = document) {
     resultVerifyWhy: el<HTMLButtonElement>('result-verify-why'),
     resultSettle: el<HTMLParagraphElement>('result-settle'),
     resultDispute: el<HTMLButtonElement>('result-dispute'),
-    resultCollect: el<HTMLButtonElement>('result-collect'),
     resultAnalyse: el<HTMLButtonElement>('result-analyse'),
     resultAgain: el<HTMLButtonElement>('result-again'),
     resultBack: el<HTMLButtonElement>('result-back'),

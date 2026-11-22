@@ -584,7 +584,7 @@ export function prizeLine(
     case MatchStatus.Settled:
       return owed === 0n
         ? `${won}. It was paid out and you have collected it.`
-        : `${won}. It is in your balance: collect it below or from the lobby.`;
+        : `${won}. It is in your balance: collect it from the lobby.`;
     case MatchStatus.Proposed:
       if (match.disputed) {
         return `${won}, but the result is disputed. If the guardian lets it stand, it is collectable in ${formatWait(Math.max(0, match.deadline - match.chainTime))}; if they veto it, every stake is refunded instead.`;
