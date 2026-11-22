@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_RULES, type MatchResult } from '@lms/consensus';
 import { type MatchAnalysis } from '@lms/api';
 import {
@@ -12,6 +12,7 @@ import {
   openStorage,
   claimInstance,
   InstanceLockHeld,
+  type Database,
   type MatchArchive,
   type StyleBook,
   nullRelayer,
@@ -264,9 +265,104 @@ describe('one server per database', () => {
         release: () => {
           released += 1;
         },
+        on: () => undefined,
+        removeListener: () => undefined,
       }),
     };
     await expect(claimInstance(database)).rejects.toBeInstanceOf(InstanceLockHeld);
     expect(released).toBe(1);
   });
+
+  it('takes the lock again on a new connection when the database closes the one holding it', async () => {
+    const { database, sessions } = lockSessions(['held', 'held']);
+    const release = await claimInstance(database, { retryDelayMs: () => 0 });
+    const lost = new Error('terminating connection due to administrator command');
+
+    sessions[0]!.fail(lost);
+    expect(sessions[0]!.released).toEqual([lost]);
+    await vi.waitFor(() => expect(sessions).toHaveLength(2));
+    expect(sessions[1]!.queries).toEqual(['SELECT pg_try_advisory_lock($1) AS held']);
+
+    await release();
+    expect(sessions[1]!.queries.at(-1)).toBe('SELECT pg_advisory_unlock($1)');
+    expect(sessions[1]!.released).toEqual([undefined]);
+  });
+
+  it('keeps retrying while the database cannot be reached', async () => {
+    const { database, sessions, attempts } = lockSessions(['held', 'down', 'down', 'held']);
+    const delays: number[] = [];
+    const release = await claimInstance(database, {
+      retryDelayMs: (attempt) => {
+        delays.push(attempt);
+        return 0;
+      },
+    });
+
+    sessions[0]!.fail(new Error('Connection terminated unexpectedly'));
+    await vi.waitFor(() => expect(sessions).toHaveLength(2));
+    expect(attempts()).toBe(4);
+    expect(delays).toEqual([0, 1, 2]);
+    await release();
+  });
+
+  it('stops for good when another server took the lock in between', async () => {
+    const { database, sessions, attempts } = lockSessions(['held', 'taken']);
+    const onLost = vi.fn();
+    const release = await claimInstance(database, { onLost, retryDelayMs: () => 0 });
+
+    sessions[0]!.fail(new Error('terminating connection due to administrator command'));
+    await vi.waitFor(() => expect(onLost).toHaveBeenCalledTimes(1));
+    expect(onLost.mock.calls[0]?.[0]).toBeInstanceOf(InstanceLockHeld);
+    expect(sessions[1]!.released).toEqual([undefined]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(attempts()).toBe(2);
+    await release();
+  });
+
+  it('retries nothing once released', async () => {
+    const { database, sessions, attempts } = lockSessions(['held', 'held']);
+    const release = await claimInstance(database, { retryDelayMs: () => 10 });
+
+    sessions[0]!.fail(new Error('Connection terminated unexpectedly'));
+    await release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(attempts()).toBe(1);
+  });
 });
+
+/** One fake connection per `database.session()`, answering the lock query as `plan` says, in order. */
+function lockSessions(plan: Array<'held' | 'taken' | 'down'>) {
+  const sessions: Array<{
+    queries: string[];
+    released: Array<Error | undefined>;
+    fail(error: Error): void;
+  }> = [];
+  let tried = 0;
+  const database: Database = {
+    query: async () => ({ rows: [] }),
+    transaction: async () => undefined as never,
+    close: async () => undefined,
+    session: async () => {
+      const answer = plan[tried] ?? 'held';
+      tried += 1;
+      if (answer === 'down') throw new Error('connect ECONNREFUSED');
+      const listeners: Array<(error: Error) => void> = [];
+      const session = {
+        queries: [] as string[],
+        released: [] as Array<Error | undefined>,
+        fail: (error: Error) => listeners.forEach((listener) => listener(error)),
+      };
+      sessions.push(session);
+      return {
+        query: async (text: string) => {
+          session.queries.push(text);
+          return { rows: [{ held: answer === 'held' }] };
+        },
+        release: (error?: Error) => void session.released.push(error),
+        on: (_event: 'error', listener: (error: Error) => void) => listeners.push(listener),
+        removeListener: () => undefined,
+      };
+    },
+  };
+  return { database, sessions, attempts: () => tried };
+}

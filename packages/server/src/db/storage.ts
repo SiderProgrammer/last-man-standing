@@ -1,7 +1,7 @@
 import { MemoryArchive, PostgresArchive, type MatchArchive } from '../lobby/store.js';
 import { MemoryStyleBook, PostgresStyleBook, type StyleBook } from '../lobby/styles.js';
 import { MemoryJournal, PostgresJournal, type RoomJournal } from '../match/journal.js';
-import { claimInstance, connectDatabase, type Database } from './database.js';
+import { claimInstance, connectDatabase, type Database, type InstanceClaimOptions } from './database.js';
 
 /** Every repository the server keeps, over one database or none. */
 export interface Storage {
@@ -22,7 +22,7 @@ export interface Storage {
  * `loadConfig` turns `ARCHIVE=memory` into no URL, and refuses a production
  * server with neither.
  */
-export async function openStorage(databaseUrl: string): Promise<Storage> {
+export async function openStorage(databaseUrl: string, options: InstanceClaimOptions = {}): Promise<Storage> {
   if (!databaseUrl) {
     return {
       archive: new MemoryArchive(),
@@ -35,7 +35,7 @@ export async function openStorage(databaseUrl: string): Promise<Storage> {
   const database = await connectDatabase(databaseUrl);
   let release: () => Promise<void>;
   try {
-    release = await claimInstance(database);
+    release = await claimInstance(database, options);
   } catch (error) {
     await database.close();
     throw error;

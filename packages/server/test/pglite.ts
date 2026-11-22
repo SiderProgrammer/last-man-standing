@@ -13,7 +13,7 @@ export async function pglite(migrations?: readonly Migration[]): Promise<Databas
     transaction: (work) =>
       db.transaction((tx) => work({ query: async (text, values) => ({ rows: (await tx.query<Record<string, unknown>>(text, values)).rows }) })),
     // PGlite is one connection: every session is that one.
-    session: async () => ({ query: database.query, release: () => undefined }),
+    session: async () => ({ query: database.query, release: () => undefined, on: () => undefined, removeListener: () => undefined }),
     close: () => db.close(),
   };
   await migrate(database, migrations);

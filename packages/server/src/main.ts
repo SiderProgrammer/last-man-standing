@@ -55,7 +55,17 @@ async function main(): Promise<void> {
     console.error('[server] unhandled rejection:', reason);
   });
 
-  const storage = await openStorage(config.databaseUrl);
+  // Another server took the database while this one's connection was down:
+  // stop, as on SIGTERM, rather than run two. Before `shutdown` exists there
+  // is nothing in play to wind down.
+  let stop = (): void => process.exit(1);
+  const storage = await openStorage(config.databaseUrl, {
+    onLost: () => {
+      console.error('[server] another server instance now holds this database: shutting down');
+      process.exitCode = 1;
+      stop();
+    },
+  });
   const { archive, styles, journal } = storage;
   console.log(config.databaseUrl ? '[server] archiving to Postgres' : '[server] archiving in memory (ARCHIVE=memory or no DATABASE_URL)');
   // One key per job, and one sender per key: a key's nonces are a single
@@ -405,7 +415,10 @@ async function main(): Promise<void> {
     console.log(`[server] listening on :${config.port}`);
   });
 
+  let stopping = false;
   const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
     bridge?.stop();
     feeKeeper?.stop();
     crossChain?.stop();
@@ -419,6 +432,7 @@ async function main(): Promise<void> {
     attestor?.stop();
     void lobby.drain().finally(() => storage.close());
   };
+  stop = shutdown;
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }

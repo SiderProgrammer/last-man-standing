@@ -16,7 +16,9 @@ export {
   connectDatabase,
   migrate,
   type Database,
+  type InstanceClaimOptions,
   type Queryable,
+  type Session,
 } from './db/database.js';
 export { MIGRATIONS, type Migration } from './db/migrations.js';
 export { openStorage, storageOn, type Storage } from './db/storage.js';
