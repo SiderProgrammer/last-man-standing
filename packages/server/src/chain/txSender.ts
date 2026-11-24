@@ -6,7 +6,6 @@ import {
   createPublicClient,
   createWalletClient,
   encodeFunctionData,
-  http,
   nonceManager,
   type Abi,
   type Address,
@@ -14,7 +13,7 @@ import {
 } from 'viem';
 import { errorMessage } from '@lms/api';
 import { signerAccount, type Signer } from './signer.js';
-import { rpcChain } from './viem.js';
+import { rpcChain, rpcTransport } from './viem.js';
 
 /** A contract call, as the sender sends it. */
 export interface ContractCall {
@@ -237,7 +236,7 @@ function asReverted(error: unknown): unknown {
 /** `TxPort` over viem, for one signer. */
 export function viemTxPort(options: { signer: Signer; chainId: number; rpcUrl: string }): TxPort {
   const chain = rpcChain(options.chainId, options.rpcUrl);
-  const transport = http(options.rpcUrl);
+  const transport = rpcTransport(options.rpcUrl);
   const account = signerAccount(options.signer);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });

@@ -4,7 +4,7 @@
  * top level, which is why it is not the one `@lms/server` resolves to.
  */
 import type { RequestListener, Server } from 'node:http';
-import { createPublicClient, http as httpTransport } from 'viem';
+import { createPublicClient } from 'viem';
 import { WebSocketServer } from 'ws';
 import { MAX_CLIENT_FRAME_BYTES, errorMessage, type StakingInfo } from '@lms/api';
 import { config, ZERO_ADDRESS } from './config.js';
@@ -21,6 +21,7 @@ import { generatePrivateKey } from 'viem/accounts';
 import { attestorReceipts, receiptSigner, relayerFrom } from './chain/attestor.js';
 import { keySigner } from './chain/signer.js';
 import { viemTxSender, type TxSender } from './chain/txSender.js';
+import { rpcTransport } from './chain/viem.js';
 import { AttestorProcess } from './attestor/remote.js';
 import { ChainBridge } from './chain/bridge.js';
 import { AvatarRegistry, parseCollections } from './chain/avatars.js';
@@ -169,7 +170,7 @@ async function main(): Promise<void> {
   // Either way an EOA's signature is settled by local recovery on the verify
   // pool, and only a signature that does not recover is put to the RPC.
   const rpc = config.rpcUrl
-    ? createPublicClient({ transport: httpTransport(config.rpcUrl) })
+    ? createPublicClient({ transport: rpcTransport(config.rpcUrl) })
     : null;
 
   // Pays into the escrow, so it is only offered alongside one.
