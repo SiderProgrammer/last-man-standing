@@ -1,0 +1,15 @@
+{
+  "hosting": {
+    "site": "last-man-standing-client",
+    "public": "packages/client/dist",
+    "ignore": ["firebase.json", "**/.*"],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" }
+        ]
+      }
+    ]
+  }
+}

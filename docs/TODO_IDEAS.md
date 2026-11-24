@@ -1,4 +1,5 @@
 host the game
+fix gemini analysis
 record video
 update README, docs
 test freshly cloned repo
