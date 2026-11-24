@@ -263,7 +263,7 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `index.ts` | The package's public exports. Importing it boots nothing |
 | `config.ts` | Environment configuration |
 | `errors.ts` | `RequestError`: a refusal with the code the client switches on |
-| `util/` | `envList` (soft JSON-list env parsing), `poll` (an unref'd repeat timer), `rpc` (calls across the attestor's process and the analyst's thread) |
+| `util/` | `envList` (soft JSON-list env parsing), `httpFront` (the HTTP port, which can open before the server can play), `poll` (an unref'd repeat timer), `rpc` (calls across the attestor's process and the analyst's thread) |
 | **`analyst/`** | **The match analyst, in a worker thread; see [ANALYST.md](ANALYST.md)** |
 | **`match/`** | **One live match** |
 | `match/room.ts` | Phases, the round clock and the ready phase before round 1, client fan-out (the whole state on attach, deltas after), held moves (a move a player hands over with its commit, checked against the commitment *and* the rules there and then, which the server reveals for them if they drop), each round's signatures and receive times, the journal entries a restart replays, and the transcript it hands the lobby at the end |
@@ -364,7 +364,9 @@ deadline. Practice rooms are simply gone. Render's free tier makes restarts rout
 process, and each key's transactions go out of one `TxSender` in nonce order. A second
 instance would split the rooms and the queue, double the limits and race for nonces, so
 the server runs as one: with Postgres it takes an advisory lock on the database at
-start, and a second server is refused.
+start, and a second server is refused. In production it first waits for the lock
+(`INSTANCE_WAIT_MS`) with its port open and answering only `/health`, because a
+zero-downtime deploy stops the old server only once the new one is up.
 
 ### `packages/client` — the player's view
 

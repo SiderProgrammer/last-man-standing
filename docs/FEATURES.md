@@ -508,7 +508,8 @@ storage at a fixed slot, as a 7702 delegate must.
   archived; each room journals its rounds, so a restart resumes instead of
   refunding.
 - **One instance.** Rooms, the queue and the rate limits live in the process;
-  a second server against the same Postgres is refused.
+  a second server against the same Postgres is refused, after waiting for the
+  first to stop in production, as a deploy overlaps them.
 - **The reveal is automatic**, and the reads panel is bookkeeping over the
   published history: after five rounds you are playing the table.
 

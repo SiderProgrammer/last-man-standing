@@ -319,6 +319,45 @@ describe('one server per database', () => {
     await release();
   });
 
+  it('waits for the server before it to stop, when told to', async () => {
+    const { database, sessions, attempts } = lockSessions(['taken', 'taken', 'held']);
+    const onWaiting = vi.fn();
+    const release = await claimInstance(database, { waitMs: 60_000, pollMs: 0, onWaiting });
+
+    expect(onWaiting).toHaveBeenCalledTimes(1);
+    expect(attempts()).toBe(3);
+    // Each refused connection went back as it came: usable, and with no listener left on it.
+    expect(sessions.map((session) => session.listeners())).toEqual([0, 0, 1]);
+    expect(sessions.map((session) => session.released)).toEqual([[undefined], [undefined], []]);
+    await release();
+  });
+
+  it('opens its port before it waits, and does not wait if it cannot', async () => {
+    const { database, attempts } = lockSessions(['taken', 'held']);
+    const onWaiting = () => Promise.reject(new Error('listen EADDRINUSE'));
+    await expect(claimInstance(database, { waitMs: 60_000, pollMs: 0, onWaiting })).rejects.toThrow(/EADDRINUSE/);
+    expect(attempts()).toBe(1);
+  });
+
+  it('is refused if the server before it never stops', async () => {
+    const { database } = lockSessions(Array.from({ length: 1_000 }, () => 'taken' as const));
+    await expect(claimInstance(database, { waitMs: 20, pollMs: 5 })).rejects.toBeInstanceOf(InstanceLockHeld);
+  });
+
+  it('gives up waiting when the database fails, rather than slip in before the other server knows', async () => {
+    const { database, attempts } = lockSessions(['taken', 'down', 'held']);
+    await expect(claimInstance(database, { waitMs: 60_000, pollMs: 0 })).rejects.toThrow(/ECONNREFUSED/);
+    expect(attempts()).toBe(2);
+  });
+
+  it('does not wait when the database is free', async () => {
+    const { database } = lockSessions(['held']);
+    const onWaiting = vi.fn();
+    const release = await claimInstance(database, { waitMs: 60_000, onWaiting });
+    expect(onWaiting).not.toHaveBeenCalled();
+    await release();
+  });
+
   it('retries nothing once released', async () => {
     const { database, sessions, attempts } = lockSessions(['held', 'held']);
     const release = await claimInstance(database, { retryDelayMs: () => 10 });
@@ -336,6 +375,7 @@ function lockSessions(plan: Array<'held' | 'taken' | 'down'>) {
     queries: string[];
     released: Array<Error | undefined>;
     fail(error: Error): void;
+    listeners(): number;
   }> = [];
   let tried = 0;
   const database: Database = {
@@ -351,6 +391,7 @@ function lockSessions(plan: Array<'held' | 'taken' | 'down'>) {
         queries: [] as string[],
         released: [] as Array<Error | undefined>,
         fail: (error: Error) => listeners.forEach((listener) => listener(error)),
+        listeners: () => listeners.length,
       };
       sessions.push(session);
       return {
@@ -360,7 +401,7 @@ function lockSessions(plan: Array<'held' | 'taken' | 'down'>) {
         },
         release: (error?: Error) => void session.released.push(error),
         on: (_event: 'error', listener: (error: Error) => void) => listeners.push(listener),
-        removeListener: () => undefined,
+        removeListener: (_event: 'error', listener: (error: Error) => void) => void listeners.splice(listeners.indexOf(listener), 1),
       };
     },
   };

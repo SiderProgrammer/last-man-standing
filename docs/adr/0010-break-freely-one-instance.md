@@ -23,6 +23,7 @@ the matchmaking queue live in one process's memory.
   deployment starts from a clean registry and database.
 - A second server against the same Postgres is refused at start (an advisory
   lock held for the server's life), so the limit is enforced, not just
-  documented.
+  documented. In production it first waits for the other to stop, as a
+  zero-downtime deploy overlaps the two.
 - Scaling out would need shared rooms, a shared queue and shared rate limits;
   that is a later decision, not this one.

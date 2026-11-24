@@ -116,6 +116,7 @@ const ENV = z.object({
   ATTESTOR_PK: privateKey,
   KEEPER_PK: privateKey,
   DATABASE_URL: url(/^postgres(ql)?$/, 'a postgres://'),
+  INSTANCE_WAIT_MS: variable(z.string().regex(/^\d+$/, 'must be a whole number').transform(Number).optional()),
   ARCHIVE: variable(z.enum(['postgres', 'memory'], { error: 'must be postgres or memory' }).optional()),
   MAX_PRACTICE_ROOMS: whole(200),
   MAX_CONNECTIONS: whole(10_000, 1),
@@ -223,6 +224,12 @@ export function loadConfig(
 
   return {
     port: e.WS_PORT,
+    /**
+     * How long to wait at start for another server to let go of the database.
+     * In production a deploy overlaps the old server with the new; anywhere
+     * else a second server is a mistake, and is refused at once.
+     */
+    instanceWaitMs: e.INSTANCE_WAIT_MS ?? (e.NODE_ENV === 'production' ? 600_000 : 0),
     chainId: e.CHAIN_ID,
     commitMs: e.COMMIT_MS,
     revealMs: e.REVEAL_MS,

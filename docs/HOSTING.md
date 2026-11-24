@@ -89,7 +89,7 @@ until the next month.**
 The server handles one hub chain, so testnet and mainnet need a server each, and they
 cannot both be kept awake. The second gets only the 6 to 30 hours left over, and an
 idle spun-down service uses none. Testnet and mainnet also need **separate databases**,
-because a second server on the same database is refused at start.
+because a second server on the same database never gets past waiting for the first.
 
 ### Disk
 
@@ -114,17 +114,27 @@ here.** Expect far fewer players, and possibly late rounds on a slow CPU. Runnin
 memory is another restart. Before the demo, run a small load test against the deployed
 server to find the real limit.
 
-### Redeploys may fail on the instance lock: test this first
+### Redeploys have a gap
 
-Render starts the new instance and moves traffic to it, and only then stops the old one.
-The server takes a Postgres advisory lock at start and exits if another instance holds it
-(`claimInstance` in `packages/server/src/db/database.ts`). So the new instance may refuse
-to start because the old one is still running, and the old one will not stop until the new
-one has started.
+Render starts the new instance and moves traffic to it, and only then stops the old one,
+60 seconds later. One instance at a time may hold the database's advisory lock
+(`claimInstance` in `packages/server/src/db/database.ts`), so with `NODE_ENV=production`
+the new one waits for the old one to stop, up to `INSTANCE_WAIT_MS` (10 minutes by
+default). While it waits its port is open: `/health` answers 200 with `"starting": true`,
+which is what lets Render go on and stop the old one, and everything else gets a 503.
 
-If that happens, either suspend the service before each deploy, which means downtime, or
-change the server so it binds its port before claiming the lock. Render's docs do not say
-whether free services use this deploy sequence.
+- **Players already connected** stay on the old instance until it stops. It then closes
+  their sockets, and their clients reconnect to the new one.
+- **Anyone else** cannot connect from the traffic switch until the old instance stops:
+  about a minute, and up to 30 seconds more if it has to be killed.
+- **The new instance's migrations run while the old one still plays**, so a migration must
+  not break the version before it.
+- **A failure after the wait is downtime**, because the old instance has gone by then. A
+  bad configuration, an unreachable database and a failed migration are all found before
+  the port opens, so those fail the deploy and leave the old instance running.
+
+This was checked with two server processes and a stand-in for Postgres, not on Render.
+Render's docs do not say whether free services use this deploy sequence.
 
 ### Neon's pooled connection string: test this too
 

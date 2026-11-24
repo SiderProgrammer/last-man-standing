@@ -114,6 +114,15 @@ describe('server configuration', () => {
     expect(() => loadConfig({ ARCHIVE: 'postgres' })).toThrow(/ARCHIVE=postgres needs DATABASE_URL/);
   });
 
+  it('waits for the server before it in production only, unless told how long', () => {
+    const production = { NODE_ENV: 'production', ARCHIVE: 'memory', ALLOWED_ORIGINS: '*' };
+    expect(loadConfig({}).instanceWaitMs).toBe(0);
+    expect(loadConfig(production).instanceWaitMs).toBe(600_000);
+    expect(loadConfig({ ...production, INSTANCE_WAIT_MS: '0' }).instanceWaitMs).toBe(0);
+    expect(loadConfig({ INSTANCE_WAIT_MS: '5000' }).instanceWaitMs).toBe(5_000);
+    expect(() => loadConfig({ INSTANCE_WAIT_MS: 'soon' })).toThrow(/INSTANCE_WAIT_MS must be a whole number/);
+  });
+
   it('refuses to run in production without allowed origins unless told to accept any', () => {
     const production = { NODE_ENV: 'production', ARCHIVE: 'memory' };
     expect(() => loadConfig(production)).toThrow(/ALLOWED_ORIGINS is required in production/);

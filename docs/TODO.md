@@ -263,8 +263,8 @@ order, with the testnet deployment from section 1 before the hosting:
 - **Host it on Render's free tier.** The client and server run only on a developer's
   machine today. Serve the client and a server pointed at Base Sepolia from a public URL,
   with Neon for the database and an external ping. [HOSTING.md](HOSTING.md) has the setup
-  and the risks. Test its two possible blockers first: redeploys against the instance
-  lock, and the lock through Neon's pooled connection string. Then run a small load test
+  and the risks. Test two things first: a redeploy, where the new instance waits for the
+  old one's lock, and the lock through Neon's pooled connection string. Then run a small load test
   on the deployed server, because the numbers in LOAD_TESTING.md do not apply there.
 - **Finish the fork playtest** (what section 2 lists as never played there), then play
   with a few real people: locally, then with testnet wallets on all four chains.

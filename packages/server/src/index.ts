@@ -99,6 +99,7 @@ export {
 } from './attestor/service.js';
 export { AttestorProcess, type AttestorProcessOptions } from './attestor/remote.js';
 export { AnalystWorker, type AnalystWorkerConfig } from './analyst/remote.js';
+export { HttpFront } from './util/httpFront.js';
 export { Rpc, RemoteError, type Channel, type Handlers } from './util/rpc.js';
 export {
   RevertedError,

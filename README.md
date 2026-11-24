@@ -496,7 +496,8 @@ quota live in the server's memory, and its keys send transactions in nonce
 order from one process. A second instance would split the rooms and the
 queue, double every limit, and race the first for nonces. So it is one
 instance by design: with Postgres, it takes a lock on the database at start
-and a second server against the same database refuses to start. Scaling out
+and a second server against the same database refuses to start (in production,
+once it has waited for the first to stop, which is a deploy). Scaling out
 would mean moving rooms, queue and limits into shared storage first.
 
 The VRF adapter has a fork test against the Base Sepolia coordinator

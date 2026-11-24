@@ -55,6 +55,12 @@ const MIGRATION_LOCK = 7428;
  * same database is refused at start. The lock goes with the connection, so
  * a crashed server frees it.
  *
+ * With `waitMs`, a second server waits that long for the first to go before it
+ * is refused: what a zero-downtime deploy needs, where the old server is told
+ * to stop only once the new one is up. A database that fails meanwhile ends
+ * the wait rather than extending it: the first server may have lost its lock
+ * too without knowing it yet, and this one must not slip in before it does.
+ *
  * The database can close that connection under a running server: a
  * serverless host scaling to zero, a restart, an admin. The lock goes with
  * it, so the server takes it again on a new connection, retrying with
@@ -106,7 +112,7 @@ export async function claimInstance(database: Database, options: InstanceClaimOp
     timer.unref?.();
   };
 
-  session = await takeInstanceLock(database, failed);
+  session = await firstInstanceLock(database, failed, options);
   return async () => {
     released = true;
     if (timer) clearTimeout(timer);
@@ -117,6 +123,12 @@ export async function claimInstance(database: Database, options: InstanceClaimOp
 }
 
 export interface InstanceClaimOptions {
+  /** How long to wait, at start, for another server to let go of the lock. 0, the default, refuses at once. */
+  waitMs?: number;
+  /** Called once, and awaited, when that wait begins. */
+  onWaiting?: () => void | Promise<void>;
+  /** How long between two tries for the lock during that wait. */
+  pollMs?: number;
   /** Told once if another server took the lock while this one's connection was down: this server must stop. */
   onLost?: (error: InstanceLockHeld) => void;
   /** How long to wait before retry `attempt` (0 first) to take the lock again. */
@@ -127,6 +139,31 @@ export interface InstanceClaimOptions {
 const LOCK_RETRY_FIRST_MS = 1_000;
 const LOCK_RETRY_MAX_MS = 30_000;
 
+/** How often a server waiting for the lock tries it. */
+const LOCK_POLL_MS = 1_000;
+
+/** The lock at start: now, or within `waitMs` if another server holds it. */
+async function firstInstanceLock(
+  database: Database,
+  failed: (held: Session, error: Error) => void,
+  { waitMs = 0, onWaiting, pollMs = LOCK_POLL_MS }: InstanceClaimOptions,
+): Promise<Session> {
+  let deadline: number | null = null;
+  for (;;) {
+    try {
+      return await takeInstanceLock(database, failed);
+    } catch (error) {
+      if (!(error instanceof InstanceLockHeld) || waitMs <= 0) throw error;
+      if (deadline === null) {
+        deadline = Date.now() + waitMs;
+        await onWaiting?.();
+      }
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+}
+
 /**
  * Takes the instance lock on a connection of its own, or throws
  * `InstanceLockHeld`. The connection's errors go to `failed` from the moment
@@ -134,7 +171,8 @@ const LOCK_RETRY_MAX_MS = 30_000;
  */
 async function takeInstanceLock(database: Database, failed: (held: Session, error: Error) => void): Promise<Session> {
   const held = await database.session();
-  held.on('error', (error) => failed(held, error));
+  const onError = (error: Error): void => failed(held, error);
+  held.on('error', onError);
   let rows: Array<Record<string, unknown>>;
   try {
     ({ rows } = await held.query('SELECT pg_try_advisory_lock($1) AS held', [INSTANCE_LOCK]));
@@ -143,6 +181,9 @@ async function takeInstanceLock(database: Database, failed: (held: Session, erro
     throw error;
   }
   if (rows[0]?.held !== true) {
+    // Back to the pool without the listener: a server waiting for the lock
+    // asks every second, and they would pile up on one connection.
+    held.removeListener('error', onError);
     held.release();
     throw new InstanceLockHeld('another server instance is already running against this database; run one');
   }

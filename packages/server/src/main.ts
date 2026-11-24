@@ -3,7 +3,7 @@
  * starts listening. The only file in the package with side effects at the
  * top level, which is why it is not the one `@lms/server` resolves to.
  */
-import { createServer, type Server } from 'node:http';
+import type { RequestListener, Server } from 'node:http';
 import { createPublicClient, http as httpTransport } from 'viem';
 import { WebSocketServer } from 'ws';
 import { MAX_CLIENT_FRAME_BYTES, errorMessage, type StakingInfo } from '@lms/api';
@@ -37,6 +37,7 @@ import { LobbyOpener, viemLobbyOpenerPort } from './chain/lobbyOpener.js';
 import { DailyQuota, SessionRelay, viemRelayPort } from './chain/sessionRelay.js';
 import { Faucet, viemFaucetPort } from './chain/faucet.js';
 import { SpokeFiller, spokeFillerPolicy, spokeRpcs, viemSpokeFiller } from './chain/spokeFiller.js';
+import { HttpFront } from './util/httpFront.js';
 import { repeat } from './util/poll.js';
 
 const TICK_MS = 250;
@@ -46,6 +47,8 @@ const SWEEP_MS = 1_000;
 const LOBBY_PUSH_MS = 1_000;
 /** A socket that misses a ping for this long is terminated. */
 const HEARTBEAT_MS = 30_000;
+/** The WebSocket close code for a server that is restarting. */
+const WS_SERVICE_RESTART = 1012;
 
 async function main(): Promise<void> {
   // A promise nobody awaited that rejects would otherwise end the process,
@@ -55,11 +58,33 @@ async function main(): Promise<void> {
     console.error('[server] unhandled rejection:', reason);
   });
 
+  // The attestor key lives in a process of its own, which replays every
+  // transcript before it signs one; this process only forwards. Started before
+  // the database is claimed: once this server's port opens, a deploy may stop
+  // the old one, so what can fail should have failed by then.
+  const attestor =
+    config.attestorPk && config.onChain
+      ? await AttestorProcess.start({
+          privateKey: config.attestorPk,
+          chainId: config.chainId,
+          escrow: config.escrow,
+          rpcUrl: config.rpcUrl,
+        })
+      : null;
+  if (attestor) console.log(`[server] attestor ${attestor.address} in its own process`);
+
+  const front = new HttpFront();
   // Another server took the database while this one's connection was down:
   // stop, as on SIGTERM, rather than run two. Before `shutdown` exists there
   // is nothing in play to wind down.
   let stop = (): void => process.exit(1);
   const storage = await openStorage(config.databaseUrl, {
+    waitMs: config.instanceWaitMs,
+    // The old server of a deploy is stopped only once this one's port answers.
+    onWaiting: async () => {
+      console.log('[server] another server instance holds this database: waiting for it to stop');
+      await front.listen(config.port);
+    },
     onLost: () => {
       console.error('[server] another server instance now holds this database: shutting down');
       process.exitCode = 1;
@@ -75,18 +100,6 @@ async function main(): Promise<void> {
       ? viemTxSender({ signer: keySigner(privateKey), chainId: config.chainId, rpcUrl: config.rpcUrl }, { label })
       : null;
   const keeper = senderFor(config.keeperPk, 'keeper');
-  // The attestor key lives in a process of its own, which replays every
-  // transcript before it signs one; this process only forwards.
-  const attestor =
-    config.attestorPk && config.onChain
-      ? await AttestorProcess.start({
-          privateKey: config.attestorPk,
-          chainId: config.chainId,
-          escrow: config.escrow,
-          rpcUrl: config.rpcUrl,
-        })
-      : null;
-  if (attestor) console.log(`[server] attestor ${attestor.address} in its own process`);
   const relayer = relayerFrom(config, attestor, keeper);
   // Staked rooms' receipts come from the attestor. Practice rooms' never do:
   // they are signed with a key of their own that lasts as long as the process.
@@ -290,7 +303,7 @@ async function main(): Promise<void> {
     },
   });
 
-  const http = httpServer({
+  const answer = requestHandler({
     proposals,
     archive,
     health: () => {
@@ -302,7 +315,7 @@ async function main(): Promise<void> {
         clients: gateway.connections,
         onChain: config.onChain,
         lobbies: { open: lobbies.open.length, live: lobbies.live.length },
-        // Read when asked, which is after `listen`, so after it is assigned.
+        // Read when asked, which is after `serve`, so after it is assigned.
         filler: filler ? { address: fillerSender?.address, waiting: filler.waiting } : null,
         analyst: analyst
           ? {
@@ -316,7 +329,6 @@ async function main(): Promise<void> {
   });
 
   const heartbeat = new Heartbeat();
-  const wss = acceptSockets(http, gateway, heartbeat);
 
   notify = (player, message) => gateway.notify(player, message);
   const timers = [
@@ -411,9 +423,10 @@ async function main(): Promise<void> {
     console.log(`[server] avatar collections on chains ${avatars.chains.join(', ')}`);
   }
 
-  http.listen(config.port, () => {
-    console.log(`[server] listening on :${config.port}`);
-  });
+  // The port is already open if this server had to wait for the database.
+  const http = front.server;
+  const wss = acceptSockets(http, gateway, heartbeat);
+  front.serve(answer);
 
   let stopping = false;
   const shutdown = () => {
@@ -426,6 +439,9 @@ async function main(): Promise<void> {
     proposals?.stop();
     for (const stop of timers) stop();
     wss.close();
+    // `wss.close` leaves the open ones open. Closed, their players go to the
+    // server taking over rather than sit on one that no longer plays.
+    for (const socket of wss.clients) socket.close(WS_SERVICE_RESTART, 'server restarting');
     http.close();
     void verifyPool.close();
     void analyst?.close();
@@ -435,11 +451,16 @@ async function main(): Promise<void> {
   stop = shutdown;
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+
+  await front.listen(config.port);
+  console.log(`[server] listening on :${config.port}`);
 }
 
 void main().catch((error: unknown) => {
   console.error('[server] failed to start', error);
-  process.exitCode = 1;
+  // Not `exitCode`: what had already started would keep the process up,
+  // holding the database's lock and, had it waited for it, answering `/health`.
+  process.exit(1);
 });
 
 /** The analyst worker, configured from `config.analyst`. */
@@ -490,8 +511,8 @@ function stakingInfo(proposalsIndexed: boolean, dripping: boolean): StakingInfo 
 }
 
 /** The HTTP side: proposals and transcripts, which the client reads, and `/health`. */
-function httpServer(options: { proposals: ProposalIndex | null; archive: MatchArchive; health: () => object }): Server {
-  return createServer((request, response) => {
+function requestHandler(options: { proposals: ProposalIndex | null; archive: MatchArchive; health: () => object }): RequestListener {
+  return (request, response) => {
     const url = request.url ?? '';
     // Both read by the client from its own origin, which is not this one.
     const answer = (route: { status: number; body: string }) => {
@@ -519,7 +540,7 @@ function httpServer(options: { proposals: ProposalIndex | null; archive: MatchAr
     } else {
       response.writeHead(404).end();
     }
-  });
+  };
 }
 
 /** Hands every WebSocket on `http` to the gateway, and the ones it admits to the heartbeat. */
