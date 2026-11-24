@@ -156,7 +156,7 @@ const ENV = z.object({
   GOVERNOR_ADDRESS: address,
   GOVERNOR_FROM_BLOCK: bigint,
   ANALYST_ENABLED: flag(true),
-  ANALYST_MODEL: text('gemini-3.8-flash'),
+  ANALYST_MODEL: text('gemini-3.5-flash-lite'),
   GEMINI_API_KEY: text(),
   GEMINI_BASE_URL: text(),
   ANALYST_EFFORT: variable(z.enum(EFFORTS, { error: `must be one of ${EFFORTS.join(', ')}` }).default('medium')),
@@ -409,7 +409,7 @@ export function loadConfig(
       maxConcurrent: e.ANALYST_MAX_CONCURRENT,
       /**
        * The Gemini project's own rate limits, enforced here so they are never
-       * hit as errors. Defaults are the free tier for Gemini 3.8 Flash: 5
+       * hit as errors. Defaults are Gemini 3.8 Flash's free tier, kept as cautious limits: 5
        * requests a minute, 20 a day. `none` lifts either.
        */
       requestsPerMinute: e.ANALYST_RPM,

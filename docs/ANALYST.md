@@ -56,7 +56,7 @@ client                 gateway                analyst                         Ge
    minute-long request and several. Earlier records are looked up by the
    seats' own wallets, so the prompt can only name a wallet that sat at this
    table.
-5. **The model.** `gemini-3.8-flash` by default — any Gemini 3 model or
+5. **The model.** `gemini-3.5-flash-lite` by default — any Gemini 3 model or
    later — with effort pinned explicitly (`medium`, sent as the thinking
    level) and the answer constrained to a JSON schema. `gemini.ts` speaks the
    REST API directly: no SDK, one `generateContent` call. The model is
@@ -111,8 +111,8 @@ them.
   operator's circuit breaker once billing is on.
 
 **Per model request**, the Gemini project's own rate limits, enforced here so
-they are never met as errors. The defaults are the free tier for Gemini 3.8
-Flash — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
+they are never met as errors. The defaults are the free tier of Gemini 3.8
+Flash, kept as cautious limits — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
 `none` lifts either). The call books a slot first: over the minute's
 allowance it waits for one, past the day's it is refused, and an analysis is
 not started at all once the day has no request left. The day turns at

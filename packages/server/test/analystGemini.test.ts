@@ -225,7 +225,7 @@ describe('analyst config', () => {
   it('is on exactly when GEMINI_API_KEY is set', () => {
     expect(loadConfig({}).analyst.enabled).toBe(false);
     const config = loadConfig({ GEMINI_API_KEY: 'g' });
-    expect(config.analyst).toMatchObject({ model: 'gemini-3.8-flash', enabled: true, geminiApiKey: 'g' });
+    expect(config.analyst).toMatchObject({ model: 'gemini-3.5-flash-lite', enabled: true, geminiApiKey: 'g' });
     expect(loadConfig({ GEMINI_API_KEY: 'g', ANALYST_ENABLED: 'false' }).analyst.enabled).toBe(false);
     expect(loadConfig({ GEMINI_API_KEY: 'g', ANALYST_MODEL: 'gemini-4-argon' }).analyst.model).toBe('gemini-4-argon');
   });
