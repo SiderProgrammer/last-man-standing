@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { DEFAULT_SERVER_PORT } from '../api/src/ports.js';
 import { contentSecurityPolicy } from './src/csp.js';
+import { filesWithDevKeys } from './src/devKeys.js';
 
 /** Puts the production Content-Security-Policy in the page's `<head>`. See `src/csp.ts`. */
 function csp(): Plugin {
@@ -19,6 +20,29 @@ function csp(): Plugin {
   };
 }
 
+/** Fails a production build that has a dev burner key in it. See `src/devKeys.ts`. */
+function noDevKeys(): Plugin {
+  let env: Record<string, string> = {};
+  let production = false;
+  return {
+    name: 'lms-no-dev-keys',
+    apply: 'build',
+    configResolved(config) {
+      env = loadEnv(config.mode, config.envDir || config.root, 'VITE_');
+      production = config.isProduction;
+    },
+    generateBundle(_options, bundle) {
+      if (!production) return;
+      const files = Object.values(bundle).map((file) => ({
+        name: file.fileName,
+        text: file.type === 'chunk' ? file.code : typeof file.source === 'string' ? file.source : '',
+      }));
+      const leaks = filesWithDevKeys(env, files);
+      if (leaks.length) this.error(`VITE_DEV_KEY or VITE_DEV_KEYS is in the production bundle: ${leaks.join(', ')}`);
+    },
+  };
+}
+
 /**
  * The client consumes the shared packages from source rather than from `dist`,
  * so a change to the wire format or the hashing rules shows up immediately
@@ -26,7 +50,7 @@ function csp(): Plugin {
  * the server and the contracts.
  */
 export default defineConfig({
-  plugins: [csp()],
+  plugins: [csp(), noDevKeys()],
   resolve: {
     alias: {
       '@lms/consensus': fileURLToPath(new URL('../consensus/src/index.ts', import.meta.url)),

@@ -184,9 +184,17 @@ function devBurnerKey(): string | undefined {
  * `?chain=<chainId>` puts it on that spoke, so a join from a spoke can be
  * tried without a wallet extension. An unknown chain is an error, shown when
  * the player connects, rather than a silent hub.
+ *
+ * Each variable is named: handing over `import.meta.env` whole makes Vite
+ * write every `VITE_` value into the bundle, the dev keys included.
  */
 function burnerRpc(): string | undefined {
-  return burnerRpcFor(new URLSearchParams(location.search).get('chain'), import.meta.env);
+  if (!import.meta.env.DEV) return undefined;
+  return burnerRpcFor(new URLSearchParams(location.search).get('chain'), {
+    VITE_RPC_URL: import.meta.env.VITE_RPC_URL,
+    VITE_SPOKE_RPC_URL: import.meta.env.VITE_SPOKE_RPC_URL,
+    VITE_SPOKE_RPC_URLS: import.meta.env.VITE_SPOKE_RPC_URLS,
+  });
 }
 
 export async function authenticate(): Promise<void> {

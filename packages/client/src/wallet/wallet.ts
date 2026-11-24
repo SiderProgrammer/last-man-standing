@@ -171,7 +171,8 @@ export class Wallet {
    * Development-only burner, used when no extension is installed.
    *
    * The key comes from `VITE_DEV_KEY` and the caller only enables this in a dev
-   * build, so it can never reach a production bundle. It exists because the
+   * build. A production build that contains the key fails (`src/devKeys.ts`).
+   * It exists because the
    * practice loop needs nothing but a login signature, and requiring a wallet
    * extension to click through the game locally is pure friction.
    */

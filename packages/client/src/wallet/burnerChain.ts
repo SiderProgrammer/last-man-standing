@@ -2,9 +2,9 @@ import { spokeRpcUrls } from '../csp.js';
 
 /** What the dev burner's chain choice reads: the RPCs the dev build was given. */
 export interface BurnerRpcs {
-  VITE_RPC_URL?: string;
-  VITE_SPOKE_RPC_URL?: string;
-  VITE_SPOKE_RPC_URLS?: string;
+  VITE_RPC_URL?: string | undefined;
+  VITE_SPOKE_RPC_URL?: string | undefined;
+  VITE_SPOKE_RPC_URLS?: string | undefined;
 }
 
 /**
