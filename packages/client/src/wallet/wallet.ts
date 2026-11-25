@@ -13,7 +13,6 @@ import {
   type LocalAccount,
   type PublicClient,
   type TransactionReceipt,
-  type TypedDataDefinition,
   type WalletClient,
 } from 'viem';
 import type { ChainRecord } from '@lms/engine';
@@ -433,14 +432,6 @@ export class Wallet {
       // result was cancelled with one.
       vetoed: info.status === MatchStatus.Cancelled && !/^0x0*$/.test(info.rankingHash),
     };
-  }
-
-  /**
-   * Checks a wallet's signature over typed data through the chain, so a
-   * grant from a contract wallet (ERC-1271) verifies too.
-   */
-  verifyTyped(args: TypedDataDefinition & { address: Address; signature: Hex }): Promise<boolean> {
-    return this.rpc.verifyTypedData(args).catch(() => false);
   }
 
   /**

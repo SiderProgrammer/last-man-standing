@@ -25,7 +25,7 @@ the third-party integration behind it is a local stub.
 | **ERC-20 wrapper** | `StakedLms` | Stake LMS for sLMS one for one |
 | **ERC-5805 / ERC-6372** votes and clock | `StakedLms`, `LmsGovernor` | Checkpointed voting power read at a past timestamp, so votes cannot be flash-borrowed |
 | **ERC-2612** permit | `LmsToken` | Approve and stake, or pay a fee discount, in one transaction |
-| **ERC-1271** | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the server accept a session grant signed by a contract wallet |
+| **ERC-1271** | `SessionKeyDelegate.isValidSignature` (root key only), the gateway's grant check | Lets the server accept a session grant signed by a contract wallet, for practice |
 | **ERC-4337** | *considered, not used* | It would change every player's address; see [Account abstraction](#account-abstraction) |
 | **Across** V3 SpokePool | `SpokeRouter`, `BridgeJoinReceiver` | Bridges a spoke stake to the hub with a join message, and a hub balance back out |
 | **Chainlink VRF v2.5** | `ChainlinkVrfAdapter` | The concrete source behind the chain-agnostic randomness interface, paid in native ETH |
@@ -424,7 +424,7 @@ a day. The key signs the login nonce on every connect and every commit and
 reveal, so a reconnect costs no prompt and every move in a transcript is
 provably its player's. The grant is shaped like a SIWE message and has no chain
 id in its domain, so a wallet on a spoke can sign it; a contract wallet's grant
-is checked with ERC-1271. The key can stake or spend nothing.
+is checked with ERC-1271, and plays practice only. The key can stake or spend nothing.
 
 The key is secp256k1, which WebCrypto cannot hold, so it is sealed in IndexedDB
 under a non-extractable AES-GCM key. The production build's

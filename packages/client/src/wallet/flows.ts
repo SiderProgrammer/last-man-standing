@@ -217,6 +217,18 @@ export async function authenticate(): Promise<void> {
   }
 }
 
+/**
+ * Whether the wallet's grant is one staked play takes, saying why when it is
+ * not. Asked before anything is staked or queued for: the escrow would take a
+ * contract wallet's stake, and the server would then take none of its moves.
+ */
+export async function mayStake(): Promise<boolean> {
+  const key = app.grantKey;
+  if (!key || (await key.recovers())) return true;
+  toast('A contract wallet can only practise. To play for stakes, connect a wallet that signs with its own key.', 'error');
+  return false;
+}
+
 export function onAuthed(): void {
   storedGrantPending = false;
   void refreshOneClick();

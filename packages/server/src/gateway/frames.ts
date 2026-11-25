@@ -56,8 +56,13 @@ const target = integer(0, 255);
 /** Unix seconds, as a grant carries them. */
 const seconds = integer(0, 2 ** 40);
 
-/** Long enough for any real host or origin, short enough to stay well inside a frame. */
-const origin = z.string({ error: 'must be a string' }).max(256, 'is too long');
+/**
+ * Long enough for any real host or origin, short enough to stay well inside a
+ * frame. Printable ASCII, as every origin a browser reports is: a grant goes
+ * into the transcript, and Postgres stores no NUL and no lone surrogate, so a
+ * match with one in it could never be archived, nor then settled.
+ */
+const origin = z.string({ error: 'must be a string' }).max(256, 'is too long').regex(/^[\x21-\x7e]+$/, 'must be printable ASCII');
 
 const grant = object({
   grant: object({

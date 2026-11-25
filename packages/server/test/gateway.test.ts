@@ -42,7 +42,7 @@ import type {
   SignatureVerifier,
   Socket,
 } from '@lms/server';
-import { lastOfType, setupWithBots, transcriptOf, viewOf } from './helpers.js';
+import { HUMAN, bytes32, lastOfType, setupWithBots, transcriptOf, viewOf } from './helpers.js';
 import { TestPlayer } from './players.js';
 
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -120,6 +120,7 @@ interface Extras {
   escrow: `0x${string}` | null;
   directory: () => { open: LobbyInfo[]; live: LobbyInfo[] };
   verify: SignatureVerifier;
+  verifyGrant: NonNullable<GatewayOptions['verifyGrant']>;
   relay: SessionRelay;
   zap: ZapInfo | null;
   staking: StakingInfo | null;
@@ -151,6 +152,7 @@ function harness(extras: Partial<Extras> = {}) {
     escrow: extras.escrow ?? null,
     directory: extras.directory ?? (() => ({ open: [], live: [] })),
     ...(extras.verify ? { verify: extras.verify } : {}),
+    ...(extras.verifyGrant ? { verifyGrant: extras.verifyGrant } : {}),
     ...(extras.relay ? { relay: extras.relay } : {}),
     zap: extras.zap ?? null,
     staking: extras.staking ?? null,
@@ -844,6 +846,117 @@ describe('gateway session grants and signed moves', () => {
     forged.signature = await player.key.signTypedData(grantTypedData(forged.grant));
     await socket.deliver(await player.auth(nonceOf(socket), forged));
     expect(socket.last('error')).toMatchObject({ code: 'BAD_GRANT', message: expect.stringMatching(/not signed/) });
+  });
+
+  it('refuses a grant whose origin no browser would report', async () => {
+    for (const uri of ['https://play.test/\u0000', 'https://play.test/\ud800']) {
+      const { socket } = harness();
+      await socket.deliver(await player.auth(nonceOf(socket), await player.grant(0, 3_600, { uri })));
+      expect(socket.last('authed')).toBeUndefined();
+      expect(socket.last('error')?.code).toBe('MALFORMED_FRAME');
+    }
+  });
+
+  /**
+   * A contract wallet's grant is good only while the wallet says it is, so a
+   * staked transcript with one in it might never settle: a losing seat could
+   * bring one in for the refund. `verifyGrant` stands in for ERC-1271 saying yes.
+   */
+  describe('under a grant that does not recover to its wallet', () => {
+    async function contractWallet(extras: Partial<Extras> = {}) {
+      const { socket, lobby } = harness({ verifyGrant: async () => true, ...extras });
+      const signed = await player.grant();
+      signed.signature = `0x${'11'.repeat(65)}`;
+      await socket.deliver(await player.auth(nonceOf(socket), signed));
+      expect(socket.last('authed')?.address).toBe(player.address);
+      return { socket, lobby };
+    }
+    const move = { action: Action.Guard, target: 0, salt: SALT } as const;
+
+    /** A staked room with `player` at seat 0 and house bots for company. */
+    function staked(lobby: Lobby) {
+      const setup = setupWithBots(4, 'staked');
+      const seats = setup.seats.map((seat) => (seat.address === HUMAN ? { ...seat, address: player.address } : seat));
+      return lobby.adopt({ ...setup, seats }, [1, 2, 3], 0);
+    }
+
+    it('plays practice', async () => {
+      const { socket } = await contractWallet();
+      await socket.deliver({ type: 'practice', bots: 3 });
+      await socket.deliver(await player.commit(place(socket), move));
+      expect(socket.last('error')).toBeUndefined();
+    });
+
+    it('is refused every move in a staked room, and leaves no grant in its transcript', async () => {
+      const { socket, lobby } = await contractWallet();
+      const room = staked(lobby);
+      const at = { matchId: room.matchId, round: 1, seat: 0 };
+      await socket.deliver(await player.commit(at, move));
+      await settled();
+      expect(socket.last('error')?.code).toBe('GRANT_NOT_STAKEABLE');
+      await socket.deliver(await player.reveal(at, move));
+      await settled();
+      expect(socket.sent.filter((message) => message.type === 'error')).toHaveLength(2);
+      expect(room.grants).toEqual([]);
+    });
+
+    it('cannot switch to one mid-match: the same seat plays on under its own', async () => {
+      const { socket, lobby } = await contractWallet();
+      const room = staked(lobby);
+      await socket.deliver(await player.auth(nonceOf(socket)));
+      await socket.deliver(await player.commit({ matchId: room.matchId, round: 1, seat: 0 }, move));
+      await settled();
+      expect(socket.last('error')).toBeUndefined();
+      expect(room.grants).toHaveLength(1);
+    });
+
+    it('is kept out of the queue and opens no lobby, before anything is staked', async () => {
+      const queued: string[] = [];
+      const matchmaker = new Matchmaker({
+        port: { create: async () => bytes32('unused') },
+        minSeats: 4,
+        maxSeats: 8,
+        notify: (address) => void queued.push(address),
+      });
+      const opener = new LobbyOpener({
+        port: { open: async () => Promise.reject(new Error('opened')) },
+        quota: new DailyQuota(5),
+        lobbies: () => [],
+      });
+      const { socket } = await contractWallet({ matchmaker, opener });
+      await socket.deliver({ type: 'queue', minStake: '1', maxStake: '2', minSeats: 4, maxSeats: 8 });
+      await settled();
+      expect(socket.last('error')?.code).toBe('GRANT_NOT_STAKEABLE');
+      expect(queued).toEqual([]);
+      await socket.deliver({ type: 'openLobby', id: 'o', stake: '1000000000000000', seats: 4 });
+      await settled();
+      expect(socket.last('relay.error')).toMatchObject({ id: 'o', code: 'GRANT_NOT_STAKEABLE' });
+    });
+
+    it('is not a verdict one failed worker can give: a grant that recovers plays', async () => {
+      const { lobby, socket } = harness();
+      const gateway = new Gateway({
+        lobby,
+        chainId: 11155111,
+        now: () => 0,
+        directory: () => ({ open: [], live: [] }),
+        verifyGrant: async () => true,
+        // Says no to the grant, as a pool whose worker died mid-check does.
+        verifyKey: { message: async () => true, typed: async (args) => args.primaryType !== 'SessionGrant' },
+      });
+      const other = new FakeSocket();
+      gateway.accept(other);
+      await other.deliver(await player.auth(nonceOf(other)));
+      const room = staked(lobby);
+      await other.deliver(await player.commit({ matchId: room.matchId, round: 1, seat: 0 }, move));
+      await settled();
+      expect(other.last('error')).toBeUndefined();
+      expect(room.grants).toHaveLength(1);
+      expect(socket.last('error')).toBeUndefined();
+    });
+
+    /** Recovering a signature takes a few turns of the event loop more than `deliver` waits. */
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 50));
   });
 
   it('lets a login without a grant watch but not play', async () => {

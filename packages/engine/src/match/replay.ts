@@ -17,6 +17,11 @@ import { entropyOf, resolveRound, tiebreakKey, type DeclaredMove } from '../kern
 export interface ReplayResult {
   result: MatchResult;
   rounds: RoundRecord[];
+  /**
+   * True when the rules end the match with the last round given: one survivor,
+   * or the round cap. False when rounds are missing from its end, or follow it.
+   */
+  complete: boolean;
 }
 
 /**
@@ -52,6 +57,8 @@ export function replayMatch(setup: MatchSetup, moveLog: readonly (readonly Decla
   const rounds: RoundRecord[] = [];
   const eliminationSequence: number[] = [];
   let quietRounds = 0;
+  /** The round the match ended with; zero while it has not. */
+  let endedAt = 0;
 
   for (const [offset, moves] of moveLog.entries()) {
     const round = offset + 1;
@@ -62,6 +69,8 @@ export function replayMatch(setup: MatchSetup, moveLog: readonly (readonly Decla
     states = resolution.states;
     quietRounds = resolution.quietRounds;
     eliminationSequence.push(...resolution.eliminationOrder);
+    const over = states.filter((state) => state.alive).length <= 1 || round >= setup.rules.maxRounds;
+    if (over && endedAt === 0) endedAt = round;
   }
 
   const last = rounds[rounds.length - 1];
@@ -82,6 +91,7 @@ export function replayMatch(setup: MatchSetup, moveLog: readonly (readonly Decla
       ranking: ranking.map((seat) => (setup.seats[seat] as Seat).address),
     },
     rounds,
+    complete: rounds.length > 0 && endedAt === rounds.length,
   };
 }
 
@@ -107,14 +117,15 @@ export function moveLogFromHistory(history: readonly RoundRecord[]): DeclaredMov
   );
 }
 
-/** True when a claimed result matches an independent replay of the move log. */
+/** True when the move log is a whole match, and a claimed result matches an independent replay of it. */
 export function verifyResult(
   setup: MatchSetup,
   moveLog: readonly (readonly DeclaredMove[])[],
   claimed: MatchResult,
 ): boolean {
-  const { result } = replayMatch(setup, moveLog);
+  const { result, complete } = replayMatch(setup, moveLog);
   return (
+    complete &&
     sameHex(result.matchId, claimed.matchId) &&
     result.rounds === claimed.rounds &&
     sameHex(result.historyRoot, claimed.historyRoot) &&

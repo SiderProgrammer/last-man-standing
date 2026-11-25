@@ -4,6 +4,7 @@ import {
   addressKey,
   commitTypedData,
   grantProblem,
+  grantRecovers,
   grantTypedData,
   revealTypedData,
   type SignedGrant,
@@ -103,6 +104,8 @@ interface Session extends Client {
   loginFailures: number;
   /** The grant this socket logged in with. Null for a login without one, which may watch but not play. */
   grant: SignedGrant | null;
+  /** Whether `grant` recovers to its wallet, once asked; see `requireStakeable`. */
+  recovers: Promise<boolean> | null;
   closed: boolean;
   /** The analysis being written for this socket, if any; aborted if it closes. */
   analysis: AbortController | null;
@@ -183,7 +186,8 @@ export interface GatewayOptions {
   /**
    * How a wallet's signature over a session grant is checked. Defaults to
    * offline recovery; supply one that falls back to ERC-1271 over RPC to
-   * accept grants from contract wallets.
+   * accept grants from contract wallets, for practice: staked play takes
+   * only a grant that recovers (`requireStakeable`), whatever this says.
    */
   verifyGrant?: TypedSignatureVerifier;
   /**
@@ -283,6 +287,7 @@ export class Gateway {
       strikes: new TokenBucket(l.strikeRate, l.strikeBurst, now),
       loginFailures: 0,
       grant: null,
+      recovers: null,
       closed: false,
       analysis: null,
       queued: false,
@@ -495,6 +500,7 @@ export class Gateway {
         const opener = this.options.opener;
         const open = opener
           ? async () => {
+              await this.requireStakeable(session);
               if (this.options.paused?.()) throw new RequestError('UNAVAILABLE', 'staked play is paused right now: no lobby opens until it resumes');
               return { ...(await opener.open(address, message.stake, message.seats)), kind: 'openLobby' as const };
             }
@@ -506,6 +512,9 @@ export class Gateway {
         const matchmaker = this.options.matchmaker;
         if (!matchmaker) throw new RequestError('UNAVAILABLE', 'this server runs no matchmaking');
         if (this.options.paused?.()) throw new RequestError('UNAVAILABLE', 'staked play is paused right now; the queue reopens when it resumes');
+        await this.requireStakeable(session);
+        // Checking took a moment, and nobody would be left to tell.
+        if (session.closed) return;
         // `queued` goes to every socket of the wallet, this one included.
         const { minStake, maxStake, minSeats, maxSeats } = message;
         matchmaker.join(address, { minStake, maxStake, minSeats, maxSeats });
@@ -539,6 +548,7 @@ export class Gateway {
     message: Extract<ClientMessage, { type: 'commit' }>,
   ): Promise<void> {
     const { grant, room, place } = this.movePlace(session, address, message);
+    if (room.staked) await this.requireStakeable(session);
     await this.requireKeySigned(grant, commitTypedData(this.options.chainId, place, message.commitment), message.signature);
     const hold = message.hold;
     if (hold) await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, hold), hold.signature);
@@ -566,6 +576,7 @@ export class Gateway {
     message: Extract<ClientMessage, { type: 'reveal' }>,
   ): Promise<void> {
     const { grant, room, place } = this.movePlace(session, address, message);
+    if (room.staked) await this.requireStakeable(session);
     const move = { action: message.action, target: message.target, salt: message.salt };
     await this.requireKeySigned(grant, revealTypedData(this.options.chainId, place, move), message.signature);
     room.submitReveal(address, move, this.now(), aimOf(message), { grant, signature: message.signature });
@@ -630,6 +641,7 @@ export class Gateway {
     }
     session.address = message.address;
     session.grant = grant;
+    session.recovers = null;
     session.send({ type: 'authed', address: message.address });
     this.resume(session, message.address);
     this.options.faucet?.onLogin(message.address);
@@ -794,6 +806,32 @@ export class Gateway {
     if (!grant) throw new RequestError('NO_GRANT', 'log in with a session grant to play');
     if (grant.grant.expiresAt * 1000 <= this.now()) throw new RequestError('BAD_GRANT', 'the session grant has expired');
     return grant;
+  }
+
+  /**
+   * Throws if the socket's grant does not recover to its wallet: a contract
+   * wallet's, which only the wallet can vouch for. Staked play cannot rest on
+   * that (see `grantRecovers`): one such grant in a transcript and the attestor
+   * signs no result, so a losing seat could bring one in for the refund.
+   *
+   * A login with no grant passes: it cannot move, and gets one before it does.
+   */
+  private async requireStakeable(session: Session): Promise<void> {
+    const signed = session.grant;
+    if (!signed) return;
+    session.recovers ??= this.recoversToWallet(signed);
+    if (await session.recovers) return;
+    throw new RequestError(
+      'GRANT_NOT_STAKEABLE',
+      'staked play needs a wallet that signs with its own key: a contract wallet can only practise',
+    );
+  }
+
+  /** On the pool first; its word alone does not refuse a player, since a worker that dies says no. */
+  private async recoversToWallet(signed: SignedGrant): Promise<boolean> {
+    const verify = this.options.verifyKey?.typed ?? offlineVerifyTyped;
+    const { grant, signature } = signed;
+    return (await verify({ address: grant.wallet, ...grantTypedData(grant), signature })) || grantRecovers(signed);
   }
 
   private requireArchive(): MatchArchive {

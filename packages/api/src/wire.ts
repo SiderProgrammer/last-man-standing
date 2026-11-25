@@ -58,6 +58,8 @@ export type RequestErrorCode =
   | 'BAD_GRANT'
   /** A move from a socket that logged in without a session grant, so nothing could sign it. */
   | 'NO_GRANT'
+  /** Staked play under a grant that does not recover to its wallet: a contract wallet's. It can practise. */
+  | 'GRANT_NOT_STAKEABLE'
   | 'NOT_FOUND'
   /** The caller may not see this match. */
   | 'FORBIDDEN'

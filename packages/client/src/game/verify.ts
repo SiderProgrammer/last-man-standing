@@ -40,6 +40,7 @@ export function verifyMatch(state: PublicMatchState, claimed: MatchResult): Veri
   if (!sameHex(root, claimed.historyRoot)) {
     return { ok: false, root, reason: 'the published rounds do not hash to the announced root' };
   }
+  if (!replay.complete) return { ok: false, root, reason: 'the published rounds are not a whole match' };
   if (!sameAddresses(replay.result.ranking, claimed.ranking)) return { ok: false, root, reason: 'the announced ranking is not what the rounds produce' };
   return { ok: true, root };
 }
@@ -58,7 +59,6 @@ export async function verifyOnChain(options: {
   /** The game server's HTTP origin. */
   server: string;
   own?: AuditOptions['own'];
-  verifyWallet?: AuditOptions['verifyWallet'];
   fetcher?: typeof fetch;
 }): Promise<{ audit: Audit; transcript: Transcript | null }> {
   const { chain } = options;
@@ -74,7 +74,6 @@ export async function verifyOnChain(options: {
   const audit = await auditTranscript(transcript, {
     chain,
     ...(options.own ? { own: options.own } : {}),
-    ...(options.verifyWallet ? { verifyWallet: options.verifyWallet } : {}),
   });
   return { audit, transcript };
 }

@@ -17,6 +17,7 @@ import {
   type StakePreset,
 } from '../ui/views.js';
 import { chainNow } from '../io/chainClock.js';
+import { mayStake } from '../wallet/flows.js';
 
 /**
  * The matchmaking queue: say what stakes and table sizes you will play,
@@ -175,16 +176,17 @@ export function chosenRange(): QueueRange | null {
 }
 
 /** Queues for `range`: the form's, or "Find another match"'s. */
-export function queueFor(range: QueueRange): void {
+export async function queueFor(range: QueueRange): Promise<void> {
   lastQueued = range;
-  net.send({ type: 'queue', ...range });
+  if (await mayStake()) net.send({ type: 'queue', ...range });
+  else renderQueue();
 }
 
 function joinQueue(): void {
   const parsed = formRange();
   if (!parsed.ok) return;
   dom.joinQueue.disabled = true;
-  queueFor(parsed.range);
+  void queueFor(parsed.range);
 }
 
 export function onQueued(message: Extract<ServerMessage, { type: 'queued' }>): void {

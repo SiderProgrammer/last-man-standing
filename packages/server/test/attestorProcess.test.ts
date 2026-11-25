@@ -23,7 +23,9 @@ import {
   type ArchivedMatch,
   type Relayer,
 } from '@lms/server';
+import { moveLogFromHistory, replayMatch } from '@lms/engine';
 import { botSeats, setupWithBots } from './helpers.js';
+import { playSigned } from './players.js';
 
 const CHAIN_ID = 84532;
 const ESCROW = '0x00000000000000000000000000000000000000e5' as const;
@@ -81,7 +83,7 @@ describe('attestor service', () => {
   });
 
   it('refuses a transcript whose seats or seed are not the ones the escrow holds', async () => {
-    const transcript = await playedTranscript('attest-escrow');
+    const { transcript } = await playSigned('attest-escrow', CHAIN_ID);
     const staked = {
       seed: transcript.seed,
       rulesHash: hashRules(transcript.rules),
@@ -104,6 +106,33 @@ describe('attestor service', () => {
       chain: async () => ({ ...staked, seed: `0x${'99'.repeat(32)}` }),
     });
     await expect(reseeded.attest(transcript)).rejects.toThrow(/seed is not the one the oracle delivered/);
+  });
+});
+
+describe('attestor against the escrow', () => {
+  const service = (transcript: Transcript) =>
+    new AttestorService({
+      signer: keySigner(generatePrivateKey()),
+      chainId: CHAIN_ID,
+      escrow: ESCROW,
+      chain: async () => ({
+        seed: transcript.seed,
+        rulesHash: hashRules(transcript.rules),
+        seats: transcript.seats.map((seat) => seat.address),
+      }),
+    });
+
+  it('signs nothing for a staked match that says house bots played it', async () => {
+    const transcript = await playedTranscript('attest-bots');
+    await expect(service(transcript).attest(transcript)).rejects.toThrow(/house bots/);
+  });
+
+  it('signs nothing for a match that was not played to its end', async () => {
+    const { transcript } = await playSigned('attest-cut', CHAIN_ID);
+    const rounds = transcript.rounds.slice(0, 1);
+    const { result } = replayMatch(transcript, moveLogFromHistory(rounds.map((round) => round.record)));
+    const cut = { ...transcript, rounds, result };
+    await expect(service(cut).attest(cut)).rejects.toThrow(/not a whole match/);
   });
 });
 

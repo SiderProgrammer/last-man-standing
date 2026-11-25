@@ -14,7 +14,8 @@ identity.
 - **Privy** is the embedded wallet: one EVM wallet, the same address on Base,
   Arbitrum, Optimism and L1.
 - Injected wallets and Coinbase Smart Wallet also connect, with the normal
-  flow.
+  flow. *Amended 2026-11-25: a contract wallet can only practise, because its
+  ERC-1271 grant cannot be checked again once the match is over.*
 - **Turnkey** is the fallback if Privy cannot sign a 7702 authorisation for a
   delegate that is not its own. If neither can, embedded wallets fall back to
   the normal flow; the contracts do not change either way.

@@ -859,7 +859,7 @@ export function wireMatchControls(): void {
   };
   dom.resultAgain.onclick = () => {
     if (againRange) {
-      queueFor(againRange);
+      void queueFor(againRange);
       leaveMatch();
       return;
     }

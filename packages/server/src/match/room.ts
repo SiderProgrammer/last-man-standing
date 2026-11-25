@@ -125,7 +125,10 @@ export class Room {
   private readonly receivedAt = new Map<number, number>();
   /** Every round's signatures, in round order, alongside `match.history`. */
   private readonly proofLog: SeatProof[][] = [];
-  /** Every grant a seat played under, by session key. A player may reconnect with a new one mid-match. */
+  /**
+   * Every grant a seat played under, by wallet and session key: two wallets may
+   * grant one key, and a player may reconnect with a new one mid-match.
+   */
   private readonly grantLog = new Map<string, SignedGrant>();
 
   constructor(setup: MatchSetup, options: RoomOptions, now: number = Date.now()) {
@@ -434,7 +437,8 @@ export class Room {
   }
 
   private recordGrant(grant: SignedGrant): void {
-    this.grantLog.set(addressKey(grant.grant.sessionKey), grant);
+    const { wallet, sessionKey } = grant.grant;
+    this.grantLog.set(`${addressKey(wallet)}:${addressKey(sessionKey)}`, grant);
   }
 
   private requireSeat(address: `0x${string}`): number {

@@ -2,63 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { keccak256, toHex } from 'viem';
 import {
   Action,
-  DEFAULT_RULES,
-  commitMove,
+  NO_COMMITMENT,
   commitTypedData,
   hashRules,
   hashTranscript,
-  revealTypedData,
-  type SealedMove,
   type Transcript,
 } from '@lms/consensus';
-import { auditTranscript, rankingHash, type ChainRecord, type OwnMove } from '@lms/engine';
-import { Room } from '@lms/server';
+import { auditTranscript, moveLogFromHistory, rankingHash, replayMatch, type ChainRecord } from '@lms/engine';
 import { bytes32 } from './helpers.js';
-import { TestPlayer } from './players.js';
+import { TestPlayer, playSigned as played } from './players.js';
 
 const CHAIN_ID = 84532;
 
-/**
- * Plays a whole match through a real room with every seat a signed player,
- * the way the gateway feeds it, and returns the transcript the room hands
- * the lobby, plus what seat 0's browser remembers.
- */
-async function playSigned(label: string) {
-  const players = Array.from({ length: 4 }, (_, i) => new TestPlayer(`${label}:${i}`, CHAIN_ID));
-  const grants = await Promise.all(players.map((player) => player.grant()));
-  const seats = players.map((player, index) => ({ index, address: player.address, chainId: CHAIN_ID }));
-  let transcript: Transcript | null = null;
-  const room = new Room(
-    { matchId: bytes32(`match:${label}`), seats, seed: bytes32(`seed:${label}`), rules: DEFAULT_RULES },
-    { commitMs: 10_000, revealMs: 5_000, botSeats: [], chainId: CHAIN_ID, onFinished: (t) => (transcript = t) },
-    0,
-  );
-  const own = new Map<number, OwnMove>();
-  let now = 1;
-  while (!room.finished) {
-    const round = room.match.round;
-    const alive = room.match.alive;
-    const moves = new Map<number, SealedMove>();
-    for (const seat of alive) {
-      const target = alive.find((other) => other !== seat) ?? 0;
-      const move = { action: round % 3 === 0 ? Action.Guard : Action.Strike, target, salt: bytes32(`${label}:${round}:${seat}`) };
-      moves.set(seat, move);
-      const place = { matchId: room.matchId, round, seat };
-      const commitment = commitMove(room.matchId, round, seat, move);
-      const signature = await players[seat]!.key.signTypedData(commitTypedData(CHAIN_ID, place, commitment));
-      room.submitCommit(seats[seat]!.address, commitment, now, undefined, undefined, { grant: grants[seat]!, signature });
-      if (seat === 0) own.set(round, { ...move, receipt: { receivedAt: now, signature: '0x' }, revealed: true });
-    }
-    for (const seat of alive) {
-      const place = { matchId: room.matchId, round, seat };
-      const move = moves.get(seat)!;
-      const signature = await players[seat]!.key.signTypedData(revealTypedData(CHAIN_ID, place, move));
-      room.submitReveal(seats[seat]!.address, move, now, undefined, { grant: grants[seat]!, signature });
-    }
-    now += 1_000;
-  }
-  if (!transcript) throw new Error('the match never finished');
-  return { transcript: transcript as Transcript, own: { seat: 0, moves: own } };
+const playSigned = (label: string, players?: TestPlayer[]) => played(label, CHAIN_ID, players);
+
+/** `transcript` with its result, and every record's hash, made to agree with a replay of its rounds. */
+function resettled(transcript: Transcript): Transcript {
+  const replay = replayMatch(transcript, moveLogFromHistory(transcript.rounds.map((round) => round.record)));
+  return {
+    ...transcript,
+    rounds: transcript.rounds.map((round, i) => ({ ...round, record: { ...round.record, hash: replay.rounds[i]!.hash } })),
+    result: replay.result,
+  };
 }
 
 function chainOf(transcript: Transcript): ChainRecord {
@@ -141,6 +106,66 @@ describe('transcript audit', () => {
     expect(audit.problems[0]).toMatch(/is not signed by/);
     // And so every move under it is unsigned as far as the audit goes.
     expect(audit.problems.some((problem) => problem.includes("seat 3's commitment is not signed"))).toBe(true);
+  });
+
+  it('catches a match cut off before it ended', async () => {
+    const { transcript } = await playSigned('cut');
+    const cut = resettled({ ...clone(transcript), rounds: clone(transcript).rounds.slice(0, 1) });
+    const audit = await auditTranscript(cut, { chain: chainOf(cut) });
+    expect(audit.problems).toEqual(['the rounds are not a whole match: it did not end with the last of them']);
+  });
+
+  it('catches rounds that follow the end of the match', async () => {
+    const { transcript } = await playSigned('longer');
+    const longer = clone(transcript);
+    longer.rounds.push(clone(transcript).rounds.at(-1)!);
+    const audit = await auditTranscript(resettled(longer));
+    expect(audit.problems).toContain('the rounds are not a whole match: it did not end with the last of them');
+  });
+
+  it('catches a round left out, the next one standing in for it', async () => {
+    const { transcript } = await playSigned('dropped');
+    const dropped = clone(transcript);
+    dropped.rounds.splice(1, 1);
+    const audit = await auditTranscript(resettled(dropped));
+    expect(audit.problems).toContain('round 2 is not recorded as its moves play out');
+  });
+
+  it('catches a seat named twice, which would re-roll the round under its signed move', async () => {
+    const { transcript } = await playSigned('twice');
+    const twice = clone(transcript);
+    const { moves } = twice.rounds[0]!.record;
+    moves.push({ ...moves[0]!, commitment: NO_COMMITMENT });
+    const audit = await auditTranscript(resettled(twice));
+    expect(audit.problems).toContain('round 1 is not recorded as its moves play out');
+  });
+
+  it('catches seats passed off as house bots in a staked match, so that nothing need be signed', async () => {
+    const { transcript } = await playSigned('bots');
+    const forged: Transcript = {
+      ...clone(transcript),
+      botSeats: [0, 1, 2, 3],
+      grants: [],
+      rounds: transcript.rounds.map((round) => ({ ...round, proofs: [] })),
+    };
+    const audit = await auditTranscript(forged, { chain: chainOf(forged) });
+    expect(audit.problems).toEqual(['the transcript names house bots, which a staked match never seats']);
+  });
+
+  it('passes two wallets that granted the same key, and still tells their seats apart', async () => {
+    const [a, b, c, d] = Array.from({ length: 4 }, (_, i) => new TestPlayer(`shared:${i}`, CHAIN_ID)) as [TestPlayer, TestPlayer, TestPlayer, TestPlayer];
+    const twin = Object.assign(new TestPlayer('shared:1', CHAIN_ID), { key: a.key });
+    const { transcript } = await playSigned('shared', [a, twin, c, d]);
+    expect(b.address).toBe(twin.address);
+    expect(transcript.grants).toHaveLength(4);
+    expect((await auditTranscript(transcript, { chain: chainOf(transcript) })).problems).toEqual([]);
+
+    // The shared key speaks only for the wallets that granted it.
+    const without = clone(transcript);
+    without.grants = without.grants.filter((signed) => signed.grant.wallet !== a.address);
+    const audit = await auditTranscript(without);
+    expect(audit.problems).toContain("round 1: seat 0's commitment is not signed by its player");
+    expect(audit.problems.some((problem) => problem.includes('seat 1'))).toBe(false);
   });
 
   it('catches a receipted commitment that was left out, and a counted-out reveal', async () => {

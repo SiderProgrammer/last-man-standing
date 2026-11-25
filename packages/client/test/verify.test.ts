@@ -1,18 +1,71 @@
 import { describe, expect, it } from 'vitest';
+import { keccak256, toHex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import {
+  NO_COMMITMENT,
   commitMove,
+  commitTypedData,
   DEFAULT_RULES,
+  grantTypedData,
   TRANSCRIPT_VERSION,
   hashRules,
   hashTranscript,
+  revealTypedData,
   type Move,
   type PublicMatchState,
   type Transcript,
 } from '@lms/consensus';
-import { Match, rankingHash, type ChainRecord } from '@lms/engine';
+import { Match, moveLogFromHistory, rankingHash, replayMatch, type ChainRecord } from '@lms/engine';
 import { Prng, readerStrategy } from '@lms/engine/bots';
 import { evidenceBundle, evidenceHash, verifyMatch, verifyOnChain } from '../src/game/verify.js';
 import { bytes32 } from './helpers.js';
+
+const CHAIN_ID = 11155111;
+
+/** The wallet at a seat, and the session key it grants. */
+function player(label: string, seat: number) {
+  const account = (kind: string) => privateKeyToAccount(keccak256(toHex(`${kind}:${label}:${seat}`)));
+  return { wallet: account('wallet'), key: account('key') };
+}
+
+/** `transcript` with every seat's grant, commits and reveals signed, as a staked match has them. */
+async function signed(label: string, transcript: Transcript): Promise<Transcript> {
+  const players = transcript.seats.map((seat) => player(label, seat.index));
+  const grants = await Promise.all(
+    players.map(async ({ wallet, key }) => {
+      const grant = {
+        wallet: wallet.address,
+        sessionKey: key.address,
+        domain: 'play.test',
+        uri: 'https://play.test',
+        chainId: CHAIN_ID,
+        issuedAt: 0,
+        expiresAt: 3_600,
+        nonce: bytes32('grant'),
+      };
+      return { grant, signature: await wallet.signTypedData(grantTypedData(grant)) };
+    }),
+  );
+  const rounds = await Promise.all(
+    transcript.rounds.map(async ({ record }) => ({
+      record,
+      proofs: await Promise.all(
+        record.moves.map(async (move) => {
+          const place = { matchId: transcript.matchId, round: record.round, seat: move.index };
+          const { key } = players[move.index]!;
+          return {
+            index: move.index,
+            commitSignature:
+              move.commitment === NO_COMMITMENT ? null : await key.signTypedData(commitTypedData(CHAIN_ID, place, move.commitment)),
+            revealSignature: move.revealed ? await key.signTypedData(revealTypedData(CHAIN_ID, place, move)) : null,
+            receivedAt: 1,
+          };
+        }),
+      ),
+    })),
+  );
+  return { ...transcript, botSeats: [], grants, rounds };
+}
 
 /** Plays a full match and returns what the server would have broadcast. */
 function finishedMatch(label: string) {
@@ -20,8 +73,8 @@ function finishedMatch(label: string) {
     matchId: bytes32(`match:${label}`),
     seats: Array.from({ length: 5 }, (_, index) => ({
       index,
-      address: `0x${(index + 1).toString(16).padStart(40, '0')}` as `0x${string}`,
-      chainId: 11155111,
+      address: player(label, index).wallet.address,
+      chainId: CHAIN_ID,
     })),
     seed: bytes32(`seed:${label}`),
     rules: DEFAULT_RULES,
@@ -40,11 +93,11 @@ function finishedMatch(label: string) {
     for (const [seat, move] of moves) if (!(seat === 4 && round > 1)) match.submitReveal(seat, move);
     match.resolve();
   }
-  // Every seat a house bot, so nothing in the transcript needs a signature.
+  // Every seat a house bot, so nothing in the transcript needs a signature until `signed` adds them.
   const transcript: Transcript = {
     version: TRANSCRIPT_VERSION,
     matchId: match.matchId,
-    chainId: 11155111,
+    chainId: CHAIN_ID,
     seed: match.seed,
     rules: match.rules,
     seats: [...match.seats],
@@ -98,9 +151,22 @@ describe('in-browser verification', () => {
   });
 });
 
+describe('a result announced before the match ended', () => {
+  it('is rejected, though its rounds replay to it', () => {
+    const { state, result } = finishedMatch('cut');
+    const cut: PublicMatchState = { ...state, history: state.history.slice(0, 1) };
+    const replay = replayMatch(
+      { matchId: cut.matchId, seats: cut.players, seed: cut.seed, rules: cut.rules },
+      moveLogFromHistory(cut.history),
+    );
+    expect(replay.result.historyRoot).not.toBe(result.historyRoot);
+    expect(verifyMatch(cut, replay.result)).toMatchObject({ ok: false, reason: expect.stringMatching(/whole match/) });
+  });
+});
+
 describe('verification from chain', () => {
   it('fetches the transcript the escrow names and checks it against the escrow', async () => {
-    const { transcript } = finishedMatch('chain');
+    const transcript = await signed('chain', finishedMatch('chain').transcript);
     const requested: string[] = [];
     const fetcher = (async (url: string) => {
       requested.push(url);

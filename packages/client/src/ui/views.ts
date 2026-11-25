@@ -921,13 +921,13 @@ export function spokeQuoteLabel(stakeWei: bigint, total: bigint): string {
 /**
  * Why a join could not be priced or sent, in words. The interesting cases
  * are a contract wallet, which the router will not seat as itself because
- * its address may be someone else's on the hub, and an amount Across will
- * not move.
+ * its address may be someone else's on the hub (nor could it play for stakes
+ * there: see `grantRecovers`), and an amount Across will not move.
  */
 export function spokeQuoteError(message: string, spokeChainId: number, stage: 'price' | 'send' = 'price'): string {
   const spoke = chainInfo(spokeChainId).name;
   if (/HubRecipientRequired/.test(message)) {
-    return `A contract wallet cannot join from ${spoke} as itself. Join from the hub instead.`;
+    return 'A contract wallet cannot play for stakes. Connect a wallet that signs with its own key.';
   }
   if (/amount this small/.test(message)) return `This stake is below what Across will bridge from ${spoke}.`;
   return `Could not ${stage} the join from ${spoke}: ${message.split('\n')[0]}`;

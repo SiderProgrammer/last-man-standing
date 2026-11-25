@@ -167,7 +167,6 @@ async function checkChain(wallet: Wallet, escrow: `0x${string}`, matchId: `0x${s
     chain,
     server: serverOrigin,
     ...(own ? { own } : {}),
-    verifyWallet: (args) => wallet.verifyTyped(args),
   });
   if (shownFor !== matchId) return;
 

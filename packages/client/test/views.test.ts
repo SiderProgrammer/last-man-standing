@@ -149,7 +149,7 @@ describe('spoke joins', () => {
   it('explains a contract wallet, a stake too small to bridge, and anything else', () => {
     const raw = 'The contract function "join" reverted.\n\nError: HubRecipientRequired(address caller)';
     expect(spokeQuoteError(raw, BASE_SEPOLIA)).toBe(
-      'A contract wallet cannot join from Base Sepolia as itself. Join from the hub instead.',
+      'A contract wallet cannot play for stakes. Connect a wallet that signs with its own key.',
     );
     expect(spokeQuoteError('Across will not bridge an amount this small.', BASE_SEPOLIA)).toBe(
       'This stake is below what Across will bridge from Base Sepolia.',

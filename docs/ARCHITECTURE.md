@@ -246,8 +246,10 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
   `properties.test.ts` replays 45 matches across three bot strategies to hold the two
   derivations to the same answer.
 - **`match/audit.ts`** is `auditTranscript`: checks an archived transcript against
-  what the escrow stored (hash, seed, rules, root, ranking), every signature and grant
-  in it, and the auditing player's own moves and receipts. The attestor runs it before
+  what the escrow stored (hash, seed, rules, root, ranking; no house bots), that its
+  rounds are a whole match, each recorded exactly as its moves play out, every signature
+  and grant in it, and the auditing player's own moves and receipts. It is offline
+  throughout: no answer in it can change between the match and the audit. The attestor runs it before
   it signs, and every player's browser on every proposed result.
 - **`bots/strategy.ts`** (`@lms/engine/bots`) holds the bots: a seeded keccak PRNG,
   `always`, `randomStrategy`, `readerStrategy`, and the house bot `smartStrategy` with its
@@ -331,7 +333,11 @@ the grant and its key for a day. On every connect the server issues a random non
 the *key* signs `Last Man Standing login\nnonce:<nonce>`. The server checks the grant
 (its chain, its expiry, at most a week, its origin against `ALLOWED_ORIGINS`, and the
 wallet's signature, through ERC-1271 for a contract wallet) and that the key signed the
-nonce. From then on every commit and reveal must be signed by that key as EIP-712
+nonce. A grant that does not recover to its wallet offline, which is every contract
+wallet's, plays practice only: the gateway refuses its moves in a staked room
+(`GRANT_NOT_STAKEABLE`), and its wallet a place in the queue. Were one let into a staked
+transcript, its wallet could stop vouching for it once the match was lost, and the
+attestor would sign no result. From then on every commit and reveal must be signed by that key as EIP-712
 `Commit` / `Reveal` typed data naming the match, round and seat, and each accepted commit
 is answered with a signed `CommitReceipt`. The wallet *is* the identity, and it is the
 same address that staked on-chain. A login with a plain wallet signature and no grant
@@ -652,7 +658,7 @@ Logins and moves do not need the delegation for that: the session grant above ma
 every reconnect prompt-free for every kind of wallet. The delegation is for one-click
 joins and withdrawals, relayed and paid for by the server, and only for wallets that can
 sign an authorization for our delegate: the dev burner and embedded wallets. Injected
-wallets and Coinbase Smart Wallet keep the normal flow. See the wallet matrix in the README.
+wallets keep the normal flow; a contract wallet, such as Coinbase Smart Wallet, can only practise. See the wallet matrix in the README.
 
 **Why 7702 rather than a smart account.** In this protocol the address *is* the identity:
 `GameEscrow` keys seats, rankings and payouts by the address that staked. Migrating players
@@ -677,7 +683,8 @@ account, never from whoever submits.
 **Logins are not the delegate's business.** `isValidSignature` answers for the account's
 own key only. A session key that spoke for the account through ERC-1271 would be accepted
 by anything that checks it — a permit, an order, a login — with no cap at all. The server
-checks the off-chain session grant instead, and uses ERC-1271 only for contract wallets.
+checks the off-chain session grant instead, and uses ERC-1271 only for contract wallets,
+which can practise but not play for stakes.
 
 **The relayer guards its own gas, not the player.** `executeWithSession` is permissionless
 to submit, and `SessionRelay` submits what players' keys signed from a key of its own

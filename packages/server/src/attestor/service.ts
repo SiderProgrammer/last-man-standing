@@ -56,10 +56,11 @@ export interface AttestorServiceOptions {
  * The attestor: replays a transcript through the engine, as anyone auditing
  * it later would, and signs only a result that replay produces.
  *
- * It checks every round hash, the root, the ranking, every reveal against
- * its commitment, and every commit and reveal against a key its seat's
- * wallet granted; with `chain`, also the seed, the rules and the seats
- * against the escrow. So a bug or a compromise in the game server cannot get
+ * It checks that the match was played to its end, every round record, the
+ * root, the ranking, every reveal against its commitment, and every commit
+ * and reveal against a key its seat's wallet granted; with `chain`, also the
+ * seed, the rules and the seats against the escrow, and that no seat is a
+ * house bot's. So a bug or a compromise in the game server cannot get
  * a result signed that its own transcript does not support.
  */
 export class AttestorService implements Attestor {

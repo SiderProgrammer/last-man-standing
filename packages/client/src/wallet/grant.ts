@@ -3,6 +3,7 @@ import { toHex, type Address, type Hex } from 'viem';
 import {
   addressKey,
   commitTypedData,
+  grantRecovers,
   revealTypedData,
   sameAddress,
   sessionCallTypedData,
@@ -60,8 +61,15 @@ export class GrantedKey {
     private readonly account: PrivateKeyAccount,
   ) {}
 
+  private recovered: Promise<boolean> | null = null;
+
   get grant(): SessionGrant {
     return this.signed.grant;
+  }
+
+  /** Whether staked play takes this grant: see `grantRecovers`. A contract wallet's it does not. */
+  recovers(): Promise<boolean> {
+    return (this.recovered ??= grantRecovers(this.signed));
   }
 
   /** The key's own address, which the wallet grants on-chain for one-click play. */

@@ -127,7 +127,7 @@ const MESSAGES: Record<string, (args: readonly unknown[]) => string> = {
   AlreadyMinted: () => 'This wallet has already minted its avatar.',
   SoldOut: () => 'Every avatar has been minted.',
   // Across
-  HubRecipientRequired: () => 'A contract wallet cannot join from this chain as itself. Join from the hub instead.',
+  HubRecipientRequired: () => 'A contract wallet cannot play for stakes. Connect a wallet that signs with its own key.',
 };
 
 function say(name: string, args: readonly unknown[]): string {

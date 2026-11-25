@@ -1,4 +1,4 @@
-import type { TypedDataDomain } from 'viem';
+import { verifyTypedData, type TypedDataDomain } from 'viem';
 import { Action, type ActionValue } from '../game/types.js';
 import { EIP712_DOMAIN_NAME, EIP712_DOMAIN_VERSION } from './result.js';
 
@@ -98,6 +98,20 @@ export function grantTypedData(grant: SessionGrant) {
       nonce: grant.nonce,
     },
   };
+}
+
+/**
+ * Whether a grant's signature recovers to its wallet, with no chain to ask.
+ *
+ * Staked play accepts no other grant. A contract wallet's (ERC-1271) holds
+ * only for as long as the wallet says so, and a wallet that says yes while a
+ * match is played and no when its transcript is audited would leave the match
+ * impossible to settle: every stake refunded, its owner's losses included.
+ */
+export function grantRecovers(signed: SignedGrant): Promise<boolean> {
+  return verifyTypedData({ address: signed.grant.wallet, ...grantTypedData(signed.grant), signature: signed.signature }).catch(
+    () => false,
+  );
 }
 
 /**

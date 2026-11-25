@@ -188,8 +188,8 @@ Around that core:
   (SIWE-shaped: origin, chain, expiry) naming a key the browser keeps for a
   day. The key signs the login nonce and every commit and reveal, so
   reconnects need no prompt and every move is provably the player's. The
-  grant alone cannot stake or spend. Contract wallets' grants are checked with
-  ERC-1271. The key is kept in IndexedDB, sealed under a non-extractable
+  grant alone cannot stake or spend. A contract wallet's grant is checked with
+  ERC-1271 and good for practice only; staked play takes none. The key is kept in IndexedDB, sealed under a non-extractable
   WebCrypto key, and the page ships a strict Content-Security-Policy.
 - **One-click play** — a burner or embedded wallet delegates to
   `SessionKeyDelegate` (EIP-7702) once and grants its session key a capped
@@ -228,7 +228,14 @@ and collecting winnings can be one click.
 | Burner (`VITE_DEV_KEY`, dev builds only) | Session key, no prompt | One click, relayed | One click, relayed | Its own transaction on the spoke |
 | Privy embedded wallet (planned, deferred) | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
 | Injected (MetaMask, Rabby) | Session key, no prompt | Its own transaction | Its own transaction | Its own transaction on the spoke |
-| Coinbase Smart Wallet | Session key; the grant is checked through ERC-1271 | Its own transaction | Its own transaction | Its own transaction on the spoke |
+| Coinbase Smart Wallet | Session key, practice only; the grant is checked through ERC-1271 | Not offered | Its own transaction | Not offered |
+
+A contract wallet can only practise. Its grant holds for only as long as the
+wallet itself says so, and a wallet that changed its answer after a match would
+leave the transcript impossible to check, and so the match impossible to settle.
+The escrow does not know this, and takes a stake from any address: the client
+and the queue refuse a contract wallet first, but a stake it sends to the escrow
+directly buys a seat it cannot play.
 
 One-click play needs a wallet that can sign an EIP-7702 authorization for *our*
 delegate. An injected wallet will not be asked for one, and a smart wallet

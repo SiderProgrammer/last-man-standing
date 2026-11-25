@@ -1,19 +1,19 @@
-import { encodeAbiParameters, keccak256, recoverTypedDataAddress, verifyTypedData, type TypedDataDefinition } from 'viem';
+import { encodeAbiParameters, keccak256, recoverTypedDataAddress, type TypedDataDefinition } from 'viem';
 import {
   Action,
   NO_COMMITMENT,
   addressKey,
   sameAddresses,
   sameHex,
+  canonicalJson,
   commitMove,
   commitTypedData,
-  grantTypedData,
+  grantRecovers,
   hashRules,
   hashTranscript,
   revealTypedData,
   type ActionValue,
   type SealedMove,
-  type SessionGrant,
   type Transcript,
 } from '@lms/consensus';
 import { moveLogFromHistory, replayMatch } from './replay.js';
@@ -49,11 +49,6 @@ export interface AuditOptions {
   chain?: ChainRecord;
   /** The auditor's own seat and the moves it remembers sealing, by round. */
   own?: { seat: number; moves: ReadonlyMap<number, OwnMove> };
-  /**
-   * Checks a wallet's signature over a grant. Defaults to offline recovery,
-   * which accepts EOAs only; pass an RPC-backed one to accept contract wallets.
-   */
-  verifyWallet?: (args: TypedDataDefinition & { address: `0x${string}`; signature: `0x${string}` }) => Promise<boolean>;
 }
 
 export interface Audit {
@@ -71,14 +66,20 @@ export interface Audit {
  *
  * - the transcript hashes to the hash the attestors signed, and names the
  *   seed, rules and seats the escrow holds;
- * - replaying its moves through the engine gives every round hash, the root
- *   and the ranking that were signed;
+ * - replaying its moves through the engine gives every round record, the root
+ *   and the ranking that were signed, and the rules end the match with its
+ *   last round: none is missing, reordered or added;
+ * - a staked match has no house bots, whose moves nobody signs;
  * - every reveal opens its commitment;
  * - every player's commit and reveal is signed by a key that player's wallet
  *   granted, for that match, round and seat;
  * - and, for the auditor's own seat, the record matches what this browser
  *   sealed: a commitment it holds a receipt for is there, and a reveal it
  *   sent was counted.
+ *
+ * Everything is checked offline. No signature is put to the wallet it is from,
+ * which could answer one way while the match is played and another when it is
+ * audited; `grantRecovers` says which grants staked play accepts because of it.
  *
  * A failure is not proof of fraud on its own (a browser can lose its
  * storage), but each is something a player can dispute and the guardian can
@@ -103,6 +104,7 @@ export async function auditTranscript(transcript: Transcript, options: AuditOpti
     if (!sameHex(hashRules(transcript.rules), chain.rulesHash)) {
       problems.push('the rules are not the ones the lobby was opened under');
     }
+    if (transcript.botSeats.length > 0) problems.push('the transcript names house bots, which a staked match never seats');
     if (!sameAddresses(seats.map((seat) => seat.address), chain.seats)) problems.push('the seats are not the ones that staked');
     if (!sameHex(result.historyRoot, chain.historyRoot) || result.rounds !== chain.rounds) {
       problems.push('the result is not the one proposed on-chain');
@@ -116,12 +118,20 @@ export async function auditTranscript(transcript: Transcript, options: AuditOpti
     problems.push('the rounds do not replay to the signed history root');
   }
   if (!sameAddresses(replay.result.ranking, result.ranking)) problems.push('the ranking is not what the rounds produce');
+  if (!replay.complete) problems.push('the rounds are not a whole match: it did not end with the last of them');
+  // The whole record, not its hash alone: the hash covers only what the moves
+  // produce, and the signatures below are checked against what is published.
+  // A record numbered for another round, or naming a seat twice, must not pass.
   replay.rounds.forEach((round, i) => {
-    const published = transcript.rounds[i]?.record.hash ?? '0x';
-    if (!sameHex(round.hash, published)) problems.push(`round ${round.round} does not hash to its published hash`);
+    const published = transcript.rounds[i]?.record;
+    if (!published || !sameHex(round.hash, published.hash)) {
+      problems.push(`round ${round.round} does not hash to its published hash`);
+    } else if (canonicalJson(round) !== canonicalJson(published)) {
+      problems.push(`round ${round.round} is not recorded as its moves play out`);
+    }
   });
 
-  problems.push(...(await checkSignatures(transcript, options)));
+  problems.push(...(await checkSignatures(transcript)));
   if (options.own) problems.push(...checkOwnMoves(transcript, options.own));
 
   return { ok: problems.length === 0, problems, root };
@@ -134,15 +144,18 @@ export function rankingHash(ranking: readonly `0x${string}`[]): `0x${string}` {
   return keccak256(encodeAbiParameters(RANKING_ABI, [[...ranking]]));
 }
 
+const grantKey = (wallet: `0x${string}`, sessionKey: `0x${string}`): string =>
+  `${addressKey(wallet)}:${addressKey(sessionKey)}`;
+
 /** Every grant, commit and reveal signature, against the seats that made them. */
-async function checkSignatures(transcript: Transcript, options: AuditOptions): Promise<string[]> {
+async function checkSignatures(transcript: Transcript): Promise<string[]> {
   const problems: string[] = [];
   const { matchId, chainId } = transcript;
   const bots = new Set(transcript.botSeats);
-  const verifyWallet = options.verifyWallet ?? ((args) => verifyTypedData(args).catch(() => false));
 
-  // Session key -> the grant that names it, once its wallet's signature checks out.
-  const grants = new Map<string, SessionGrant>();
+  // Which wallets granted which keys, once each wallet's signature checks out.
+  // By both: two wallets may grant one key, and neither's grant replaces the other's.
+  const granted = new Set<string>();
   const seated = new Set(transcript.seats.map((seat) => addressKey(seat.address)));
   for (const signed of transcript.grants) {
     const { grant } = signed;
@@ -151,12 +164,11 @@ async function checkSignatures(transcript: Transcript, options: AuditOptions): P
       continue;
     }
     if (grant.chainId !== chainId) problems.push(`the grant to ${grant.sessionKey} is for another chain`);
-    const valid = await verifyWallet({ address: grant.wallet, ...grantTypedData(grant), signature: signed.signature });
-    if (!valid) {
+    if (!(await grantRecovers(signed))) {
       problems.push(`the grant to ${grant.sessionKey} is not signed by ${grant.wallet}`);
       continue;
     }
-    grants.set(addressKey(grant.sessionKey), grant);
+    granted.add(grantKey(grant.wallet, grant.sessionKey));
   }
 
   /** Who signed `data`, if it was a key the seat's own wallet granted. */
@@ -167,9 +179,8 @@ async function checkSignatures(transcript: Transcript, options: AuditOptions): P
     } catch {
       return false;
     }
-    const grant = grants.get(addressKey(signer));
     const wallet = transcript.seats[seat]?.address;
-    return grant !== undefined && wallet !== undefined && addressKey(grant.wallet) === addressKey(wallet);
+    return wallet !== undefined && granted.has(grantKey(wallet, signer));
   };
 
   for (const { record, proofs } of transcript.rounds) {

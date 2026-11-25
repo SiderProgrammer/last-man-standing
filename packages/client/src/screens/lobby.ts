@@ -46,7 +46,7 @@ import {
 import { renderWinnings } from '../wallet/payouts.js';
 import type { SpokeRoute } from '../wallet/wallet.js';
 import { protocolTerms } from '../wallet/terms.js';
-import { connectWallet, signInToPractise } from '../wallet/flows.js';
+import { connectWallet, mayStake, signInToPractise } from '../wallet/flows.js';
 import { confirmFirstStake } from './help.js';
 import { formatDuration } from '../ui/staking.js';
 import { RelayError, canRelay, relayJoin, relayOpenLobby } from '../wallet/oneClick.js';
@@ -637,7 +637,7 @@ async function createLobby(): Promise<void> {
   if (wallet.isGuest) return void connectWallet();
   const stake = parseStakeInput(dom.stake.value, app.terms);
   if (!stake.ok) return toast(stake.error, 'error');
-  if (!(await confirmFirstStake())) return;
+  if (!(await mayStake()) || !(await confirmFirstStake())) return;
   const seats = Number(dom.seats.value);
   if (spoke) return openFromSpoke(stake.wei, seats, spoke);
   try {
@@ -869,7 +869,7 @@ function idleStakeButton(button: HTMLButtonElement, lobby: LobbyInfo): void {
   }
   const choices = paymentChoices();
   button.onclick = async () => {
-    if (!(await confirmFirstStake())) return;
+    if (!(await mayStake()) || !(await confirmFirstStake())) return;
     if (choices.length > 1) openPayChoice(button, lobby, choices);
     else void joinLobby(lobby);
   };
@@ -958,7 +958,7 @@ function idleSpokeButton(button: HTMLButtonElement, lobby: LobbyInfo, spoke: Spo
   if (app.escrowPaused) return disable(button, 'Paused', PAUSED_TEXT);
   button.title = `Staked on ${chainInfo(spoke.chainId).name}, carried to ${chainInfo(app.chainId).name} for the match.`;
   button.onclick = async () => {
-    if (await confirmFirstStake()) void quoteSpokeJoin(button, lobby, spoke);
+    if ((await mayStake()) && (await confirmFirstStake())) void quoteSpokeJoin(button, lobby, spoke);
   };
 }
 
