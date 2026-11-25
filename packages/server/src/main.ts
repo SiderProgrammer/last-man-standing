@@ -565,6 +565,8 @@ function acceptSockets(http: Server, gateway: Gateway, heartbeat: Heartbeat): We
     // event, and one with no listener is thrown, taking the whole process
     // down on one malformed frame. With a listener, `ws` closes that socket.
     socket.on('error', () => undefined);
+    // TEMPORARY: shows what Render's proxies send, to set TRUSTED_PROXY_HOPS. Remove once it is set.
+    console.log('[peer]', request.socket.remoteAddress, JSON.stringify(request.headers['x-forwarded-for'] ?? null));
     const admitted = gateway.accept(
       {
         get readyState() {
