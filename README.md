@@ -20,7 +20,8 @@ Choices are committed as hashes and opened together, so nobody can react to
 anybody else. After the reveal the entire round is published, which is the point
 of the game: within a few rounds the history tells you who always swings, who
 guards whenever it can, who is charged, and who keeps coming after you. The client derives those tells from the
-same public history everyone else can see.
+same public history everyone else can see, and a wallet that has played staked
+matches before brings its [record](docs/FEATURES.md#play-styles) to the table.
 
 ## How a staked match runs
 
@@ -97,8 +98,8 @@ Practice bots are predictable on purpose: their moves derive from the match
 seed, which the client receives, so a player who reads the code can call them.
 Practice has no stakes, and staked matches never seat house bots.
 
-Out of scope: a compromised wallet, and denial of service beyond per-socket rate
-limits on one instance.
+Out of scope: a compromised wallet, and denial of service beyond one instance's
+[gateway limits](docs/FEATURES.md#gateway-limits).
 
 ## Trust model
 
@@ -548,6 +549,14 @@ clients over a simulated network that drops, stalls and resets connections
 ([docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md)), and a load generator opens
 a thousand or more real WebSocket players against a running server
 ([docs/LOAD_TESTING.md](docs/LOAD_TESTING.md)).
+
+Beyond the Foundry suites, the contracts have a stateful fuzz suite for Medusa and
+Echidna (`contracts/test/fizz`; [report](contracts/fizz_data/report.md)), run so far
+only in short Medusa campaigns, and two AI-assisted reviews: a
+[pre-audit report](contracts/x-ray/x-ray.md) and a
+[security review](.solidity-auditor/runs/20261103-180302/full-report.md) that says
+what became of each finding. None of this is an independent audit; the limits of each
+are in [docs/FEATURES.md](docs/FEATURES.md#stateful-fuzzing).
 
 ## Match analyst
 

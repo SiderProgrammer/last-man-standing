@@ -56,6 +56,11 @@ so ids from two deployments or two chains never collide.
 - **Terms are snapshotted at creation** — stake, fee, seat range, deadlines,
   payout schedule, rules hash. A governance change cannot alter the deal a
   player already staked into.
+- **The oracle and the attestor set are fixed at lock.** Every change to the
+  attestors makes a new numbered set in `ProtocolConfig`, and `lockMatch` records
+  the set and the oracle the match uses. From then on only that oracle can
+  deliver the seed and only that set can sign the result or an abort, so
+  replacing either never affects a match already locked.
 - **Locking and cancelling are permissionless.** Players never depend on the
   operator to recover a stake; the keeper key is a convenience, not a role.
 - **The seed is requested only after the seat list is final**, so nobody can
@@ -303,6 +308,33 @@ Safe --> MultisigPhase --proposes, cancels---------+  the delay has passed)    B
 - **`Ownable2Step`**, so ownership is never handed to an address nobody
   controls.
 
+### The governance screen
+
+`packages/client/src/ui/proposalBuilder.ts`, `ui/governance.ts` ·
+`packages/contracts/src/proposals.ts`
+
+Proposals are made and voted on in the client, and nobody has to write calldata
+to make one or read calldata to vote on one.
+
+- **Ten templates** take values as a person thinks of them (a percentage, days, an
+  address): the stakers' share, the protocol fee, the treasury, the guardian,
+  the unstake cooldown, the voting period, the proposal threshold, ending a
+  pause, removing the Safe's veto and the bridge receiver. Each checks its
+  values and encodes the call; a custom call is the escape hatch.
+- **One decoder for both sides.** The form previews a draft with the decoder the
+  proposal cards use, so the proposer sees what voters will: the call with its
+  arguments in full and, where the screen knows it, a plain sentence ("Set the
+  protocol fee to 2.5%").
+- **Warnings** on a call the screen does not recognise, one that sends ETH, a
+  repeated call, switching the guardian off, and a zero proposal threshold.
+- **A fee change resends every parameter.** `setParams` writes them all, so the
+  card says what differs from the config now, and the template warns that it
+  would undo another parameter change that executes first.
+- **The server only lists proposals.** It indexes `ProposalCreated`, since the
+  governor cannot enumerate its own; state, tallies and voting power are read
+  from the chain through the player's wallet. A proposal's text is untrusted and
+  is never drawn as markup.
+
 ---
 
 ## Token, staking and play-mining
@@ -474,6 +506,81 @@ An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
 
 ---
 
+## Play styles
+
+`packages/server/src/lobby/styles.ts` · `packages/api/src/style.ts` ·
+`packages/client/src/game/style.ts` · **Unit-tested**
+
+The reads panel counts what each seat did in this match. Beside that, a wallet
+that has played before arrives with a record: matches and wins, how its moves
+split between Strike, Guard and Charge, and how often it committed and never
+revealed. The room sends the table's records as a `dossier` message, and the
+match analyst is given them too.
+
+- **Nothing hidden is in it.** It is tallied from published rounds, which any
+  player could have written down.
+- **Staked matches only.** A record against house bots says little about how
+  someone plays people.
+- **Counted once the server has archived a match and tried to settle it**, so one
+  that is vetoed later still counts.
+- **Kept by wallet**, so a new wallet has no record, and outside consensus: no
+  hash covers it and no result depends on it. A write that fails costs the
+  record, never the match.
+
+---
+
+## Gateway limits
+
+`packages/server/src/gateway/limits.ts`, `gateway.ts` · **Unit-tested**
+
+The socket is open to anyone, so the gateway bounds what one client can cost
+the server and everyone else on it.
+
+| Limit | Default | Why |
+| --- | --- | --- |
+| Open sockets, in all / per IP | 10,000 / 20 | Per IP is enough for a household behind one NAT |
+| New sockets per IP | 2 a second, burst 10 | Reconnect storms |
+| Logins per IP | 2 a second, burst 10 | A login can cost the server an ERC-1271 RPC call |
+| Time to log in, failed logins | 2 minutes, 5 | Closes the socket, and its nonce with it |
+| Messages per socket | 10 a second, burst 30 | |
+| Commits and reveals per socket | 4 a second, burst 12 | **A bucket of their own**, so other messages can never use up a player's reveal |
+| Rejected messages per socket | burst 20, one back every 10 s | Past it the socket is closed; one bad frame a minute never adds up |
+| Practice rooms | 200 in all, 6 per IP, 1 per wallet | Wallets are free, so a per-wallet limit alone stops nobody |
+| Unread bytes queued for a socket | 1 MiB | A client that stops reading is closed, not buffered for |
+| Frame size | 8 KiB, compression off | Refused before it is buffered; no decompression bombs |
+
+- **Limits fail closed.** The table of per-IP buckets has a ceiling; past it an
+  address it does not know is refused, and the ones it is tracking are unaffected.
+- **The clock is passed in**, so the limits are tested on virtual time.
+- **`TRUSTED_PROXY_HOPS` decides whose IP it is.** At 0, `X-Forwarded-For` is
+  ignored, or any client could pick its own address.
+- **`GATEWAY_LIMITS`** overrides any limit in `limits.ts`. All of them live in one
+  process, as the rooms do.
+
+---
+
+## Sending transactions
+
+`packages/server/src/chain/txSender.ts` · **Unit-tested**
+
+A lobby has to be locked and a result settled before a deadline, and a
+transaction that sits in the mempool can cost a match its result. Each key the
+server sends from has one `TxSender`, and nothing else sends from it:
+
+- **One nonce sequence**, handed out in order; after a send the node refuses, the
+  next nonce is read from the node again, so none is skipped.
+- **One transaction in flight per action** (`settle:<id>`), so the next poll does
+  not send a second while the first is pending.
+- **Simulated first**: a call that would revert costs a read, is never sent, and
+  is reported by the contract's own error.
+- **Replaced when stuck.** With no receipt after 30 s it is sent again at the same
+  nonce for 125% of the fees, or the network's if higher, up to five times.
+  Every version's receipt is watched, since any of them may be the one that lands.
+- **The chain is an interface**, so the stuck-transaction logic is tested against
+  a fake mempool.
+
+---
+
 ## No hand-written assembly in the value path
 
 `contracts/src/libraries/` · **Live**
@@ -533,3 +640,36 @@ feed, at least 90% branch coverage on every contract that moves value, and a
 seeded chaos suite
 against the server. Commands are in the README; the suite for each feature is in
 [ARCHITECTURE.md](ARCHITECTURE.md#testing).
+
+### Stateful fuzzing
+
+`contracts/test/fizz` · [`PROPERTIES.md`](../contracts/PROPERTIES.md) ·
+[report](../contracts/fizz_data/report.md)
+
+A generated suite for Medusa and Echidna drives fifteen contracts together
+through 103 handlers, checking 61 of the 68 properties specified for them. Its
+last campaign (Medusa, 20 minutes, 2,884 sequences, 4 Nov 2026) passed all 134
+tests and covered 72–100% of each target's lines. It is **weak evidence**, as the
+report says:
+
+- It was short, and it ran before later changes to `GameEscrow`,
+  `MultisigPhase` and the handlers. Echidna has not been run, and CI runs neither.
+- Seven properties are not implemented. The largest gap is a hostile ETH
+  recipient.
+- A 10-minute first campaign flagged two tests: one was a harness bug, fixed; the
+  other, in `escrow_finalize_clamped`, is unexplained. It did not recur, and its
+  sequence was not kept.
+- `SpokeRouter`, `PlayerAvatars`, a real 7702 delegation and the deployed time
+  windows were not exercised.
+
+What is left is in [TODO.md](TODO.md), section 4.
+
+### Security reviews
+
+Two AI-assisted reviews, both of the code on 3 Nov 2026. **Neither is an
+independent audit, and there has not been one.**
+
+| Review | What it is |
+| --- | --- |
+| [`contracts/x-ray/`](../contracts/x-ray/x-ray.md) | A pre-audit report: threat model, entry points and invariants. A snapshot, not kept up to date. |
+| [`.solidity-auditor/runs/`](../.solidity-auditor/runs/20261103-180302/full-report.md) | A security review with twelve findings. Eight are fixed; three are unchanged and described in the docs (7, 9 and 11); one is a known limit (12, sLMS transfers freely). Its header says which is which. |

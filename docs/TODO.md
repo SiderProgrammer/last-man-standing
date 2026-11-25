@@ -276,8 +276,6 @@ order, with the testnet deployment from section 1 before the hosting:
 - **Say what is live at the top of the README:** testnet for playing, mainnet only as an
   unpromoted demo that is not for real use. Today this first appears far down, in
   "A portfolio project, not a product".
-- **Link the audit work from the README:** `contracts/x-ray/` and
-  `.solidity-auditor/runs/`, described as AI-assisted reviews, not an independent audit.
 - **Clear out the working notes.** Finish `TODO_IDEAS.md`, then delete it or fold what is
   left into this file.
 - **Add a root `LICENSE`.** The repo has none.
