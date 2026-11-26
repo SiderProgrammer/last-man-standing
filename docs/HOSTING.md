@@ -27,7 +27,7 @@ limits, so check them again before relying on them.
 - `NODE_VERSION=22`: the start script uses `--env-file-if-exists`, which needs 22.9 or newer.
 - `WS_PORT` set to the same value as Render's `PORT` (10000 by default). The server
   reads `WS_PORT`, and serves HTTP and WebSockets on that one port.
-- `TRUSTED_PROXY_HOPS`: how many of Render's proxies stand in front of the server, so the
+- `TRUSTED_PROXY_HOPS=1`: how many of Render's proxies stand in front of the server, so the
   per-IP limits see each player's own address instead of the proxy's. Read it off the
   `X-Forwarded-For` header: the number of entries after your own IP, counting the socket's
   address as the last. Never more than that, since entries further left are the client's to forge.
