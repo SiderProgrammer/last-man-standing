@@ -344,7 +344,7 @@ export class Wallet {
   ): Promise<Hex> {
     await this.ensureChain(spokeChainId);
     const chain = viemChain(spokeChainId);
-    const { request } = await this.rpc.simulateContract({
+    const call = {
       account: this.signer,
       address: router,
       abi: spokeRouterAbi,
@@ -353,9 +353,12 @@ export class Wallet {
       // that is the same on the hub: an EOA, delegated or not.
       args: [matchId, ZERO_ADDRESS, quote],
       value,
-      ...(await this.feesWithHeadroom()),
-    });
-    return this.client.writeContract({ ...request, chain });
+    } as const;
+    await this.rpc.simulateContract(call);
+    // The fee cap goes on the send only. In the simulation, a node with no gas
+    // limit to go on budgets its RPC gas cap (50M on Arbitrum) at that fee and
+    // refuses a wallet that cannot cover it: about 0.002 ETH more than the join costs.
+    return this.client.writeContract({ ...call, ...(await this.feesWithHeadroom()), chain });
   }
 
   /**
