@@ -1,8 +1,6 @@
-host the game
-fix gemini analysis
-record video
 update README, docs
 test freshly cloned repo
+pass proposal quorum
 
 complete TODO.md
 tenderly tests?

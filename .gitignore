@@ -36,3 +36,6 @@ contracts/fizz_data/corpus_echidna/
 contracts/fizz_data/crytic-export/
 contracts/fizz_data/logs_medusa/
 contracts/fizz_data/slither_results.json
+
+# CV demo recordings (demo/record.mjs)
+demo/

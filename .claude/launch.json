@@ -112,6 +112,16 @@
         "process.env.VITE_WS_URL='ws://localhost:8798'; const { createServer } = await import('vite'); const server = await createServer({ configFile: 'packages/client/vite.config.ts', root: 'packages/client', server: { port: 5184, strictPort: true } }); await server.listen(); server.printUrls();"
       ],
       "port": 5184
+    },
+    {
+      "name": "demo-fork",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--input-type=module",
+        "-e",
+        "process.env.FORK_SPOKES='arb,op,eth'; process.env.COMMIT_MS='20000'; process.env.REVEAL_MS='8000'; await import('./scripts/fork-base.mjs');"
+      ],
+      "port": 5176
     }
   ]
 }

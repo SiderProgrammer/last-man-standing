@@ -98,6 +98,18 @@ Features that have only run against mocks, or once by hand:
   covered by unit tests only. Also never played there: one-click play, the LMS fee
   discount and a successful LMS stake (all blocked by the fork's warped clock), a server
   restart mid-match, and the analyst (no key on the server).
+- **Move the client to its own domain.** MetaMask shows "Continue at your own risk" on
+  connect, because its site scan blocks unknown subdomains of shared hosts: made-up
+  `*.web.app`, `*.vercel.app` and `*.onrender.com` names all scored `BLOCK` on 24 Nov,
+  while made-up names on their own domains scored `NONE`. Plan: buy `lastmanarena.xyz`
+  (unregistered and `NONE` on 25 Nov; Porkbun listed $1.29 for the first year, $14.21 to
+  renew), connect `play.lastmanarena.xyz` in Firebase Hosting (TXT record on the main
+  domain, kept for good, plus the A record Firebase shows for `play`), and set
+  `ALLOWED_ORIGINS` on Render to both the new origin and the `web.app` one until the
+  move is done. No rebuild: the client runs on whatever address serves it. Players sign
+  one new login grant, and guest profiles stay with the old address. Afterwards, check
+  `https://dapp-scanning.api.cx.metamask.io/v2/scan?url=play.lastmanarena.xyz` and submit
+  the domain to Blockaid as a Developer (report.blockaid.io) before sharing it.
 
 ---
 

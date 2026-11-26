@@ -13,15 +13,13 @@ Each round every surviving player secretly picks one of three actions:
 | 🛡️ Guard | Block one striker and reflect a full hit back; any others still connect. Not two rounds running |
 | ⚡ Charge | Load a much bigger next Strike, taking more damage while you do. Not two rounds running |
 
-Strike beats Charge, Guard beats Strike, Charge beats Guard. There is no storm: a
-table that stops fighting takes a growing stall penalty instead.
+Strike beats Charge, Guard beats Strike, Charge beats Guard.
 
 Choices are committed as hashes and opened together, so nobody can react to
 anybody else. After the reveal the entire round is published, which is the point
 of the game: within a few rounds the history tells you who always swings, who
 guards whenever it can, who is charged, and who keeps coming after you. The client derives those tells from the
-same public history everyone else can see, and a wallet that has played staked
-matches before brings its [record](docs/FEATURES.md#play-styles) to the table.
+same public history everyone else can see.
 
 ## How a staked match runs
 
@@ -73,15 +71,7 @@ and what stands in the way:
   players can leave first. On testnet one person holds all three keys.
 - **Someone buying governance** needs vested LMS, staked, at the proposal's
   snapshot, enough to clear a 1M-sLMS quorum floor, and the same timelock
-  delay. The fee is capped at 10% in the contract, whatever passes. sLMS is
-  an ordinary transferable token, so a voter can sell it right after the
-  snapshot: the unstake cooldown holds back only stake that is unstaked, not
-  sLMS that changes hands.
-- **Someone spending the VRF subscription.** Only the escrow can request a
-  seed, but anyone can open a private lobby, fill it with their own wallets
-  and lock it, and each lock bills one VRF request to the Safe's
-  subscription. It costs them gas and the match's fee once it settles, not
-  nothing; nothing else limits it.
+  delay. The fee is capped at 10% in the contract, whatever passes.
 - **Script in the player's page** could use the session key: sign moves for a
   day, and with one-click play on, stake up to 0.05 ETH a join and 0.25 ETH in
   all into lobbies — never withdraw to anyone else. The key is sealed in
@@ -98,8 +88,37 @@ Practice bots are predictable on purpose: their moves derive from the match
 seed, which the client receives, so a player who reads the code can call them.
 Practice has no stakes, and staked matches never seat house bots.
 
-Out of scope: a compromised wallet, and denial of service beyond one instance's
-[gateway limits](docs/FEATURES.md#gateway-limits).
+Out of scope: a compromised wallet, and denial of service beyond per-socket rate
+limits on one instance.
+
+## Roles
+
+Every key and contract with authority, and where it ends. Safe, guardian and
+treasury are three separate addresses; `Deploy.s.sol` refuses to finish if any
+two coincide.
+
+| Role | Held by | Can | Cannot |
+| --- | --- | --- | --- |
+| Timelock | `TimelockController`, 3-day delay | Owns `ProtocolConfig`, `StakedLms`, `FeeRouter`, `RewardsDistributor`, `PlayerAvatars` and the VRF adapter. Every change waits out the delay, which is longer than a whole match. | Act without a queued proposal. |
+| Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
+| Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
+| Safe | A 2-of-3 multisig. On testnet and the mainnet demo all three keys are the owner's, on separate devices; **real use needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
+| Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which cancels what the Safe left pending and renounces both roles. | Schedule a call that is only ready after `phaseEnd`; be extended, or stopped from retiring, by anyone — the Safe included. |
+| VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be spent by anyone but a registered consumer. |
+| Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
+| Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
+| Operator | Runs the game server, and the keys below | Plays each match; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal, or by restarting the server; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
+| Attestor | The server's `ATTESTOR_PK`, in a process of its own | Signs a result, after replaying its transcript and checking the seed, rules and seats against the escrow; signs an abort, which refunds every seat of a live match; signs commit receipts in staked rooms. Sends no transactions. | Sign a result its transcript does not replay to. |
+| Keeper | The server's `KEEPER_PK`, holding only gas money | Sends the attestor's signed results and aborts, and the permissionless `lockMatch`, `finalize`, `cancelMatch` and fee harvests. | Anything a stranger could not: every one of those checks signatures or deadlines, not the sender. |
+| Matchmaker | The server's `MATCHMAKER_PK`, named in `ProtocolConfig` | Opens matchmade lobbies with the roster its queue put together: who plays whom in every lobby that earns play-mining. | Hold a stake, seat anyone off the roster, or sign a result. |
+| Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
+| Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
+| Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, and players' signed withdrawals to a spoke, and opens lobbies for players on a spoke, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, exceed a session's caps, bridge a balance anywhere its owner did not sign for, or seat anyone in a lobby it opened. |
+
+The server's four keys are four addresses: it refuses to start if two of them
+are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
+the guardian and the timelock. Each signs through a `Signer` interface, which
+is where a KMS would plug in; today every key is in the server's memory.
 
 ## Trust model
 
@@ -188,8 +207,8 @@ Around that core:
   (SIWE-shaped: origin, chain, expiry) naming a key the browser keeps for a
   day. The key signs the login nonce and every commit and reveal, so
   reconnects need no prompt and every move is provably the player's. The
-  grant alone cannot stake or spend. A contract wallet's grant is checked with
-  ERC-1271 and good for practice only; staked play takes none. The key is kept in IndexedDB, sealed under a non-extractable
+  grant alone cannot stake or spend. Contract wallets' grants are checked with
+  ERC-1271. The key is kept in IndexedDB, sealed under a non-extractable
   WebCrypto key, and the page ships a strict Content-Security-Policy.
 - **One-click play** — a burner or embedded wallet delegates to
   `SessionKeyDelegate` (EIP-7702) once and grants its session key a capped
@@ -228,14 +247,7 @@ and collecting winnings can be one click.
 | Burner (`VITE_DEV_KEY`, dev builds only) | Session key, no prompt | One click, relayed | One click, relayed | Its own transaction on the spoke |
 | Privy embedded wallet (planned, deferred) | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
 | Injected (MetaMask, Rabby) | Session key, no prompt | Its own transaction | Its own transaction | Its own transaction on the spoke |
-| Coinbase Smart Wallet | Session key, practice only; the grant is checked through ERC-1271 | Not offered | Its own transaction | Not offered |
-
-A contract wallet can only practise. Its grant holds for only as long as the
-wallet itself says so, and a wallet that changed its answer after a match would
-leave the transcript impossible to check, and so the match impossible to settle.
-The escrow does not know this, and takes a stake from any address: the client
-and the queue refuse a contract wallet first, but a stake it sends to the escrow
-directly buys a seat it cannot play.
+| Coinbase Smart Wallet | Session key; the grant is checked through ERC-1271 | Its own transaction | Its own transaction | Its own transaction on the spoke |
 
 One-click play needs a wallet that can sign an EIP-7702 authorization for *our*
 delegate. An injected wallet will not be asked for one, and a smart wallet
@@ -260,44 +272,6 @@ plays from a spoke never needs gas on the hub.
 
 ERC-4337 (`validateUserOp`), so that smart wallets get one-click play too, is a
 stretch goal and not built.
-
-## Roles
-
-Every key and contract with authority, and where it ends. Safe, guardian and
-treasury are three separate addresses; `Deploy.s.sol` refuses to finish if any
-two coincide.
-
-| Role | Held by | Can | Cannot |
-| --- | --- | --- | --- |
-| Timelock | `TimelockController`, 3-day delay | Owns `ProtocolConfig`, `StakedLms`, `FeeRouter`, `RewardsDistributor`, `PlayerAvatars` and the VRF adapter. Every change waits out the delay, which is longer than a whole match. | Act without a queued proposal. |
-| Treasury | The timelock | Receives the non-staker share of fees through `FeeRouter`. | Spend without a proposal. |
-| Governor | `LmsGovernor`, voted by staked LMS | Proposes to the timelock. | Vote with unstaked or still-vesting LMS. |
-| Safe | A 2-of-3 multisig. On testnet and the mainnet demo all three keys are the owner's, on separate devices; **real use needs independent signers.** | Through `MultisigPhase`, until its fixed `phaseEnd`: proposes to the timelock and cancels anything queued (the veto). Owns the VRF subscription. | Hold a timelock role itself; schedule a call on the timelock, or a `transferOwnership`/`renounceOwnership` anywhere; move LMS (any call on the token, `sweep`, `sweepStray`, `LiquidityReserve.setRecipient`, `recover` of LMS); do any of it after `phaseEnd`, when anyone can `retire()` the phase. |
-| Multisig phase | `MultisigPhase`, holding the Safe's proposer and canceller roles on the timelock | Forwards the Safe's proposals and cancellations until `phaseEnd`: a date fixed at deploy, a year out by default (`MULTISIG_PHASE_END`), two years at most. After it, anyone calls `retire()`, which cancels what the Safe left pending and renounces both roles. | Schedule a call that is only ready after `phaseEnd`; be extended, or stopped from retiring, by anyone — the Safe included. |
-| VRF subscription | Owned by the Safe, paid in native ETH | Funds every match's seed through `ChainlinkVrfAdapter`, which the timelock owns and only the escrow may request through. | Be requested from by anything but a registered consumer. Anyone who fills and locks a lobby still makes the escrow request one seed (see the threat model). |
-| Liquidity reserve | `LiquidityReserve`, holding the 5% liquidity share | The Safe or the timelock sends LMS to a recipient the timelock has approved (the pool). | Stake, delegate or vote; pay the vault, the Safe or itself, even by a proposal. |
-| Faucet (testnet) | `LmsFaucet`, off Base mainnet only, holding 10% of the supply | Anyone calls `drip(wallet)`: that wallet gets 10,000 LMS and 40,000 staked, once. The server does it for wallets that sign in with hub ETH. | Pay an address twice, or itself or the vault; let LMS out any other way: it has no owner. |
-| Guardian | A hardware-wallet EOA | Pauses the escrow at once, for 7 days at most, then waits 7 days before it can pause again; vetoes a proposed result, which refunds every stake; dismisses a dispute it finds unfounded. | Redirect a stake, or keep a pause going: only governance extends one. |
-| Operator | Runs the game server, and the keys below | Plays each match; refuses or drops moves. | Make up or alter a move (each is signed by its player's granted key); re-roll a round by dropping a reveal, or by restarting the server; get a result paid whose transcript it withholds, once a player disputes it and the guardian acts. |
-| Attestor | The server's `ATTESTOR_PK`, in a process of its own | Signs a result, after replaying its transcript and checking the seed, rules and seats against the escrow; signs an abort, which refunds every seat of a live match; signs commit receipts in staked rooms. Sends no transactions. | Sign a result its transcript does not replay to. |
-| Keeper | The server's `KEEPER_PK`, holding only gas money | Sends the attestor's signed results and aborts, and the permissionless `lockMatch`, `finalize`, `cancelMatch` and fee harvests. | Anything a stranger could not: every one of those checks signatures or deadlines, not the sender. |
-| Matchmaker | The server's `MATCHMAKER_PK`, named in `ProtocolConfig` | Opens matchmade lobbies with the roster its queue put together: who plays whom in every lobby that earns play-mining. | Hold a stake, seat anyone off the roster, or sign a result. |
-| Seated player | Their own wallet | Disputes a proposed result once, during the challenge window, holding the payout back 48 h for the guardian. | Hold a result back longer than one extension, or at all once the window has closed. |
-| Session key | The player's browser, sealed in IndexedDB | Signs logins and moves until its grant expires, a day after it was signed. With one-click play on: joins lobbies and collects winnings for the player, at most 0.05 ETH a join and 0.25 ETH in all. | Call anything but `join` and `withdrawFor` on the escrow; withdraw to anyone but the player; outlive its grant or seven days; speak for the wallet through ERC-1271. |
-| Session relayer | The server's `SESSION_RELAYER_PK`, holding only gas money | Submits the joins and withdrawals players' session keys signed, and players' signed withdrawals to a spoke, and opens lobbies for players on a spoke, paying the gas, up to `RELAY_QUOTA_PER_DAY` calls per wallet per day. | Change a call, send one the key did not sign, replay one, exceed a session's caps, bridge a balance anywhere its owner did not sign for, or seat anyone in a lobby it opened. |
-| Filler | The server's optional `FILLER_PK`, holding the ETH it fills with | Fills players' spoke stakes on the hub through the hub's own Across pool, as a relayer would, when Across's relayers do not: up to `FILLER_MAX_STAKE_WEI` a stake and `FILLER_PER_DAY` fills per wallet, keeping `FILLER_RESERVE_WEI` back. | Seat anyone the deposit did not name, or fill for a lobby that would not seat the stake. On testnet each fill costs it the stake, which Across may never repay. |
-
-The server's job keys (the four above, and the filler's when it is set) are
-separate addresses: it refuses to start if two of them are the same key, and `Deploy.s.sol` keeps the matchmaker apart from the Safe,
-the guardian and the timelock. Each signs through a `Signer` interface, which
-is where a KMS would plug in; today every key is in the server's memory.
-
-**A portfolio project, not a product.** It is deployed on testnet only: the hub on
-Base Sepolia, spokes on Arbitrum Sepolia, OP Sepolia and Sepolia. The plan is
-testnet for playing, then an unpromoted mainnet demo to show it can be deployed there
-([ADR 0012](docs/adr/0012-launch-scope.md)). Real use would need independent signers
-for the Safe, an independent audit and paid hosting, none of which this has. Do not
-stake money on it.
 
 ## Wash-trading economics
 
@@ -356,8 +330,7 @@ which is what makes a match replayable by a third party.
 
 ### What you need
 
-- **Node.js 22.9 or newer**, with npm, and **Git**. The server's scripts load
-  `.env` with `--env-file-if-exists`, which older Node does not have.
+- **Node.js 20 or newer**, with npm, and **Git**.
 - **[Foundry](https://getfoundry.sh)** (`forge`, `anvil`, `cast`) on `PATH`, for
   everything staked. Practice mode alone runs without it.
 - Optional: a free **Alchemy API key**, so the forks below read from an archive
@@ -504,8 +477,7 @@ quota live in the server's memory, and its keys send transactions in nonce
 order from one process. A second instance would split the rooms and the
 queue, double every limit, and race the first for nonces. So it is one
 instance by design: with Postgres, it takes a lock on the database at start
-and a second server against the same database refuses to start (in production,
-once it has waited for the first to stop, which is a deploy). Scaling out
+and a second server against the same database refuses to start. Scaling out
 would mean moving rooms, queue and limits into shared storage first.
 
 The VRF adapter has a fork test against the Base Sepolia coordinator
@@ -534,9 +506,7 @@ npm run sim                 # bot matches under the current rules; fails if bala
 npm run check:one-click     # one-click play end to end on a local Prague anvil (needs foundry)
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of the above except
-`check:one-click`, which is run by hand. For the ABIs it checks that the committed
-ones are current instead of regenerating them. On top of that it runs
+CI (`.github/workflows/ci.yml`) runs all of the above, plus
 `forge fmt --check`, a coverage report and Slither. The coverage job fails if any
 contract that moves value has under 90% of its branches covered
 (`scripts/coverage-gate.mjs` lists them). Slither fails only on findings
@@ -556,14 +526,6 @@ clients over a simulated network that drops, stalls and resets connections
 ([docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md)), and a load generator opens
 a thousand or more real WebSocket players against a running server
 ([docs/LOAD_TESTING.md](docs/LOAD_TESTING.md)).
-
-Beyond the Foundry suites, the contracts have a stateful fuzz suite for Medusa and
-Echidna (`contracts/test/fizz`; [report](contracts/fizz_data/report.md)), run so far
-only in short Medusa campaigns, and two AI-assisted reviews: a
-[pre-audit report](contracts/x-ray/x-ray.md) and a
-[security review](.solidity-auditor/runs/20261103-180302/full-report.md) that says
-what became of each finding. None of this is an independent audit; the limits of each
-are in [docs/FEATURES.md](docs/FEATURES.md#stateful-fuzzing).
 
 ## Match analyst
 
