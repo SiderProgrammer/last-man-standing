@@ -1,5 +1,7 @@
 # Last Man Standing
 
+<img width="760" height="514" alt="teaser" src="https://github.com/user-attachments/assets/88607e63-80fb-4bca-aaac-985c82a7b79b" />
+
 A cross-chain multiplayer arena. Four to eight players enter a lobby by staking
 on-chain, then play a hidden-information elimination game off-chain in real
 time. A quorum of attestors signs the result, the hub-chain escrow holds it open
