@@ -28,4 +28,7 @@ Stargate v2 was ruled out: it has no Base Sepolia deployment.
 - Across's testnet is unreliable (slow fills, no relayer incentives, unfilled
   deposits not refunded), so the main testnet flow uses mock pools and a local
   relayer, and the real integration is proven by fork tests against mainnet
-  SpokePools. A live testnet join is an optional demo.
+  SpokePools. A live testnet join is an optional demo. *Amended 2026-11-26: testnet
+  now runs on Across's real pools, and the server fills the join deposits its relayers
+  skip from `FILLER_PK` (`chain/spokeFiller.ts`); mock pools are left to
+  `npm run dev:fork`.*

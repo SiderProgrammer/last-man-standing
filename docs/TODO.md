@@ -269,12 +269,11 @@ These are open questions, not bugs:
 A reviewer gives the repo a few minutes and will not run `npm run dev:fork`. Roughly in
 order, with the testnet deployment from section 1 before the hosting:
 
-- **Host it on Render's free tier.** The client and server run only on a developer's
-  machine today. Serve the client and a server pointed at Base Sepolia from a public URL,
-  with Neon for the database and an external ping. [HOSTING.md](HOSTING.md) has the setup
-  and the risks. Test two things first: a redeploy, where the new instance waits for the
-  old one's lock, and the lock through Neon's pooled connection string. Then run a small load test
-  on the deployed server, because the numbers in LOAD_TESTING.md do not apply there.
+- **Finish the hosting checks.** The server runs on Render's free tier against Base
+  Sepolia and the client on Firebase Hosting ([HOSTING.md](HOSTING.md)). Still to test
+  there: a redeploy, where the new instance waits for the old one's lock, and the lock
+  through Neon's pooled connection string. Then run a small load test on the deployed
+  server, because the numbers in LOAD_TESTING.md do not apply there.
 - **Finish the fork playtest** (what section 2 lists as never played there), then play
   with a few real people: locally, then with testnet wallets on all four chains.
 - **Record a walkthrough:** 2–3 minutes, after the playtests so it does not show bugs
@@ -283,8 +282,8 @@ order, with the testnet deployment from section 1 before the hosting:
   link, the video, the stack, about six engineering highlights and the main limitations.
   The threat and trust models stay, further down.
 - **Say what is live at the top of the README:** testnet for playing, mainnet only as an
-  unpromoted demo that is not for real use. Today this first appears far down, in
-  "A portfolio project, not a product".
+  unpromoted demo that is not for real use. Today the README says it only in passing, in
+  the Safe's row of the roles table.
 - **Clear out the working notes.** Finish `TODO_IDEAS.md`, then delete it or fold what is
   left into this file.
 - **Add a root `LICENSE`.** The repo has none.

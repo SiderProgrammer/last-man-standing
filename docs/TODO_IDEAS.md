@@ -1,8 +1,7 @@
-update README, docs
 test freshly cloned repo
 pass proposal quorum
-
 complete TODO.md
+
 tenderly tests?
 formal verification?
 add back YUL code?

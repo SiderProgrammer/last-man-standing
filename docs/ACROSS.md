@@ -87,7 +87,7 @@ So everything on our side is proven live on testnet: the spoke deposit, Across's
 pools, the receiver and the escrow. The one thing still not seen is a fill by Across's
 own testnet relayers, which looks like their choice, not ours. Whether mainnet relayers
 fill these deposits promptly is not measured either; the fork tests in
-`AcrossFork.t.sol` prove the mainnet pools accept and fill them. The local stack and the unit tests keep using `MockAcrossSpokePool`.
+`AcrossFork.t.sol` prove the mainnet pools accept and fill them. `npm run dev:fork` and the unit tests keep using `MockAcrossSpokePool`; `npm run fork:base` runs against the real pools on mainnet forks.
 
 Since then the server fills these deposits itself when it runs with `FILLER_PK`
 (`packages/server/src/chain/spokeFiller.ts`), for any wallet, through the same

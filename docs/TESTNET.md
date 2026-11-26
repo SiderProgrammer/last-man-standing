@@ -65,6 +65,22 @@ signs in with some. `npm run testnet -- fund` drips the generated players too,
 and `doctor` says how many scoops are left. A deploy made before the faucet
 existed has none: players there get LMS only by play-mining.
 
+The faucet pays each address once. To collect more for one address, to stake past
+the quorum floor for instance, `script/FaucetAirdrop.s.sol` drips to throwaway
+addresses derived from `AIRDROP_SEED` and moves each one's 10,000 liquid LMS to
+`AIRDROP_TO` with a permit, sending every transaction from `DEPLOYER_PK`, so the
+throwaway addresses need no ETH. `AIRDROP_AMOUNT` defaults to 900,000 LMS (90
+scoops) and must be a whole number of scoops. Each scoop's 40,000 sLMS stays with its
+throwaway address. The same seed gives the same addresses, so a rerun resumes where
+it stopped; keep the seed secret, since its keys hold that stake. It finds the faucet
+as `lmsFaucet` in the chain's registry, and refuses a chain without one. From
+`contracts/`:
+
+```bash
+DEPLOYER_PK=0x… AIRDROP_SEED=0x… AIRDROP_TO=0x… \
+forge script script/FaucetAirdrop.s.sol:FaucetAirdrop --rpc-url $BASE_SEPOLIA_RPC --broadcast
+```
+
 The script writes `contracts/deployments/84532.json`: every address it created
 (the receiver as `bridgeReceiver`) and the block to start scanning logs from.
 Commit it. The server reads it for `CHAIN_ID=84532`, so its escrow, governor

@@ -41,12 +41,14 @@ earns nothing.
    25% more from every strike that reaches it.
 4. **Charge beats Guard.** The guard spent its turn; the charger loaded a hit worth
    more than two ordinary ones, and everyone can see it is loaded.
-5. **Healing** from landed strikes is added before anything else is settled, and
-   can never lift a player above their starting HP. It is what makes fighting pay:
-   without it, damage dealt to one rival helps every other rival just as much.
+5. **Healing** from landed strikes is netted against the damage the striker took
+   that round, and the result can never lift a player above their starting HP. It
+   is what makes fighting pay: without it, damage dealt to one rival helps every
+   other rival just as much.
 6. **The stall penalty** is applied last, to everyone, and only to a table that has
-   stopped fighting: once 2 rounds in a row pass without a single hit (a Guard's
-   reflection counts), everyone takes 8, then 16, 24 … until somebody lands one.
+   stopped fighting: the second round in a row without a single hit (a Guard's
+   reflection counts) costs everyone 8, the third 16, then 24 … until somebody
+   lands one.
    It replaces the old storm, which did most of the damage in every match and made
    the final round a coin flip between whoever was left.
 7. **Elimination** takes everyone at or below 0 HP, ordered worst-first by HP and then
@@ -92,13 +94,16 @@ tiebreak draw.
 ### Information is the real game
 
 Choices are hidden while they are being made and fully public afterwards. After every
-round the history feed shows exactly what happened:
+round the History tab adds a card for it: a row per seat, in seat order, with its move
+and target, what came of it (hit, blocked or missed, with the damage, heal and
+recoil) and its HP before and after, plus the stall penalty and the eliminations in the card's header. The server
+also sends each round as plain lines (`describeRound`):
 
 ```
-#7  → struck #13
+#7 → struck #13
 #13 → struck #7
-#4  → guarded
-#9  → charged
+#4 → guarded
+#9 → charged
 #13 → eliminated
 ```
 
@@ -169,7 +174,7 @@ packages/contracts  generated ABIs, chain table, deployment registry, call helpe
 packages/api        wire messages and DTOs between browser and server
 packages/engine     pure resolution kernel + match state machine + replay
 packages/server     WebSocket gateway, rooms, chain bridge, attestor, archive
-packages/client     PixiJS arena, wallet session, history and reads panels
+packages/client     PixiJS arena, wallet session, history, staking and governance screens
 packages/harness    headless bot clients for load and chaos testing
 contracts/          escrow, config, governance and token, libraries, adapters, periphery
 ```
@@ -226,8 +231,9 @@ same way.
 | `style.ts`, `analysis.ts` | The dossier's `PlayStyle` and the match analyst's output |
 | `ports.ts`, `errors.ts` | The default port, and `errorMessage` / `errorFirstLine` for `catch (unknown)` |
 
-The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's own, in
-`packages/client/src/game/`; the server only tallies the styles it stores.
+The server tallies each wallet's play style and sends the table's as a `dossier`
+message, which the match analyst also reads. The client accepts it and shows nothing:
+the Reads tab that drew it is gone.
 
 ### `packages/engine` — deterministic game logic
 
@@ -307,6 +313,7 @@ The reads panel (`readOpponents`, the tells, `describeStyle`) is the client's ow
 | `chain/crossChain.ts` | `SPOKES`, and `CrossChainWatcher`: tells a player on a spoke what their join became on the hub, a seat or a credit |
 | `chain/zap.ts` | `ZAP_TOKENS`: the tokens players may pay with, and each one's v4 route |
 | `chain/feeKeeper.ts` | Harvests `FeeRouter` on a timer, once there is more than `minHarvest` |
+| `chain/faucet.ts` | Off Base mainnet: drips `LmsFaucet` once to every wallet that signs in holding hub ETH, from `SESSION_RELAYER_PK` |
 | `chain/proposals.ts` | Indexes the governor's proposals from `ProposalCreated` |
 | `chain/results.ts` | Indexes `ResultProposed`, so a wallet's history survives an in-memory archive |
 | `chain/avatars.ts` | `AvatarRegistry`: reads each seat's NFT on its own chain and resolves the image |
@@ -413,9 +420,10 @@ zero-downtime deploy stops the old server only once the new one is up.
 | `wallet/grant.ts` | The browser's session key and the wallet's grant to it: sign logins, moves and relayed calls |
 | `wallet/oneClick.ts` | One-click play: turn the on-chain session on and off, relay joins and collects; requests answered by the relayer, a lobby opened for a spoke wallet among them |
 | `csp.ts` | The Content-Security-Policy the production build ships with |
+| `devKeys.ts` | *Pure.* `filesWithDevKeys`: which built files carry a `VITE_DEV_KEY(S)` key, so `vite.config.ts` fails a production build that would publish one |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
-| `game/style.ts` | *Pure.* `describeStyle`: a wallet's record from earlier matches as one line |
+| `game/style.ts` | *Pure.* `describeStyle`: a wallet's record from earlier matches as one line. Nothing calls it since the Reads tab went |
 | `game/verify.ts` | Replays a finished match from what was broadcast, audits its transcript against the chain, and builds a dispute's evidence bundle |
 | `game/review.ts` | *Pure.* An archived match, rebuilt into what the match screen draws |
 | `game/rewind.ts` | *Pure.* The table as it stood when a given round began, from the published history |
@@ -487,9 +495,9 @@ Three things are worth calling out:
   it has committed, never what it committed to, so the view cannot leak a hidden move.
 - **The reveal is automatic.** The player already chose during the commit window; making
   them click a second time would only manufacture no-shows.
-- **The reads panel is bookkeeping, not privileged data.** It is computed from the same
-  history every spectator receives — it just does the counting the player would otherwise
-  do on paper.
+- **The History tab is bookkeeping, not privileged data.** It is laid out from the same
+  round records every spectator receives — it just keeps the notes the player would
+  otherwise keep on paper.
 
 ### The round replay
 

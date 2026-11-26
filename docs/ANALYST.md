@@ -112,7 +112,7 @@ them.
 
 **Per model request**, the Gemini project's own rate limits, enforced here so
 they are never met as errors. The defaults are the free tier of Gemini 3.8
-Flash, kept as cautious limits — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
+Flash, kept as cautious limits for the default model too — **5 requests a minute, 20 a day** (`ANALYST_RPM`, `ANALYST_RPD`;
 `none` lifts either). The call books a slot first: over the minute's
 allowance it waits for one, past the day's it is refused, and an analysis is
 not started at all once the day has no request left. The day turns at

@@ -227,7 +227,7 @@ The rest are UI paths to click through.
 - [ ] Fork: `npm run play -- warp 61m` → `finalize last` → `status last`: 5% fee, then 60 / 25 / 15 % of the rest.
 - [ ] Testnet: wait the 1 h challenge window; the server's keeper finalises on its own.
 - [ ] Result screen: the browser re-checks the transcript ("verified"). **Collect** in Winnings, or `npm run play -- withdraw`.
-- [ ] History: open a finished match, replay its rounds, and check the Reads panel.
+- [ ] History: open a finished match, replay its rounds, and check its History tab: a card per round, each seat's move, outcome and HP.
 
 ### 5. Disputes and the guardian
 - [ ] In the challenge window: `npm run play -- dispute last --as 2` → status shows DISPUTED, deadline +48 h.

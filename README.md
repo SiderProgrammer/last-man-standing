@@ -10,16 +10,65 @@ Each round every surviving player secretly picks one of three actions:
 | Action | Effect |
 | --- | --- |
 | ⚔️ Strike | Hit a chosen seat; a hit that lands heals you part of it |
-| 🛡️ Guard | Block one striker and reflect a full hit back; any others still connect. Not two rounds running |
-| ⚡ Charge | Load a much bigger next Strike, taking more damage while you do. Not two rounds running |
+| 🛡️ Guard | Block one striker and send a bigger hit back at it; any others still connect. Not two rounds running |
+| ⚡ Charge | Load a much bigger next Strike, taking more damage while you do. Not while one is already loaded |
 
 Strike beats Charge, Guard beats Strike, Charge beats Guard.
 
 Choices are committed as hashes and opened together, so nobody can react to
 anybody else. After the reveal the entire round is published, which is the point
 of the game: within a few rounds the history tells you who always swings, who
-guards whenever it can, who is charged, and who keeps coming after you. The client derives those tells from the
-same public history everyone else can see.
+guards whenever it can, who is charged, and who keeps coming after you. The
+History tab lays every round out seat by seat, from the same public record
+everyone else receives.
+
+## Deployments (testnet)
+
+Every contract is verified, so its source can be read on the explorer. The hub
+is on Base Sepolia:
+
+| Contract | Address |
+| --- | --- |
+| `GameEscrow`: stakes, results, payouts | [`0x4D5203D06f74ED3EE12cC99c09BDC2ae64199034`](https://sepolia.basescan.org/address/0x4D5203D06f74ED3EE12cC99c09BDC2ae64199034#code) |
+| `ProtocolConfig`: every parameter | [`0x986F314ea9Ad5B9426864b188cE8d5CD26bD745B`](https://sepolia.basescan.org/address/0x986F314ea9Ad5B9426864b188cE8d5CD26bD745B#code) |
+| `ChainlinkVrfAdapter`: match seeds | [`0x9D2EbbDb41Aa1F8e28c643aF497f56787B1b819F`](https://sepolia.basescan.org/address/0x9D2EbbDb41Aa1F8e28c643aF497f56787B1b819F#code) |
+| `BridgeJoinReceiver`: joins bridged from spokes | [`0xe43AF39C1CE88c04dF1F05A44aC02dcBB610B36d`](https://sepolia.basescan.org/address/0xe43AF39C1CE88c04dF1F05A44aC02dcBB610B36d#code) |
+| `ZapJoin`: join with any token | [`0xC2efAe29526edf6c71642F67e720b11755cD3db8`](https://sepolia.basescan.org/address/0xC2efAe29526edf6c71642F67e720b11755cD3db8#code) |
+| `SessionKeyDelegate`: one-click play | [`0x1Ae1467837516856ee36b804d3207D6f5536768A`](https://sepolia.basescan.org/address/0x1Ae1467837516856ee36b804d3207D6f5536768A#code) |
+| `LmsToken` | [`0xFf634B064C2634884C813eB1b7E5d2215EB89FB8`](https://sepolia.basescan.org/address/0xFf634B064C2634884C813eB1b7E5d2215EB89FB8#code) |
+| `StakedLms` | [`0xaD7FFFF1F26093F9A7CFAd7b730209695f9B3bE9`](https://sepolia.basescan.org/address/0xaD7FFFF1F26093F9A7CFAd7b730209695f9B3bE9#code) |
+| `LmsFaucet` | [`0xC59352Ce4f4Bf36F302582674ad700ddB09965fB`](https://sepolia.basescan.org/address/0xC59352Ce4f4Bf36F302582674ad700ddB09965fB#code) |
+| `LmsGovernor` | [`0x95CFbC28eBBfCf76D978E084E5c1e2a39EB123CB`](https://sepolia.basescan.org/address/0x95CFbC28eBBfCf76D978E084E5c1e2a39EB123CB#code) |
+| `TimelockController` | [`0xc4659ce639e4280cE97354B04b6b6980831a9052`](https://sepolia.basescan.org/address/0xc4659ce639e4280cE97354B04b6b6980831a9052#code) |
+| `MultisigPhase` | [`0x5e29E1d1542E602149dEE87AA3648faD637d4656`](https://sepolia.basescan.org/address/0x5e29E1d1542E602149dEE87AA3648faD637d4656#code) |
+| `RewardsDistributor`: play-mining | [`0x0a157457B3B5a9590c2e69BEcb00DBB15C90f79A`](https://sepolia.basescan.org/address/0x0a157457B3B5a9590c2e69BEcb00DBB15C90f79A#code) |
+| `FeeRouter` | [`0x7B80f86ec6e1d1A92B94215665611369060aeEC4`](https://sepolia.basescan.org/address/0x7B80f86ec6e1d1A92B94215665611369060aeEC4#code) |
+| `PlayerAvatars` | [`0x4b6b87A6d3bEAdc28d459d10997F31c0F3610aD3`](https://sepolia.basescan.org/address/0x4b6b87A6d3bEAdc28d459d10997F31c0F3610aD3#code) |
+
+Spoke chains, which bridge stakes to the hub over Across:
+
+| Chain | `SpokeRouter` |
+| --- | --- |
+| Arbitrum Sepolia | [`0xb6937a4EbFd1057F406e33F0E14fecd4f1972b4b`](https://sepolia.arbiscan.io/address/0xb6937a4EbFd1057F406e33F0E14fecd4f1972b4b#code) |
+| OP Sepolia | [`0xAeBC6399e9d51680Fb99D136ceED3AFb09dBfB51`](https://sepolia-optimism.etherscan.io/address/0xAeBC6399e9d51680Fb99D136ceED3AFb09dBfB51#code) |
+| Ethereum Sepolia | [`0x706AfEb6fDBD6c14e81daecc81721BB5eD46F2c5`](https://sepolia.etherscan.io/address/0x706AfEb6fDBD6c14e81daecc81721BB5eD46F2c5#code) |
+
+The keys behind the [roles](#roles), on Base Sepolia. Each one is a separate
+address, so the separation the roles depend on can be checked on-chain:
+
+| Role | Address | Where it is set |
+| --- | --- | --- |
+| Safe | [`0x1Ff0052349A5b2f94204dbD9f4CC9057445A1b69`](https://sepolia.basescan.org/address/0x1Ff0052349A5b2f94204dbD9f4CC9057445A1b69) | Proposer and canceller on the timelock, through `MultisigPhase`. On testnet it is 1-of-1, signed by [`0xbf8Bc2B42Bd9465f3465692eA36B53a08959A75b`](https://sepolia.basescan.org/address/0xbf8Bc2B42Bd9465f3465692eA36B53a08959A75b) |
+| Guardian | [`0x5693F912E21f8570AA41905CBa1a05729Db033b5`](https://sepolia.basescan.org/address/0x5693F912E21f8570AA41905CBa1a05729Db033b5) | `ProtocolConfig.guardian()` |
+| Attestor | [`0xBD66c147433A6D658dF7463909BB6901104e838E`](https://sepolia.basescan.org/address/0xBD66c147433A6D658dF7463909BB6901104e838E) | `ProtocolConfig` attestor set version 1, threshold 1 of 1. Signs only, so it has no transactions |
+| Matchmaker | [`0xDD9539bAd14779CD6f693fe818b2Cb91F24Fa626`](https://sepolia.basescan.org/address/0xDD9539bAd14779CD6f693fe818b2Cb91F24Fa626) | `ProtocolConfig.matchmaker()` |
+| Keeper | [`0xB635F13E040B0612fA873b8b88a169849A7Dd379`](https://sepolia.basescan.org/address/0xB635F13E040B0612fA873b8b88a169849A7Dd379) | The server's config only. It sends permissionless calls, so the contracts do not name it |
+| Session relayer | [`0x329D882cA37Dcc75557549205ec39e31BA1c6955`](https://sepolia.basescan.org/address/0x329D882cA37Dcc75557549205ec39e31BA1c6955) | The server's config only. It submits what session keys sign, so the contracts do not name it |
+
+The attestor set can be rotated by governance, so the `AttestorSetUpdated`
+events on `ProtocolConfig` are the source of truth, not this table. The full
+registry, with the vesting contracts, the liquidity reserve and each chain's
+deploy block, is in [contracts/deployments/](contracts/deployments/).
 
 ## How a staked match runs
 
@@ -208,7 +257,8 @@ Around that core:
   day. The key signs the login nonce and every commit and reveal, so
   reconnects need no prompt and every move is provably the player's. The
   grant alone cannot stake or spend. Contract wallets' grants are checked with
-  ERC-1271. The key is kept in IndexedDB, sealed under a non-extractable
+  ERC-1271, and play practice only: the server refuses their moves in a
+  staked room. The key is kept in IndexedDB, sealed under a non-extractable
   WebCrypto key, and the page ships a strict Content-Security-Policy.
 - **One-click play** — a burner or embedded wallet delegates to
   `SessionKeyDelegate` (EIP-7702) once and grants its session key a capped
@@ -247,11 +297,17 @@ and collecting winnings can be one click.
 | Burner (`VITE_DEV_KEY`, dev builds only) | Session key, no prompt | One click, relayed | One click, relayed | Its own transaction on the spoke |
 | Privy embedded wallet (planned, deferred) | Session key, no prompt | One click, relayed, once the Privy check passes (see below) | One click, relayed, likewise | Its own transaction on the spoke |
 | Injected (MetaMask, Rabby) | Session key, no prompt | Its own transaction | Its own transaction | Its own transaction on the spoke |
-| Coinbase Smart Wallet | Session key; the grant is checked through ERC-1271 | Its own transaction | Its own transaction | Its own transaction on the spoke |
+| Coinbase Smart Wallet | Practice only; the grant is checked through ERC-1271 | Not for play: a staked room refuses its moves | Its own transaction | Not for play, likewise |
 
 One-click play needs a wallet that can sign an EIP-7702 authorization for *our*
 delegate. An injected wallet will not be asked for one, and a smart wallet
 already has code of its own.
+
+A contract wallet cannot play for stakes at all. Its grant is valid only while
+the wallet says so through ERC-1271, so the server refuses its moves in a
+staked room (`GRANT_NOT_STAKEABLE`) and keeps it out of the queue: once a
+transcript holds a grant the wallet stops vouching for, the attestor can no
+longer sign that match's result.
 
 **Privy is planned but deferred.** It is not in the client, and the first
 deployments do not wait for it, so production one-click play is not available
@@ -270,8 +326,8 @@ a player's signed withdrawal of their hub balance to a spoke, and opens a lobby
 on the hub for a player on a spoke, within the same quota, so a player who
 plays from a spoke never needs gas on the hub.
 
-ERC-4337 (`validateUserOp`), so that smart wallets get one-click play too, is a
-stretch goal and not built.
+ERC-4337 (`validateUserOp`) is a stretch goal and not built. On its own it
+would not let smart wallets play for stakes, for the reason above.
 
 ## Wash-trading economics
 
@@ -314,7 +370,7 @@ packages/contracts  generated ABIs, chain table, deployment registry, contract c
 packages/api        wire messages and DTOs between browser and server
 packages/engine     deterministic resolution kernel, match state machine, replay, bots, balance sim
 packages/server     WebSocket gateway, authoritative rooms, attestor, chain bridge, fee keeper
-packages/client     PixiJS arena, wallet login, history and reads, staking and governance screens
+packages/client     PixiJS arena, wallet login, round history, staking and governance screens
 packages/harness    headless bot clients for load and chaos testing
 contracts/          Foundry: escrow, config, governance, oracles, bridge router and receiver, zap, avatars, 7702 delegate
 scripts/            mainnet-fork dev environment, balance sim, load generator
@@ -330,7 +386,8 @@ which is what makes a match replayable by a third party.
 
 ### What you need
 
-- **Node.js 20 or newer**, with npm, and **Git**.
+- **Node.js 22.9 or newer** (`package.json`'s `engines`; the server's scripts
+  use `--env-file-if-exists`), with npm, and **Git**.
 - **[Foundry](https://getfoundry.sh)** (`forge`, `anvil`, `cast`) on `PATH`, for
   everything staked. Practice mode alone runs without it.
 - Optional: a free **Alchemy API key**, so the forks below read from an archive

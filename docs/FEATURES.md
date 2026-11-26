@@ -511,11 +511,11 @@ An ERC-721 per chain, free mint, one per wallet, with an `equipped` slot.
 `packages/server/src/lobby/styles.ts` · `packages/api/src/style.ts` ·
 `packages/client/src/game/style.ts` · **Unit-tested**
 
-The reads panel counts what each seat did in this match. Beside that, a wallet
-that has played before arrives with a record: matches and wins, how its moves
-split between Strike, Guard and Charge, and how often it committed and never
-revealed. The room sends the table's records as a `dossier` message, and the
-match analyst is given them too.
+A wallet that has played before arrives with a record: matches and wins, how
+its moves split between Strike, Guard and Charge, and how often it committed
+and never revealed. The room sends the table's records as a `dossier` message,
+and the match analyst is given them. The client no longer shows them: the
+Reads tab that did was removed, and the message is accepted and ignored.
 
 - **Nothing hidden is in it.** It is tallied from published rounds, which any
   player could have written down.
@@ -617,8 +617,8 @@ storage at a fixed slot, as a 7702 delegate must.
 - **One instance.** Rooms, the queue and the rate limits live in the process;
   a second server against the same Postgres is refused, after waiting for the
   first to stop in production, as a deploy overlaps them.
-- **The reveal is automatic**, and the reads panel is bookkeeping over the
-  published history: after five rounds you are playing the table.
+- **The reveal is automatic**, and the History tab is bookkeeping over the
+  published rounds: after five rounds you are playing the table.
 
 ---
 

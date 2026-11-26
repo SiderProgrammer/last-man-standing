@@ -16,7 +16,8 @@ out of it.
   deployed and run on a real chain. It is not promoted, nobody is meant to put money in,
   and it is not a product.
 - **Render's free tier** hosts the client and the server, kept awake by an external ping.
-  Neon's free tier holds the database.
+  Neon's free tier holds the database. *Amended 2026-11-26: the client is served from
+  Firebase Hosting instead; the server stays on Render.*
 - **Privy is deferred, not dropped.** It is still the planned embedded wallet, and 0009
   still stands. Nothing it relies on is removed.
 - **The dispute bond is deferred.** A dispute costs only gas for now, which is listed as

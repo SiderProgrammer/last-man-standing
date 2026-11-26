@@ -3,11 +3,13 @@
 The decision and why it was made are in [ADR 0012](adr/0012-launch-scope.md). This
 page says how the game is meant to run there and what that risks.
 
-**None of this has run on Render yet.** The commands below are what the repo implies,
-and the risks come from reading the server's code and Render's docs
+**The server runs on Render; the client is on Firebase Hosting.** Render's proxy depth
+below was read off a live request on 26 Nov 2026. The rest of the risks come from
+reading the server's code and Render's docs
 ([free services](https://render.com/docs/free),
-[deploys](https://render.com/docs/deploys)), checked on 2026-11-04. Render changes its
-limits, so check them again before relying on them.
+[deploys](https://render.com/docs/deploys)), checked on 2026-11-04, and the two tests
+flagged below have not been run there. Render changes its limits, so check them again
+before relying on them.
 
 ---
 
@@ -16,7 +18,7 @@ limits, so check them again before relying on them.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Game server | Render free web service | One instance, as [ADR 0010](adr/0010-break-freely-one-instance.md) requires |
-| Client | Render static site | Free, but counts towards the same bandwidth and build minutes |
+| Client | Firebase Hosting (`firebase.json`) | Static files, so off Render's bandwidth and build minutes |
 | Database | Neon free tier | **Not** Render's free Postgres, which expires after 30 days and is deleted 14 days later |
 | Keep-awake ping | An external uptime monitor | `GET /health` every 10 minutes |
 
@@ -36,9 +38,12 @@ limits, so check them again before relying on them.
 
 **Client**
 
-- Build: `npm ci && npm run build && npm run build --workspace @lms/client`
-- Publish directory: `packages/client/dist`
-- `VITE_WS_URL=wss://<the server's host>`, set at build time.
+- Build locally: `npm ci && npm run build && npm run build --workspace @lms/client`,
+  with `VITE_WS_URL=wss://<the server's host>` set at build time.
+- Deploy: `firebase deploy --only hosting`. `firebase.json` publishes
+  `packages/client/dist` and adds `frame-ancestors 'none'`; the rest of the
+  Content-Security-Policy ships inside the page.
+- `ALLOWED_ORIGINS` on the server must name the client's origin.
 
 **The ping** has to come from outside Render, because a service that has spun down
 cannot wake itself. Scheduled GitHub Actions can run late, which is a poor fit for a
