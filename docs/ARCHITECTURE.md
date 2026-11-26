@@ -415,7 +415,6 @@ zero-downtime deploy stops the old server only once the new one is up.
 | `csp.ts` | The Content-Security-Policy the production build ships with |
 | **`game/`** | **Match logic that runs in the browser** |
 | `game/phase.ts` | *Pure.* `phasePlan` — what the controls should be, and whether a reveal is due |
-| `game/reads.ts` | *Pure.* Derives per-opponent tendencies and tells from the public history |
 | `game/style.ts` | *Pure.* `describeStyle`: a wallet's record from earlier matches as one line |
 | `game/verify.ts` | Replays a finished match from what was broadcast, audits its transcript against the chain, and builds a dispute's evidence bundle |
 | `game/review.ts` | *Pure.* An archived match, rebuilt into what the match screen draws |
@@ -434,10 +433,11 @@ zero-downtime deploy stops the old server only once the new one is up.
 | `arena/textures.ts` | Seat faces leased by URL, unloaded once no seat wears them |
 | **`ui/`** | **The DOM around the canvas** |
 | `ui/dom.ts` | `queryDom(document)` — the element registry, as a factory |
-| `ui/views.ts` | *Pure.* Target options, chain chips, reads table, hub label, avatar, queue, discount and collect-home panels |
+| `ui/views.ts` | *Pure.* Target options, chain chips, hub label, avatar, queue, discount and collect-home panels |
 | `ui/staking.ts`, `governance.ts`, `analysis.ts` | *Pure.* What the staking panel, a proposal card and the analysis tab show |
 | `ui/proposalBuilder.ts` | *Pure.* Proposal actions from the values a person thinks in (a percentage, days), not calldata |
-| `ui/roundText.ts`, `rules.ts` | *Pure.* A round in words for the history feed, and the rules sheet from the numbers the match runs under |
+| `ui/roundText.ts`, `rules.ts` | *Pure.* Each seat's part in a round for the History tab, the recap from your seat, and the rules sheet from the numbers the match runs under |
+| `ui/feed.ts` | The History tab: a card per round, newest first, with each seat's move, outcome and HP |
 | `ui/errors.ts` | *Pure.* Wallet and revert errors, in words a player can act on |
 | `ui/format.ts` | *Pure.* `short`, `describeDraft`, `formatCountdown` |
 | `ui/links.ts` | Transaction links to the chain's explorer |

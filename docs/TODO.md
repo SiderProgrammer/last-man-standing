@@ -232,9 +232,6 @@ These are open questions, not bugs:
 - **Skill versus luck.** With the current rules a hard bot wins about 2× its share
   (`npm run sim`), well above the old rules. That suits a skill game, but in a staked one
   new players lose to strong ones more often; worth deciding deliberately.
-- **Reads.** The tells in `packages/client/src/game/reads.ts` are hand-tuned thresholds
-  ("strikes ≥ 70% of revealed moves"). They are readable but arbitrary; worth validating
-  against simulated play so the panel does not confidently mislabel a bot.
 - **Anti-collusion.** Nothing prevents two players from splitting a lobby, and with the
   current rules it pays: two colluding hard bots won 1.74× as often as two honest ones
   in validation (1.09× under the old storm rules). See "Known risk: collusion" in

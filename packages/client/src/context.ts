@@ -1,6 +1,5 @@
 import type { ActionValue, PublicMatchState } from '@lms/consensus';
 import type {
-  PlayStyle,
   AvatarCollectionInfo,
   AvatarEntry,
   LobbyInfo,
@@ -117,8 +116,6 @@ export interface AppState {
    * rebuilt on every match switch.
    */
   avatars: readonly AvatarEntry[];
-  /** Earlier play styles of this table's wallets, by lowercased address. */
-  dossier: ReadonlyMap<string, PlayStyle>;
   you: number | null;
   deadline: number;
   /** Seats round 1 is still waiting to see connected. Empty once it has started. */
@@ -178,7 +175,6 @@ export const store = createStore<AppState>({
   analyst: false,
   match: null,
   avatars: [],
-  dossier: new Map(),
   you: null,
   deadline: 0,
   waitingFor: [],

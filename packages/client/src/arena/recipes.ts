@@ -92,14 +92,34 @@ export const RECIPES = {
     ],
     sprays: [sparks(FX.charge, 5, 7, [60, 120])],
   },
-  /** A hit thrown with a Charge behind it. */
+  /** A striker letting a loaded Charge go: the crackle again, louder, and a ring snapping inward. */
+  chargedWindup: {
+    puffs: [
+      { texture: 'glow', tint: FX.charge, life: 0.35, size: [150, 60], alpha: 0.8, additive: true },
+      { texture: 'ring', tint: FX.charge, life: 0.3, size: [130, 50], alpha: 0.9, additive: true },
+      { texture: 'bolt', tint: 0xffffff, life: 0.25, size: [60, 90], randomTurn: true, additive: true },
+    ],
+    sprays: [sparks(FX.charge, 8, 9, [80, 160])],
+  },
+  /**
+   * A hit thrown with a Charge behind it: everything a plain hit does, bigger,
+   * plus a shockwave and a flash, so it reads as the blow it is. A kill still
+   * shakes harder and alone gets the hit-stop.
+   */
   chargedHit: {
     puffs: [
-      { texture: 'blast', tint: FX.charge, life: 0.35, size: [40, 110], additive: true },
-      { texture: 'claw', tint: 0xffffff, life: 0.45, size: [70, 76], randomTurn: true, additive: true },
+      { texture: 'flash', tint: 0xffffff, life: 0.2, size: [40, 140], additive: true },
+      { texture: 'blast', tint: FX.charge, life: 0.45, size: [50, 160], additive: true },
+      { texture: 'shockwave', tint: FX.charge, life: 0.5, size: [40, 200], alpha: 0.9, additive: true },
+      { texture: 'bolt', tint: FX.charge, life: 0.35, size: [90, 120], randomTurn: true, additive: true },
+      { texture: 'claw', tint: 0xffffff, life: 0.5, size: [86, 96], randomTurn: true, additive: true },
     ],
-    sprays: [sparks(FX.charge, 10, 12, [120, 240])],
-    shake: [5, 4],
+    sprays: [
+      sparks(FX.charge, 18, 14, [160, 320]),
+      { ...sparks(0xffffff, 8, 8, [220, 380]), life: [0.2, 0.3] },
+    ],
+    shake: [6, 5],
+    flash: [FX.charge, 0.14],
   },
   heal: {
     puffs: [{ texture: 'glow', tint: FX.heal, life: 0.4, size: [30, 70], alpha: 0.6, rise: 18, additive: true }],

@@ -10,7 +10,6 @@ import { refreshStaking, refreshStakingAfterDrip, wireStakingPanel } from './scr
 import { refreshGovernance, wireGovernanceNav } from './screens/governanceNav.js';
 import {
   onAvatars,
-  onDossier,
   onRoomClosed,
   onFinished,
   onReceipt,
@@ -144,7 +143,8 @@ const HANDLERS: Handlers = {
   // The watch is held until the room opens; `state` follows then.
   waiting: onWaiting,
   avatars: onAvatars,
-  dossier: onDossier,
+  // Play styles for the old Reads tab; nothing on the page shows them now.
+  dossier: () => {},
   round: onRound,
   receipt: (message) => void onReceipt(message),
   finished: onFinished,

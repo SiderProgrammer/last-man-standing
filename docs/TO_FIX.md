@@ -1,7 +1,6 @@
 - create match and instantly stake or dont allow to create a match
 - match leaving penalty
 - afk player penalty
-- history/reads tab
 - disable match joining/creation until current match finished
 - shorter commit time
 - set voting period 1 day and proposal threshold to 30k

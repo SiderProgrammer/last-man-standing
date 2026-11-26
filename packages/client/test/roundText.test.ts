@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Action, StrikeOutcome, type RoundRecord } from '@lms/consensus';
-import { missedRound, roundLines, roundRecap } from '../src/ui/roundText.js';
+import { missedRound, roundRecap, roundRows } from '../src/ui/roundText.js';
 
 type Move = RoundRecord['moves'][number];
 type Strike = RoundRecord['strikes'][number];
@@ -33,20 +33,29 @@ const ROUND = {
   eliminated: [] as number[],
 };
 
-describe('roundLines', () => {
-  it('shows what each strike did, and a seat with no move as "no move"', () => {
-    expect(roundLines(ROUND)).toEqual([
-      '#0 → struck #1 (−25, +5 hp)',
-      '#1 → guarded',
-      '#2 → struck #1 (blocked: took −34)',
-      '#3 → no move',
+describe('roundRows', () => {
+  it('gives every seat its move, what it did and the HP it left on', () => {
+    const rows = roundRows({ ...ROUND, hpAfter: [80, 50, 41, 75] }, [75, 75, 75, 75]);
+    expect(rows.map((row) => [row.seat, row.action, row.target, row.outcome])).toEqual([
+      [0, 'strike', 1, 'hit'],
+      [1, 'guard', null, null],
+      [2, 'strike', 1, 'blocked'],
+      [3, 'none', null, null],
     ]);
+    expect(rows[0]).toMatchObject({ dealt: 25, heal: 5, hpBefore: 75, hpAfter: 80 });
+    expect(rows[1]).toMatchObject({ blocked: [2], reflected: 34, taken: 25, hpAfter: 50 });
+    expect(rows[2]).toMatchObject({ recoil: 34, dealt: 0 });
   });
 
-  it('leaves eliminations to the feed, so none is listed twice', () => {
-    const lines = roundLines({ ...ROUND, eliminated: [3], stallDamage: 4 });
-    expect(lines.filter((line) => line.includes('eliminated'))).toEqual([]);
-    expect(lines.at(-1)).toBe('stall → everyone took 4');
+  it('marks a charged strike, a miss and an elimination', () => {
+    const rows = roundRows({
+      moves: [move(0, Action.Strike, 1), move(1, Action.Strike, 2)],
+      strikes: [strike(0, 1, StrikeOutcome.Hit, { charged: true, damage: 60 }), strike(1, 2, StrikeOutcome.Void)],
+      stallDamage: 0,
+      eliminated: [1],
+    });
+    expect(rows[0]).toMatchObject({ charged: true, dealt: 60, hpAfter: null });
+    expect(rows[1]).toMatchObject({ outcome: 'missed', out: true, taken: 60 });
   });
 });
 

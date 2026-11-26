@@ -46,6 +46,21 @@ const SHIELD_FADE = 0.15;
 const SHIMMER = 0.175;
 /** How far the camera pushes in on a kill. */
 const ZOOM_PUNCH = 1.045;
+/** A charged hit pushes in too, less than a kill. */
+const CHARGED_PUNCH = 1.025;
+/** A charged striker lunges this much further, and its bolt is this much bigger. */
+const CHARGED_LUNGE = 1.8;
+const CHARGED_BOLT = 1.7;
+/** Sparks a charged bolt sheds along its way. */
+const TRAIL: Spray = {
+  texture: 'glow',
+  count: 3,
+  tint: [FX.charge, 0xffffff],
+  life: [0.2, 0.32],
+  size: [9, 2],
+  speed: [30, 80],
+  additive: true,
+};
 /** Longest hit-stop, in real seconds, and the margin it always leaves the hold. */
 const MAX_HIT_STOP = 0.1;
 const HOLD_MARGIN = 0.15;
@@ -114,13 +129,23 @@ export class Effects {
       ...choreo.beats.filter((beat) => combat.has(beat.kind)).map((beat) => beat.end),
     );
 
+    // Strikers that let a Charge go: their windup and lunge say so too.
+    const loaded = new Set(
+      choreo.beats.flatMap((beat) => (beat.kind === 'travel' && beat.charged ? [beat.from] : [])),
+    );
+
     for (const beat of choreo.beats) {
       switch (beat.kind) {
         case 'noShow':
           this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.noShow, 'no show', FX.noShow));
           break;
         case 'declare':
-          if (beat.action === Action.Strike) {
+          if (beat.action === Action.Strike && loaded.has(beat.seat)) {
+            this.sway(timeline, seats.get(beat.seat), this.direction(beat.seat, beat.target), LUNGE * CHARGED_LUNGE, beat);
+            this.when(timeline, beat.start, () =>
+              this.moment(beat.seat, RECIPES.chargedWindup, 'POWER STRIKE', FX.charge, 0.9),
+            );
+          } else if (beat.action === Action.Strike) {
             this.sway(timeline, seats.get(beat.seat), this.direction(beat.seat, beat.target), LUNGE, beat);
             this.when(timeline, beat.start, () => this.moment(beat.seat, RECIPES.windup));
           } else if (beat.action === Action.Guard) {
@@ -131,7 +156,7 @@ export class Effects {
           }
           break;
         case 'travel':
-          this.projectile(timeline, beat.from, beat.to, beat, beat.charged ? FX.charge : FX.projectile);
+          this.projectile(timeline, beat.from, beat.to, beat, beat.charged ? FX.charge : FX.projectile, beat.charged);
           break;
         case 'impact':
           this.when(timeline, beat.start, () => this.impact(beat));
@@ -306,13 +331,18 @@ export class Effects {
       .set(seat, { veil: 1 }, until);
   }
 
-  /** A projectile curving from one seat to another, landing exactly on its impact. */
+  /**
+   * A projectile curving from one seat to another, landing exactly on its
+   * impact. A charged one is twice the size, wrapped in a spinning crackle,
+   * and sheds sparks along its way.
+   */
   private projectile(
     timeline: gsap.core.Timeline,
     from: number,
     to: number,
     window: Window,
     tint: number,
+    heavy = false,
   ): void {
     const a = this.options.positionOf(from);
     const b = this.options.positionOf(to);
@@ -321,6 +351,7 @@ export class Effects {
     // A coloured head with a white-hot core, trailing a streak.
     const bolt = new Container();
     bolt.visible = false;
+    const grow = heavy ? CHARGED_BOLT : 1;
     const parts = (
       [
         ['glow', tint, 34],
@@ -329,9 +360,24 @@ export class Effects {
       ] as const
     ).map(([texture, colour, size]) => {
       const sprite = this.acquire(texture, colour, true, bolt);
-      sprite.scale.set(this.scaleFor(sprite, size));
+      sprite.scale.set(this.scaleFor(sprite, size * grow));
       return sprite;
     });
+    if (heavy) {
+      const crackle = this.acquire('bolt', 0xffffff, true, bolt);
+      crackle.scale.set(this.scaleFor(crackle, 52));
+      crackle.alpha = 0.85;
+      timeline.to(crackle, { rotation: Math.PI * 4, duration: span(window), ease: 'none' }, window.start);
+      parts.push(crackle);
+      // Sparks dropped behind it, on the replay's clock so they stop when it lands.
+      const drops = 6;
+      for (let drop = 1; drop < drops; drop += 1) {
+        this.when(timeline, window.start + (span(window) * drop) / drops, () => {
+          if (bolt.destroyed) return;
+          this.spray(TRAIL, { x: bolt.x, y: bolt.y });
+        });
+      }
+    }
     this.layer.addChild(bolt);
 
     const start = new Point(a.x, a.y);
@@ -371,10 +417,16 @@ export class Effects {
   // --------------------------------------------------------------- moments
 
   private impact(beat: Extract<Beat, { kind: 'impact' }>): void {
-    if (beat.outcome === StrikeOutcome.Hit && beat.charged)
-      this.moment(beat.seat, RECIPES.chargedHit, `-${beat.damage}`, FX.charge, 1.5);
-    else if (beat.outcome === StrikeOutcome.Hit) this.moment(beat.seat, RECIPES.hit, `-${beat.damage}`, FX.hit, 1.25);
-    else if (beat.outcome === StrikeOutcome.Guarded) this.moment(beat.seat, RECIPES.block, 'BLOCK', FX.parry);
+    if (beat.outcome === StrikeOutcome.Hit && beat.charged) {
+      this.moment(beat.seat, RECIPES.chargedHit, `-${beat.damage}`, FX.charge, 1.9);
+      this.zoomPunch(CHARGED_PUNCH);
+    } else if (beat.outcome === StrikeOutcome.Hit) this.moment(beat.seat, RECIPES.hit, `-${beat.damage}`, FX.hit, 1.25);
+    else if (beat.outcome === StrikeOutcome.Guarded && beat.charged) {
+      // The guard held, but the blow was heavy: the block rings harder.
+      this.moment(beat.seat, RECIPES.block, 'BLOCK', FX.parry, 1.2);
+      this.play(RECIPES.chargedWindup, this.options.positionOf(beat.seat) ?? { x: 0, y: 0 });
+      this.shake(4, 3);
+    } else if (beat.outcome === StrikeOutcome.Guarded) this.moment(beat.seat, RECIPES.block, 'BLOCK', FX.parry);
   }
 
   /** A moment on one seat: its recipe, and the word or number that rises off it. */
@@ -458,11 +510,11 @@ export class Effects {
     gsap.delayedCall(stop, () => timeline.timeScale(1));
   }
 
-  private zoomPunch(): void {
+  private zoomPunch(punch = ZOOM_PUNCH): void {
     if (this.reduced) return;
     gsap.fromTo(
       this.options.camera.scale,
-      { x: ZOOM_PUNCH, y: ZOOM_PUNCH },
+      { x: punch, y: punch },
       { x: 1, y: 1, duration: 0.45, ease: 'power3.out', overwrite: true },
     );
   }

@@ -21,19 +21,18 @@ import {
   withRound,
   type LobbyInfo,
   type QueueRange,
-  type PlayStyle,
   type ServerMessage,
 } from '@lms/api';
 import { verifyTypedData } from 'viem';
 import type { Arena } from '../arena/arena.js';
 import { app, dom, net, store, type AppState } from '../context.js';
 import { phasePlan, type PhasePlan } from '../game/phase.js';
-import { readOpponents, type Read } from '../game/reads.js';
 import { freshSalt, recallMove, rememberMove, updateMove } from '../game/salts.js';
 import { readRaw, writeRaw } from '../io/storage.js';
 import { currentScreen, showLobbyScreen, showMatchScreen, showScreen, toast } from '../ui/chrome.js';
 import { callBack, cue, setSound, soundOn } from '../ui/alerts.js';
-import { missedRound, roundLines, roundRecap } from '../ui/roundText.js';
+import { missedRound, roundRecap } from '../ui/roundText.js';
+import { feedNote, roundCard } from '../ui/feed.js';
 import { renderWinnings } from '../wallet/payouts.js';
 import { startPractice } from './lobby.js';
 import { chosenRange, queueFor } from './queue.js';
@@ -102,7 +101,7 @@ export function onRound(message: Extract<ServerMessage, { type: 'round' }>): voi
   // The history grows here: deltas never carry it.
   replayedRound = message.record.round;
   store.set({ match: withRound(app.match, message.record) });
-  appendRound(roundLines(message.record), message.record.round, message.record.eliminated);
+  addRound(message.record);
   renderRecap(message.record);
   // Before the post-round snapshot lands, which follows within
   // milliseconds: the replay starts from the HP still on screen.
@@ -157,11 +156,6 @@ export async function onReceipt(message: Extract<ServerMessage, { type: 'receipt
   updateMove(receipt.matchId, receipt.round, { receipt: { receivedAt: receipt.receivedAt, signature } });
 }
 
-export function onDossier(message: Extract<ServerMessage, { type: 'dossier' }>): void {
-  if (message.matchId !== app.match?.matchId) return;
-  store.set({ dossier: new Map(message.entries.map((entry) => [entry.address.toLowerCase(), entry.style])) });
-}
-
 export function onAvatars(message: Extract<ServerMessage, { type: 'avatars' }>): void {
   // Late by design: the match is already running by the time these resolve.
   if (message.matchId !== app.match?.matchId) return;
@@ -196,11 +190,11 @@ function endReplay(): void {
 function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): void {
   const winner = message.ranking[0];
   const youWon = winner !== undefined && winner === app.you;
-  appendLine(
+  addNote(
     youWon
-      ? `You are the last one standing after ${message.result.rounds} rounds.`
+      ? `🏆 You are the last one standing after ${message.result.rounds} rounds.`
       : `Match over — seat #${winner ?? '?'} took it after ${message.result.rounds} rounds.`,
-    'round-head',
+    youWon ? 'win' : 'end',
   );
   if (winner !== undefined) arena?.showWinner(winner);
   // The sealed moves are kept until the result panel has verified the match:
@@ -237,7 +231,7 @@ function showFinished(message: Extract<ServerMessage, { type: 'finished' }>): vo
 function showEnded(state: PublicMatchState): void {
   const standing = state.players.filter((player) => player.alive);
   const winner = standing.length === 1 ? standing[0]?.index : undefined;
-  appendLine(winner === undefined ? 'This match has ended.' : `Match over — seat #${winner} took it after ${state.round} rounds.`, 'round-head');
+  addNote(winner === undefined ? 'This match has ended.' : `Match over — seat #${winner} took it after ${state.round} rounds.`, 'end');
   if (winner !== undefined) {
     if (arena) arena.showWinner(winner);
     else void mounting?.then((mounted) => mounted.showWinner(winner));
@@ -341,7 +335,6 @@ const FRESH_MATCH: Partial<AppState> = {
   committedRound: null,
   revealedRound: null,
   avatars: [],
-  dossier: new Map<string, PlayStyle>(),
   replaying: false,
   pendingFinish: null,
 };
@@ -372,7 +365,7 @@ export function onState(
     showMatchScreen();
     // The rounds already played, so a table opened mid-match, or just after
     // it ended, has its history and not an empty feed.
-    for (const record of state.history) appendRound(roundLines(record), record.round, record.eliminated);
+    for (const record of state.history) addRound(record, state, you);
     tableSeen = [...app.lobbies.live, ...app.lobbies.open].find((entry) => entry.matchId === state.matchId) ?? null;
     if (you !== null) callBack('Match starting', 'Your table is open: round 1 is about to begin.');
   }
@@ -603,7 +596,7 @@ function coachLine(round: number): string | null {
     case 3:
       return 'Charge (3) loads your next Strike to hit much harder, but strikes on you hurt more while you charge, and everyone can see it.';
     case 4:
-      return 'Everyone moves at once, so read the table: the Reads tab shows each seat’s habits. Last one standing wins.';
+      return 'Everyone moves at once, so read the table: the History tab shows what each seat did. Last one standing wins.';
     default:
       return null;
   }
@@ -697,72 +690,25 @@ function renderPhaseLabel(label: string): void {
   dom.phaseLabel.replaceChildren(round ?? '', element('span', `phase-chip ${phase}`, phase));
 }
 
-function renderReads(): void {
-  const state = app.match;
-  const you = app.you;
-  if (!state) return;
-  const reads = readOpponents(state, you, app.dossier);
-  // A regular's record is worth showing before the first round, too.
-  if (reads.length === 0 || (state.history.length === 0 && app.dossier.size === 0)) {
-    dom.reads.replaceChildren(element('p', 'muted small', 'Patterns appear once the first round resolves.'));
-    return;
-  }
-
-  dom.reads.replaceChildren(readsTable(reads));
+/**
+ * A resolved round on top of the History tab. `state` is the match it belongs
+ * to, holding the round before it, for the HP each seat went in with.
+ */
+function addRound(record: RoundRecord, state: PublicMatchState | null = app.match, you: number | null = app.you): void {
+  const maxHp = state?.rules.startingHp || 100;
+  const previous = state?.history.find((entry) => entry.round === record.round - 1);
+  const hpBefore = previous?.hpAfter ?? (record.round === 1 ? record.hpAfter.map(() => maxHp) : undefined);
+  dom.feed.querySelector('.feed-round.latest')?.classList.remove('latest');
+  const card = roundCard(record, hpBefore, { you, maxHp });
+  card.classList.add('latest');
+  dom.feed.prepend(card);
+  dom.feed.scrollTop = 0;
 }
 
-function readsTable(reads: Read[]): HTMLTableElement {
-  const head = element('tr');
-  for (const label of ['seat', '⚔️', '🛡️', '⚡', 'favours', 'tell']) head.append(element('th', '', label));
-
-  const body = element('tbody');
-  for (const read of reads) {
-    const row = element('tr', read.alive ? '' : 'dead');
-    const favourite = read.favourite === null ? '—' : `#${read.favourite}`;
-    for (const value of [`#${read.seat}`, String(read.strikes), String(read.guards), String(read.charges), favourite]) {
-      row.append(element('td', '', value));
-    }
-    row.append(element('td', 'tell', read.tell));
-    body.append(row);
-    if (read.past) {
-      const past = element('tr', read.alive ? 'past' : 'past dead');
-      const cell = element('td', '', read.past);
-      cell.colSpan = 5;
-      past.append(element('td'), cell);
-      body.append(past);
-    }
-  }
-
-  const thead = element('thead');
-  thead.append(head);
-  const table = element('table');
-  table.append(thead, body);
-  return table;
-}
-
-function appendRound(lines: string[], round: number, eliminated: number[]): void {
-  appendLine(`Round ${round}`, 'round-head');
-  for (const line of lines) appendLine(line);
-  if (eliminated.length > 0) {
-    appendLine(`eliminated: ${eliminated.map((seat) => `#${seat}`).join(', ')}`, 'kill');
-  }
-  dom.feed.scrollTop = dom.feed.scrollHeight;
-}
-
-function appendLine(text: string, className = ''): void {
-  const li = element('li', className || lineKind(text), text);
-  if (app.you !== null && text.startsWith(`#${app.you} `)) li.classList.add('mine');
-  dom.feed.append(li);
-}
-
-/** Colours a history line by what it describes. */
-function lineKind(text: string): string {
-  if (text.includes('struck')) return 'act-strike';
-  if (text.includes('guarded')) return 'act-guard';
-  if (text.endsWith('charged')) return 'act-charge';
-  if (text.includes('eliminated')) return 'kill';
-  if (text.endsWith('no move')) return 'act-none';
-  return '';
+/** How the match ended, above its last round. */
+function addNote(text: string, tone: 'win' | 'end'): void {
+  dom.feed.prepend(feedNote(text, tone));
+  dom.feed.scrollTop = 0;
 }
 
 /**
@@ -843,7 +789,6 @@ export function wireMatchControls(): void {
   };
 
   store.subscribe(['match', 'you'], renderTable);
-  store.subscribe(['match', 'you', 'dossier'], renderReads);
   store.subscribe(['match', 'you', 'draft', 'committedRound', 'revealedRound', 'replaying'], renderControls);
   store.subscribe(['avatars'], () => arena?.setAvatars(app.avatars));
   // No analyst on the server: no tab that can only say so.
@@ -869,7 +814,6 @@ export function wireMatchControls(): void {
   dom.lockIn.onclick = lockIn;
 
   dom.tabFeed.onclick = () => switchTab('feed');
-  dom.tabReads.onclick = () => switchTab('reads');
   dom.tabAnalysis.onclick = () => switchTab('analysis');
   wireAnalysisControls({ replay: replayRound, showTab: () => switchTab('analysis') });
 
@@ -939,10 +883,9 @@ function clickAction(action: ActionValue): void {
   if (button && !button.disabled) button.click();
 }
 
-function switchTab(tab: 'feed' | 'reads' | 'analysis'): void {
+function switchTab(tab: 'feed' | 'analysis'): void {
   const tabs = [
     [dom.tabFeed, dom.feed, tab === 'feed'],
-    [dom.tabReads, dom.reads, tab === 'reads'],
     [dom.tabAnalysis, dom.analysis, tab === 'analysis'],
   ] as const;
   for (const [button, pane, active] of tabs) {
